@@ -1,0 +1,419 @@
+Configuration
+=============
+
+**Note:** Sentry's library and framework integration documentation explains how to to do
+basic Sentry configuration for each of the supported integrations. The configuration
+below is typically for more advanced use cases and can be used in combination any of the other
+integrations *once you set Sentry up with the integration*. Please check the integration
+documentation before you attempt to do any advanced configuration.
+
+Most of Sentry's advanced configuration happens by setting options in your DSN, as seen below.
+
+Connection and Protocol
+-----------------------
+
+It is possible to send events to Sentry over different protocols, depending
+on the security and performance requirements.
+
+HTTPS
+~~~~~
+
+The most common way to send events to Sentry is via HTTPS, this can be done by
+using a DSN of this form:
+
+::
+
+    https://public:private@host:port/1
+
+If not provided, the port will default to ``443``.
+
+HTTPS (naive)
+~~~~~~~~~~~~~
+
+If the certificate used over HTTPS is a wildcard certificate (which is not
+handled by every version of Java), and the certificate isn't added to the
+truststore, you can add a protocol setting to tell the client to be
+naive and ignore hostname verification:
+
+::
+
+    naive+https://public:private@host:port/1
+
+HTTP
+~~~~
+
+It is possible to use an unencrypted connection to Sentry via HTTP:
+
+::
+
+    http://public:private@host:port/1
+
+If not provided, the port will default to ``80``.
+
+Using a Proxy
+~~~~~~~~~~~~~
+
+If your application needs to send outbound requests through an HTTP proxy,
+you can configure the proxy information via JVM networking properties or
+as part of the Sentry DSN.
+
+For example, using JVM networking properties (affects the entire JVM process),
+
+::
+
+    java \
+      # if you are using the HTTP protocol \
+      -Dhttp.proxyHost=proxy.example.com \
+      -Dhttp.proxyPort=8080 \
+      \
+      # if you are using the HTTPS protocol \
+      -Dhttps.proxyHost=proxy.example.com \
+      -Dhttps.proxyPort=8080 \
+      \
+      # relevant to both HTTP and HTTPS
+      -Dhttp.nonProxyHosts=”localhost|host.example.com” \
+      \
+      MyApp
+
+See `Java Networking and
+Proxies <http://docs.oracle.com/javase/8/docs/technotes/guides/net/proxies.html>`_
+for more information about the proxy properties.
+
+Alternatively, using the Sentry DSN (only affects the Sentry HTTP client,
+useful inside shared application containers),
+
+::
+
+    http://public:private@host:port/1?http.proxy.host=proxy.example.com&sentry.http.proxy.port=8080
+
+Options
+-------
+
+It is possible to enable some options by adding data to the query string of the
+DSN:
+
+::
+
+    http://public:private@host:port/1?option1=value1&option2&option3=value3
+
+Some options do not require a value, just being declared signifies that the
+option is enabled.
+
+Async Connection
+~~~~~~~~~~~~~~~~
+
+In order to avoid performance issues due to a large amount of logs being
+generated or a slow connection to the Sentry server, an asynchronous connection
+is set up, using a low priority thread pool to submit events to Sentry.
+
+To disable the async mode, add ``sentry.async=false`` to the DSN:
+
+::
+
+    http://public:private@host:port/1?async=false
+
+Graceful Shutdown (Advanced)
+````````````````````````````
+
+In order to shutdown the asynchronous connection gracefully, a ``ShutdownHook``
+is created. By default, the asynchronous connection is given 1 second
+to shutdown gracefully, but this can be adjusted via
+``sentry.async.shutdowntimeout`` (represented in milliseconds):
+
+::
+
+    http://public:private@host:port/1?async.shutdowntimeout=5000
+
+The special value ``-1`` can be used to disable the timeout and wait
+indefinitely for the executor to terminate.
+
+The ``ShutdownHook`` could lead to memory leaks in an environment where
+the life cycle of Sentry doesn't match the life cycle of the JVM.
+
+An example would be in a JEE environment where the application using Sentry
+could be deployed and undeployed regularly.
+
+To avoid this behaviour, it is possible to disable the graceful shutdown.
+This might lead to some log entries being lost if the log application
+doesn't shut down the ``SentryClient`` instance nicely.
+
+The option to do so is ``sentry.async.gracefulshutdown``:
+
+::
+
+    http://public:private@host:port/1?async.gracefulshutdown=false
+
+Queue Size (Advanced)
+`````````````````````
+
+The default queue used to store unprocessed events is limited to 50
+items. Additional items added once the queue is full are dropped and
+never sent to the Sentry server.
+Depending on the environment (if the memory is sparse) it is important to be
+able to control the size of that queue to avoid memory issues.
+
+It is possible to set a maximum with the option ``sentry.async.queuesize``:
+
+::
+
+    http://public:private@host:port/1?async.queuesize=100
+
+This means that if the connection to the Sentry server is down, only the 100
+most recent events will be stored and processed as soon as the server is back up.
+
+The special value ``-1`` can be used to enable an unlimited queue. Beware
+that network connectivity or Sentry server issues could mean your process
+will run out of memory.
+
+Threads Count (Advanced)
+````````````````````````
+
+By default the thread pool used by the async connection contains one thread per
+processor available to the JVM.
+
+It's possible to manually set the number of threads (for example if you want
+only one thread) with the option ``sentry.async.threads``:
+
+::
+
+    http://public:private@host:port/1?async.threads=1
+
+Threads Priority (Advanced)
+```````````````````````````
+
+In most cases sending logs to Sentry isn't as important as an application
+running smoothly, so the threads have a
+`minimal priority <http://docs.oracle.com/javase/6/docs/api/java/lang/Thread.html#MIN_PRIORITY>`_.
+
+It is possible to customise this value to increase the priority of those threads
+with the option ``sentry.async.priority``:
+
+::
+
+    http://public:private@host:port/1?async.priority=10
+
+Buffering Events to Disk
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sentry can be configured to write events to a specified directory on disk
+anytime communication with the Sentry server fails with the ``sentry.buffer.dir``
+option. If the directory doesn't exist, Sentry will attempt to create it
+on startup and may therefore need write permission on the parent directory.
+Sentry always requires write permission on the buffer directory itself.
+
+::
+
+    http://public:private@host:port/1?buffer.dir=sentry-events
+
+The maximum number of events that will be stored on disk defaults to 50,
+but can also be configured with the option ``sentry.buffer.size``:
+
+::
+
+    http://public:private@host:port/1?buffer.size=100
+
+If a buffer directory is provided, a background thread will periodically
+attempt to re-send the events that are found on disk. By default it will
+attempt to send events every 60 seconds. You can change this with the
+``sentry.buffer.flushtime`` option (in milliseconds):
+
+::
+
+    http://public:private@host:port/1?buffer.flushtime=10000
+
+Graceful Shutdown (Advanced)
+````````````````````````````
+
+In order to shutdown the buffer flushing thread gracefully, a ``ShutdownHook``
+is created. By default, the buffer flushing thread is given 1 second
+to shutdown gracefully, but this can be adjusted via
+``sentry.buffer.shutdowntimeout`` (represented in milliseconds):
+
+::
+
+    http://public:private@host:port/1?buffer.shutdowntimeout=5000
+
+The special value ``-1`` can be used to disable the timeout and wait
+indefinitely for the executor to terminate.
+
+The ``ShutdownHook`` could lead to memory leaks in an environment where
+the life cycle of Sentry doesn't match the life cycle of the JVM.
+
+An example would be in a JEE environment where the application using Sentry
+could be deployed and undeployed regularly.
+
+To avoid this behaviour, it is possible to disable the graceful shutdown
+by setting the ``sentry.buffer.gracefulshutdown`` option:
+
+::
+
+    http://public:private@host:port/1?buffer.gracefulshutdown=false
+
+Event Sampling
+~~~~~~~~~~~~~~
+
+Sentry can be configured to sample events with the ``sentry.sample.rate`` option:
+
+::
+
+    http://public:private@host:port/1?sample.rate=0.75
+
+This option takes a number from 0.0 to 1.0, representing the percent of
+events to allow through to server (from 0% to 100%). By default all
+events will be sent to the Sentry server.
+
+"In Application" Stack Frames
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sentry differentiates stack frames that are directly related to your application
+("in application") from stack frames that come from other packages such as the
+standard library, frameworks, or other dependencies. The difference
+is visible in the Sentry web interface where only the "in application" frames are
+displayed by default.
+
+You can configure which package prefixes your application uses with the
+``sentry.stacktrace.app.packages`` option, which takes a comma separated list.
+
+::
+
+    http://public:private@host:port/1?stacktrace.app.packages=com.mycompany,com.other.name
+
+Same Frame as Enclosing Exception
+`````````````````````````````````
+
+Sentry can use the "in application" system to hide frames in chained exceptions. Usually when a
+StackTrace is printed, the result looks like this:
+
+::
+
+    HighLevelException: MidLevelException: LowLevelException
+            at Main.a(Main.java:13)
+            at Main.main(Main.java:4)
+    Caused by: MidLevelException: LowLevelException
+            at Main.c(Main.java:23)
+            at Main.b(Main.java:17)
+            at Main.a(Main.java:11)
+            ... 1 more
+    Caused by: LowLevelException
+            at Main.e(Main.java:30)
+            at Main.d(Main.java:27)
+            at Main.c(Main.java:21)
+            ... 3 more
+
+Some frames are replaced by the ``... N more`` line as they are the same frames
+as in the enclosing exception.
+
+To enable a similar behaviour in Sentry use the ``sentry.stacktrace.hidecommon`` option.
+
+::
+
+    http://public:private@host:port/1?stacktrace.hidecommon
+
+Compression
+~~~~~~~~~~~
+
+By default the content sent to Sentry is compressed before being sent.
+However, compressing and encoding the data adds a small CPU and memory hit which
+might not be useful if the connection to Sentry is fast and reliable.
+
+Depending on the limitations of the project (e.g. a mobile application with a
+limited connection, Sentry hosted on an external network), it can be useful
+to compress the data beforehand or not.
+
+It's possible to manually enable/disable the compression with the option
+``sentry.compression``
+
+::
+
+    http://public:private@host:port/1?compression=false
+
+Max Message Size
+~~~~~~~~~~~~~~~~
+
+By default only the first 1000 characters of a message will be sent to
+the server. This can be changed with the ``sentry.maxmessagelength`` option.
+
+::
+
+    http://public:private@host:port/1?maxmessagelength=1500
+
+Timeout (Advanced)
+~~~~~~~~~~~~~~~~~~
+
+A timeout is set to avoid blocking Sentry threads because establishing a
+connection is taking too long.
+
+It's possible to manually set the timeout length with ``sentry.timeout``
+(in milliseconds):
+
+::
+
+    http://public:private@host:port/1?timeout=10000
+
+Custom SentryClientFactory
+--------------------------
+
+At times, you may require custom functionality that is not included in ``sentry-java``
+already. The most common way to do this is to create your own ``SentryClientFactory`` instance
+as seen in the example below. Note that you'll also need to register it with Sentry and
+possibly configure your integration to use it, as shown below.
+
+Implementation
+~~~~~~~~~~~~~~
+
+.. sourcecode:: java
+
+    public class MySentryClientFactory extends DefaultSentryClientFactory {
+
+        @Override
+        public SentryClient createSentryClient(Dsn dsn) {
+            SentryClient sentry = new SentryClient(createConnection(dsn));
+
+            /*
+            Create and use the ForwardedAddressResolver, which will use the
+            X-FORWARDED-FOR header for the remote address if it exists.
+             */
+            ForwardedAddressResolver forwardedAddressResolver = new ForwardedAddressResolver();
+            sentry.addBuilderHelper(new HttpEventBuilderHelper(forwardedAddressResolver));
+
+            return sentry;
+        }
+
+    }
+
+Next, you'll need to register your class with Sentry in one of two ways.
+
+Registration
+~~~~~~~~~~~~
+
+Java ServiceLoader Provider (Recommended)
+`````````````````````````````````````````
+
+You'll need to add a ``ServiceLoader`` provider file to your project at
+``src/main/resources/META-INF/services/io.sentry.SentryClientFactory`` that contains
+the name of your class so that it will be considered as a candidate ``SentryClientFactory``. For an example, see
+`how we configure the DefaultSentryClientFactory itself
+<https://github.com/getsentry/sentry-java/blob/master/sentry/src/main/resources/META-INF/services/io.sentry.SentryClientFactory>`_.
+
+Manual Registration
+```````````````````
+
+You can also manually register your ``SentryClientFactory`` instance. If you are using
+an integration that builds its own Sentry client, such as a logging integration, this should
+be done early in your application lifecycle so that your factory is available the first time
+you attempt to send an event to the Sentry server.
+
+.. sourcecode:: java
+
+    class MyApp {
+        public static void main(String[] args) {
+            SentryClientFactory.registerFactory(new MySentryClientFactory());
+            // ... your app code ...
+        }
+    }
+
+Configuration
+~~~~~~~~~~~~~
+
+Finally, see the documentation for the integration you use to find out how to
+configure it to use your custom ``SentryClientFactory``.
