@@ -67,6 +67,8 @@ public class SimpleResourceAssembler<T> implements ResourceAssembler<T, Resource
 	/**
 	 * Define links to add to every individual {@link Resource}.
 	 *
+	 * @see org.springframework.hateoas.mvc.SimpleIdentifiableResourceAssembler#addLinks(Resource)
+	 *
 	 * @param resource
 	 */
 	protected void addLinks(Resource<T> resource) {
@@ -75,6 +77,8 @@ public class SimpleResourceAssembler<T> implements ResourceAssembler<T, Resource
 
 	/**
 	 * Define links to add to the {@link Resources} collection.
+	 *
+	 * @see org.springframework.hateoas.mvc.SimpleIdentifiableResourceAssembler#addLinks(Resources)
 	 *
 	 * @param resources
 	 */
