@@ -225,10 +225,9 @@ public final class RsXsltTest {
     @Test
     public void loadsExternalImports() throws IOException {
         final String xml = Joiner.on(' ').join(
-            "<?xml-stylesheet",
+            "<?xml-stylesheet   ",
             " href='/org/takes/rs/stylesheet-with-include.xsl'",
-            " type='text/xsl'?>",
-            "<page sla='0.324'/>"
+            " type='text/xsl'?><page sla='0.324'/>"
         );
         MatcherAssert.assertThat(
             IOUtils.toString(
@@ -236,7 +235,9 @@ public final class RsXsltTest {
                     new RsText(xml)
                 ).body()
             ),
-            XhtmlMatchers.hasXPath("//xhtml:p[.='\u0443']")
+            XhtmlMatchers.hasXPath(
+                "/xhtml:html/xhtml:span[starts-with(@class, 'sla ')]"
+            )
         );
     }
 
