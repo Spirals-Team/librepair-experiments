@@ -1,0 +1,79 @@
+/*
+ * Infinitest, a Continuous Test Runner.
+ *
+ * Copyright (C) 2010-2013
+ * "Ben Rady" <benrady@gmail.com>,
+ * "Rod Coffin" <rfciii@gmail.com>,
+ * "Ryan Breidenbach" <ryan.breidenbach@gmail.com>
+ * "David Gageot" <david@gageot.net>, et al.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+package org.infinitest;
+
+import static com.google.common.collect.Lists.*;
+import static com.google.common.collect.Sets.*;
+
+import java.util.*;
+
+import org.infinitest.testrunner.*;
+
+public class TestCaseFailures {
+	private final Set<TestEvent> existingFailures;
+	private final Set<TestEvent> newFailures;
+
+	public TestCaseFailures(Collection<TestEvent> existingFailures) {
+		this.existingFailures = newHashSet(existingFailures);
+		newFailures = newHashSet();
+	}
+
+	public void addNewFailure(TestEvent newFailure) {
+		newFailures.add(newFailure);
+	}
+
+	public Collection<TestEvent> updatedFailures() {
+		Set<TestEvent> eventsFromAFailingTest = intersection(newFailures, existingFailures);
+		List<TestEvent> eventsThatAreFailingForDifferentReason = listOf(difference(setOf(eventsFromAFailingTest), setOf(existingFailures)));
+		return eventsThatAreFailingForDifferentReason;
+	}
+
+	public static List<TestEvent> listOf(Set<TestEventEqualityAdapter> set) {
+		ArrayList<TestEvent> list = newArrayList();
+		for (TestEventEqualityAdapter each : set) {
+			list.add(each.getEvent());
+		}
+		return list;
+	}
+
+	public static LinkedHashSet<TestEventEqualityAdapter> setOf(Collection<TestEvent> failures) {
+		LinkedHashSet<TestEventEqualityAdapter> set = newLinkedHashSet();
+		for (TestEvent testEvent : failures) {
+			set.add(new TestEventEqualityAdapter(testEvent));
+		}
+		return set;
+	}
+
+	public Collection<TestEvent> newFailures() {
+		return difference(newFailures, existingFailures);
+	}
+
+	public Collection<TestEvent> removedFailures() {
+		return difference(existingFailures, newFailures);
+	}
+}

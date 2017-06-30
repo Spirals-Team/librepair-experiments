@@ -1,0 +1,70 @@
+/*
+ * Infinitest, a Continuous Test Runner.
+ *
+ * Copyright (C) 2010-2013
+ * "Ben Rady" <benrady@gmail.com>,
+ * "Rod Coffin" <rfciii@gmail.com>,
+ * "Ryan Breidenbach" <ryan.breidenbach@gmail.com>
+ * "David Gageot" <david@gageot.net>, et al.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+package org.infinitest.eclipse.markers;
+
+import static org.hamcrest.Matchers.*;
+import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
+
+import java.util.*;
+
+import org.infinitest.eclipse.workspace.*;
+import org.junit.*;
+
+public class WhenPlacingFailureMarkers {
+	private ResourceLookup lookup;
+	private MarkerPlacer markerPlacer;
+	private List<MarkerPlacementStrategy> links;
+
+	@Before
+	public void inContext() {
+		lookup = mock(ResourceLookup.class);
+		markerPlacer = new MarkerPlacer(lookup);
+		links = markerPlacer.getLinks();
+	}
+
+	@Test
+	public void shouldFirstTryToPlaceMarkersAtThePointOfFailure() {
+		assertThat(links.get(0), instanceOf(PointOfFailurePlacementStrategy.class));
+	}
+
+	@Test
+	public void shouldThenTryToPlaceMarkersUsingStackTraceInfo() {
+		assertThat(links.get(1), instanceOf(StackTracePlacementStrategy.class));
+	}
+
+	@Test
+	public void shouldThenTryToPlaceMarkersInTheOriginatingTest() {
+		assertThat(links.get(2), instanceOf(TestNamePlacementStrategy.class));
+	}
+
+	@Test
+	public void shouldDefaultToWorkspaceRootIfNoStrategiesMatch() {
+		assertThat(links.get(3), instanceOf(WorkspaceFallbackPlacementStrategy.class));
+	}
+}
