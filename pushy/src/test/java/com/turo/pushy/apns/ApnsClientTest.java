@@ -368,10 +368,6 @@ public class ApnsClientTest {
             assertTrue(response.isAccepted());
             this.tokenAuthenticationMetricsListener.waitForNonZeroAcceptedNotifications();
 
-            // Hack: stall until we're confident everything (including listener updates) has made it through the event
-            // loop.
-            this.tokenAuthenticationClient.close().await();
-
             // See https://github.com/relayrides/pushy/issues/448
             assertEquals(1, this.tokenAuthenticationMetricsListener.getSentNotifications().size());
             assertEquals(1, this.tokenAuthenticationMetricsListener.getAcceptedNotifications().size());
@@ -571,9 +567,8 @@ public class ApnsClientTest {
 
         this.tokenAuthenticationClient.sendNotification(pushNotification).await();
 
-        // Hack: stall until we're confident everything (including listener updates) has made it through the event
-        // loop.
-        this.tokenAuthenticationClient.close().await();
+        this.tokenAuthenticationMetricsListener.waitForNonZeroFailedConnections();
+        this.tokenAuthenticationMetricsListener.waitForNonZeroWriteFailures();
 
         assertEquals(0, this.tokenAuthenticationMetricsListener.getConnectionsAdded().get());
         assertEquals(0, this.tokenAuthenticationMetricsListener.getConnectionsRemoved().get());
