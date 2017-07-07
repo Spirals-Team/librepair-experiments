@@ -390,7 +390,6 @@ public class TestQueries
         h.execute("insert into something (id, name) values (?, ?)", 2, "world");
 
         List<Map<String, Object>> rs = h.createQuery("select id, name from something")
-                              .setMaxRows(1)
                               .mapToMap()
                               .list();
 
