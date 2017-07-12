@@ -167,7 +167,8 @@ public class SequencerServer extends AbstractServer {
 
         long cacheSize = defaultCacheSize;
 
-        if (Long.parseLong((String) opts.get("--sequencer-cache-size")) != 0) {
+        if (opts.get("--sequencer-cache-size") != null
+                && Long.parseLong((String) opts.get("--sequencer-cache-size")) != 0) {
             cacheSize = Long.parseLong((String) opts.get("--sequencer-cache-size"));
         }
 
@@ -175,8 +176,8 @@ public class SequencerServer extends AbstractServer {
                 .maximumSize(cacheSize)
                 .removalListener((Integer k, Long v, RemovalCause cause) -> {
                     if (!RemovalCause.REPLACED.equals(cause)) {
-                        log.trace("Updating maxConflictWildcard. Old value = '{}', new value = '{}', "
-                                        + "conflictParam = '{}'. Removal cause = '{}'",
+                        log.trace("Updating maxConflictWildcard. Old value = '{}', new value='{}'"
+                                        + " conflictParam = '{}'. Removal cause = '{}'",
                                 maxConflictWildcard, v, k, cause);
                         maxConflictWildcard = Math.max(v, maxConflictWildcard);
                     }
