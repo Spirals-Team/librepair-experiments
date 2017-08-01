@@ -298,7 +298,7 @@ public class BackpointerStreamView extends AbstractQueuedStreamView {
 
             if (context.checkpointSuccessId == null &&
                     cpEntry.getCpType() == CheckpointEntry.CheckpointEntryType.END
-             && Long.decode(cpEntry.getDict().get(CheckpointEntry.CheckpointDictKey.SNAPSHOT_ADDRESS)) <= maxGlobal) {
+             && Long.decode(cpEntry.getDict().get(CheckpointEntry.CheckpointDictKey.START_LOG_ADDRESS)) <= maxGlobal) {
                 log.trace("Checkpoint[{}] END found at address {} type {} id {} author {}",
                         this, data.getGlobalAddress(), cpEntry.getCpType(),
                         Utils.toReadableId(cpEntry.getCheckpointId()),
@@ -313,15 +313,8 @@ public class BackpointerStreamView extends AbstractQueuedStreamView {
                 context.checkpointSuccessNumEntries++;
                 context.checkpointSuccessBytes += cpEntry.getSmrEntriesBytes();
                 if (cpEntry.getCpType().equals(CheckpointEntry.CheckpointEntryType.START)) {
-                    long cpStartAddr;
-                    if (cpEntry.getDict().get(CheckpointEntry.CheckpointDictKey
-                            .START_LOG_ADDRESS) != null) {
-                        cpStartAddr = Long.decode(cpEntry.getDict()
-                                .get(CheckpointEntry.CheckpointDictKey.START_LOG_ADDRESS));
-                    } else {
-                        cpStartAddr = data.getGlobalAddress();
-                    }
-                    context.checkpointSuccessStartAddr = cpStartAddr;
+                    context.checkpointSuccessStartAddr = Long.decode(cpEntry.getDict()
+                            .get(CheckpointEntry.CheckpointDictKey.START_LOG_ADDRESS));
                     if (cpEntry.getDict().get(CheckpointEntry.CheckpointDictKey
                             .SNAPSHOT_ADDRESS) != null) {
                         context.checkpointSnapshotAddress = Long.decode(cpEntry.getDict()
@@ -329,7 +322,8 @@ public class BackpointerStreamView extends AbstractQueuedStreamView {
                     }
                     log.trace("Checkpoint[{}] HALT due to START at address {} startAddr"
                             + " {} type {} id {} author {}",
-                            this, data.getGlobalAddress(), cpStartAddr, cpEntry.getCpType(),
+                            this, data.getGlobalAddress(), context.checkpointSuccessStartAddr,
+                            cpEntry.getCpType(),
                             Utils.toReadableId(cpEntry.getCheckpointId()),
                             cpEntry.getCheckpointAuthorId());
                     return BackpointerOp.INCLUDE_STOP;

@@ -164,8 +164,8 @@ public class CheckpointEntry extends LogEntry {
         super.serialize(b);
 
         if (cpType == CheckpointEntryType.END
-                && getDict().get(CheckpointDictKey.SNAPSHOT_ADDRESS) == null) {
-            throw new RuntimeException("CP end record must contain a snapshot address");
+                && getDict().get(CheckpointDictKey.START_LOG_ADDRESS) == null) {
+            throw new RuntimeException("CP end record must contain START_LOG_ADDRESS address");
         }
 
         b.writeByte(cpType.asByte());

@@ -423,10 +423,6 @@ public class CheckpointSmokeTest extends AbstractViewTest {
         final UUID checkpointStreamID = CorfuRuntime.getStreamID(streamId.toString() + "_cp");
         BackpointerStreamView sv = new BackpointerStreamView(r, checkpointStreamID);
         Map<CheckpointEntry.CheckpointDictKey, String> mdKV = new HashMap<>();
-        long snapshotAddress = r.getSequencerView().nextToken(Collections.emptySet(),
-                        0).getToken().getTokenValue();
-        mdKV.put(CheckpointEntry.CheckpointDictKey.SNAPSHOT_ADDRESS,
-                Long.toString(snapshotAddress));
         mdKV.put(CheckpointEntry.CheckpointDictKey.START_TIME, "The perfect time");
 
         // Write cp #1 of 3
