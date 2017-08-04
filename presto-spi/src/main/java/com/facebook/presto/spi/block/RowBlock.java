@@ -36,7 +36,7 @@ public class RowBlock
     private long sizeInBytes;
     private final long retainedSizeInBytes;
 
-    RowBlock(int startOffset, int positionCount, boolean[] rowIsNull, int[] columnBlockOffsets, Block[] columnBlocks)
+    public RowBlock(int startOffset, int positionCount, boolean[] rowIsNull, int[] columnBlockOffsets, Block[] columnBlocks)
     {
         super(columnBlocks.length);
 
@@ -139,6 +139,6 @@ public class RowBlock
     @Override
     public String toString()
     {
-        return format("RowBlock{numColumns=%d, positionCount=%d", numColumns, getPositionCount());
+        return format("RowBlock{numColumns=%d, positionCount=%d}", numColumns, getPositionCount());
     }
 }

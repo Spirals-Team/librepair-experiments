@@ -120,7 +120,7 @@ public class RowToRowCast
 
         Variable wasNull = scope.declareVariable(boolean.class, "wasNull");
         Variable blockBuilder = scope.createTempVariable(BlockBuilder.class);
-        Variable singleRowBlockBuilder = scope.createTempVariable(BlockBuilder.class);
+        Variable singleRowBlockWriter = scope.createTempVariable(BlockBuilder.class);
 
         body.append(wasNull.set(constantBoolean(false)));
 
@@ -132,7 +132,7 @@ public class RowToRowCast
                         constantType(binder, toType).invoke("getTypeParameters", List.class),
                         newInstance(BlockBuilderStatus.class),
                         constantInt(1))));
-        body.append(singleRowBlockBuilder.set(blockBuilder.invoke("beginBlockEntry", BlockBuilder.class)));
+        body.append(singleRowBlockWriter.set(blockBuilder.invoke("beginBlockEntry", BlockBuilder.class)));
 
         // loop through to append member blocks
         for (int i = 0; i < toTypes.size(); i++) {
@@ -143,7 +143,7 @@ public class RowToRowCast
             ScalarFunctionImplementation function = functionRegistry.getScalarFunctionImplementation(signature);
             Type currentFromType = fromTypes.get(i);
             if (currentFromType.equals(UNKNOWN)) {
-                body.append(singleRowBlockBuilder.invoke("appendNull", BlockBuilder.class).pop());
+                body.append(singleRowBlockWriter.invoke("appendNull", BlockBuilder.class).pop());
                 continue;
             }
             BytecodeExpression fromElement = constantType(binder, currentFromType).getValue(value, constantInt(i));
@@ -151,8 +151,8 @@ public class RowToRowCast
             IfStatement ifElementNull = new IfStatement("if the element in the row type is null...");
 
             ifElementNull.condition(value.invoke("isNull", boolean.class, constantInt(i)))
-                    .ifTrue(singleRowBlockBuilder.invoke("appendNull", BlockBuilder.class).pop())
-                    .ifFalse(constantType(binder, toTypes.get(i)).writeValue(singleRowBlockBuilder, toElement));
+                    .ifTrue(singleRowBlockWriter.invoke("appendNull", BlockBuilder.class).pop())
+                    .ifFalse(constantType(binder, toTypes.get(i)).writeValue(singleRowBlockWriter, toElement));
 
             body.append(ifElementNull);
         }

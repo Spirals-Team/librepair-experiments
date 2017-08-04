@@ -47,18 +47,18 @@ public class RowConstructorCodeGenerator
 
         block.comment("Create new RowBlockBuilder; beginBlockEntry;");
         Variable blockBuilder = scope.createTempVariable(BlockBuilder.class);
-        Variable singleRowBlockBuilder = scope.createTempVariable(BlockBuilder.class);
+        Variable singleRowBlockWriter = scope.createTempVariable(BlockBuilder.class);
         Binding typesBinding = binder.bind(types, List.class);
         block.append(blockBuilder.set(
                 newInstance(RowBlockBuilder.class, loadConstant(typesBinding), newInstance(BlockBuilderStatus.class), constantInt(1))));
-        block.append(singleRowBlockBuilder.set(blockBuilder.invoke("beginBlockEntry", BlockBuilder.class)));
+        block.append(singleRowBlockWriter.set(blockBuilder.invoke("beginBlockEntry", BlockBuilder.class)));
 
         for (int i = 0; i < arguments.size(); ++i) {
             Type fieldType = types.get(i);
             Class<?> javaType = fieldType.getJavaType();
             if (javaType == void.class) {
                 block.comment(i + "-th field type of row is undefined");
-                block.append(singleRowBlockBuilder.invoke("appendNull", BlockBuilder.class).pop());
+                block.append(singleRowBlockWriter.invoke("appendNull", BlockBuilder.class).pop());
             }
             else {
                 Variable field = scope.createTempVariable(javaType);
@@ -68,8 +68,8 @@ public class RowConstructorCodeGenerator
                 block.putVariable(field);
                 block.append(new IfStatement()
                         .condition(context.wasNull())
-                        .ifTrue(singleRowBlockBuilder.invoke("appendNull", BlockBuilder.class).pop())
-                        .ifFalse(constantType(binder, fieldType).writeValue(singleRowBlockBuilder, field).pop()));
+                        .ifTrue(singleRowBlockWriter.invoke("appendNull", BlockBuilder.class).pop())
+                        .ifFalse(constantType(binder, fieldType).writeValue(singleRowBlockWriter, field).pop()));
             }
         }
         block.comment("closeEntry; slice the SingleRowBlock; wasNull = false;");

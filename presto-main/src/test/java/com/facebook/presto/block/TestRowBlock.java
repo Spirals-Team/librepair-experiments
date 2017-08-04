@@ -69,17 +69,17 @@ public class TestRowBlock
                 rowBlockBuilder.appendNull();
             }
             else {
-                BlockBuilder singleRowBlockBuilder = rowBlockBuilder.beginBlockEntry();
+                BlockBuilder singleRowBlockWriter = rowBlockBuilder.beginBlockEntry();
                 for (Object fieldValue : row) {
                     if (fieldValue == null) {
-                        singleRowBlockBuilder.appendNull();
+                        singleRowBlockWriter.appendNull();
                     }
                     else {
                         if (fieldValue instanceof Long) {
-                            BIGINT.writeLong(singleRowBlockBuilder, ((Long) fieldValue).longValue());
+                            BIGINT.writeLong(singleRowBlockWriter, ((Long) fieldValue).longValue());
                         }
                         else if (fieldValue instanceof String) {
-                            VARCHAR.writeSlice(singleRowBlockBuilder, utf8Slice((String) fieldValue));
+                            VARCHAR.writeSlice(singleRowBlockWriter, utf8Slice((String) fieldValue));
                         }
                         else {
                             throw new IllegalArgumentException();
