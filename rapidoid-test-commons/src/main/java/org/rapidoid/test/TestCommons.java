@@ -47,9 +47,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public abstract class TestCommons {
 
-	private static final boolean ADJUST_TESTS = inDebugMode()
+	protected static final boolean RAPIDOID_CI = "true".equalsIgnoreCase(System.getenv("RAPIDOID_CI"));
+
+	// don't adjust tests during continuous integration
+	private static final boolean ADJUST_TESTS = !RAPIDOID_CI && (inDebugMode()
 		|| "true".equalsIgnoreCase(System.getProperty("ADJUST_TESTS"))
-		|| "true".equalsIgnoreCase(System.getenv("ADJUST_TESTS"));
+		|| "true".equalsIgnoreCase(System.getenv("ADJUST_TESTS")));
 
 	protected static final Random RND = new Random();
 
