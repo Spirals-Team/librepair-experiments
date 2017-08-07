@@ -26,7 +26,6 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
-import static java.util.Arrays.asList;
 import static net.javacrumbs.jsonunit.core.Option.COMPARING_ONLY_STRUCTURE;
 import static net.javacrumbs.jsonunit.core.internal.Diff.create;
 import static net.javacrumbs.jsonunit.core.internal.JsonUtils.convertToJson;
@@ -183,7 +182,7 @@ public class JsonFluentAssert {
      * Adds paths to be ignored
      */
     public JsonFluentAssert whenIgnoringPaths(String... pathsToBeIgnored) {
-        return new JsonFluentAssert(actual, path, description, configuration.withPathsToBeIgnored(asList(pathsToBeIgnored)));
+        return new JsonFluentAssert(actual, path, description, configuration.whenIgnoringPaths(pathsToBeIgnored));
     }
 
     private Diff createDiff(Object expected, Configuration configuration) {

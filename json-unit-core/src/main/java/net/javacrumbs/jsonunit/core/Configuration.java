@@ -24,6 +24,8 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
+import static java.util.Arrays.asList;
+
 /**
  * Comparison configuration. Immutable.
  */
@@ -109,8 +111,8 @@ public class Configuration {
         return new Configuration(tolerance, options, ignorePlaceholder, matchers, pathsToBeIgnored);
     }
 
-    public Configuration withPathsToBeIgnored(Collection<String> pathsToBeIgnored) {
-        return new Configuration(tolerance, options, ignorePlaceholder, matchers, pathsToBeIgnored);
+    public Configuration whenIgnoringPaths(String... pathsToBeIgnored) {
+        return new Configuration(tolerance, options, ignorePlaceholder, matchers, asList(pathsToBeIgnored));
     }
 
     /**
