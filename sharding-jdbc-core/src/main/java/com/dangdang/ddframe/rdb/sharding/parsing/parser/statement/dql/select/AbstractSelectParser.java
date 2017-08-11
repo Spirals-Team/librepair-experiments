@@ -80,6 +80,8 @@ public abstract class AbstractSelectParser implements SQLStatementParser {
     @Setter
     private boolean containSubquery;
     
+    private boolean containStarForOutQuery;
+    
     private boolean appendDerivedColumnsFlag;
     
     public AbstractSelectParser(final AbstractSQLParser sqlParser) {
@@ -177,6 +179,9 @@ public abstract class AbstractSelectParser implements SQLStatementParser {
     }
     
     private SelectItem parseStarSelectItem() {
+        if (!containSubquery) {
+            containStarForOutQuery = true;
+        }
         sqlParser.getLexer().nextToken();
         selectStatement.setContainStar(true);
         return new CommonSelectItem(Symbol.STAR.getLiterals(), sqlParser.parseAlias());
@@ -225,7 +230,7 @@ public abstract class AbstractSelectParser implements SQLStatementParser {
         sqlParser.accept(DefaultKeyword.BY);
         do {
             OrderItem orderItem = parseSelectOrderByItem();
-            if (!containSubquery) {
+            if (!containSubquery || containStarForOutQuery) {
                 result.add(orderItem);
             }
         }
@@ -304,7 +309,7 @@ public abstract class AbstractSelectParser implements SQLStatementParser {
         } else {
             return;
         }
-        if (!containSubquery) {
+        if (!containSubquery || containStarForOutQuery) {
             selectStatement.getGroupByItems().add(orderItem);
         }
     }
@@ -344,7 +349,7 @@ public abstract class AbstractSelectParser implements SQLStatementParser {
             sqlParser.skipUselessParentheses();
             parse();
             sqlParser.skipUselessParentheses();
-            if (!selectStatement.getTables().isEmpty() || getSqlParser().equalAny(DefaultKeyword.WHERE, Assist.END)) {
+            if (getSqlParser().equalAny(DefaultKeyword.WHERE, Assist.END)) {
                 return;
             }
         }
@@ -357,8 +362,8 @@ public abstract class AbstractSelectParser implements SQLStatementParser {
     }
     
     protected final void parseTableFactor() {
-        final int beginPosition = sqlParser.getLexer().getCurrentToken().getEndPosition() - sqlParser.getLexer().getCurrentToken().getLiterals().length();
         sqlParser.skipAll(DefaultKeyword.AS);
+        final int beginPosition = sqlParser.getLexer().getCurrentToken().getEndPosition() - sqlParser.getLexer().getCurrentToken().getLiterals().length();
         String literals = sqlParser.getLexer().getCurrentToken().getLiterals();
         sqlParser.getLexer().nextToken();
         // TODO 包含Schema解析
