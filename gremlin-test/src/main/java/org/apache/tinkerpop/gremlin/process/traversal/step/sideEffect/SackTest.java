@@ -161,7 +161,7 @@ public abstract class SackTest extends AbstractGremlinProcessTest {
 
     @Test
     @LoadGraphWith(MODERN)
-    public void g_withSackX2X_V_sackXdivX_byXconstantX3dXX_sack() {
+    public void g_withSackX2X_V_sackXdivX_byXconstantXBigDecimal_valueOfX3XXX_sack() {
         final Traversal<Vertex, BigDecimal> traversal = get_g_withSackX2X_V_sackXdivX_byXconstantXBigDecimal_valueOfX3XXX_sack();
         printTraversalForm(traversal);
         final double expected = 2.0 / 3.0;
