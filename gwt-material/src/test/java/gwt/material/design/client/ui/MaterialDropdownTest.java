@@ -88,7 +88,6 @@ public class MaterialDropdownTest extends MaterialWidgetTest {
         assertEquals(link.getElement().getAttribute("data-activates"), ACTIVATOR);
         RootPanel.get().add(link);
 
-
         dropdown.setActivator(ACTIVATOR);
         assertEquals(dropdown.getId(), ACTIVATOR);
         assertEquals(dropdown.getActivator(), ACTIVATOR);
@@ -105,6 +104,7 @@ public class MaterialDropdownTest extends MaterialWidgetTest {
         }
 
         // Smart check for parent Enabled / Disabled property
+        dropdown.setEnabled(true);
         assertTrue(link.isEnabled());
         dropdown.setEnabled(false);
         assertTrue(link instanceof HasEnabled);
