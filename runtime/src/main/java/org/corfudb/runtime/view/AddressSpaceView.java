@@ -315,13 +315,6 @@ public class AddressSpaceView extends AbstractView {
             while (iterator.hasNext()) {
                 readAddresses.add(iterator.next());
             }
-
-            TreeSet tree = (TreeSet) readAddresses;
-            System.out.println(tree.first() + "  " + tree.last());
-            if ((Long)tree.first() == 22536) {
-                System.out.println("badshit");
-            }
-
             //doesn't handle the case where some address have a different replication mode
             temp.putAll(layoutHelper(l -> l.getReplicationMode(readAddresses.iterator().next())
                     .getReplicationProtocol(runtime)
