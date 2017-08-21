@@ -326,21 +326,11 @@ public class AddressSpaceView extends AbstractView {
      * @param addresses collection of addresses to read from.
      * @return A result to be cached
      */
-    public @Nonnull Map<Long, ILogData> cacheFetch(Set<Long> addresses) {
-
-        Map<Long, ILogData> temp = new HashMap<>();
-
-        Iterable<List<Long>> batches = Iterables.partition(addresses, runtime.getBulkReadSize());
-
-        for (List<Long> batch : batches) {
-            Set<Long> batchSet = new HashSet<>(batch);
-            //doesn't handle the case where some address have a different replication mode
-            temp.putAll(layoutHelper(l -> l.getReplicationMode(batch.iterator().next())
-                    .getReplicationProtocol(runtime)
-                    .readRange(l, batchSet)));
-        }
-
-        return temp;
+    public @Nonnull
+    Map<Long, ILogData> cacheFetch(Set<Long> addresses) {
+        return layoutHelper(l -> l.getReplicationMode(addresses.iterator().next())
+                .getReplicationProtocol(runtime)
+                .readRange(l, addresses));
     }
 
 

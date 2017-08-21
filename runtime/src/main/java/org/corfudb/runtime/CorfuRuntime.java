@@ -182,7 +182,7 @@ public class CorfuRuntime {
      */
     @Setter
     @Getter
-    private int bulkReadSize = 10;
+    private int bulkReadSize = 20;
 
 
     /**
