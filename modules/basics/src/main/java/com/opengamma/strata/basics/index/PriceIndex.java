@@ -6,6 +6,7 @@
 package com.opengamma.strata.basics.index;
 
 import org.joda.convert.FromString;
+import org.joda.convert.ToString;
 
 import com.opengamma.strata.basics.date.DayCount;
 import com.opengamma.strata.basics.date.DayCounts;
@@ -84,5 +85,17 @@ public interface PriceIndex
    * @return the frequency of publication of the index
    */
   public abstract Frequency getPublicationFrequency();
+
+  //-------------------------------------------------------------------------
+  /**
+   * Gets the name that uniquely identifies this index.
+   * <p>
+   * This name is used in serialization and can be parsed using {@link #of(String)}.
+   * 
+   * @return the unique name
+   */
+  @ToString
+  @Override
+  public abstract String getName();
 
 }
