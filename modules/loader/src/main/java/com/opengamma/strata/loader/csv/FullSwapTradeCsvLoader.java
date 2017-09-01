@@ -155,6 +155,7 @@ final class FullSwapTradeCsvLoader {
     // this finds the index for each leg, using null for fixed legs
     List<FloatingRateIndex> indices = new ArrayList<>();
     Set<DayCount> dayCounts = new LinkedHashSet<>();
+    boolean missingDayCount = false;
     String legPrefix = "Leg 1 ";
     Optional<String> payReceiveOpt = Optional.of(getValue(row, legPrefix, DIRECTION_FIELD));
     int i = 1;
@@ -162,12 +163,15 @@ final class FullSwapTradeCsvLoader {
       // parse this leg
       FloatingRateIndex index = parseIndex(row, legPrefix);
       if (index != null) {
-        // floating leg or fixed leg with known day count
+        // floating leg
         indices.add(index);
         dayCounts.add(index.getDefaultFixedLegDayCount());
       } else {
-        // fixed leg with unknown day count
+        // fixed leg
         indices.add(null);
+        if (!findValue(row, legPrefix, DAY_COUNT_FIELD).isPresent()) {
+          missingDayCount = true;
+        }
       }
       // check if there is another leg
       i++;
@@ -176,7 +180,7 @@ final class FullSwapTradeCsvLoader {
     }
     // determine the default day count for the fixed leg
     DayCount defaultFixedLegDayCount = null;
-    if (indices.contains(null)) {
+    if (missingDayCount) {
       if (dayCounts.size() > 1) {
         throw new IllegalArgumentException(
             "Swap leg must define day count on fixed legs when more than 2 floating legs");
