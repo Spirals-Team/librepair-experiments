@@ -75,7 +75,7 @@ public class ComplexRenderTest {
     private String renderTest3() {
         boolean USER_SHOULD_LOG_IN = true;
         boolean USER_SHOULD_SIGN_UP = false;
-        return document().render() + "\r\n" +
+        return document().render() + "\n" +
             html(
                 head(
                     title("Test")
@@ -112,6 +112,43 @@ public class ComplexRenderTest {
 
     @Test
     public void testComplexRender_formatted() {
-        assertThat(renderTest3(), is(fileAsString("/renderTest3.html").render()));
+        System.out.println(renderTest3());
+        assertThat(renderTest3(),
+                   is("<!DOCTYPE html>\n"
+                          + "<html>\n"
+                          + "    <head>\n"
+                          + "        <title>\n"
+                          + "            Test\n"
+                          + "        </title>\n"
+                          + "    </head>\n"
+                          + "    <body>\n"
+                          + "        <header>\n"
+                          + "            <h1>\n"
+                          + "                Test Header \n"
+                          + "                <a href=\"http://example.com\">\n"
+                          + "                    with link\n"
+                          + "                </a>\n"
+                          + "                .\n"
+                          + "            </h1>\n"
+                          + "        </header>\n"
+                          + "        <main>\n"
+                          + "            <h2>\n"
+                          + "                Test Form\n"
+                          + "            </h2>\n"
+                          + "            <div>\n"
+                          + "                <input type=\"email\" name=\"email\" placeholder=\"Email\">\n"
+                          + "                <input type=\"password\" name=\"password\" placeholder=\"Password\">\n"
+                          + "                <button type=\"submit\">\n"
+                          + "                    Login\n"
+                          + "                </button>\n"
+                          + "            </div>\n"
+                          + "        </main>\n"
+                          + "        <footer class=\"footer\" id=\"id\">\n"
+                          + "            Test Footer\n"
+                          + "        </footer>\n"
+                          + "        <script src=\"/testScript.js\">\n"
+                          + "        </script>\n"
+                          + "    </body>\n"
+                          + "</html>\n"));
     }
 }

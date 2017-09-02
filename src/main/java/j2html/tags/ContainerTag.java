@@ -2,7 +2,6 @@ package j2html.tags;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 public class ContainerTag extends Tag<ContainerTag> {
@@ -141,19 +140,19 @@ public class ContainerTag extends Tag<ContainerTag> {
     }
 
     private String renderFormatted(int lvl) {
-        StringBuilder res = new StringBuilder(renderOpenTag() + "\r\n");
+        StringBuilder res = new StringBuilder(renderOpenTag() + "\n");
         if (children != null && !children.isEmpty()) {
             for (DomContent child : children) {
                 lvl++;
                 if (child instanceof ContainerTag) {
                     res.append(spaces(lvl)).append(((ContainerTag) child).renderFormatted(lvl));
                 } else {
-                    res.append(spaces(lvl)).append(child.render()).append("\r\n");
+                    res.append(spaces(lvl)).append(child.render()).append("\n");
                 }
                 lvl--;
             }
         }
-        res.append(spaces(lvl)).append(renderCloseTag()).append("\r\n");
+        res.append(spaces(lvl)).append(renderCloseTag()).append("\n");
         return res.toString();
     }
 
