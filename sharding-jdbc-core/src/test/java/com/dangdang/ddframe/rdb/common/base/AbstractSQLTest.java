@@ -47,7 +47,7 @@ import java.util.Set;
 
 public abstract class AbstractSQLTest {
     
-    private static Set<DatabaseType> databaseTypes = Sets.newHashSet(DatabaseType.MySQL);
+    private static Set<DatabaseType> databaseTypes = Sets.newHashSet(DatabaseType.H2);
     
     private final Map<DatabaseType, Map<String, DataSource>> databaseTypeMap = new HashMap<>();
     
@@ -89,7 +89,6 @@ public abstract class AbstractSQLTest {
     
     private static void createSchema(final DatabaseType dbType) {
         createJdbcSchema(dbType);
-        createMasterSlaveOnlySchema(dbType);
         createShardingSchema(dbType);
     }
     
@@ -97,27 +96,17 @@ public abstract class AbstractSQLTest {
         try {
             Connection conn;
             for (int i = 0; i < 10; i++) {
-                for (String database : Arrays.asList("db", "dbtbl", "nullable", "master", "slave")) {
-                    conn = initialConnection(database + "_" + i, dbType);
-                    RunScript.execute(conn, new InputStreamReader(AbstractSQLTest.class.getClassLoader().getResourceAsStream("integrate/schema/table/" + database + ".sql")));
-                    conn.close();
+                for (String database : Arrays.asList("tbl", "db", "dbtbl", "nullable", "master", "slave")) {
+                    if ("tbl".equals(database) && i == 0) {
+                        conn = initialConnection(database, dbType);
+                        RunScript.execute(conn, new InputStreamReader(AbstractSQLTest.class.getClassLoader().getResourceAsStream("integrate/schema/table/tbl.sql")));
+                        conn.close();
+                    } else {
+                        conn = initialConnection(database + "_" + i, dbType);
+                        RunScript.execute(conn, new InputStreamReader(AbstractSQLTest.class.getClassLoader().getResourceAsStream("integrate/schema/table/" + database + ".sql")));
+                        conn.close();
+                    }
                 }
-            }
-            conn = initialConnection("tbl", dbType);
-            RunScript.execute(conn, new InputStreamReader(AbstractSQLTest.class.getClassLoader().getResourceAsStream("integrate/schema/table/tbl.sql")));
-            conn.close();
-        } catch (final SQLException ex) {
-            ex.printStackTrace();
-        }
-    }
-
-    private static void createMasterSlaveOnlySchema(final DatabaseType dbType) {
-        try {
-            Connection conn;
-            for (String database : Arrays.asList("master_only", "slave_only")) {
-                conn = initialConnection(database, dbType);
-                RunScript.execute(conn, new InputStreamReader(AbstractSQLTest.class.getClassLoader().getResourceAsStream("integrate/schema/table/" + database + ".sql")));
-                conn.close();
             }
         } catch (final SQLException ex) {
             ex.printStackTrace();
