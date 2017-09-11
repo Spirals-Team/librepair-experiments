@@ -372,6 +372,7 @@ public final class Http1Codec implements HttpCodec {
       if (streamAllocation != null) {
         streamAllocation.eventListener.responseBodyEnd(streamAllocation.call, e);
         streamAllocation.streamFinished(!reuseConnection, Http1Codec.this);
+        streamAllocation.eventListener.fetchEnd(streamAllocation.call, e);
       }
     }
   }
