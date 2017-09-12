@@ -11,9 +11,8 @@ package jsat.lossfunctions;
 public class HuberLoss implements LossR
 {
 
-
-	private static final long serialVersionUID = -4463269746356262940L;
-	private double c;
+    private static final long serialVersionUID = -4463269746356262940L;
+    private double c;
 
     /**
      * Creates a new HuberLoss loss
@@ -109,6 +108,12 @@ public class HuberLoss implements LossR
     }
 
     @Override
+    public double getConjugate(double b, double pred, double y)
+    {
+        return Double.NaN;
+    }
+
+    @Override
     public double getDeriv2Max()
     {
         return 1;
@@ -124,5 +129,14 @@ public class HuberLoss implements LossR
     public double getRegression(double score)
     {
         return score;
+    }
+
+    @Override
+    public double lipschitz()
+    {
+        //TODO: is this tighter?
+        //We also observe that |fc''(x)| ≤ 1/c. This implies that fc(x) is 1/c-Lipschitz continuous.
+        //Huber interpolated between Asbolute loss and Squared loss, with are both L-Lipschitz, so Huber is too
+        return 1;
     }
 }

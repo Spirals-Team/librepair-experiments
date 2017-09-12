@@ -10,10 +10,9 @@ package jsat.lossfunctions;
 public class SquaredLoss implements LossR
 {
 
+    private static final long serialVersionUID = 130786305325167077L;
 
-	private static final long serialVersionUID = 130786305325167077L;
-
-	/**
+    /**
      * Computes the SquaredLoss loss
      *
      * @param pred the predicted value
@@ -73,6 +72,12 @@ public class SquaredLoss implements LossR
     {
         return deriv2(pred, y);
     }
+    
+    @Override
+    public double getConjugate(double b, double pred, double y)
+    {
+        return b*b*0.5+b*y;
+    }
 
     @Override
     public double getDeriv2Max()
@@ -90,5 +95,13 @@ public class SquaredLoss implements LossR
     public double getRegression(double score)
     {
         return score;
+    }
+
+    @Override
+    public double lipschitz()
+    {
+        //see Stochastic Dual Coordinate Ascent Methods for Regularized Loss Minimization
+        //"Both log loss and squared loss are 1-smooth"
+        return 1.0;
     }
 }

@@ -40,6 +40,18 @@ public interface LossFunc extends Serializable
      * @return the second derivative of the getLoss function
      */
     public double getDeriv2(double pred, double y);
+    
+    /**
+     * Computes the result of the conjugate function of this loss. This function
+     * is generally optional, and should return {@link Double#NaN} if not
+     * properly implemented. Many optimization algorithms do require a working
+     * implementation though.
+     * @param b the primary input to the function
+     * @param pred the predicted score in (-Infinity, Infinity)
+     * @param y the true class label in {-1, 1}
+     * @return the result of the conjugate function of this loss
+     */
+    public double getConjugate(double b, double pred, double y);
 
     /**
      * Returns an upper bound on the maximum value of the second derivative. If
@@ -51,6 +63,12 @@ public interface LossFunc extends Serializable
      * @return the max value of {@link #getDeriv2(double, double) }
      */
     public double getDeriv2Max();
+    
+    /**
+     * If this loss is L-Lipschitz (1/L Lipschitz smooth), this method will return the value of L. If it is not L-Lipschitz, a value of 0 will be returned.  
+     * @return the L-Lipschitz  constant, or 0 if this loss is not L-Lipschitz;
+     */
+    public double lipschitz();
     
     public LossFunc clone();
 }
