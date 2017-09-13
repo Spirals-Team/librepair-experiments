@@ -5,7 +5,9 @@ layout: doc_page
 Recommendations
 ===============
 
-# JVM Flags
+# Some Genearl guidelines
+
+JVM Flags..
 ```
 -Duser.timezone=UTC
 -Dfile.encoding=UTF-8
