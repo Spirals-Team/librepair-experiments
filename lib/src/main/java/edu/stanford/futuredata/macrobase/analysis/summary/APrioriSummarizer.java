@@ -106,14 +106,14 @@ public class APrioriSummarizer extends BatchSummarizer {
                 2
         );
 
-        countSet(
-                encoded,
-                countCol,
-                outlierCol,
-                3
-        );
+        // countSet(
+        //         encoded,
+        //         countCol,
+        //         outlierCol,
+        //         3
+        // );
 
-        for (int o = 1; o <= 3; o++) {
+        for (int o = 1; o <= 2; o++) {
             log.info("Order {} Explanations: {}", o, setSaved.get(o).size());
         }
 
@@ -236,8 +236,7 @@ public class APrioriSummarizer extends BatchSummarizer {
             if (oCount < suppCount) {
                 numPruned++;
             } else {
-                final double denom = (numOutliers - oCount) / (numEvents - count); // c / c + d
-                double ratio = oCount * 1.0 / (count * denom);
+                double ratio = oCount * 1.0 / (count * baseRate);
                 if (ratio > minRiskRatio) {
                     saved.add(curSet);
                 } else {
@@ -281,8 +280,7 @@ public class APrioriSummarizer extends BatchSummarizer {
             if (singleOCounts[i] < suppCount) {
                 numPruned++;
             } else {
-                final double denom = (numOutliers - singleOCounts[i]) / (numEvents - singleCounts[i]); // c / c + d
-                double ratio = singleOCounts[i]*1.0 / (singleCounts[i] * denom);
+                double ratio = singleOCounts[i]*1.0 / (singleCounts[i] * baseRate);
                 if (ratio > minRiskRatio) {
                     singleSaved.add(i);
                 } else {
@@ -317,7 +315,7 @@ public class APrioriSummarizer extends BatchSummarizer {
     @Override
     public Explanation getResults() {
         List<AttributeSet> results = new ArrayList<>();
-        for (int o = 1; o <= 3; o++) {
+        for (int o = 1; o <= 2; o++) {
             HashSet<IntSet> curResults = setSaved.get(o);
             HashMap<IntSet, Integer> idxMapping = setIdxMapping.get(o);
             int[] oCounts = setOCounts.get(o);
@@ -326,12 +324,7 @@ public class APrioriSummarizer extends BatchSummarizer {
                 int idx = idxMapping.get(vs);
                 int oCount = oCounts[idx];
                 int count = counts[idx];
-                // oCount = a
-                // count = a + b
-                // numOutliers = a + c
-                // numEvents = a + b + c + d
-                double denom = (numOutliers - oCount) / (numEvents - count); // c / c + d
-                double lift = (oCount*1.0/count) / denom;
+                double lift = (oCount*1.0/count) / baseRate;
                 double support = oCount*1.0 / numOutliers;
                 ItemsetResult iResult = new ItemsetResult(
                         support,
