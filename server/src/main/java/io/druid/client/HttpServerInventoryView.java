@@ -718,7 +718,7 @@ public class HttpServerInventoryView implements ServerInventoryView, FilteredSer
         catch (Exception ex) {
           log.makeAlert(
               ex,
-              "WTF! Couldn't schedule next sync. Server[%s] is not being synced any more.",
+              "WTF! Couldn't schedule next sync. Server[%s] is not being synced any more, restarting Druid process on that server might fix the issue.",
               druidServer.getName()
           ).emit();
         }
