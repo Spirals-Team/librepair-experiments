@@ -23,6 +23,7 @@ import com.facebook.presto.bytecode.Scope;
 import com.facebook.presto.bytecode.Variable;
 import com.facebook.presto.bytecode.control.ForLoop;
 import com.facebook.presto.bytecode.control.IfStatement;
+import com.facebook.presto.bytecode.expression.BytecodeExpressions;
 import com.facebook.presto.metadata.BoundVariables;
 import com.facebook.presto.metadata.FunctionKind;
 import com.facebook.presto.metadata.FunctionRegistry;
@@ -189,7 +190,8 @@ public final class MapTransformKeyFunction
         body.append(typedSet.set(newInstance(
                 TypedSet.class,
                 constantType(binder, transformedKeyType),
-                divide(positionCount, constantInt(2)))));
+                divide(positionCount, constantInt(2)),
+                BytecodeExpressions.constantString(MAP_TRANSFORM_KEY_FUNCTION.getSignature().getName()))));
 
         // throw null key exception block
         BytecodeNode throwNullKeyException = new BytecodeBlock()
