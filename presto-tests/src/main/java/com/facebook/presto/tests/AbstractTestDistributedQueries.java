@@ -133,10 +133,6 @@ public abstract class AbstractTestDistributedQueries
         assertTrue(getQueryRunner().tableExists(getSession(), "test_create"));
         assertTableColumnNames("test_create", "a", "b", "c");
 
-        assertQueryFails("CREATE TABLE test_create (a bigint, b double, c varchar)", "(.*)Table '(\\w+).tpch.test_create' already exists");
-        assertQueryFails("CREATE TABLE test_create (a varchar, b double, c varchar)", ".*Table '(\\w+).tpch.test_create' already exists with a different schema");
-        assertUpdate("CREATE TABLE IF NOT EXISTS test_create (a bigint, b double, c varchar)");
-
         assertUpdate("DROP TABLE test_create");
         assertFalse(getQueryRunner().tableExists(getSession(), "test_create"));
 
