@@ -63,34 +63,26 @@ public class BytecodeEGWalker {
   BytecodeEGWalker(BehaviorCache behaviorCache){
     this.behaviorCache = behaviorCache;
     checkerDispatcher = new CheckerDispatcher(this, Lists.newArrayList(new BytecodeSECheck.NullnessCheck()));
-  }
-
-  @VisibleForTesting
-  BytecodeEGWalker() {
-    behaviorCache = null;
-    checkerDispatcher = new CheckerDispatcher(this, Lists.newArrayList(new BytecodeSECheck.NullnessCheck()));
+    constraintManager = new ConstraintManager();
   }
 
   public MethodBehavior getMethodBehavior(Symbol.MethodSymbol symbol, SquidClassLoader classLoader) {
     methodBehavior = behaviorCache.methodBehaviorForSymbol(symbol);
     if(!methodBehavior.isComplete()) {
-      BytecodeCFGBuilder.BytecodeCFG bytecodeCFG = BytecodeCFGBuilder.buildCFG(symbol, classLoader);
-      Iterable<ProgramState> startingStates = startingStates(symbol, programState);
-      execute(bytecodeCFG, startingStates);
+      execute(symbol, classLoader);
       methodBehavior.completed();
     }
     return methodBehavior;
   }
 
-  @VisibleForTesting
-  void execute(BytecodeCFGBuilder.BytecodeCFG bytecodeCFG, Iterable<ProgramState> startingStates) {
+  private void execute(Symbol.MethodSymbol symbol, SquidClassLoader classLoader) {
     explodedGraph = new ExplodedGraph();
-    constraintManager = new ConstraintManager();
     programState = ProgramState.EMPTY_STATE;
     workList = new LinkedList<>();
     endOfExecutionPath = new LinkedHashSet<>();
     steps = 0;
-    for (ProgramState startingState : startingStates) {
+    BytecodeCFGBuilder.BytecodeCFG bytecodeCFG = BytecodeCFGBuilder.buildCFG(symbol, classLoader);
+    for (ProgramState startingState : startingStates(symbol, programState)) {
       enqueue(new ProgramPoint(bytecodeCFG.entry()), startingState);
     }
     while (!workList.isEmpty()) {
@@ -107,7 +99,11 @@ public class BytecodeEGWalker {
 
       if (programPosition.i < programPosition.block.elements().size()) {
         // process block element
-        executeInstruction((BytecodeCFGBuilder.Instruction) programPosition.block.elements().get(programPosition.i));
+        BytecodeCFGBuilder.Instruction instruction = (BytecodeCFGBuilder.Instruction) programPosition.block.elements().get(programPosition.i);
+        if (checkerDispatcher.executeCheckPreStatement(instruction)) {
+          executeInstruction(instruction);
+          checkerDispatcher.executeCheckPostStatement(instruction);
+        }
       } else {
         // process block exit, which is unconditional jump such as goto-statement or return-statement
         handleBlockExit(programPosition);
@@ -116,12 +112,15 @@ public class BytecodeEGWalker {
 
     handleEndOfExecutionPath();
     executeCheckEndOfExecution();
+    // Cleanup:
+    workList = null;
+    node = null;
+    programState = null;
+    constraintManager = null;
   }
 
-  private void executeInstruction(BytecodeCFGBuilder.Instruction instruction) {
-    if(!checkerDispatcher.executeCheckPreStatement(instruction)) {
-      return;
-    }
+  @VisibleForTesting
+  void executeInstruction(BytecodeCFGBuilder.Instruction instruction) {
     switch (instruction.opcode) {
       case Opcodes.ARETURN:
         programState.storeExitValue();
@@ -153,7 +152,6 @@ public class BytecodeEGWalker {
       default:
         // do nothing
     }
-    checkerDispatcher.executeCheckPostStatement(instruction);
   }
 
   private void handleBlockExit(ProgramPoint programPosition) {

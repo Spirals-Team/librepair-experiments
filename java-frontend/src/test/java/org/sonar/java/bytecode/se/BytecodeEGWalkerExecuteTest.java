@@ -19,17 +19,16 @@
  */
 package org.sonar.java.bytecode.se;
 
-import com.google.common.collect.ImmutableList;
 import org.junit.Test;
 import org.objectweb.asm.Opcodes;
 
-import org.sonar.java.bytecode.cfg.BytecodeCFGBuilder;
-import org.sonar.java.bytecode.cfg.Instructions;
+import org.sonar.java.bytecode.cfg.BytecodeCFGBuilder.Instruction;
 import org.sonar.java.se.ProgramState;
 import org.sonar.java.se.constraint.Constraint;
 import org.sonar.java.se.constraint.ConstraintsByDomain;
 import org.sonar.java.se.constraint.ObjectConstraint;
 import org.sonar.java.se.symbolicvalues.SymbolicValue;
+import org.sonar.java.se.xproc.BehaviorCache;
 
 import java.util.List;
 
@@ -39,26 +38,26 @@ public class BytecodeEGWalkerExecuteTest {
 
   @Test
   public void test_nop() throws Exception {
-    ProgramState programState = execute(new Instructions().visitInsn(Opcodes.NOP));
+    ProgramState programState = execute(new Instruction(Opcodes.NOP));
     assertThat(programState).isEqualTo(ProgramState.EMPTY_STATE);
   }
 
   @Test
   public void test_ldc() throws Exception {
-    ProgramState programState = execute(new Instructions().visitLdcInsn(0));
+    ProgramState programState = execute(new Instruction(Opcodes.LDC));
     assertStack(programState, ObjectConstraint.NOT_NULL);
   }
 
   @Test
   public void test_aconst_null() throws Exception {
-    ProgramState programState = execute(new Instructions().visitInsn(Opcodes.ACONST_NULL));
+    ProgramState programState = execute(new Instruction(Opcodes.ACONST_NULL));
     assertStack(programState, ObjectConstraint.NULL);
   }
 
   @Test
   public void test_areturn() throws Exception {
     SymbolicValue returnValue = new SymbolicValue();
-    ProgramState programState = execute(new Instructions().visitInsn(Opcodes.ARETURN), ProgramState.EMPTY_STATE.stackValue(returnValue));
+    ProgramState programState = execute(new Instruction(Opcodes.ARETURN), ProgramState.EMPTY_STATE.stackValue(returnValue));
     assertThat(programState.peekValue()).isEqualTo(returnValue);
   }
 
@@ -81,14 +80,14 @@ public class BytecodeEGWalkerExecuteTest {
     }
   }
 
-  private ProgramState execute(Instructions instructions) {
-    return execute(instructions, ProgramState.EMPTY_STATE);
+  private ProgramState execute(Instruction instruction) {
+    return execute(instruction, ProgramState.EMPTY_STATE);
   }
 
-  private ProgramState execute(Instructions instructions, ProgramState startingState) {
-    BytecodeCFGBuilder.BytecodeCFG cfg = instructions.cfg();
-    BytecodeEGWalker walker = new BytecodeEGWalker();
-    walker.execute(cfg, ImmutableList.of(startingState));
+  private ProgramState execute(Instruction instruction, ProgramState startingState) {
+    BytecodeEGWalker walker = new BytecodeEGWalker(new BehaviorCache(null));
+    walker.programState = startingState;
+    walker.executeInstruction(instruction);
     return walker.programState;
   }
 }
