@@ -53,10 +53,12 @@ public class GraphiteRabbitMQTest
     public void measuresFailures() throws Exception {
         try (final GraphiteRabbitMQ graphite = new GraphiteRabbitMQ(bogusConnectionFactory, "graphite")) {
             graphite.connect();
-            graphite.send("name", "value", 0);
-            failBecauseExceptionWasNotThrown(IOException.class);
-        } catch (IOException e) {
-            assertThat(graphite.getFailures()).isEqualTo(1);
+            try {
+              graphite.send("name", "value", 0);
+              failBecauseExceptionWasNotThrown(IOException.class);
+            } catch (IOException e) {
+              assertThat(graphite.getFailures()).isEqualTo(1);
+            }
         }
     }
 
