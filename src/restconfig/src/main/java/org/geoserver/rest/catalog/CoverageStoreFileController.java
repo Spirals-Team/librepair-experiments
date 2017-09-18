@@ -81,7 +81,7 @@ public class CoverageStoreFileController extends AbstractStoreUploadController {
             @PathVariable String storeName,
             @PathVariable UploadMethod method,
             @PathVariable String format,
-            @PathVariable(required = false) String filename,
+            @RequestParam(required = false) String filename,
             HttpServletRequest request) throws IOException {
 
         // check the coverage store exists
@@ -125,7 +125,7 @@ public class CoverageStoreFileController extends AbstractStoreUploadController {
             @RequestParam(name = "configure", required = false) String configure,
             @RequestParam(name = "USE_JAI_IMAGEREAD", required = false) Boolean useJaiImageRead,
             @RequestParam(name = "coverageName", required = false) String coverageName,
-            @PathVariable(required = false) String filename,
+            @RequestParam(required = false) String filename,
             HttpServletRequest request) throws IOException {
 
         Format coverageFormat = getCoverageFormat(format);

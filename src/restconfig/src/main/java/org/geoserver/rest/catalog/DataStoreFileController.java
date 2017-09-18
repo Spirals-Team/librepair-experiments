@@ -222,7 +222,7 @@ public class DataStoreFileController extends AbstractStoreUploadController {
             @RequestParam(name = "target", required = false) String target,
             @RequestParam(name = "update", required = false) String update,
             @RequestParam(name = "charset", required = false) String characterset,
-            @PathVariable(name = "filename", required = false) String filename,
+            @RequestParam(name = "filename", required = false) String filename,
             HttpServletRequest request, HttpServletResponse response) throws IOException {
 
         response.setStatus(HttpStatus.ACCEPTED.value());
