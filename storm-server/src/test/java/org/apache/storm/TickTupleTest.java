@@ -54,18 +54,28 @@ public class TickTupleTest {
             topoConf.put(Config.TOPOLOGY_TICK_TUPLE_FREQ_SECS, 1);
             try (ILocalTopology topo = cluster.submitTopology("test", topoConf,  topology)) {
                 //Give the cluster some time to come up
-                cluster.advanceClusterTime(40);
+                long time = 0;
+                while (tickTupleTimes.size() <= 0) {
+                    assert time <= 100_000 : "took over " + time + " ms of simulated time to get a message back...";
+                    cluster.advanceClusterTime(10);
+                    time += 10_000;
+                }
                 tickTupleTimes.clear();
                 cluster.advanceClusterTime(1);
-                assertEquals(41000, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
+                time += 1000;
+                assertEquals(time, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
                 cluster.advanceClusterTime(1);
-                assertEquals(42000, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
+                time += 1000;
+                assertEquals(time, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
                 cluster.advanceClusterTime(1);
-                assertEquals(43000, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
+                time += 1000;
+                assertEquals(time, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
                 cluster.advanceClusterTime(1);
-                assertEquals(44000, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
+                time += 1000;
+                assertEquals(time, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
                 cluster.advanceClusterTime(1);
-                assertEquals(45000, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
+                time += 1000;
+                assertEquals(time, tickTupleTimes.poll(100, TimeUnit.MILLISECONDS).longValue());
             }
             assertNull("The bolt got a tuple that is not a tick tuple " + nonTickTuple.get(), nonTickTuple.get());
         }
@@ -86,13 +96,13 @@ public class TickTupleTest {
         }
     }
 
-    private static class NoopBlot extends BaseRichBolt {
+    private static class NoopBolt extends BaseRichBolt {
         @Override
         public void prepare(Map<String, Object> conf, TopologyContext topologyContext, OutputCollector outputCollector) {}
 
         @Override
         public void execute(Tuple tuple) {
-            LOG.error("GOT {}", tuple);
+            LOG.info("GOT {}", tuple);
             if (TupleUtils.isTick(tuple)) {
                 try {
                     tickTupleTimes.put(Time.currentTimeMillis());
@@ -114,7 +124,7 @@ public class TickTupleTest {
     private StormTopology createNoOpTopology() {
         TopologyBuilder builder = new TopologyBuilder();
         builder.setSpout("1", new NoopSpout());
-        builder.setBolt("2", new NoopBlot()).fieldsGrouping("1", new Fields("tuple"));
+        builder.setBolt("2", new NoopBolt()).fieldsGrouping("1", new Fields("tuple"));
         return builder.createTopology();
     }
 }
