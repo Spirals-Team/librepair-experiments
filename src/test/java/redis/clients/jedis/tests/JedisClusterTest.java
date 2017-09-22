@@ -36,15 +36,9 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisCluster;
 import redis.clients.jedis.JedisCluster.Reset;
 import redis.clients.jedis.JedisClusterInfoCache;
-import redis.clients.jedis.JedisFactory;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
-import redis.clients.jedis.exceptions.JedisAskDataException;
-import redis.clients.jedis.exceptions.JedisClusterMaxRedirectionsException;
-import redis.clients.jedis.exceptions.JedisConnectionException;
-import redis.clients.jedis.exceptions.JedisException;
-import redis.clients.jedis.exceptions.JedisExhaustedPoolException;
-import redis.clients.jedis.exceptions.JedisMovedDataException;
+import redis.clients.jedis.exceptions.*;
 import redis.clients.jedis.tests.utils.ClientKillerUtil;
 import redis.clients.jedis.tests.utils.JedisClusterTestUtil;
 import redis.clients.util.JedisClusterCRC16;
@@ -558,7 +552,6 @@ public class JedisClusterTest {
     final JedisCluster jc = new JedisCluster(jedisClusterNode, DEFAULT_TIMEOUT, DEFAULT_TIMEOUT,
         DEFAULT_REDIRECTIONS, "cluster", DEFAULT_CONFIG);
     jc.set("foo", "bar");
-    assertEquals("bar", jc.get("foo"));
 
     ThreadPoolExecutor executor = new ThreadPoolExecutor(10, 100, 0, TimeUnit.SECONDS,
         new ArrayBlockingQueue<Runnable>(10));
@@ -642,39 +635,6 @@ public class JedisClusterTest {
     Map<String, JedisPool> clusterNodes = jc.getClusterNodes();
     assertEquals(3, clusterNodes.size());
     assertFalse(clusterNodes.containsKey(JedisClusterInfoCache.getNodeKey(invalidHost)));
-  }
-
-  @Test(expected = JedisConnectionException.class)
-  public void testResetInvalidPassword() {
-    Set<HostAndPort> jedisClusterNode = new HashSet<HostAndPort>();
-    jedisClusterNode.add(new HostAndPort("127.0.0.1", 7379));
-    JedisFactory factory = new JedisFactory(null, 0, DEFAULT_TIMEOUT, DEFAULT_TIMEOUT, "cluster", 0, "my_shiny_client_name", false, null, null, null);
-    JedisCluster jc = new JedisCluster(jedisClusterNode, DEFAULT_REDIRECTIONS, "cluster","my_shiny_client_name", DEFAULT_CONFIG, factory);
-
-    jc.set("foo", "bar");
-    assertEquals("bar", jc.get("foo"));
-
-    factory.setPassword("wrong password");
-    jc.set("foo2", "bar2");
-
-    jc.close();
-  }
-
-  @Test
-  public void testResetValidPassword() {
-    Set<HostAndPort> jedisClusterNode = new HashSet<HostAndPort>();
-    jedisClusterNode.add(new HostAndPort("127.0.0.1", 7379));
-    JedisFactory factory = new JedisFactory(null, 0, DEFAULT_TIMEOUT, DEFAULT_TIMEOUT, "wrong password", 0, "my_shiny_client_name", false, null, null, null);
-    JedisCluster jc = new JedisCluster(jedisClusterNode, DEFAULT_REDIRECTIONS, "cluster","my_shiny_client_name", DEFAULT_CONFIG, factory);
-    try {
-      jc.set("foo", "bar");
-    } catch (JedisConnectionException  e) {
-      factory.setPassword("cluster");
-      jc.set("foo", "bar");
-      assertEquals("bar", jc.get("foo"));
-    }
-
-    jc.close();
   }
 
   private static String getNodeServingSlotRange(String infoOutput) {

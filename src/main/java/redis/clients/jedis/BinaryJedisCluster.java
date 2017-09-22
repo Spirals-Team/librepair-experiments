@@ -17,7 +17,6 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
-
 import redis.clients.util.JedisClusterHashTagUtil;
 
 public class BinaryJedisCluster implements BinaryJedisClusterCommands,
@@ -62,12 +61,6 @@ public class BinaryJedisCluster implements BinaryJedisClusterCommands,
   public BinaryJedisCluster(Set<HostAndPort> jedisClusterNode, int connectionTimeout, int soTimeout, int maxAttempts, String password, String clientName, GenericObjectPoolConfig poolConfig) {
     this.connectionHandler = new JedisSlotBasedConnectionHandler(jedisClusterNode, poolConfig,
             connectionTimeout, soTimeout, password, clientName);
-    this.maxAttempts = maxAttempts;
-  }
-
-  public BinaryJedisCluster(Set<HostAndPort> jedisClusterNode, int maxAttempts, String password, String clientName,
-      final GenericObjectPoolConfig poolConfig, final JedisFactory factory) {
-    this.connectionHandler = new JedisSlotBasedConnectionHandler(jedisClusterNode, poolConfig, factory, password, clientName);
     this.maxAttempts = maxAttempts;
   }
 

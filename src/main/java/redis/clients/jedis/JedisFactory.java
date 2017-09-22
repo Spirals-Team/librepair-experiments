@@ -75,7 +75,7 @@ public class JedisFactory implements PooledObjectFactory<Jedis> {
   }
 
   @Override
-  public void activateObject(final PooledObject<Jedis> pooledJedis) throws Exception {
+  public void activateObject(PooledObject<Jedis> pooledJedis) throws Exception {
     final BinaryJedis jedis = pooledJedis.getObject();
     if (jedis.getDB() != database) {
       jedis.select(database);
@@ -84,7 +84,7 @@ public class JedisFactory implements PooledObjectFactory<Jedis> {
   }
 
   @Override
-  public void destroyObject(final PooledObject<Jedis> pooledJedis) throws Exception {
+  public void destroyObject(PooledObject<Jedis> pooledJedis) throws Exception {
     final BinaryJedis jedis = pooledJedis.getObject();
     if (jedis.isConnected()) {
       try {
@@ -127,12 +127,12 @@ public class JedisFactory implements PooledObjectFactory<Jedis> {
   }
 
   @Override
-  public void passivateObject(final PooledObject<Jedis> pooledJedis) throws Exception {
+  public void passivateObject(PooledObject<Jedis> pooledJedis) throws Exception {
     // TODO maybe should select db 0? Not sure right now.
   }
 
   @Override
-  public boolean validateObject(final PooledObject<Jedis> pooledJedis) {
+  public boolean validateObject(PooledObject<Jedis> pooledJedis) {
     final BinaryJedis jedis = pooledJedis.getObject();
     try {
       HostAndPort hostAndPort = this.hostAndPort.get();

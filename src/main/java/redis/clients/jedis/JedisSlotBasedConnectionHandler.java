@@ -1,7 +1,6 @@
 package redis.clients.jedis;
 
 import java.util.List;
-
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 
 import java.util.Set;
@@ -27,10 +26,6 @@ public class JedisSlotBasedConnectionHandler extends JedisClusterConnectionHandl
 
   public JedisSlotBasedConnectionHandler(Set<HostAndPort> nodes, GenericObjectPoolConfig poolConfig, int connectionTimeout, int soTimeout, String password, String clientName) {
     super(nodes, poolConfig, connectionTimeout, soTimeout, password, clientName);
-  }
-
-  public JedisSlotBasedConnectionHandler(Set<HostAndPort> nodes, GenericObjectPoolConfig poolConfig, final JedisFactory factory, String password, String clientName) {
-    super(nodes, poolConfig, factory, password, clientName);
   }
 
   @Override

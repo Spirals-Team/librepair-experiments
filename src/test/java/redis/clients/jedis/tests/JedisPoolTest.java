@@ -381,7 +381,7 @@ public class JedisPoolTest {
   private int getClientCount(final String clientList) {
     return clientList.split("\n").length;
   }
-
+  
   @Test(expected = JedisConnectionException.class)
   public void testResetInvalidPassword() {
     JedisFactory factory = new JedisFactory(hnp.getHost(), hnp.getPort(), 2000, 2000, "foobared", 0, "my_shiny_client_name", false, null, null, null);
@@ -390,13 +390,13 @@ public class JedisPoolTest {
     obj1.set("foo", "bar");
     assertEquals("bar", obj1.get("foo"));
     assertEquals(1, pool.getNumActive());
-
+    
     factory.setPassword("wrong password");
     Jedis obj2 = pool.getResource();
     obj2.set("foo2", "bar2");
     pool.close();
   }
-
+  
   @Test
   public void testResetValidPassword() {
     JedisFactory factory = new JedisFactory(hnp.getHost(), hnp.getPort(), 2000, 2000, "bad password", 0, "my_shiny_client_name", false, null, null, null);

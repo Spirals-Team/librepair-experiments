@@ -33,7 +33,6 @@ public class JedisClusterInfoCache {
   private String password;
   private String clientName;
 
-  private volatile JedisFactory factory;
   private static final int MASTER_NODE_INDEX = 2;
 
   public JedisClusterInfoCache(final GenericObjectPoolConfig poolConfig, int timeout) {
@@ -47,12 +46,6 @@ public class JedisClusterInfoCache {
     this.soTimeout = soTimeout;
     this.password = password;
     this.clientName = clientName;
-  }
-
-  public JedisClusterInfoCache(final GenericObjectPoolConfig poolConfig,
-      final JedisFactory factory) {
-    this.poolConfig = poolConfig;
-    this.factory = factory;
   }
 
   public void discoverClusterNodesAndSlots(Jedis jedis) {
@@ -164,14 +157,8 @@ public class JedisClusterInfoCache {
       JedisPool existingPool = nodes.get(nodeKey);
       if (existingPool != null) return existingPool;
 
-      JedisPool nodePool = null;
-      if (factory != null) {
-        factory.setHostAndPort(node);
-        nodePool = new JedisPool(poolConfig, factory);
-      } else {
-        nodePool = new JedisPool(poolConfig, node.getHost(), node.getPort(), connectionTimeout,
-            soTimeout, password, 0, clientName, false, null, null, null);
-      }
+      JedisPool nodePool = new JedisPool(poolConfig, node.getHost(), node.getPort(),
+          connectionTimeout, soTimeout, password, 0, clientName, false, null, null, null);
       nodes.put(nodeKey, nodePool);
       return nodePool;
     } finally {
@@ -186,14 +173,8 @@ public class JedisClusterInfoCache {
       JedisPool existingPool = nodes.get(nodeKey);
       if (existingPool != null) return existingPool;
 
-      JedisPool nodePool = null;
-      if (factory != null) {
-        factory.setHostAndPort(node);
-        nodePool = new JedisPool(poolConfig, factory);
-      } else {
-        nodePool = new JedisPool(poolConfig, node.getHost(), node.getPort(), connectionTimeout,
-            soTimeout, password, 0, null, ssl, null, null, null);
-      }
+      JedisPool nodePool = new JedisPool(poolConfig, node.getHost(), node.getPort(),
+          connectionTimeout, soTimeout, password, 0, null, ssl, null, null, null);
       nodes.put(nodeKey, nodePool);
       return nodePool;
     } finally {
@@ -209,14 +190,9 @@ public class JedisClusterInfoCache {
       JedisPool existingPool = nodes.get(nodeKey);
       if (existingPool != null) return existingPool;
 
-      JedisPool nodePool = null;
-      if (factory != null) {
-        factory.setHostAndPort(node);
-        nodePool = new JedisPool(poolConfig, factory);
-      } else {
-        nodePool = new JedisPool(poolConfig, node.getHost(), node.getPort(), connectionTimeout,
-            soTimeout, password, 0, null, ssl, sslSocketFactory, sslParameters, hostnameVerifier);
-      }
+      JedisPool nodePool = new JedisPool(poolConfig, node.getHost(), node.getPort(),
+          connectionTimeout, soTimeout, password, 0, null, ssl, sslSocketFactory, sslParameters,
+          hostnameVerifier);
       nodes.put(nodeKey, nodePool);
       return nodePool;
     } finally {

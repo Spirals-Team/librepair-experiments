@@ -222,7 +222,7 @@ public class JedisPool extends JedisPoolAbstract {
         (uri.getScheme() !=null && uri.getScheme().equals(REDISS)), sslSocketFactory,
         sslParameters, hostnameVerifier));
   }
-
+  
   public JedisPool(GenericObjectPoolConfig poolConfig, PooledObjectFactory<Jedis> factory) {
     super(poolConfig, factory);
   }
