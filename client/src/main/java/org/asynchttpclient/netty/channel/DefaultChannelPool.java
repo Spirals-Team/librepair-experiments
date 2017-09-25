@@ -108,9 +108,9 @@ public final class DefaultChannelPool implements ChannelPool {
     }
 
     private static final class IdleChannel {
-
+        
         private static final AtomicIntegerFieldUpdater<IdleChannel> ownedField = AtomicIntegerFieldUpdater.newUpdater(IdleChannel.class, "owned");
-
+        
         final Channel channel;
         final long start;
         @SuppressWarnings("unused")
@@ -122,7 +122,7 @@ public final class DefaultChannelPool implements ChannelPool {
         }
 
         public boolean takeOwnership() {
-            return ownedField.getAndSet(this, 1) != 0;
+            return ownedField.getAndSet(this, 1) == 0;
         }
 
         public Channel getChannel() {
