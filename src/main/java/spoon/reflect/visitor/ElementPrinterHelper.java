@@ -62,10 +62,10 @@ import java.util.StringTokenizer;
 public class ElementPrinterHelper {
 	private final DefaultJavaPrettyPrinter prettyPrinter;
 	private final Environment env;
-	private PrinterTokenWriter printer;
+	private SnapshotPrinterTokenWriter printer;
 
-	ElementPrinterHelper(PrinterTokenWriter printerHelper, DefaultJavaPrettyPrinter prettyPrinter, Environment env) {
-		this.printer = printerHelper;
+	ElementPrinterHelper(SnapshotPrinterTokenWriter printerTokenWriter, DefaultJavaPrettyPrinter prettyPrinter, Environment env) {
+		this.printer = printerTokenWriter;
 		this.prettyPrinter = prettyPrinter;
 		this.env = env;
 	}
@@ -82,7 +82,7 @@ public class ElementPrinterHelper {
 
 	public void writeModifiers(CtModifiable modifiable) {
 		for (ModifierKind modifierKind : modifiable.getModifiers()) {
-			printer.writeKeyword(modifierKind.toString()).writeWhitespace(" ");
+			printer.writeKeyword(modifierKind.toString()).writeSpace();
 		}
 	}
 
@@ -95,14 +95,14 @@ public class ElementPrinterHelper {
 
 	public void writeExtendsClause(CtType<?> type) {
 		if (type.getSuperclass() != null) {
-			printer.writeWhitespace(" ").writeKeyword("extends").writeWhitespace(" ");
+			printer.writeSpace().writeKeyword("extends").writeSpace();
 			prettyPrinter.scan(type.getSuperclass());
 		}
 	}
 
 	public void writeImplementsClause(CtType<?> type) {
 		if (type.getSuperInterfaces().size() > 0) {
-			printer.writeWhitespace(" ").writeKeyword("implements").writeWhitespace(" ");
+			printer.writeSpace().writeKeyword("implements").writeSpace();
 			try (ListPrinter lp = createListPrinter(null, false, true, ",", true, false, null)) {
 				for (CtTypeReference<?> ref : type.getSuperInterfaces()) {
 					lp.printSeparatorIfAppropriate();
@@ -284,22 +284,24 @@ public class ElementPrinterHelper {
 			List<String> sortedImports = new ArrayList<>(setImports);
 			Collections.sort(sortedImports);
 			for (String importLine : sortedImports) {
-				printer.writeKeyword("import").writeWhitespace(" ");
+				printer.writeKeyword("import").writeSpace();
 				writeQualifiedName(importLine).writeSeparator(";").writeln().writeTabs();
 			}
-			printer.writeln().writeTabs();
-			List<String> sortedStaticImports = new ArrayList<>(setStaticImports);
-			Collections.sort(sortedStaticImports);
-			for (String importLine : sortedStaticImports) {
-				printer.writeKeyword("import").writeWhitespace(" ").writeKeyword("static").writeWhitespace(" ");
-				writeQualifiedName(importLine).writeSeparator(";").writeln().writeTabs();
+			if (setStaticImports.size() > 0) {
+				printer.writeln().writeTabs();
+				List<String> sortedStaticImports = new ArrayList<>(setStaticImports);
+				Collections.sort(sortedStaticImports);
+				for (String importLine : sortedStaticImports) {
+					printer.writeKeyword("import").writeSpace().writeKeyword("static").writeSpace();
+					writeQualifiedName(importLine).writeSeparator(";").writeln().writeTabs();
+				}
 			}
 			printer.writeln().writeTabs();
 		}
 	}
 
 	public void writePackageLine(String packageQualifiedName) {
-		printer.writeKeyword("package").writeWhitespace(" ");
+		printer.writeKeyword("package").writeSpace();
 		writeQualifiedName(packageQualifiedName).writeSeparator(";");
 	}
 
@@ -374,7 +376,7 @@ public class ElementPrinterHelper {
 	public void writeIfOrLoopBlock(CtStatement block) {
 		if (block != null) {
 			if (!block.isImplicit() && (block instanceof CtBlock || block instanceof CtIf)) {
-				printer.writeWhitespace(" ");
+				printer.writeSpace();
 			}
 			if (!(block instanceof CtBlock) && !(block instanceof CtIf)) {
 				printer.incTab();
@@ -386,7 +388,7 @@ public class ElementPrinterHelper {
 			}
 			if (!block.isImplicit()) {
 				if (!block.isParentInitialized() || (!(block.getParent() instanceof CtFor) && !(block.getParent() instanceof CtForEach) && !(block.getParent() instanceof CtIf))) {
-					printer.writeWhitespace(" ");
+					printer.writeSpace();
 				}
 			}
 		} else {

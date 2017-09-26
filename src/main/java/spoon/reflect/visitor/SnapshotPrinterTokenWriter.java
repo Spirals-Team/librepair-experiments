@@ -18,48 +18,75 @@ package spoon.reflect.visitor;
 
 import java.util.ArrayDeque;
 
+import spoon.SpoonException;
+import spoon.reflect.code.CtComment;
+
 /**
  * The special {@link PrinterTokenWriter} implementation,
  * detects whether some identifier, keyword, literal, operator or separator.
  * Comments, white spaces, tabs and new lines are ignored, because they can appear in the middle of printed elements.
  * was written since last call of {@link #snapshotLength()}
  */
-class SnapshotPrinterTokenWriter extends PrinterTokenWriterDelegate {
+class SnapshotPrinterTokenWriter implements PrinterTokenWriter {
+
+	private PrinterTokenWriter next;
 
 	SnapshotPrinterTokenWriter(PrinterTokenWriter next) {
-		super(next);
+		this.next = next;
+	}
+
+	public PrinterTokenWriter getNext() {
+		return next;
+	}
+
+	public void setNext(PrinterTokenWriter next) {
+		if (next == null) {
+			throw new SpoonException("Next PrinterTokenWriter must not be null");
+		}
+		this.next = next;
 	}
 
 	private int countOfTokens = 0;
 
+	SnapshotPrinterTokenWriter writeSpace() {
+		writeWhitespace(" ");
+		return this;
+	}
+
+
 	@Override
-	public PrinterTokenWriterDelegate writeIdentifier(String token) {
+	public SnapshotPrinterTokenWriter writeIdentifier(String token) {
 		countOfTokens++;
-		return super.writeIdentifier(token);
+		next.writeIdentifier(token);
+		return this;
 	}
 
 	@Override
-	public PrinterTokenWriterDelegate writeKeyword(String token) {
+	public SnapshotPrinterTokenWriter writeKeyword(String token) {
 		countOfTokens++;
-		return super.writeKeyword(token);
+		next.writeKeyword(token);
+		return this;
 	}
 
 	@Override
-	public PrinterTokenWriterDelegate writeLiteral(String token) {
+	public SnapshotPrinterTokenWriter writeLiteral(String token) {
 		countOfTokens++;
-		return super.writeLiteral(token);
+		next.writeLiteral(token);
+		return this;
 	}
 
 	@Override
-	public PrinterTokenWriterDelegate writeOperator(String token) {
+	public SnapshotPrinterTokenWriter writeOperator(String token) {
 		countOfTokens++;
-		return super.writeOperator(token);
+		next.writeOperator(token);
+		return this;
 	}
 
 	@Override
-	public PrinterTokenWriterDelegate writeSeparator(String token) {
+	public SnapshotPrinterTokenWriter writeSeparator(String token) {
 		countOfTokens++;
-		return super.writeSeparator(token);
+		next.writeSeparator(token);
+		return this;
 	}
 
 	private ArrayDeque<Integer> lengths = new ArrayDeque<>();
@@ -73,5 +100,57 @@ class SnapshotPrinterTokenWriter extends PrinterTokenWriterDelegate {
 	/** returns true if something has been written since the last call to snapshotLength() */
 	public boolean hasNewContent() {
 		return lengths.pollLast() < countOfTokens;
+	}
+
+	@Override
+	public PrinterTokenWriter writeWhitespace(String token) {
+		next.writeWhitespace(token);
+		return this;
+	}
+
+	@Override
+	public PrinterTokenWriter writeCodeSnippet(String token) {
+		next.writeCodeSnippet(token);
+		return this;
+	}
+
+	@Override
+	public PrinterTokenWriter writeComment(CtComment comment) {
+		next.writeComment(comment);
+		return this;
+	}
+
+	@Override
+	public PrinterTokenWriter writeln() {
+		next.writeln();
+		return this;
+	}
+
+	@Override
+	public PrinterTokenWriter writeTabs() {
+		next.writeTabs();
+		return this;
+	}
+
+	@Override
+	public PrinterTokenWriter incTab() {
+		next.incTab();
+		return this;
+	}
+
+	@Override
+	public PrinterTokenWriter decTab() {
+		next.decTab();
+		return this;
+	}
+
+	@Override
+	public PrinterHelper getPrinterHelper() {
+		return next.getPrinterHelper();
+	}
+
+	@Override
+	public void reset() {
+		next.reset();
 	}
 }

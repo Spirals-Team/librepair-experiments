@@ -245,7 +245,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 			for (CtTypeReference<?> r : e.getTypeCasts()) {
 				printer.writeSeparator("(");
 				DefaultJavaPrettyPrinter.this.scan(r);
-				printer.writeSeparator(")").writeWhitespace(" ");
+				printer.writeSeparator(")").writeSpace();
 				printer.writeSeparator("(");
 				context.parenthesedExpression.push(e);
 			}
@@ -260,7 +260,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		getPrinterHelper().mapLine(s, sourceCompilationUnit);
 		elementPrinterHelper.writeAnnotations(s);
 		if (s.getLabel() != null) {
-			printer.writeIdentifier(s.getLabel()).writeWhitespace(" ").writeSeparator(":").writeWhitespace(" ");
+			printer.writeIdentifier(s.getLabel()).writeSpace().writeSeparator(":").writeSpace();
 		}
 	}
 
@@ -400,7 +400,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 					lp.printSeparatorIfAppropriate();
 					if ((annotation.getValues().size() == 1 && "value".equals(e.getKey())) == false) {
 						//it is not a default value attribute. We must print a attribute name too.
-						printer.writeIdentifier(e.getKey()).writeWhitespace(" ").writeOperator("=").writeWhitespace(" ");
+						printer.writeIdentifier(e.getKey()).writeSpace().writeOperator("=").writeSpace();
 					}
 					elementPrinterHelper.writeAnnotationElement(annotation.getFactory(), e.getValue());
 				}
@@ -412,8 +412,8 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	public <A extends Annotation> void visitCtAnnotationType(CtAnnotationType<A> annotationType) {
 		visitCtType(annotationType);
 		printer.writeSeparator("@").writeKeyword("interface")
-			.writeWhitespace(" ").writeIdentifier(annotationType.getSimpleName())
-			.writeWhitespace(" ").writeSeparator("{").incTab();
+			.writeSpace().writeIdentifier(annotationType.getSimpleName())
+			.writeSpace().writeSeparator("{").incTab();
 
 		elementPrinterHelper.writeElementList(annotationType.getTypeMembers());
 		printer.decTab().writeTabs().writeSeparator("}");
@@ -460,10 +460,10 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public <T> void visitCtAssert(CtAssert<T> asserted) {
 		enterCtStatement(asserted);
-		printer.writeKeyword("assert").writeWhitespace(" ");
+		printer.writeKeyword("assert").writeSpace();
 		scan(asserted.getAssertExpression());
 		if (asserted.getExpression() != null) {
-			printer.writeWhitespace(" ").writeSeparator(":").writeWhitespace(" ");
+			printer.writeSpace().writeSeparator(":").writeSpace();
 			scan(asserted.getExpression());
 		}
 
@@ -474,7 +474,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		enterCtStatement(assignement);
 		enterCtExpression(assignement);
 		scan(assignement.getAssigned());
-		printer.writeWhitespace(" ").writeOperator("=").writeWhitespace(" ");
+		printer.writeSpace().writeOperator("=").writeSpace();
 		scan(assignement.getAssignment());
 		exitCtExpression(assignement);
 	}
@@ -483,9 +483,9 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	public <T> void visitCtBinaryOperator(CtBinaryOperator<T> operator) {
 		enterCtExpression(operator);
 		scan(operator.getLeftHandOperand());
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		printer.writeOperator(OperatorHelper.getOperatorText(operator.getKind()));
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		try (Writable _context = context.modify()) {
 			if (operator.getKind() == BinaryOperatorKind.INSTANCEOF) {
 				_context.forceWildcardGenerics(true);
@@ -527,7 +527,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		enterCtStatement(breakStatement);
 		printer.writeKeyword("break");
 		if (breakStatement.getTargetLabel() != null) {
-			printer.writeWhitespace(" ").writeKeyword(breakStatement.getTargetLabel());
+			printer.writeSpace().writeKeyword(breakStatement.getTargetLabel());
 		}
 	}
 
@@ -536,7 +536,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	public <E> void visitCtCase(CtCase<E> caseStatement) {
 		enterCtStatement(caseStatement);
 		if (caseStatement.getCaseExpression() != null) {
-			printer.writeKeyword("case").writeWhitespace(" ");
+			printer.writeKeyword("case").writeSpace();
 			// writing enum case expression
 			if (caseStatement.getCaseExpression() instanceof CtFieldAccess) {
 				final CtFieldReference variable = ((CtFieldAccess) caseStatement.getCaseExpression()).getVariable();
@@ -554,7 +554,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		} else {
 			printer.writeKeyword("default");
 		}
-		printer.writeWhitespace(" ").writeSeparator(":").incTab();
+		printer.writeSpace().writeSeparator(":").incTab();
 
 		for (CtStatement statement : caseStatement.getStatements()) {
 			printer.writeln().writeTabs();
@@ -566,7 +566,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public void visitCtCatch(CtCatch catchBlock) {
 		elementPrinterHelper.writeComment(catchBlock, CommentOffset.BEFORE);
-		printer.writeWhitespace(" ").writeKeyword("catch").writeWhitespace(" ").writeSeparator("(");
+		printer.writeSpace().writeKeyword("catch").writeSpace().writeSeparator("(");
 		CtCatchVariable<? extends Throwable> parameter = catchBlock.getParameter();
 		if (parameter.getMultiTypes().size() > 0) {
 			try (ListPrinter lp = elementPrinterHelper.createListPrinter(null, false, true, "|", true, false, null)) {
@@ -576,11 +576,11 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 					scan(type);
 				}
 			}
-			printer.writeWhitespace(" ").writeIdentifier(parameter.getSimpleName());
+			printer.writeSpace().writeIdentifier(parameter.getSimpleName());
 		} else {
 			scan(parameter);
 		}
-		printer.writeSeparator(")").writeWhitespace(" ");
+		printer.writeSeparator(")").writeSpace();
 		scan(catchBlock.getBody());
 	}
 
@@ -590,9 +590,9 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		if (ctClass.getSimpleName() != null && !CtType.NAME_UNKNOWN.equals(ctClass.getSimpleName()) && !ctClass.isAnonymous()) {
 			visitCtType(ctClass);
 			if (ctClass.isLocalType()) {
-				printer.writeKeyword("class").writeWhitespace(" ").writeIdentifier(ctClass.getSimpleName().replaceAll("^[0-9]*", ""));
+				printer.writeKeyword("class").writeSpace().writeIdentifier(ctClass.getSimpleName().replaceAll("^[0-9]*", ""));
 			} else {
-				printer.writeKeyword("class").writeWhitespace(" ").writeIdentifier(ctClass.getSimpleName());
+				printer.writeKeyword("class").writeSpace().writeIdentifier(ctClass.getSimpleName());
 			}
 
 			elementPrinterHelper.writeFormalTypeParameters(ctClass);
@@ -600,7 +600,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 			elementPrinterHelper.writeImplementsClause(ctClass);
 		}
 		// lst.addAll(elementPrinterHelper.getComments(ctClass, CommentOffset.INSIDE));
-		printer.writeWhitespace(" ").writeSeparator("{").incTab();
+		printer.writeSpace().writeSeparator("{").incTab();
 		elementPrinterHelper.writeElementList(ctClass.getTypeMembers());
 		getPrinterHelper().adjustEndPosition(ctClass);
 		printer.decTab().writeTabs().writeSeparator("}");
@@ -621,9 +621,9 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		}
 		if (ref.getBoundingType() != null) {
 			if (ref.isUpper()) {
-				printer.writeWhitespace(" ").writeKeyword("extends").writeWhitespace(" ");
+				printer.writeSpace().writeKeyword("extends").writeSpace();
 			} else {
-				printer.writeWhitespace(" ").writeKeyword("super").writeWhitespace(" ");
+				printer.writeSpace().writeKeyword("super").writeSpace();
 			}
 			scan(ref.getBoundingType());
 		}
@@ -647,10 +647,10 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		if (parent) {
 			printer.writeSeparator(")");
 		}
-		printer.writeWhitespace(" ").writeOperator("?").writeWhitespace(" ");
+		printer.writeSpace().writeOperator("?").writeSpace();
 		CtExpression<T> thenExpression = conditional.getThenExpression();
 		scan(thenExpression);
-		printer.writeWhitespace(" ").writeOperator(":").writeWhitespace(" ");
+		printer.writeSpace().writeOperator(":").writeSpace();
 
 		CtExpression<T> elseExpression = conditional.getElseExpression();
 		boolean isAssign = false;
@@ -671,7 +671,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		elementPrinterHelper.writeModifiers(constructor);
 		elementPrinterHelper.writeFormalTypeParameters(constructor);
 		if (constructor.getFormalCtTypeParameters().size() > 0) {
-			printer.writeWhitespace(" ");
+			printer.writeSpace();
 		}
 		if (constructor.getDeclaringType() != null) {
 			if (constructor.getDeclaringType().isLocalType()) {
@@ -682,7 +682,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		}
 		elementPrinterHelper.writeExecutableParameters(constructor);
 		elementPrinterHelper.writeThrowsClause(constructor);
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		scan(constructor.getBody());
 	}
 
@@ -691,7 +691,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		enterCtStatement(continueStatement);
 		printer.writeKeyword("continue");
 		if (continueStatement.getTargetLabel() != null) {
-			printer.writeWhitespace(" ").writeIdentifier(continueStatement.getTargetLabel());
+			printer.writeSpace().writeIdentifier(continueStatement.getTargetLabel());
 		}
 	}
 
@@ -700,18 +700,18 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		enterCtStatement(doLoop);
 		printer.writeKeyword("do");
 		elementPrinterHelper.writeIfOrLoopBlock(doLoop.getBody());
-		printer.writeKeyword("while").writeWhitespace(" ").writeSeparator("(");
+		printer.writeKeyword("while").writeSpace().writeSeparator("(");
 		scan(doLoop.getLoopingExpression());
-		printer.writeWhitespace(" ").writeSeparator(")");
+		printer.writeSpace().writeSeparator(")");
 	}
 
 	@Override
 	public <T extends Enum<?>> void visitCtEnum(CtEnum<T> ctEnum) {
 		visitCtType(ctEnum);
-		printer.writeKeyword("enum").writeWhitespace(" ").writeIdentifier(ctEnum.getSimpleName());
+		printer.writeKeyword("enum").writeSpace().writeIdentifier(ctEnum.getSimpleName());
 		elementPrinterHelper.writeImplementsClause(ctEnum);
 		context.pushCurrentThis(ctEnum);
-		printer.writeWhitespace(" ").writeSeparator("{").incTab().writeln();
+		printer.writeSpace().writeSeparator("{").incTab().writeln();
 
 		if (ctEnum.getEnumValues().size() == 0) {
 			printer.writeTabs().writeSeparator(";").writeln();
@@ -741,11 +741,11 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		elementPrinterHelper.visitCtNamedElement(f, sourceCompilationUnit);
 		elementPrinterHelper.writeModifiers(f);
 		scan(f.getType());
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		printer.writeIdentifier(f.getSimpleName());
 
 		if (f.getDefaultExpression() != null) {
-			printer.writeWhitespace(" ").writeOperator("=").writeWhitespace(" ");
+			printer.writeSpace().writeOperator("=").writeSpace();
 			scan(f.getDefaultExpression());
 		}
 		printer.writeSeparator(";");
@@ -994,7 +994,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public void visitCtFor(CtFor forLoop) {
 		enterCtStatement(forLoop);
-		printer.writeKeyword("for").writeWhitespace(" ").writeSeparator("(");
+		printer.writeKeyword("for").writeSpace().writeSeparator("(");
 		List<CtStatement> st = forLoop.getForInit();
 		if (st.size() > 0) {
 			scan(st.get(0));
@@ -1002,16 +1002,16 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		if (st.size() > 1) {
 			try (Writable _context = context.modify().noTypeDecl(true)) {
 				for (int i = 1; i < st.size(); i++) {
-					printer.writeSeparator(",").writeWhitespace(" ");
+					printer.writeSeparator(",").writeSpace();
 					scan(st.get(i));
 				}
 			}
 		}
-		printer.writeSeparator(";").writeWhitespace(" ");
+		printer.writeSeparator(";").writeSpace();
 		scan(forLoop.getExpression());
 		printer.writeSeparator(";");
 		if (!forLoop.getForUpdate().isEmpty()) {
-			printer.writeWhitespace(" ");
+			printer.writeSpace();
 		}
 		try (ListPrinter lp = elementPrinterHelper.createListPrinter(null, false, true, ",", true, false, null)) {
 			for (CtStatement s : forLoop.getForUpdate()) {
@@ -1026,9 +1026,9 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public void visitCtForEach(CtForEach foreach) {
 		enterCtStatement(foreach);
-		printer.writeKeyword("for").writeWhitespace(" ").writeSeparator("(");
+		printer.writeKeyword("for").writeSpace().writeSeparator("(");
 		scan(foreach.getVariable());
-		printer.writeWhitespace(" ").writeSeparator(":").writeWhitespace(" ");
+		printer.writeSpace().writeSeparator(":").writeSpace();
 		scan(foreach.getExpression());
 		printer.writeSeparator(")");
 		elementPrinterHelper.writeIfOrLoopBlock(foreach.getBody());
@@ -1037,7 +1037,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public void visitCtIf(CtIf ifElement) {
 		enterCtStatement(ifElement);
-		printer.writeKeyword("if").writeWhitespace(" ").writeSeparator("(");
+		printer.writeKeyword("if").writeSpace().writeSeparator("(");
 		scan(ifElement.getCondition());
 		printer.writeSeparator(")");
 		elementPrinterHelper.writeIfOrLoopBlock(ifElement.getThenStatement());
@@ -1058,13 +1058,13 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public <T> void visitCtInterface(CtInterface<T> intrface) {
 		visitCtType(intrface);
-		printer.writeKeyword("interface").writeWhitespace(" ").writeIdentifier(intrface.getSimpleName());
+		printer.writeKeyword("interface").writeSpace().writeIdentifier(intrface.getSimpleName());
 		if (intrface.getFormalCtTypeParameters() != null) {
 			elementPrinterHelper.writeFormalTypeParameters(intrface);
 		}
 
 		if (intrface.getSuperInterfaces().size() > 0) {
-			printer.writeWhitespace(" ").writeKeyword("extends").writeWhitespace(" ");
+			printer.writeSpace().writeKeyword("extends").writeSpace();
 			try (ListPrinter lp = elementPrinterHelper.createListPrinter(null, false, true, ",", true, false, null)) {
 				for (CtTypeReference<?> ref : intrface.getSuperInterfaces()) {
 					lp.printSeparatorIfAppropriate();
@@ -1073,7 +1073,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 			}
 		}
 		context.pushCurrentThis(intrface);
-		printer.writeWhitespace(" ").writeSeparator("{").incTab();
+		printer.writeSpace().writeSeparator("{").incTab();
 		// Content
 		elementPrinterHelper.writeElementList(intrface.getTypeMembers());
 		printer.decTab().writeTabs().writeSeparator("}");
@@ -1151,11 +1151,11 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		if (!context.noTypeDecl()) {
 			elementPrinterHelper.writeModifiers(localVariable);
 			scan(localVariable.getType());
-			printer.writeWhitespace(" ");
+			printer.writeSpace();
 		}
 		printer.writeIdentifier(localVariable.getSimpleName());
 		if (localVariable.getDefaultExpression() != null) {
-			printer.writeWhitespace(" ").writeOperator("=").writeWhitespace(" ");
+			printer.writeSpace().writeOperator("=").writeSpace();
 			scan(localVariable.getDefaultExpression());
 		}
 	}
@@ -1172,7 +1172,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		}
 		elementPrinterHelper.writeModifiers(catchVariable);
 		scan(catchVariable.getType());
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		printer.writeIdentifier(catchVariable.getSimpleName());
 	}
 
@@ -1187,21 +1187,21 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		elementPrinterHelper.visitCtNamedElement(m, sourceCompilationUnit);
 		elementPrinterHelper.writeModifiers(m);
 		if (m.isDefaultMethod()) {
-			printer.writeKeyword("default").writeWhitespace(" ");
+			printer.writeKeyword("default").writeSpace();
 		}
 		elementPrinterHelper.writeFormalTypeParameters(m);
 		if (m.getFormalCtTypeParameters().size() > 0) {
-			printer.writeWhitespace(" ");
+			printer.writeSpace();
 		}
 		try (Writable _context = context.modify().ignoreGenerics(false)) {
 			scan(m.getType());
 		}
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		printer.writeIdentifier(m.getSimpleName());
 		elementPrinterHelper.writeExecutableParameters(m);
 		elementPrinterHelper.writeThrowsClause(m);
 		if (m.getBody() != null) {
-			printer.writeWhitespace(" ");
+			printer.writeSpace();
 			scan(m.getBody());
 			if (m.getBody().getPosition() != null) {
 				if (m.getBody().getPosition().getCompilationUnit() == sourceCompilationUnit) {
@@ -1225,12 +1225,12 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		elementPrinterHelper.visitCtNamedElement(annotationMethod, sourceCompilationUnit);
 		elementPrinterHelper.writeModifiers(annotationMethod);
 		scan(annotationMethod.getType());
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		printer.writeIdentifier(annotationMethod.getSimpleName());
 
 		printer.writeSeparator("(").writeSeparator(")");
 		if (annotationMethod.getDefaultExpression() != null) {
-			printer.writeWhitespace(" ").writeKeyword("default").writeWhitespace(" ");
+			printer.writeSpace().writeKeyword("default").writeSpace();
 			scan(annotationMethod.getDefaultExpression());
 		}
 		printer.writeSeparator(";");
@@ -1251,7 +1251,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 			CtTypeReference<?> ref = newArray.getType();
 
 			if (ref != null) {
-				printer.writeKeyword("new").writeWhitespace(" ");
+				printer.writeKeyword("new").writeSpace();
 			}
 
 			try (Writable _context = context.modify().skipArray(true)) {
@@ -1314,7 +1314,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 				_context.ignoreEnclosingClass(true);
 			}
 
-			printer.writeKeyword("new").writeWhitespace(" ");
+			printer.writeKeyword("new").writeSpace();
 
 			if (ctConstructorCall.getActualTypeArguments().size() > 0) {
 				elementPrinterHelper.writeActualTypeArguments(ctConstructorCall);
@@ -1372,9 +1372,9 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 				}
 			}
 		}
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		printer.writeSeparator("->");
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 
 		if (lambda.getBody() != null) {
 			scan(lambda.getBody());
@@ -1407,9 +1407,9 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		enterCtStatement(assignment);
 		enterCtExpression(assignment);
 		scan(assignment.getAssigned());
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		printer.writeOperator(OperatorHelper.getOperatorText(assignment.getKind()));
-		printer.writeOperator("=").writeWhitespace(" ");
+		printer.writeOperator("=").writeSpace();
 		scan(assignment.getAssignment());
 		exitCtExpression(assignment);
 	}
@@ -1441,7 +1441,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		} else {
 			scan(parameter.getType());
 		}
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		printer.writeIdentifier(parameter.getSimpleName());
 	}
 
@@ -1453,7 +1453,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public <R> void visitCtReturn(CtReturn<R> returnStatement) {
 		enterCtStatement(returnStatement);
-		printer.writeKeyword("return").writeWhitespace(" ");
+		printer.writeKeyword("return").writeSpace();
 		scan(returnStatement.getReturnedExpression());
 	}
 
@@ -1477,9 +1477,9 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public <E> void visitCtSwitch(CtSwitch<E> switchStatement) {
 		enterCtStatement(switchStatement);
-		printer.writeKeyword("switch").writeWhitespace(" ").writeSeparator("(");
+		printer.writeKeyword("switch").writeSpace().writeSeparator("(");
 		scan(switchStatement.getSelector());
-		printer.writeSeparator(")").writeWhitespace(" ").writeSeparator("{").incTab();
+		printer.writeSeparator(")").writeSpace().writeSeparator("{").incTab();
 		for (CtCase<?> c : switchStatement.getCases()) {
 			printer.writeln().writeTabs();
 			scan(c);
@@ -1498,7 +1498,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		if (synchro.getExpression() != null) {
 			printer.writeSeparator("(");
 			scan(synchro.getExpression());
-			printer.writeSeparator(")").writeWhitespace(" ");
+			printer.writeSeparator(")").writeSpace();
 		}
 		scan(synchro.getBlock());
 	}
@@ -1506,21 +1506,21 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public void visitCtThrow(CtThrow throwStatement) {
 		enterCtStatement(throwStatement);
-		printer.writeKeyword("throw").writeWhitespace(" ");
+		printer.writeKeyword("throw").writeSpace();
 		scan(throwStatement.getThrownExpression());
 	}
 
 	@Override
 	public void visitCtTry(CtTry tryBlock) {
 		enterCtStatement(tryBlock);
-		printer.writeKeyword("try").writeWhitespace(" ");
+		printer.writeKeyword("try").writeSpace();
 		scan(tryBlock.getBody());
 		for (CtCatch c : tryBlock.getCatchers()) {
 			scan(c);
 		}
 
 		if (tryBlock.getFinalizer() != null) {
-			printer.writeWhitespace(" ").writeKeyword("finally").writeWhitespace(" ");
+			printer.writeSpace().writeKeyword("finally").writeSpace();
 			scan(tryBlock.getFinalizer());
 		}
 	}
@@ -1528,7 +1528,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public void visitCtTryWithResource(CtTryWithResource tryWithResource) {
 		enterCtStatement(tryWithResource);
-		printer.writeKeyword("try").writeWhitespace(" ");
+		printer.writeKeyword("try").writeSpace();
 		if (tryWithResource.getResources() != null && !tryWithResource.getResources().isEmpty()) {
 			try (ListPrinter lp = elementPrinterHelper.createListPrinter("(", false, false, ";", false, false, ")")) {
 				for (CtLocalVariable<?> r : tryWithResource.getResources()) {
@@ -1537,14 +1537,14 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 				}
 			}
 		}
-		printer.writeWhitespace(" ");
+		printer.writeSpace();
 		scan(tryWithResource.getBody());
 		for (CtCatch c : tryWithResource.getCatchers()) {
 			scan(c);
 		}
 
 		if (tryWithResource.getFinalizer() != null) {
-			printer.writeWhitespace(" ").writeKeyword("finally").writeWhitespace(" ");
+			printer.writeSpace().writeKeyword("finally").writeSpace();
 			scan(tryWithResource.getFinalizer());
 		}
 	}
@@ -1575,9 +1575,9 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 		}
 		if (wildcardReference.getBoundingType() != null) {
 			if (wildcardReference.isUpper()) {
-				printer.writeWhitespace("").writeKeyword("extends").writeWhitespace(" ");
+				printer.writeSpace().writeKeyword("extends").writeSpace();
 			} else {
-				printer.writeWhitespace(" ").writeKeyword("super").writeWhitespace(" ");
+				printer.writeSpace().writeKeyword("super").writeSpace();
 			}
 			scan(wildcardReference.getBoundingType());
 		}
@@ -1714,7 +1714,7 @@ public class DefaultJavaPrettyPrinter implements CtVisitor, PrettyPrinter {
 	@Override
 	public void visitCtWhile(CtWhile whileLoop) {
 		enterCtStatement(whileLoop);
-		printer.writeKeyword("while").writeWhitespace(" ").writeSeparator("(");
+		printer.writeKeyword("while").writeSpace().writeSeparator("(");
 		scan(whileLoop.getLoopingExpression());
 		printer.writeSeparator(")");
 
