@@ -50,10 +50,6 @@ public class SignaturePrinter extends CtScanner {
 
 	@Override
 	public <T> void visitCtExecutableReference(CtExecutableReference<T> reference) {
-//		if (reference.getType() != null && !reference.isConstructor()) {
-//			reference.getType().accept(this);
-//			write(" ");
-//		}
 		writeNameAndParameters(reference);
 	}
 
@@ -136,22 +132,6 @@ public class SignaturePrinter extends CtScanner {
 	*/
 	@Override
 	public <T> void visitCtMethod(CtMethod<T> m) {
-//		if (!m.getFormalCtTypeParameters().isEmpty()) {
-//			write("<");
-//			for (CtTypeParameter typeParameter : m.getFormalCtTypeParameters()) {
-//				scan(typeParameter.getReference());
-//				write(",");
-//			}
-//			if (m.getFormalCtTypeParameters().size() > 0) {
-//				clearLast();
-//			}
-//			write("> ");
-//		}
-//		// the return type is required, see example in SimilarSignatureMethodes in test code (name and arguments are identical)
-//		if (m.getType() != null) {
-//			write(m.getType().getQualifiedName());
-//		}
-//		write(" ");
 		write(m.getSimpleName());
 		write("(");
 		for (CtParameter<?> p : m.getParameters()) {
