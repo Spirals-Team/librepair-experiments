@@ -113,7 +113,7 @@ public class WMTSService extends Service  {
     @Override
     public Conveyor getConveyor(HttpServletRequest request, HttpServletResponse response)
             throws GeoWebCacheException, OWSException {
-
+        
         // let's see if we have any extension that wants to provide a conveyor for this request
         for(WMTSExtension extension : extensions) {
             Conveyor conveyor = extension.getConveyor(request, response, sb);
@@ -122,7 +122,7 @@ public class WMTSService extends Service  {
                 return conveyor;
             }
         }
-
+        
         String encoding = request.getCharacterEncoding();
         String[] keys = { "layer", "request", "style", "format", "infoformat", "tilematrixset", "tilematrix",
                 "tilerow", "tilecol", "i", "j" };
@@ -130,7 +130,7 @@ public class WMTSService extends Service  {
                 encoding, keys);
         return getConveyor(request, response, values);
     }
-
+    
     public Conveyor getConveyor(HttpServletRequest request, HttpServletResponse response, Map<String, String> values)
             throws GeoWebCacheException, OWSException {
 
@@ -142,7 +142,7 @@ public class WMTSService extends Service  {
                 return conveyor;
             }
         }
-
+        
         String req = values.get("request");
         if (req == null) {
             // OWSException(httpCode, exceptionCode, locator, exceptionText);
@@ -192,14 +192,14 @@ public class WMTSService extends Service  {
         Map<String, String[]> rawParameters = new HashMap<>(request.getParameterMap());
         Map<String, String> filteringParameters;
         try {
-
+      
             /*
              * Merge values with request parameter
              */
             for (Entry<String, String> e : values.entrySet()) {
                 rawParameters.put(e.getKey(), new String[] { e.getValue() });
             }
-
+            
             // WMTS uses the "STYLE" instead of "STYLES"
             for(Entry<String, String[]> e:rawParameters.entrySet()){
                 if(e.getKey().equalsIgnoreCase("STYLE")) {

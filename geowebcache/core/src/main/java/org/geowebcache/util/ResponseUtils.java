@@ -11,9 +11,9 @@
  *
  *  You should have received a copy of the GNU Lesser General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
+ * 
  * @author Sandro Salari, GeoSolutions S.A.S., Copyright 2017
- *
+ * 
  */
 
 package org.geowebcache.util;
@@ -283,7 +283,7 @@ public final class ResponseUtils {
 
     /**
      * Wrapper method for writing an error back to the client, and logging it at the same time.
-     *
+     * 
      * @param response
      *            where to write to
      * @param httpCode

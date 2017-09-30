@@ -492,7 +492,7 @@ public class ServletUtils {
 
     /**
      * Generate the context path of the request, try the specified trailing path
-     *
+     * 
      * @param req
      * @param trailingPaths
      */

@@ -40,6 +40,7 @@ import org.geowebcache.config.legends.LegendInfo;
 import org.geowebcache.config.legends.LegendInfoBuilder;
 import org.geowebcache.conveyor.ConveyorTile;
 import org.geowebcache.filter.parameters.StringParameterFilter;
+import org.geowebcache.filter.security.SecurityDispatcher;
 import org.geowebcache.grid.BoundingBox;
 import org.geowebcache.grid.GridSet;
 import org.geowebcache.grid.GridSetBroker;
@@ -91,15 +92,15 @@ class WMTSRestWebConfig extends WebMvcConfigurationSupport {
         StringParameterFilter styles = new StringParameterFilter();
         styles.setKey("STYLES");
         styles.setValues(Arrays.asList("style-a", "style-b"));
-
+        
         StringParameterFilter time = new StringParameterFilter();
         time.setKey("time");
         time.setValues(Arrays.asList("2016-02-23T03:00:00.000Z"));
-
+        
         StringParameterFilter elevation = new StringParameterFilter();
         elevation.setKey("elevation");
         elevation.setValues(Arrays.asList("500"));
-
+        
         when(tileLayer.getParameterFilters()).thenReturn(Arrays.asList(styles, time, elevation));
 
         LegendInfo legendInfo2 = new LegendInfoBuilder().withStyleName("styla-b-legend")
@@ -185,8 +186,16 @@ class WMTSRestWebConfig extends WebMvcConfigurationSupport {
 
     @Bean
     public WMTSService wmtsService() throws Exception {
-        return new WMTSService(mock(StorageBroker.class), tileLayerDispatcher(), broker,
+        WMTSService wmtsService = new WMTSService(mock(StorageBroker.class), tileLayerDispatcher(), broker,
                 mock(RuntimeStats.class));
+        wmtsService.setSecurityDispatcher(securityDispatcher());
+        return wmtsService;
     }
 
+    @Bean
+    public SecurityDispatcher securityDispatcher() {
+        SecurityDispatcher secDisp = mock(SecurityDispatcher.class);
+        when(secDisp.isSecurityEnabled()).thenReturn(false);
+        return secDisp;
+    }
 }

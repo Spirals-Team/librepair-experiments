@@ -80,17 +80,17 @@ public class ConveyorTile extends Conveyor implements TileResponseReceiver {
      * This constructor is used for an incoming request, with fullParameters
      */
     public ConveyorTile(StorageBroker sb, String layerId, String gridSetId, long[] tileIndex,
-            MimeType mimeType, Map<String, String[]> fullParameters, Map<String, String> filteringParameters,
+            MimeType mimeType, Map<String, String[]> fullParameters, Map<String, String> filteringParameters, 
             HttpServletRequest servletReq, HttpServletResponse servletResp) {
         this(sb, layerId, gridSetId, tileIndex, mimeType, filteringParameters, servletReq, servletResp);
         this.fullParameters = fullParameters;
     }
-
+    
     /**
      * This constructor is used for an incoming request, the data is then added by the cache
      */
     public ConveyorTile(StorageBroker sb, String layerId, String gridSetId, long[] tileIndex,
-            MimeType mimeType, Map<String, String> filteringParameters,
+            MimeType mimeType, Map<String, String> filteringParameters, 
             HttpServletRequest servletReq, HttpServletResponse servletResp) {
 
         super(layerId, sb, servletReq, servletResp);
@@ -118,7 +118,7 @@ public class ConveyorTile extends Conveyor implements TileResponseReceiver {
         }
         return filteringParameters;
     }
-
+    
     public Map<String, String[]> getFullParameters() {
         if (fullParameters == null) {
             return Collections.emptyMap();

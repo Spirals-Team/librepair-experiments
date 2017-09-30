@@ -327,8 +327,8 @@ public class WMSServiceTest{
         assertEquals(Conveyor.RequestHandler.SERVICE, conv.reqHandler);
         assertNotNull(conv.getLayerId());
         assertEquals(layerName, conv.getLayerId());
-        assertTrue(!conv.getFullParameters().isEmpty());
-        assertEquals(timeValue, conv.getFullParameters().get("TIME"));
+        assertTrue(!conv.getFilteringParameters().isEmpty());
+        assertEquals(timeValue, conv.getFilteringParameters().get("TIME"));
     }    
     
     @Test

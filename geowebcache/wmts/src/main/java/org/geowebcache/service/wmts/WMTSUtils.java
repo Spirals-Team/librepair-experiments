@@ -11,9 +11,9 @@
  *
  *  You should have received a copy of the GNU Lesser General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
+ * 
  * @author Sandro Salari, GeoSolutions S.A.S., Copyright 2017
- *
+ * 
  */
 
 package org.geowebcache.service.wmts;
@@ -30,7 +30,7 @@ import org.geowebcache.layer.TileLayer;
 import org.geowebcache.mime.MimeType;
 
 final class WMTSUtils {
-
+    
     private static Log log = LogFactory.getLog(WMTSUtils.class);
 
     private WMTSUtils() {

@@ -108,7 +108,7 @@ public class WMTSServiceTest {
         final MimeType mimeType1 = MimeType.createFromFormat("image/png");
         final MimeType mimeType2 = MimeType.createFromFormat("image/jpeg");
         when(tileLayer.getMimeTypes()).thenReturn(Arrays.asList(mimeType1, mimeType2));
-
+        
         final MimeType infoMimeType1 = MimeType.createFromFormat("text/plain");
         final MimeType infoMimeType2 = MimeType.createFromFormat("text/html");
         final MimeType infoMimeType3 = MimeType.createFromFormat("application/vnd.ogc.gml");
@@ -265,7 +265,7 @@ public class WMTSServiceTest {
                 "/wmts:OnlineResource[@xlink:href='http://localhost:8080/some-url'])", doc));
         // checking that the layer has an associated tile resource URL, for each supported image
         // format of the layer
-
+        
         assertEquals("1", xpath.evaluate(
                 "count(//wmts:Contents/wmts:Layer/wmts:ResourceURL[@resourceType='tile']"
                 + "[@format='image/jpeg']"
@@ -287,7 +287,7 @@ public class WMTSServiceTest {
         assertEquals("1", xpath.evaluate(
                 "count(//wmts:Contents/wmts:Layer/wmts:ResourceURL[@resourceType='FeatureInfo']"
                 + "[@format='application/vnd.ogc.gml']"
-                + "[@template='http://localhost:8080/geowebcache" + WMTSService.REST_PATH + "/mockLayer/{style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}/{J}/{I}?format=application/vnd.ogc.gml'])", doc));
+                + "[@template='http://localhost:8080/geowebcache" + WMTSService.REST_PATH + "/mockLayer/{style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}/{J}/{I}?format=application/vnd.ogc.gml'])", doc));        
         // Checking the service metadata URL
         assertEquals("1", xpath.evaluate(
                 "count(//wmts:ServiceMetadataURL[@xlink:href='http://localhost:8080/geowebcache" + WMTSService.SERVICE_PATH + "?REQUEST=getcapabilities&VERSION=1.0.0'])", doc));
@@ -769,12 +769,12 @@ public class WMTSServiceTest {
         assertEquals("1", xpath.evaluate("count(//wmts:Contents/wmts:Layer)", doc));
         assertEquals("1", xpath
                 .evaluate("count(//wmts:Contents/wmts:Layer[ows:Identifier='mockLayer'])", doc));
-
+        
         assertEquals("5", xpath.evaluate(
                 "count(//wmts:Contents/wmts:Layer/wmts:ResourceURL"
-                + "[contains(@template,'&elevation={elevation}&time={time}')])", doc));
+                + "[contains(@template,'&elevation={elevation}&time={time}')])", doc));        
     }
-
+    
     @SuppressWarnings("unchecked")
     @Test
     public void testGetTileWithStyle() throws Exception {

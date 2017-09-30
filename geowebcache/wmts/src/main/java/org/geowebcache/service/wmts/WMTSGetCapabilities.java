@@ -67,7 +67,7 @@ public class WMTSGetCapabilities {
     private GridSetBroker gsb;
     
     private String baseUrl;
-
+    
     private String restBaseUrl;
 
     private final Collection<WMTSExtension> extensions;
@@ -89,7 +89,7 @@ public class WMTSGetCapabilities {
         } else {
             this.baseUrl = urlMangler.buildURL(baseUrl, contextPath, WMTSService.SERVICE_PATH);
         }
-
+        
         this.restBaseUrl = urlMangler.buildURL(baseUrl, contextPath, WMTSService.REST_PATH);
 
         this.extensions = extensions;
@@ -461,7 +461,7 @@ public class WMTSGetCapabilities {
         layerGridSubSets(xml, layer);
 
         layerResourceUrls(xml, layer, filters, restBaseUrl);
-
+        
         // allow extensions to contribute extra metadata to this layer
         for (WMTSExtension extension : extensions) {
             extension.encodeLayer(xml, layer);
@@ -685,7 +685,7 @@ public class WMTSGetCapabilities {
          }
      }
     /**
-     * For each layer discovers the available image formats, feature info formats and dimensions
+     * For each layer discovers the available image formats, feature info formats and dimensions 
      * and produce the necessary <ResourceURL> elements.
      */
     private void layerResourceUrls(XMLBuilder xml, TileLayer layer, List<ParameterFilter> filters,
@@ -693,7 +693,7 @@ public class WMTSGetCapabilities {
         String commonTemplate = baseurl + "/" + layer.getName()
                 + "/{style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}";
         String commonDimensions = "";
-        //Extracts layer dimension
+        //Extracts layer dimension 
         List<ParameterFilter> layerDimensions = WMTSUtils.getLayerDimensions(filters);
         if (!layerDimensions.isEmpty()) {
             commonDimensions = "&"
