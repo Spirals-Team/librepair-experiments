@@ -625,15 +625,11 @@ public class FilterTest {
 		
 		try {
 			launcher.getFactory().Package().getRootPackage().filterChildren((CtClass<?> c)->{return true;}).name("step1")
-				.map((CtMethod<?> m)->m).name("invalidStep2")
-				.map((o)->o).name("step3")
-				.forEach((CtInterface<?> c)->{
-					fail();
-				});
+				.map((CtMethod<?> m)->m).name("invalidStep2") // here it will fail
+				.list(); // forcing the evaluation of the query
 			fail();
-		} catch (SpoonException e) {
-			System.out.println(e.getMessage());
-			assertTrue(e.getMessage().indexOf("cannot be cast to")>=0);
+		} catch (ClassCastException e) {
+			// CtCLass cannot be cast to CtMethod
 		}
 	}
 	@Test
