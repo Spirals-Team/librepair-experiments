@@ -9,7 +9,7 @@ public class RemoveLinkedList {
         LinkedList<String> list = new LinkedList<>();
         list.add("abc");
         list.add("xyz");
-        // BUG: Diagnostic contains: java.util.LinkedList accesses through via index
+        // BUG: Diagnostic contains: java.util.LinkedList accessed through via index
         list.remove(1);
     }
 }

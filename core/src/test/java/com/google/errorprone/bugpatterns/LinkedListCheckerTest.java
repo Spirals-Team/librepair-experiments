@@ -24,7 +24,7 @@ public class LinkedListCheckerTest {
         compilationHelper
                          .addSourceLines(
                              "NormalList.java",
-                             "import java.util.ArrayList;",
+                             "import java.util.ArrayList;", 
                              "import java.util.List;",
                              "public class NormalList {",
                              "  public void normal() {",
