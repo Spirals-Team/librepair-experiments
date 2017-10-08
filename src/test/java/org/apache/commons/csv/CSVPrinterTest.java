@@ -22,6 +22,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -1319,9 +1320,8 @@ public class CSVPrinterTest {
     public void testCloseWithFlushOn() throws IOException {
         Writer writer = mock(Writer.class);
         CSVFormat csvFormat = CSVFormat.DEFAULT;
-        try (CSVPrinter csvPrinter = new CSVPrinter(writer, csvFormat)) {
-            csvPrinter.close(true);
-        }
+        CSVPrinter csvPrinter = new CSVPrinter(writer, csvFormat);
+        csvPrinter.close(true);
         verify(writer, times(1)).flush();
     }
 
@@ -1329,10 +1329,10 @@ public class CSVPrinterTest {
     public void testCloseWithFlushOff() throws IOException {
         Writer writer = mock(Writer.class);
         CSVFormat csvFormat = CSVFormat.DEFAULT;
-        try (CSVPrinter csvPrinter = new CSVPrinter(writer, csvFormat)) {
-            csvPrinter.close(false);
-        }
-        verify(writer, times(0)).flush();
+        CSVPrinter csvPrinter = new CSVPrinter(writer, csvFormat);
+        csvPrinter.close(false);
+        verify(writer, never()).flush();
+        verify(writer, times(1)).close();
     }
 
     @Test
@@ -1340,19 +1340,20 @@ public class CSVPrinterTest {
         Writer writer = mock(Writer.class);
         CSVFormat csvFormat = CSVFormat.DEFAULT;
         try (CSVPrinter csvPrinter = new CSVPrinter(writer, csvFormat)) {
-            csvPrinter.close(true);
         }
-        verify(writer, times(0)).flush();
+        verify(writer, never()).flush();
+        verify(writer, times(1)).close();
     }
 
     @Test
     public void testCloseWithCsvFormatAutoFlushOn() throws IOException {
+        System.out.println("start method");
         Writer writer = mock(Writer.class);
         CSVFormat csvFormat = CSVFormat.DEFAULT.withAutoFlush(true);
         try (CSVPrinter csvPrinter = new CSVPrinter(writer, csvFormat)) {
-            csvPrinter.close();
         }
         verify(writer, times(1)).flush();
+        verify(writer, times(1)).close();
     }
 
     @Test
@@ -1360,9 +1361,9 @@ public class CSVPrinterTest {
         Writer writer = mock(Writer.class);
         CSVFormat csvFormat = CSVFormat.DEFAULT.withAutoFlush(false);
         try (CSVPrinter csvPrinter = new CSVPrinter(writer, csvFormat)) {
-            csvPrinter.close();
         }
-        verify(writer, times(0)).flush();
+        verify(writer, never()).flush();
+        verify(writer, times(1)).close();
     }
 
 }

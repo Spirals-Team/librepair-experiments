@@ -86,6 +86,8 @@ public final class CSVPrinter implements Flushable, Closeable {
 
     public void close(boolean flush) throws IOException {
         if (flush || format.getAutoFlush()) {
+            System.out.println(flush);
+            System.out.println(format.getAutoFlush());
             if (out instanceof Flushable) {
                 ((Flushable) out).flush();
             }
