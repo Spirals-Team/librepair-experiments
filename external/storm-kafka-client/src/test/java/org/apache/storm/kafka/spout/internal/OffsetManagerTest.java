@@ -33,7 +33,7 @@ public class OffsetManagerTest {
 
     @Rule
     public ExpectedException expect = ExpectedException.none();
-
+    
     private final long initialFetchOffset = 0;
     private final TopicPartition testTp = new TopicPartition("testTopic", 0);
     private final OffsetManager manager = new OffsetManager(testTp, initialFetchOffset);
@@ -118,7 +118,7 @@ public class OffsetManagerTest {
         /**
          * If topic compaction is enabled in Kafka some offsets may be deleted.
          * We distinguish this case from regular gaps in the acked offset sequence caused by out of order acking
-         * by checking that offsets in the gap have been emitted at some point previously.
+         * by checking that offsets in the gap have been emitted at some point previously. 
          * If they haven't then they can't exist in Kafka, since the spout emits tuples in order.
          */
         emitAndAckMessage(getMessageId(initialFetchOffset + 2));
@@ -127,7 +127,7 @@ public class OffsetManagerTest {
         assertThat("The next commit offset should cover all the acked offsets, since the offset in the gap hasn't been emitted and doesn't exist",
             nextCommitOffset.offset(), is(initialFetchOffset + 3));
     }
-
+    
     @Test
     public void testFindNextCommitOffsetWithUnackedOffsetGap() {
         manager.addToEmitMsgs(initialFetchOffset + 1);
@@ -135,7 +135,7 @@ public class OffsetManagerTest {
         OffsetAndMetadata nextCommitOffset = manager.findNextCommitOffset();
         assertThat("The next commit offset should cover the contiguously acked offsets", nextCommitOffset.offset(), is(initialFetchOffset + 1));
     }
-
+    
     @Test
     public void testFindNextCommitOffsetWhenTooLowOffsetIsAcked() {
         OffsetManager startAtHighOffsetManager = new OffsetManager(testTp, 10);
@@ -143,15 +143,15 @@ public class OffsetManagerTest {
         OffsetAndMetadata nextCommitOffset = startAtHighOffsetManager.findNextCommitOffset();
         assertThat("Acking an offset earlier than the committed offset should have no effect", nextCommitOffset, is(nullValue()));
     }
-
+    
     @Test
     public void testCommit() {
         emitAndAckMessage(getMessageId(initialFetchOffset));
         emitAndAckMessage(getMessageId(initialFetchOffset + 1));
         emitAndAckMessage(getMessageId(initialFetchOffset + 2));
-
+        
         long committedMessages = manager.commit(new OffsetAndMetadata(initialFetchOffset + 2));
-
+        
         assertThat("Should have committed all messages to the left of the earliest uncommitted offset", committedMessages, is(2L));
         assertThat("The committed messages should not be in the acked list anymore", manager.contains(getMessageId(initialFetchOffset)), is(false));
         assertThat("The committed messages should not be in the emitted list anymore", manager.containsEmitted(initialFetchOffset), is(false));
@@ -164,7 +164,7 @@ public class OffsetManagerTest {
     private KafkaSpoutMessageId getMessageId(long offset) {
         return new KafkaSpoutMessageId(testTp, offset);
     }
-
+    
     private void emitAndAckMessage(KafkaSpoutMessageId msgId) {
         manager.addToEmitMsgs(msgId.offset());
         manager.addToAckMsgs(msgId);

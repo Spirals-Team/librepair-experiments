@@ -69,7 +69,7 @@ public class OffsetManager {
     /**
      * An offset can only be committed when all emitted records with lower offset have been
      * acked. This guarantees that all offsets smaller than the committedOffset
-     * have been delivered, or that those offsets no longer exist in Kafka.
+     * have been delivered, or that those offsets no longer exist in Kafka. 
      * <p/>
      * The returned offset points to the earliest uncommitted offset, and matches the semantics of the KafkaConsumer.commitSync API.
      *
@@ -168,7 +168,7 @@ public class OffsetManager {
         LOG.trace("{}", this);
         
         LOG.debug("Committed [{}] offsets in the range [{}-{}] for topic-partition [{}]."
-            + " Processing will resume at [{}] if the spout restarts.",
+            + " Processing will resume at offset [{}] if the spout restarts.",
                 numCommittedOffsets, preCommitCommittedOffset, this.committedOffset - 1, tp, this.committedOffset);
         
         return numCommittedOffsets;
@@ -189,7 +189,7 @@ public class OffsetManager {
     public boolean contains(KafkaSpoutMessageId msgId) {
         return ackedMsgs.contains(msgId);
     }
-
+    
     @VisibleForTesting
     boolean containsEmitted(long offset) {
         return emittedOffsets.contains(offset);
