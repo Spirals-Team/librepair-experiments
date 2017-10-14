@@ -439,7 +439,7 @@ public class KafkaSpoutConfig<K, V> implements Serializable {
                     /*
                     If the user wants to explicitly set an auto offset reset policy, we should respect it, but when the spout is configured
                     for at-least-once processing we should default to seeking to the earliest offset in case there's an offset out of range
-                    error, rather than seeking to the latest (Kafka's default). This type of error will typically happen when the consumer
+                    error, rather than seeking to the latest (Kafka's default). This type of error will typically happen when the consumer 
                     requests an offset that was deleted.
                      */
                     builder.kafkaProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
