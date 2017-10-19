@@ -166,6 +166,8 @@ public class JobManagerTest {
         CronTrigger trigger = (CronTrigger) jobManager.scheduler.getTriggersOfJob(JobKey.jobKey(jobName)).get(0);
 
         assertEquals("Europe/Stockholm", trigger.getTimeZone().getID());
+
+        jobManager.stop();
     }
 
     @Test
