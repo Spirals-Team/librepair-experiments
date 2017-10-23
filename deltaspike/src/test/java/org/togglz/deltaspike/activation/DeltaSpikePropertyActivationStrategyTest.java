@@ -77,7 +77,7 @@ public class DeltaSpikePropertyActivationStrategyTest {
     public void testGetParameters() {
         Parameter[] parameters = strategy.getParameters();
 
-        assertEquals(1, parameters.length);
+        assertEquals(2, parameters.length);
 
         Parameter parameter = parameters[0];
 
