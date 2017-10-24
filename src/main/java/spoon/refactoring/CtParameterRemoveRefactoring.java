@@ -53,7 +53,7 @@ import spoon.reflect.visitor.filter.ParameterReferenceFunction;
  * <li>to be removed argument contains read only expression, which can be safely removed
  * </ul>
  * If one of the validation constraints fails, then {@link RefactoringException} is thrown and nothing is changed.
- * You can override `#getOrCreate*Issue(...)` methods to handle such exceptions individually.
+ * You can override `#create*Issue(...)` methods to handle such exceptions individually.
  * <br>
  */
 public class CtParameterRemoveRefactoring implements CtRefactoring {

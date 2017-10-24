@@ -36,7 +36,7 @@ public class JavaDocTest {
 				+ "     * @param simpleName" + System.lineSeparator()
 				+ "     * \t\tthe name of annotation" + System.lineSeparator()
 				+ "     */" + System.lineSeparator()
-				+ "    public <T> CtAnnotationType<?> getOrCreate(CtPackage owner, String simpleName) {" + System.lineSeparator()
+				+ "    public <T> CtAnnotationType<?> create(CtPackage owner, String simpleName) {" + System.lineSeparator()
 				+ "        return null;" + System.lineSeparator()
 				+ "    }" + System.lineSeparator()
 				+ "}", aClass.toString());

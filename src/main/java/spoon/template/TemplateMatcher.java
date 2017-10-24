@@ -577,7 +577,7 @@ public class TemplateMatcher implements Filter<CtElement> {
 				if (te + 1 >= teList.size()) {
 					//it is the last parameter of template list. Add all remaining target list items
 					multi.addAll(taList.subList(te, taList.size()));
-					//getOrCreate statement list and add match
+					//create statement list and add match
 					CtStatementList tpl = templateType.getFactory().Core().createStatementList();
 					tpl.setStatements((List<CtStatement>) (List<?>) multi);
 					if (!invokeCallBack(tpl, inMulti)) {
@@ -594,7 +594,7 @@ public class TemplateMatcher implements Filter<CtElement> {
 					ta++;
 				}
 				//we have found first target parameter, which fits to next template parameter
-				//getOrCreate statement list for previous parameter and add it's match
+				//create statement list for previous parameter and add it's match
 				CtStatementList tpl = templateType.getFactory().Core().createStatementList();
 				tpl.setStatements((List<CtStatement>) (List<?>) multi);
 				if (!invokeCallBack(tpl, inMulti)) {

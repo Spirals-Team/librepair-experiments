@@ -67,7 +67,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * This sub-factory contains utility methods to getOrCreate code elements. To avoid
+ * This sub-factory contains utility methods to create code elements. To avoid
  * over-using reflection, consider using {@link spoon.template.Template}.
  */
 public class CodeFactory extends SubFactory {
@@ -285,7 +285,7 @@ public class CodeFactory extends SubFactory {
 			throw new RuntimeException("value is not an array");
 		}
 		if (value.getClass().getComponentType().isArray()) {
-			throw new RuntimeException("can only getOrCreate one-dimension arrays");
+			throw new RuntimeException("can only create one-dimension arrays");
 		}
 		final CtTypeReference<T> componentTypeRef = factory.Type().createReference((Class<T>) value.getClass().getComponentType());
 		final CtArrayTypeReference<T[]> arrayReference = factory.Type().createArrayReference(componentTypeRef);
@@ -513,7 +513,7 @@ public class CodeFactory extends SubFactory {
 	 * If element is CtStatement, then it creates wrapping CtBlock, which contains the element
 	 * If element is CtBlock, then it directly returns that element
 	 * If element is null, then it returns null.
-	 * note: It must not getOrCreate empty CtBlock - as expected in CtCatch, CtExecutable, CtLoop and CtTry setBody implementations
+	 * note: It must not create empty CtBlock - as expected in CtCatch, CtExecutable, CtLoop and CtTry setBody implementations
 	 * @param element
 	 * @return CtBlock instance
 	 */

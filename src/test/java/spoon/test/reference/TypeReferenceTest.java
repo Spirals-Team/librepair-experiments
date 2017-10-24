@@ -89,7 +89,7 @@ public class TypeReferenceTest {
 		String qualifiedName = packageName + "." + className;
 		String referencedQualifiedName = packageName + "." + "ReferencedClass";
 
-		// we only getOrCreate the model for ReferecingClass
+		// we only create the model for ReferecingClass
 		List<SpoonResource> fileToBeSpooned = SpoonResourceHelper.resources("./src/test/resources/reference-test/input/" + qualifiedName.replace('.', '/') + ".java");
 		comp.addInputSources(fileToBeSpooned);
 		assertEquals(1, fileToBeSpooned.size()); // for ReferecingClass
@@ -143,7 +143,7 @@ public class TypeReferenceTest {
 		String qualifiedName = "spoontest.a.ClassA";
 		String referenceQualifiedName = "spoontest.b.ClassB";
 
-		// we only getOrCreate the model for ClassA
+		// we only create the model for ClassA
 		List<SpoonResource> fileToBeSpooned = SpoonResourceHelper.resources("./src/test/resources/reference-test-2/" + qualifiedName.replace('.', '/') + ".java");
 		comp.addInputSources(fileToBeSpooned);
 		assertEquals(1, fileToBeSpooned.size()); // for ClassA

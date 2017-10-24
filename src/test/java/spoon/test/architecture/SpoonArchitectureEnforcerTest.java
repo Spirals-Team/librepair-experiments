@@ -73,10 +73,10 @@ public class SpoonArchitectureEnforcerTest {
 						// we check only public methods
 						if (m.hasModifier(ModifierKind.PUBLIC) == false) continue;
 						// we only consider factory methods
-						if (!m.getSimpleName().startsWith("getOrCreate")) continue;
+						if (!m.getSimpleName().startsWith("create")) continue;
 
-						// too generic, what should we getOrCreate??
-						if (m.getSimpleName().equals("getOrCreate")) continue;
+						// too generic, what should we create??
+						if (m.getSimpleName().equals("create")) continue;
 
 						// too generic, is it a fieldref? an execref? etc
 						if (m.getSimpleName().equals("createReference"))

@@ -27,11 +27,11 @@ import java.util.LinkedList;
 import java.util.List;
 
 /**
- * This builder allow to getOrCreate some CtPath.
+ * This builder allow to create some CtPath.
  * <p>
  * Some examples:
  * <p>
- * To getOrCreate a CtPath that match with any method in fr.spoon.Launcher:
+ * To create a CtPath that match with any method in fr.spoon.Launcher:
  * <pre>
  * {@code
  * new CtPathBuilder().name("fr").name("spoon").name("Launcher").type("method");

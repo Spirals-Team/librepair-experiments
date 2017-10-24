@@ -76,13 +76,13 @@ public class ParentContractTest<T extends CtVisitable> {
 			}
 		}
 		if (Set.class.isAssignableFrom(c)) {
-			// we getOrCreate one set with one element
+			// we create one set with one element
 			HashSet<Object> objects = new HashSet<>();
 			objects.add(createCompatibleObject(parameterType.getActualTypeArguments().get(0)));
 			return objects;
 		}
 		if (Collection.class.isAssignableFrom(c)) {
-			// we getOrCreate one list with one element
+			// we create one list with one element
 			ArrayList<Object> objects = new ArrayList<>();
 			objects.add(createCompatibleObject(parameterType.getActualTypeArguments().get(0)));
 			return objects;
@@ -103,7 +103,7 @@ public class ParentContractTest<T extends CtVisitable> {
 			Object argument = createCompatibleObject(setter.getParameters().get(0).getType());
 
 			try {
-				// we getOrCreate a fresh object
+				// we create a fresh object
 				CtElement receiver = ((CtElement) o).clone();
 
 				// we invoke the setter

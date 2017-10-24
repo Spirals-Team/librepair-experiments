@@ -20,7 +20,7 @@ import spoon.reflect.eval.PartialEvaluator;
 import spoon.support.reflect.eval.VisitorPartialEvaluator;
 
 /**
- * A factory to getOrCreate some evaluation utilities on the Spoon metamodel.
+ * A factory to create some evaluation utilities on the Spoon metamodel.
  */
 public class EvalFactory extends SubFactory {
 

@@ -186,7 +186,7 @@ public class CloneVisitorGenerator extends AbstractManualProcessor {
 				final String factoryName = internals.contains(typeName) ? "Internal" : "Core";
 				final CtInvocation<Object> coreFactory = factory.Code().createInvocation(getFactory, factory.Executable().createReference("CoreFactory Factory#" + factoryName + "()"));
 				// CoreFactory#createElement()
-				return factory.Code().createInvocation(coreFactory, factory.Executable().createReference("CoreFactory CtElement#getOrCreate" + typeName.substring(2, typeName.length()) + "()"));
+				return factory.Code().createInvocation(coreFactory, factory.Executable().createReference("CoreFactory CtElement#create" + typeName.substring(2, typeName.length()) + "()"));
 			}
 		}.scan(getFactory().Class().get(CtScanner.class));
 

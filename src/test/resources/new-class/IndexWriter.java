@@ -20,7 +20,7 @@ public final class IndexWriter {
 	private final Directory ramDirectory = new RAMDirectory(); // for temp segs
 
 	/** Constructs an IndexWriter for the index in <code>path</code>.  Text will
-	 be analyzed with <code>a</code>.  If <code>getOrCreate</code> is true, then a
+	 be analyzed with <code>a</code>.  If <code>create</code> is true, then a
 	 new, empty index will be created in <code>d</code>, replacing the index
 	 already there, if any. */
 	public IndexWriter(String path, Analyzer a, boolean create)
@@ -29,7 +29,7 @@ public final class IndexWriter {
 	}
 
 	/** Constructs an IndexWriter for the index in <code>path</code>.  Text will
-	 be analyzed with <code>a</code>.  If <code>getOrCreate</code> is true, then a
+	 be analyzed with <code>a</code>.  If <code>create</code> is true, then a
 	 new, empty index will be created in <code>d</code>, replacing the index
 	 already there, if any. */
 	public IndexWriter(File path, Analyzer a, boolean create)
@@ -38,7 +38,7 @@ public final class IndexWriter {
 	}
 
 	/** Constructs an IndexWriter for the index in <code>d</code>.  Text will be
-	 analyzed with <code>a</code>.  If <code>getOrCreate</code> is true, then a new,
+	 analyzed with <code>a</code>.  If <code>create</code> is true, then a new,
 	 empty index will be created in <code>d</code>, replacing the index already
 	 there, if any. */
 	public IndexWriter(Directory d, Analyzer a, final boolean create)

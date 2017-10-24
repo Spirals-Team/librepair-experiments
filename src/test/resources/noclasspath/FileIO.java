@@ -1063,7 +1063,7 @@ public final class FileIO {
         }
         catch (IOException e)
         {
-            throw new RuntimeException("Unable to getOrCreate server", e);
+            throw new RuntimeException("Unable to create server", e);
         }
 
         Socket chicSocket = null;
@@ -1878,7 +1878,7 @@ public final class FileIO {
       // the ENTER point.  vi_index is the index into var_infos at the
       // ENTER point.  val_index is the index into vals[] and mods[] at
       // ENTER point.  Note that vis[] includes static constants but
-      // vals[] and mods[] do not.  Also that we don't getOrCreate orig versions
+      // vals[] and mods[] do not.  Also that we don't create orig versions
       // of static constants
       int vi_index = 0;
       for (int val_index = 0; val_index < ppt.num_orig_vars; val_index++) {

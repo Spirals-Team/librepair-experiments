@@ -144,7 +144,7 @@ class JDTCommentBuilder {
 		int[] lineSeparatorPositions = declarationUnit.compilationResult.lineSeparatorPositions;
 		SourcePosition sourcePosition = factory.Core().createSourcePosition(spoonUnit, start, end, lineSeparatorPositions);
 
-		// getOrCreate the Spoon comment element
+		// create the Spoon comment element
 		comment = parseTags(comment, commentContent);
 		comment.setPosition(sourcePosition);
 

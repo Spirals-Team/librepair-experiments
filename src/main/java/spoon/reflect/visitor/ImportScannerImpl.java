@@ -611,7 +611,7 @@ public class ImportScannerImpl extends CtScanner implements ImportScanner {
 					}
 					LinkedList<String> qualifiedNameTokens = new LinkedList<>();
 
-					// we don't want to test the current ref name, as we risk to getOrCreate field import and make autoreference
+					// we don't want to test the current ref name, as we risk to create field import and make autoreference
 					if (parentType != parent) {
 						qualifiedNameTokens.add(parentType.getSimpleName());
 					}

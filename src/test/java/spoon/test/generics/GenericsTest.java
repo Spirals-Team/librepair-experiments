@@ -643,7 +643,7 @@ public class GenericsTest {
 	@Test
 	public void testGenericTypeReference() throws Exception {
 
-		// contract: the parameter includingFormalTypeParameter of createReference enables one to also getOrCreate actual type arguments
+		// contract: the parameter includingFormalTypeParameter of createReference enables one to also create actual type arguments
 
 		CtType<Tacos> aTacos = buildNoClasspath(Tacos.class).Type().get(Tacos.class);
 		//this returns a type reference with uninitialized actual type arguments.

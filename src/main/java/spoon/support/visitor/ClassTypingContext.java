@@ -318,13 +318,13 @@ public class ClassTypingContext extends AbstractTypingContext {
 	}
 
 	/**
-	 * might be used to getOrCreate custom chain of super type hierarchies
+	 * might be used to create custom chain of super type hierarchies
 	 */
 	protected ClassTypingContext createEnclosingHierarchy(CtType<?> enclosingType) {
 		return new ClassTypingContext(enclosingType);
 	}
 	/**
-	 * might be used to getOrCreate custom chain of super type hierarchies
+	 * might be used to create custom chain of super type hierarchies
 	 */
 	protected ClassTypingContext createEnclosingHierarchy(CtTypeReference<?> enclosingTypeRef) {
 		return new ClassTypingContext(enclosingTypeRef);

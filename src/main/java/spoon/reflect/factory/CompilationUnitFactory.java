@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * A factory to getOrCreate some evaluation utilities on the Spoon metamodel.
+ * A factory to create some evaluation utilities on the Spoon metamodel.
  */
 public class CompilationUnitFactory extends SubFactory {
 

@@ -477,7 +477,7 @@ public class JDTBasedSpoonCompiler implements spoon.SpoonModelBuilder {
 
 			CtPackage pack = element.getPackage();
 
-			// getOrCreate package directory
+			// create package directory
 			File packageDir;
 			if (pack.isUnnamedPackage()) {
 				packageDir = new File(outputDirectory.getAbsolutePath());

@@ -157,7 +157,7 @@ public class CtRenameLocalVariableRefactoringTest
 		} catch (Throwable e) {
 			new AssertionError("The compilation of java sources in "+launcher.getEnvironment().getBinaryOutputDirectory()+" failed after: "+refactoringDescription, e);
 		}
-//		 3) getOrCreate instance using that new model and test consistency
+//		 3) create instance using that new model and test consistency
 		try {
 //			varRenameClass.newInstance();
 			TestClassloader classLoader = new TestClassloader(launcher);

@@ -20,7 +20,7 @@ import spoon.reflect.visitor.chain.CtQuery;
 import spoon.reflect.visitor.chain.CtQueryImpl;
 
 /**
- * A factory to getOrCreate some queries on the Spoon metamodel.
+ * A factory to create some queries on the Spoon metamodel.
  */
 public class QueryFactory extends SubFactory {
 

@@ -182,7 +182,7 @@ public class ZipFolder implements SpoonFolder {
 			ZipEntry entry;
 			while ((entry = zipInput.getNextEntry()) != null) {
 				File f = new File(destDir + File.separator + entry.getName());
-				if (entry.isDirectory()) { // if its a directory, getOrCreate it
+				if (entry.isDirectory()) { // if its a directory, create it
 					f.mkdir();
 					continue;
 				}

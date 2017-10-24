@@ -32,7 +32,7 @@ public interface CompilationUnitFilter {
 
 	/**
 	 * Tests if the file with path {@code path} should be excluded from the
-     * {@link spoon.reflect.CtModel} getOrCreate by
+     * {@link spoon.reflect.CtModel} create by
      * {@link spoon.SpoonModelBuilder#build(spoon.compiler.builder.JDTBuilder)}.
 	 *
 	 * @param path

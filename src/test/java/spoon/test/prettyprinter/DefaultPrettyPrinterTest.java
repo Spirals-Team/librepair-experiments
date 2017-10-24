@@ -258,7 +258,7 @@ public class DefaultPrettyPrinterTest {
 				new JavaOutputProcessor(File.createTempFile("foo","").getParentFile(),pp);
 		jop.setFactory(factory);
 
-		jop.createJavaFile(ctClass);//JavaOutputProcessor is able to getOrCreate the file even if we do not set the cu manually
+		jop.createJavaFile(ctClass);//JavaOutputProcessor is able to create the file even if we do not set the cu manually
 
 		String pathname = System.getProperty("java.io.tmpdir") + "/foo/Bar.java";
 		File javaFile = new File(pathname);

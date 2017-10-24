@@ -22,7 +22,7 @@ public class TryCatchResourceClass {
 		java.nio.file.Path outputFilePath = java.nio.file.Paths
 				.get(outputFileName);
 
-		// Open zip file and getOrCreate output file with try-with-resources statement
+		// Open zip file and create output file with try-with-resources statement
 
 		try (
 				java.util.zip.ZipFile zf = new java.util.zip.ZipFile(

@@ -68,14 +68,14 @@ public class MethodTypingContext extends AbstractTypingContext {
 			if (classTypingContext.getAdaptationScope() != declType) {
 				//the method is declared in different type. We have to adapt it to required classTypingContext
 				if (classTypingContext.isSubtypeOf(declType.getReference()) == false) {
-					throw new SpoonException("Cannot getOrCreate MethodTypingContext for method declared in different ClassTypingContext");
+					throw new SpoonException("Cannot create MethodTypingContext for method declared in different ClassTypingContext");
 				}
 				/*
 				 * The method is declared in an supertype of classTypingContext.
 				 * Create virtual scope method by adapting generic types of supertype method to required scope
 				 */
 				Factory factory = method.getFactory();
-				//getOrCreate new scopeMethod, which is directly used during adaptation of it's parameters
+				//create new scopeMethod, which is directly used during adaptation of it's parameters
 				CtMethod<?> adaptedMethod = factory.Core().createMethod();
 				adaptedMethod.setParent(classTypingContext.getAdaptationScope());
 				adaptedMethod.setModifiers(method.getModifiers());
@@ -153,14 +153,14 @@ public class MethodTypingContext extends AbstractTypingContext {
 		}
 		CtExecutable<?> exec = execRef.getExecutableDeclaration();
 		if (exec == null) {
-			throw new SpoonException("Cannot getOrCreate MethodTypingContext from CtExecutable of CtExecutableReference is null");
+			throw new SpoonException("Cannot create MethodTypingContext from CtExecutable of CtExecutableReference is null");
 		}
 		if (exec instanceof CtMethod<?>) {
 			setMethod((CtMethod<?>) exec);
 		} else if (exec instanceof CtConstructor<?>) {
 			setConstructor((CtConstructor<?>) exec);
 		} else {
-			throw new SpoonException("Cannot getOrCreate MethodTypingContext from " + exec.getClass().getName());
+			throw new SpoonException("Cannot create MethodTypingContext from " + exec.getClass().getName());
 		}
 		this.actualTypeArguments = execRef.getActualTypeArguments();
 		return this;

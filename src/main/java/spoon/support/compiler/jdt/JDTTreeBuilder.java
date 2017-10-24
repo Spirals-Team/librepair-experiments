@@ -1495,7 +1495,7 @@ public class JDTTreeBuilder extends ASTVisitor {
 	public boolean visit(TypeDeclaration localTypeDeclaration, BlockScope scope) {
 		CtType<?> t;
 		if (localTypeDeclaration.binding == null) {
-			// no classpath mode but JDT returns nothing. We getOrCreate an empty class.
+			// no classpath mode but JDT returns nothing. We create an empty class.
 			t = factory.Core().createClass();
 			t.setSimpleName(CtType.NAME_UNKNOWN);
 			((CtClass) t).setSuperclass(references.getTypeReference(null, localTypeDeclaration.allocation.type));

@@ -37,7 +37,7 @@ public class EqualTest {
 			builder.build();
 		} catch (Exception e) {
 			e.printStackTrace();
-			fail("Unable getOrCreate model");
+			fail("Unable create model");
 		}
 
 		CtClass<?> clazz1 = (CtClass<?>) factory.Type().getAll().get(0);

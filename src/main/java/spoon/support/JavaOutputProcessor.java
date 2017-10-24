@@ -113,7 +113,7 @@ public class JavaOutputProcessor extends AbstractProcessor<CtNamedElement> imple
 
 		getEnvironment().debugMessage("printing " + element.getQualifiedName() + " to " + directory);
 
-		// we only getOrCreate a file for top-level classes
+		// we only create a file for top-level classes
 		if (!element.isTopLevel()) {
 			throw new IllegalArgumentException();
 		}

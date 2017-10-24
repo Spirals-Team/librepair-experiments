@@ -60,7 +60,7 @@ public class SetParentTest<T extends CtVisitable> {
 			// is a primitive type or a list
 			throw new AssertionError("impossible, setParent always takes an element");
 		}
-		// we getOrCreate a fresh object
+		// we create a fresh object
 		CtElement receiver = ((CtElement) o).clone();
 
 		if ("CtClass".equals(toTest.getSimpleName())

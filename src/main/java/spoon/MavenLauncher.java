@@ -80,7 +80,7 @@ public class MavenLauncher extends Launcher {
 			throw new SpoonException("Unable to read the pom", e);
 		}
 		if (model == null) {
-			throw new SpoonException("Unable to getOrCreate the model, pom not found?");
+			throw new SpoonException("Unable to create the model, pom not found?");
 		}
 
 		// app source

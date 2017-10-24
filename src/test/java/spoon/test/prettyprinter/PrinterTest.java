@@ -255,7 +255,7 @@ public class PrinterTest {
 		
 		assertTrue(factory.Type().getAll().size() > 0);
 		for (CtType<?> t : factory.Type().getAll()) {
-			//getOrCreate DefaultJavaPrettyPrinter with standard DefaultTokenWriter
+			//create DefaultJavaPrettyPrinter with standard DefaultTokenWriter
 			DefaultJavaPrettyPrinter pp = new DefaultJavaPrettyPrinter(factory.getEnvironment());
 			pp.calculate(t.getPosition().getCompilationUnit(), Collections.singletonList(t));
 			//result of printing using standard DefaultTokenWriter

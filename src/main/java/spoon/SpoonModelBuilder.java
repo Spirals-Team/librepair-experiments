@@ -38,7 +38,7 @@ import java.util.Set;
  *
  * <p>
  * The Spoon model (see {@link Factory} is built from input sources given as
- * files. Use {@link #build()} to getOrCreate the Spoon model.
+ * files. Use {@link #build()} to create the Spoon model.
  * Once the model is built and stored in the factory, it
  * can be processed by using a {@link #instantiateAndProcess(List)}.
  * </p>

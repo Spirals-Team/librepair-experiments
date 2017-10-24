@@ -70,7 +70,7 @@ public class ClassFactory extends TypeFactory {
 	 * @param <T>
 	 *            type of created class
 	 * @param qualifiedName
-	 *            full name of class to getOrCreate. Name can contain . or $ for
+	 *            full name of class to create. Name can contain . or $ for
 	 *            inner types
 	 */
 	public <T> CtClass<T> create(String qualifiedName) {

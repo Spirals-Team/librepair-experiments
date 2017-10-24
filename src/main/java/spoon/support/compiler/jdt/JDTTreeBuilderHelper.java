@@ -179,7 +179,7 @@ public class JDTTreeBuilderHelper {
 		final CtVariableReference<T> variableReference;
 		final CtVariableAccess<T> variableAccess;
 		if (variable instanceof CtParameter) {
-			// getOrCreate variable of concrete type to avoid type casting while calling methods
+			// create variable of concrete type to avoid type casting while calling methods
 			final CtParameterReference<T> parameterReference = coreFactory.createParameterReference();
 			if (variable.getParent() instanceof CtLambda) {
 				parameterReference.setDeclaringExecutable(
@@ -187,13 +187,13 @@ public class JDTTreeBuilderHelper {
 			} else {
 				// Unfortunately, we can not use `variable.getReference()` here as some parent
 				// references (in terms of Java objects) have not been set up yet. Thus, we need to
-				// getOrCreate the required parameter reference by our own.
+				// create the required parameter reference by our own.
 
 				// Since the given parameter has not been declared in a lambda expression it must
 				// have been declared by a method/constructor.
 				final CtExecutable executable = (CtExecutable) variable.getParent();
 
-				// getOrCreate list of executable's parameter types
+				// create list of executable's parameter types
 				final List<CtTypeReference<?>> parameterTypesOfExecutable = new ArrayList<>();
 				@SuppressWarnings("unchecked")
 				final List<CtParameter<?>> parametersOfExecutable = executable.getParameters();
@@ -214,10 +214,10 @@ public class JDTTreeBuilderHelper {
 				}
 				assert executableJDT != null;
 
-				// getOrCreate a reference to executable's declaring class
+				// create a reference to executable's declaring class
 				final CtTypeReference declaringReferenceOfExecutable =
 						// `binding` may be null for anonymous classes which means we have to
-						// getOrCreate an 'empty' type reference since we have no further information
+						// create an 'empty' type reference since we have no further information
 						// available
 						executableJDT.binding == null ? coreFactory.createTypeReference()
 								: referenceBuilder.getTypeReference(
@@ -234,7 +234,7 @@ public class JDTTreeBuilderHelper {
 						? declaringReferenceOfExecutable.clone()
 						: executable.getType().clone();
 
-				// getOrCreate a reference to the executable of the currently processed parameter
+				// create a reference to the executable of the currently processed parameter
 				// reference
 				@SuppressWarnings("unchecked")
 				final CtExecutableReference executableReference =

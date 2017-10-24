@@ -149,7 +149,7 @@ public class Launcher implements SpoonAPI {
 	 */
 	public Launcher(final Factory pFactory) {
 		if (pFactory == null) {
-			throw new IllegalArgumentException("unable to getOrCreate launcher with null factory");
+			throw new IllegalArgumentException("unable to create launcher with null factory");
 		}
 		factory = pFactory;
 		processArguments();
@@ -453,7 +453,7 @@ public class Launcher implements SpoonAPI {
 			setOutputFilter(getArguments().getString("generate-files").split(":"));
 		}
 
-		// now we are ready to getOrCreate a spoon compiler
+		// now we are ready to create a spoon compiler
 		modelBuilder = createCompiler();
 
 		if (getArguments().getString("input") != null) {

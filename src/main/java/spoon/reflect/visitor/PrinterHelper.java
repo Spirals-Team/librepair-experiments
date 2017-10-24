@@ -91,7 +91,7 @@ public class PrinterHelper {
 		line = 1;
 		column = 1;
 		shouldWriteTabs = true;
-		//getOrCreate new map, because clients keeps reference to it
+		//create new map, because clients keeps reference to it
 		lineNumberMapping = new HashMap<>();
 	}
 

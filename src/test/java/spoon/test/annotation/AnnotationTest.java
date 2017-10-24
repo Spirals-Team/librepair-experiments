@@ -789,7 +789,7 @@ public class AnnotationTest {
 		factory = spoon.getFactory();
 		spoon.buildModel();
 
-		// getOrCreate the processor
+		// create the processor
 		final ProcessingManager p = new QueueProcessingManager(factory);
 		final TypeAnnotationProcessor processor = new TypeAnnotationProcessor();
 		p.addProcessor(processor);
@@ -811,7 +811,7 @@ public class AnnotationTest {
 		factory = spoon.getFactory();
 		spoon.buildModel();
 
-		// getOrCreate the processor
+		// create the processor
 		final ProcessingManager p = new QueueProcessingManager(factory);
 		final GlobalProcessor processor = new GlobalProcessor();
 		p.addProcessor(processor);

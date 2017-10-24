@@ -131,7 +131,7 @@ public class PropPanelUseCase extends PropPanelClassifier {
 
 
     /**
-     * <p>Invoked by the "Add use case" toolbar button to getOrCreate a new use case
+     * <p>Invoked by the "Add use case" toolbar button to create a new use case
      *   property panel in the same namespace as the current use case.</p>
      *
      * <p>This code uses getFactory and adds the use case explicitly to the
@@ -154,7 +154,7 @@ public class PropPanelUseCase extends PropPanelClassifier {
 
 
     /**
-     * <p>Invoked by the "Add extension point" toolbar button to getOrCreate a new
+     * <p>Invoked by the "Add extension point" toolbar button to create a new
      *   extension point for this use case in the same namespace as the current
      *   use case.</p>
      *

@@ -501,7 +501,7 @@ public class TypeFactory extends SubFactory {
 				try {
 					newShadowClass = new JavaReflectionTreeBuilder(createFactory()).scan((Class<T>) cl);
 				} catch (Throwable e) {
-					throw new SpoonClassNotFoundException("cannot getOrCreate shadow class: " + cl.getName(), e);
+					throw new SpoonClassNotFoundException("cannot create shadow class: " + cl.getName(), e);
 				}
 				newShadowClass.setFactory(factory);
 				newShadowClass.accept(new CtScanner() {

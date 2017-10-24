@@ -737,7 +737,7 @@ public class TemplateTest {
 
 		CtClass<?> resultKlass = factory.Class().create("Result");
 		CtClass<?> templateClass = factory.Class().get(ArrayAccessTemplate.class);
-		//getOrCreate array of template parameters, which contains CtBlocks
+		//create array of template parameters, which contains CtBlocks
 		TemplateParameter[] params = templateClass.getMethod("sampleBlocks").getBody().getStatements().toArray(new TemplateParameter[0]);
 		new ArrayAccessTemplate(params).apply(resultKlass);
 		CtMethod<?> m = resultKlass.getMethod("method");

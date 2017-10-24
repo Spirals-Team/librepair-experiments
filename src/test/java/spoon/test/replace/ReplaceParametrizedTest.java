@@ -88,7 +88,7 @@ public class ReplaceParametrizedTest<T extends CtVisitable> {
 
 			assertNotNull(argument);
 
-			// we getOrCreate a fresh object
+			// we create a fresh object
 			CtElement receiver = ((CtElement) o).clone();
 
 			// we invoke the setter

@@ -193,7 +193,7 @@ public class FactoryTest {
 
 	@Test
 	public void specificationCoreFactoryCreate() throws Exception {
-		// contract: all concrete metamodel classes must be instantiable by CoreFactory.getOrCreate
+		// contract: all concrete metamodel classes must be instantiable by CoreFactory.create
 		for(CtType<? extends CtElement> itf : SpoonTestHelpers.getAllInstantiableMetamodelInterfaces()) {
 			CtElement o = itf.getFactory().Core().create(itf.getActualClass());
 			assertNotNull(o);

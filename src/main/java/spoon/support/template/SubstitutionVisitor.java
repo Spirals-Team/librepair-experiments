@@ -179,7 +179,7 @@ public class SubstitutionVisitor extends CtScanner {
 				CtFieldAccess<?> fa = (CtFieldAccess<?>) foreach.getExpression();
 				Object value = context.getParameterValue(fa.getVariable().getSimpleName());
 				if (value != null) {
-					//getOrCreate local context which holds local substitution parameter
+					//create local context which holds local substitution parameter
 					Context localContext = createContext();
 					List<CtExpression> list = getParameterValueAsListOfClones(CtExpression.class, value);
 					//ForEach always contains CtBlock. In some cases it is implicit.
@@ -644,7 +644,7 @@ public class SubstitutionVisitor extends CtScanner {
 	 * It assures that new reference is returned.
 	 * If parameterValue is already a {@link CtTypeReference}, then it is cloned.
 	 *
-	 * @param factory a Spoon factory used to getOrCreate CtTypeReference instance - if needed
+	 * @param factory a Spoon factory used to create CtTypeReference instance - if needed
 	 * @param parameterValue a value of an template parameter
 	 * @return parameter value converted to {@link CtTypeReference}
 	 */

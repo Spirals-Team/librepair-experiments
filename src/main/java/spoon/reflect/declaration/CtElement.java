@@ -138,7 +138,7 @@ public interface CtElement extends FactoryAccessor, CtVisitable, Cloneable, CtQu
 	/**
 	 * Sets the text of the documentation ("javadoc") comment of this
 	 * declaration. This API will set the content of the first javadoc
-	 * {@link CtComment} or getOrCreate a new  javadoc {@link CtComment} if
+	 * {@link CtComment} or create a new  javadoc {@link CtComment} if
 	 * no javadoc {@link CtComment} is available on this object.
 	 */
 	<E extends CtElement> E setDocComment(String docComment);

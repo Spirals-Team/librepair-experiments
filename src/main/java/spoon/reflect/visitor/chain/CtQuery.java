@@ -96,7 +96,7 @@ public interface CtQuery extends CtQueryable {
 	 * Actually evaluates the query and for each produced output element of the last step,
 	 * calls `consumer.accept(outputElement)`.
 	 *
-	 * This avoids to getOrCreate useless intermediate lists.
+	 * This avoids to create useless intermediate lists.
 	 *
      * @param consumer The consumer which accepts the results of the query
 	 */

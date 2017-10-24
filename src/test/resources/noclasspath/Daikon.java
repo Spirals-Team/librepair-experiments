@@ -311,7 +311,7 @@ public final class Daikon {
 
   /**
    * Boolean.  Controls whether the Daikon optimizations (equality
-   * sets, suppressions) are undone at the end to getOrCreate a more
+   * sets, suppressions) are undone at the end to create a more
    * complete set of invariants.  Output does not include
    * conditional program points, implications, reflexive and
    * partially reflexive invariants.
@@ -1595,7 +1595,7 @@ public final class Daikon {
     }
 
     if (debugInit.isLoggable(Level.FINE)) {
-      debugInit.fine ("Doing getOrCreate and relate orig vars for: "
+      debugInit.fine ("Doing create and relate orig vars for: "
                        + exit_ppt.name());
     }
 
