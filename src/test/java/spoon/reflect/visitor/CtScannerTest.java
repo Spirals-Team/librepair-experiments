@@ -110,27 +110,27 @@ public class CtScannerTest {
 
 	@Test
 	public void testScannerCallsAllProperties() throws Exception {
-		// contract: CtScanner must visit all metamodel properties and use correct CtRole
+		// contract: CtScanner must visit all metamodel properties
 		final Launcher launcher = new Launcher();
 		launcher.addInputResource("./src/main/java/spoon/reflect/");
 		launcher.run();
-
+		
 		CtTypeReference<?> ctElementRef = launcher.getFactory().createCtTypeReference(CtElement.class);
-
+		
 		CtClass<?> scanner = (CtClass<?>)launcher.getFactory().Type().get(CtScanner.class);
-
+		
 		List<String> problems = new ArrayList<>();
 		Set<String> ignoredInvocations = new HashSet(Arrays.asList("scan", "enter", "exit"));
-
+		
 		SpoonMetaModel metaModel = new SpoonMetaModel();
-
+		
 		Map<String, CtMethod<?>> scannerVisitMethodsByName = new HashMap<>();
 		scanner.getAllMethods().forEach(m -> {
 			if(m.getSimpleName().startsWith("visit")) {
 				scannerVisitMethodsByName.put(m.getSimpleName(), m);
 			}
 		});
-
+		
 		for (MMType mmType : metaModel.getMMTypes()) {
 			if (mmType.getKind() != MMTypeKind.LEAF) {
 				continue;
@@ -183,50 +183,4 @@ public class CtScannerTest {
 			fail(String.join("\n", problems));
 		}
 	}
-
-	private String getInterfaceName(String simpleName) {
-		if (simpleName.endsWith("Impl")) {
-			simpleName = simpleName.substring(0, simpleName.length()-4);
-		}
-		return simpleName;
-	}
-
-	private CtFieldRead<?> getRoleOfInvocation(CtInvocation<?> inv) {
-		Factory f = inv.getFactory();
-		CtAnnotation<PropertyGetter> annotation = getInheritedAnnotation((CtMethod<?>) inv.getExecutable().getDeclaration(), f.createCtTypeReference(PropertyGetter.class));
-
-		if (annotation == null) {
-			this.getClass();
-		}
-		CtFieldRead<?> role = annotation.getValue("role");
-		return role;
-	}
-
-	/**
-	 * Looks for method in superClass and superInterface hierarchy for the method with required annotationType
-	 * @param method
-	 * @param annotationType
-	 * @return
-	 */
-	private <A extends Annotation> CtAnnotation<A> getInheritedAnnotation(CtMethod<?> method, CtTypeReference<A> annotationType) {
-		CtAnnotation<A> annotation = method.getAnnotation(annotationType);
-		if (annotation == null) {
-			CtType<?> declType = method.getDeclaringType();
-			final ClassTypingContext ctc = new ClassTypingContext(declType);
-			annotation = declType.map(new AllTypeMembersFunction(CtMethod.class)).map((CtMethod<?> currentMethod) -> {
-				if (method == currentMethod) {
-					return null;
-				}
-				if (ctc.isSameSignature(method, currentMethod)) {
-					CtAnnotation<A> annotation2 = currentMethod.getAnnotation(annotationType);
-					if (annotation2 != null) {
-						return annotation2;
-					}
-				}
-				return null;
-			}).first();
-		}
-		return annotation;
-	}
-
 }
