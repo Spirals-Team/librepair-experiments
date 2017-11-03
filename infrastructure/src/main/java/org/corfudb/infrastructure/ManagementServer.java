@@ -367,11 +367,11 @@ public class ManagementServer extends AbstractServer {
         AddNodeRequest addNodeRequest = msg.getPayload();
 
         try {
-            corfuRuntime.getLayoutManagementView().bootstrapNewNode(addNodeRequest.getEndpoint());
+            getCorfuRuntime().getLayoutManagementView().bootstrapNewNode(addNodeRequest.getEndpoint());
 
             // Fill layout slot if failure in maxGlobalLogTail
             // Not wait for another failure detector.
-            corfuRuntime.getLayoutManagementView().addNode(latestLayout,
+            getCorfuRuntime().getLayoutManagementView().addNode(latestLayout,
                     addNodeRequest.getEndpoint(),
                     addNodeRequest.isLayoutServer(),
                     addNodeRequest.isSequencerServer(),
@@ -381,6 +381,7 @@ public class ManagementServer extends AbstractServer {
 
         } catch (Exception e) {
             log.error("handleAddNodeRequest: Failed due to exception : ", e);
+            e.printStackTrace();
             r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
             return;
         }
