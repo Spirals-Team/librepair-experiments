@@ -4223,8 +4223,11 @@ public class DefaultDockerClientTest {
       // This is a docker bug. Docker responds with HTTP 500 when it should be HTTP 409.
       // See https://github.com/docker/docker/issues/21016.
       // Fixed in version 1.11.0 API version 1.23. So we should see a lower API version here.
-      // Seems to be a regression in API version 1.33 https://github.com/moby/moby/issues/35472
-      assertThat(dockerApiVersionLessThan("1.23") || dockerApiVersionEquals("1.33"), is(true));
+      // Seems to be a regression in API version 1.3[23] https://github.com/moby/moby/issues/35472
+      assertThat(dockerApiVersionLessThan("1.23")
+                 || dockerApiVersionEquals("1.32")
+                 || dockerApiVersionEquals("1.33"),
+          is(true));
     }
 
     // Rename a non-existent id. Should get ContainerNotFoundException.
@@ -4663,8 +4666,8 @@ public class DefaultDockerClientTest {
   public void testStorageOpt() throws Exception {
     requireDockerApiVersionAtLeast("1.24", "StorageOpt");
     requireStorageDriverNotAufs();
-    // Doesn't work on Travis because storage driver doesn't have pquota mount option.
-    assumeFalse(compareVersion(dockerApiVersion, "1.32") == 0 && TRAVIS);
+    // Doesn't work on Travis because storage driver doesn't have pquota mount option enabled.
+    assumeFalse(dockerApiVersionEquals("1.32") && TRAVIS);
     // Pull image
     sut.pull(BUSYBOX_LATEST);
 
