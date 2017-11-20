@@ -138,7 +138,7 @@ public interface ReactiveRedisOperations<K, V> {
 	 *
 	 * @param key must not be {@literal null}.
 	 * @return The number of keys that were removed. {@literal null} when used in pipeline / transaction.
-	 * @see <a href="http://redis.io/commands/del">Redis Documentation: DEL</a>
+	 * @see <a href="http://redis.io/commands/unlink">Redis Documentation: UNLINK</a>
 	 * @since 2.1
 	 */
 	Mono<Long> unlink(K... key);
@@ -149,7 +149,7 @@ public interface ReactiveRedisOperations<K, V> {
 	 *
 	 * @param keys must not be {@literal null}.
 	 * @return The number of keys that were removed. {@literal null} when used in pipeline / transaction.
-	 * @see <a href="http://redis.io/commands/del">Redis Documentation: DEL</a>
+	 * @see <a href="http://redis.io/commands/unlink">Redis Documentation: UNLINK</a>
 	 * @since 2.1
 	 */
 	Mono<Long> unlink(Publisher<K> keys);
