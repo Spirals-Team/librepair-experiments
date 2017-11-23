@@ -31,19 +31,17 @@ public class Orchestrator {
     final Callable<CorfuRuntime> getRuntime;
 
     public Orchestrator(@Nonnull Callable<CorfuRuntime> runtime) {
-
+        // TODO(Maithem) need to create a new runtime for every workflow that runs
+        // TODO(Maithem) create an in-memory registry of running workflow
         this.getRuntime = runtime;
-        System.out.println("-------------- orchestrator");
     }
 
     public void handle(@Nonnull CorfuPayloadMsg<OrchestratorRequest> msg,
                        @Nonnull ChannelHandlerContext ctx,
                        @Nonnull IServerRouter r) {
 
-        System.out.println("-------------- here");
         OrchestratorRequest req = msg.getPayload();
         dispatch(req);
-        System.out.println("-------------- here2");
         r.sendResponse(ctx, msg, CorfuMsgType.ORCHESTRATOR_RESPONSE.msg());
     }
 
@@ -65,7 +63,7 @@ public class Orchestrator {
             return new AddNodeWorkflow(payload);
         }
 
-        throw new RuntimeException("Unknown request");
+        throw new IllegalArgumentException("Unknown request");
     }
 
     /**
