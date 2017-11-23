@@ -1,6 +1,6 @@
 /*
 /*
- * Copyright (c) 2010-2016. Axon Framework
+ * Copyright (c) 2010-2017. Axon Framework
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -135,7 +135,7 @@ public class SimpleCommandBus implements CommandBus {
     }
 
     private Optional<MessageHandler<? super CommandMessage<?>>> findCommandHandlerFor(CommandMessage<?> command) {
-        return Optional.of(subscriptions.get(command.getCommandName()));
+        return Optional.ofNullable(subscriptions.get(command.getCommandName()));
     }
 
     private <C> Object doDispatch(CommandMessage<C> command, MessageHandler<? super CommandMessage<?>> handler) throws Exception {
