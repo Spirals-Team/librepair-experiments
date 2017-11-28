@@ -333,8 +333,9 @@ public class NettyReactiveStreamsBody implements NettyBody {
 		
 		@Override
 		public void onNext(HttpContent t) {
-			if (calls.incrementAndGet() < 10) {
-				new Exception().printStackTrace();
+			int i = calls.incrementAndGet();
+			if (i % 10 == 0) {
+				new Exception("call " + i).printStackTrace();
 			}
 			if (t.content().isReadable()) {
 				byte[] bytes = ByteBufUtils.byteBuf2Bytes(t.content().duplicate());
