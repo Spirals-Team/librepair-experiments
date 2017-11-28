@@ -12,18 +12,12 @@
  */
 package org.asynchttpclient.netty.request.body;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.channel.*;
-import io.netty.handler.codec.http.DefaultHttpContent;
-import io.netty.handler.codec.http.HttpContent;
-import io.netty.handler.codec.http.LastHttpContent;
-import io.netty.util.concurrent.EventExecutor;
-
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.asynchttpclient.netty.NettyResponseFuture;
 import org.asynchttpclient.netty.util.ByteBufUtils;
@@ -33,6 +27,13 @@ import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.*;
+import io.netty.handler.codec.http.DefaultHttpContent;
+import io.netty.handler.codec.http.HttpContent;
+import io.netty.handler.codec.http.LastHttpContent;
+import io.netty.util.concurrent.EventExecutor;
 
 public class NettyReactiveStreamsBody implements NettyBody {
 
@@ -318,7 +319,7 @@ public class NettyReactiveStreamsBody implements NettyBody {
 		private static final Logger LOGGER = LoggerFactory.getLogger(NettySubscriber.class);
 		private final Channel channel;
 		private final NettyResponseFuture<?> future;
-		private final AtomicBoolean firstCall = new AtomicBoolean(true);
+		private final AtomicInteger calls = new AtomicInteger();
 
 		public NettySubscriber(Channel channel, NettyResponseFuture<?> future) {
 	        this.executor = channel.eventLoop();
@@ -332,7 +333,7 @@ public class NettyReactiveStreamsBody implements NettyBody {
 		
 		@Override
 		public void onNext(HttpContent t) {
-			if (firstCall.getAndSet(false)) {
+			if (calls.incrementAndGet() < 10) {
 				new Exception().printStackTrace();
 			}
 			if (t.content().isReadable()) {
