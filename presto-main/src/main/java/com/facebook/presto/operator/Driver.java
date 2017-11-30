@@ -49,7 +49,6 @@ import static com.facebook.presto.operator.Operator.NOT_BLOCKED;
 import static com.facebook.presto.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.base.Verify.verify;
 import static com.google.common.util.concurrent.MoreExecutors.newDirectExecutorService;
 import static io.airlift.concurrent.MoreFutures.getFutureValue;
 import static java.lang.Boolean.TRUE;
@@ -122,6 +121,11 @@ public class Driver
         this.deleteOperator = deleteOperator;
 
         currentTaskSource = sourceOperator.map(operator -> new TaskSource(operator.getSourceId(), ImmutableSet.of(), false)).orElse(null);
+        synchronized (driverBlockedFutureLock) {
+            driverBlockedFuture = SettableFuture.create();
+            // initially the driver is not blocked
+            driverBlockedFuture.set(null);
+        }
     }
 
     public DriverContext getDriverContext()
@@ -279,7 +283,7 @@ public class Driver
     @GuardedBy("driverBlockedFutureLock")
     private void updateDriverBlockedFuture(ListenableFuture<?> sourceBlockedFuture)
     {
-        verify(Thread.holdsLock(driverBlockedFutureLock), "driverBlockedFutureLock must be held to call updateDriverBlockedFuture");
+        checkState(Thread.holdsLock(driverBlockedFutureLock), "driverBlockedFutureLock must be held to call updateDriverBlockedFuture");
         // Unblock as soon as the sourceBlockedFuture is done or we get a revoking request for any of the operators
         if (!revocationRequestListenersSet) {
             operators.stream()
