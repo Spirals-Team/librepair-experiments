@@ -13,9 +13,8 @@
  */
 package com.facebook.presto.type;
 
-import org.testng.annotations.Test;
-
-@Test(enabled = false) // TODO unignore when new semantics is implemented
+// TODO unignore when new semantics is implemented
+// Note: ignore done using comments because @Test(enabled = false) misbehave on subclass
 public class TestDate
         extends TestDateBase
 {
