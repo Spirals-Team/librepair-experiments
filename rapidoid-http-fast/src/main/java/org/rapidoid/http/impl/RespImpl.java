@@ -16,6 +16,7 @@ import org.rapidoid.http.Req;
 import org.rapidoid.http.Resp;
 import org.rapidoid.http.customize.Customization;
 import org.rapidoid.http.customize.LoginProvider;
+import org.rapidoid.http.customize.MediaResponseRenderer;
 import org.rapidoid.http.customize.RolesProvider;
 import org.rapidoid.io.IO;
 import org.rapidoid.net.AsyncLogic;
@@ -526,7 +527,7 @@ public class RespImpl extends RapidoidThing implements Resp {
 	}
 
 	private byte[] serializeResponseContent() {
-		return HttpUtils.responseToBytes(req, result(), contentType(), Customization.of(req).jsonResponseRenderer());
+		return HttpUtils.responseToBytes(req, result(), contentType(), mediaResponseRenderer());
 	}
 
 	@Override
@@ -580,6 +581,19 @@ public class RespImpl extends RapidoidThing implements Resp {
 	void finish() {
 		if (chunked != null && !chunked.isClosed()) {
 			IO.close(chunked, false);
+		}
+	}
+
+	private MediaResponseRenderer mediaResponseRenderer() {
+		if (contentType.equals(MediaType.JSON)) {
+			return Customization.of(req).jsonResponseRenderer();
+
+		} else if (contentType.equals(MediaType.XML_UTF_8)) {
+			return Customization.of(req).xmlResponseRenderer();
+
+		} else {
+			// defaults to json
+			return Customization.of(req).jsonResponseRenderer();
 		}
 	}
 }

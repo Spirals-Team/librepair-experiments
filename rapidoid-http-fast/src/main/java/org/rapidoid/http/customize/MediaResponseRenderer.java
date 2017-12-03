@@ -1,7 +1,12 @@
+
 package org.rapidoid.http.customize;
 
 import org.rapidoid.annotation.Authors;
 import org.rapidoid.annotation.Since;
+import org.rapidoid.http.Req;
+
+import java.io.OutputStream;
+
 
 /*
  * #%L
@@ -23,8 +28,8 @@ import org.rapidoid.annotation.Since;
  * #L%
  */
 
-@Authors("Nikolche Mihajlovski")
-@Since("5.1.0")
-public interface JsonResponseRenderer extends MediaResponseRenderer {
-
+@Authors("Dan Cytermann")
+@Since("5.5.0")
+public interface MediaResponseRenderer {
+	void render(Req req, Object value, OutputStream out) throws Exception;
 }

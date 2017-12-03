@@ -13,7 +13,7 @@ import org.rapidoid.ctx.UserInfo;
 import org.rapidoid.data.BufRanges;
 import org.rapidoid.gui.reqinfo.ReqInfo;
 import org.rapidoid.http.customize.Customization;
-import org.rapidoid.http.customize.JsonResponseRenderer;
+import org.rapidoid.http.customize.MediaResponseRenderer;
 import org.rapidoid.http.impl.MaybeReq;
 import org.rapidoid.io.Res;
 import org.rapidoid.lambda.Mapper;
@@ -219,12 +219,12 @@ public class HttpUtils extends RapidoidThing implements HttpMetadata {
 		return (Conf.ROOT.is("https") ? "https://" : "http://") + x.host() + path;
 	}
 
-	public static byte[] responseToBytes(Req req, Object result, MediaType contentType, JsonResponseRenderer jsonRenderer) {
-		if (U.eq(contentType, MediaType.JSON)) {
+	public static byte[] responseToBytes(Req req, Object result, MediaType contentType, MediaResponseRenderer responseRenderer) {
+		if (U.eq(contentType, MediaType.JSON) || U.eq(contentType, MediaType.XML_UTF_8)) {
 			ByteArrayOutputStream out = new ByteArrayOutputStream();
 
 			try {
-				jsonRenderer.renderJson(req, result, out);
+				responseRenderer.render(req, result, out);
 			} catch (Exception e) {
 				throw U.rte(e);
 			}

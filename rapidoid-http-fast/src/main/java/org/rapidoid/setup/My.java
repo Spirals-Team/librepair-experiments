@@ -21,6 +21,7 @@ package org.rapidoid.setup;
  */
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import org.rapidoid.RapidoidThing;
 import org.rapidoid.annotation.Authors;
 import org.rapidoid.annotation.Since;
@@ -47,11 +48,14 @@ public class My extends RapidoidThing {
 			GLOBAL.pageDecorator(Defaults.pageDecorator());
 			GLOBAL.jsonResponseRenderer(Defaults.jsonResponseRenderer());
 			GLOBAL.jsonRequestBodyParser(Defaults.jsonRequestBodyParser());
+			GLOBAL.xmlResponseRenderer(Defaults.xmlResponseRenderer());
+			GLOBAL.xmlRequestBodyParser(Defaults.xmlRequestBodyParser());
 			GLOBAL.beanParameterFactory(Defaults.beanParameterFactory());
 			GLOBAL.loginProvider(Defaults.loginProvider());
 			GLOBAL.rolesProvider(Defaults.rolesProvider());
 			GLOBAL.validator(Defaults.validator());
 			GLOBAL.jackson(Defaults.jackson());
+			GLOBAL.jacksonXml(Defaults.jacksonXml());
 			GLOBAL.entityManagerFactoryProvider(Defaults.entityManagerFactoryProvider());
 			GLOBAL.entityManagerProvider(Defaults.entityManagerProvider());
 			GLOBAL.sessionManager(Defaults.sessionManager());
@@ -97,6 +101,10 @@ public class My extends RapidoidThing {
 		GLOBAL.jsonResponseRenderer(jsonResponseRenderer);
 	}
 
+	public static void xmlResponseRenderer(XmlResponseRenderer xmlResponseRenderer) {
+		GLOBAL.xmlResponseRenderer(xmlResponseRenderer);
+	}
+
 	public static void beanParameterFactory(BeanParameterFactory beanParameterFactory) {
 		GLOBAL.beanParameterFactory(beanParameterFactory);
 	}
@@ -125,12 +133,20 @@ public class My extends RapidoidThing {
 		GLOBAL.jackson(jackson);
 	}
 
+	public static void jacksonXml(XmlMapper jacksonXml) {
+		GLOBAL.jacksonXml(jacksonXml);
+	}
+
 	public static ErrorHandler errorHandler() {
 		return GLOBAL.errorHandler();
 	}
 
 	public static JsonResponseRenderer jsonResponseRenderer() {
 		return GLOBAL.jsonResponseRenderer();
+	}
+
+	public static XmlResponseRenderer xmlResponseRenderer() {
+		return GLOBAL.xmlResponseRenderer();
 	}
 
 	public static BeanParameterFactory beanParameterFactory() {
