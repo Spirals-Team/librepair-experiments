@@ -360,18 +360,23 @@ public class CoordinatorBasicAuthenticatorMetadataStorageUpdater implements Basi
 
   private void setUserCredentialsInternal(String prefix, String userName, BasicAuthenticatorCredentialUpdate update)
   {
-    BasicAuthenticatorCredentials credentials = new BasicAuthenticatorCredentials(update);
+    BasicAuthenticatorCredentials credentials;
+
     // use default iteration count from Authenticator if not specified in request
-    if (credentials.getIterations() == -1) {
+    if (update.getIterations() == -1) {
       BasicHTTPAuthenticator authenticator = (BasicHTTPAuthenticator) authenticatorMapper.getAuthenticatorMap().get(
           prefix
       );
       credentials = new BasicAuthenticatorCredentials(
-          credentials.getSalt(),
-          credentials.getHash(),
-          authenticator.getDbConfig().getIterations()
+          new BasicAuthenticatorCredentialUpdate(
+              update.getPassword(),
+              authenticator.getDbConfig().getIterations()
+          )
       );
+    } else {
+      credentials = new BasicAuthenticatorCredentials(update);
     }
+
     int attempts = 0;
     while (attempts < numRetries) {
       if (setUserCredentialOnce(prefix, userName, credentials)) {
