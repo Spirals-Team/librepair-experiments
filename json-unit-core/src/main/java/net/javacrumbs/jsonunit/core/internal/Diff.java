@@ -42,6 +42,7 @@ import static net.javacrumbs.jsonunit.core.Option.IGNORING_EXTRA_ARRAY_ITEMS;
 import static net.javacrumbs.jsonunit.core.Option.IGNORING_EXTRA_FIELDS;
 import static net.javacrumbs.jsonunit.core.Option.IGNORING_VALUES;
 import static net.javacrumbs.jsonunit.core.internal.ClassUtils.isClassPresent;
+import static net.javacrumbs.jsonunit.core.internal.JsonUnitLogger.NULL_LOGGER;
 import static net.javacrumbs.jsonunit.core.internal.JsonUtils.convertToJson;
 import static net.javacrumbs.jsonunit.core.internal.JsonUtils.getNode;
 import static net.javacrumbs.jsonunit.core.internal.JsonUtils.quoteIfNeeded;
@@ -60,7 +61,6 @@ public class Diff {
 
     private static final JsonUnitLogger DEFAULT_DIFF_LOGGER = createLogger("net.javacrumbs.jsonunit.difference.diff");
     private static final JsonUnitLogger DEFAULT_VALUE_LOGGER = createLogger("net.javacrumbs.jsonunit.difference.values");
-    private static final JsonUnitLogger NULL_LOGGER = new JsonUnitLogger.NullLogger();
 
     private final Node expectedRoot;
     private final Node actualRoot;
