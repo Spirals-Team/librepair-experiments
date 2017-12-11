@@ -75,7 +75,7 @@ public class MultipartUploadTest extends AbstractBasicTest {
 
     /**
      * Tests that the streaming of a file works.
-     *
+     * 
      * @throws IOException
      */
     @Test(groups = "standalone")
@@ -143,7 +143,7 @@ public class MultipartUploadTest extends AbstractBasicTest {
     private void sendEmptyFile0(boolean disableZeroCopy) throws Exception {
         File file = getClasspathFile("empty.txt");
         try (AsyncHttpClient c = asyncHttpClient(config().setDisableZeroCopy(disableZeroCopy))) {
-            Request r = post("http://localhost" + ":" + port1 + "/upload/bob")
+            Request r = post("http://localhost" + ":" + port1 + "/upload")
                     .addBodyPart(new FilePart("file", file, "text/plain", UTF_8)).build();
 
             Response res = c.executeRequest(r).get();
