@@ -270,7 +270,7 @@ public class CorfuRuntimeTest extends AbstractViewTest {
      * Creates and bootstraps 3 nodes N0, N1 and N2.
      * The runtime connects to the 3 nodes and sets the clientRouter epochs to 1, 1 and 1.
      * Now the epoch is updated to 2.
-     * We now add a rule which throws a NetworkException while fetching a router to the first node
+     * We now simulate a NetworkException while fetching a router to the first node
      * in the list. The runtime is now invalidated, which forces to update the client router
      * epochs. This should now update the epochs to the following: 1, 2, 2.
      *
@@ -282,6 +282,9 @@ public class CorfuRuntimeTest extends AbstractViewTest {
         final Map<String, TestClientRouter> routerMap = new ConcurrentHashMap<>();
         final AtomicReference<String> failedNode = new AtomicReference<>();
 
+        // This getRouterFunction simulates the network exception thrown during the
+        // NettyClientRouter creation.
+        // Note: This does not simulate NetworkException while message transfer or connection.
         CorfuRuntime.overrideGetRouterFunction = (corfuRuntime, endpoint) -> {
             if (failedNode.get() != null && endpoint.equals(failedNode.get())) {
                 throw new NetworkException("Test server not responding : ", endpoint);
@@ -318,6 +321,7 @@ public class CorfuRuntimeTest extends AbstractViewTest {
         assertThat(routerMap.get(serverArray[1]).getEpoch()).isEqualTo(1L);
         assertThat(routerMap.get(serverArray[2]).getEpoch()).isEqualTo(1L);
 
+        // Simulate router creation failure for the first endpoint in the list.
         failedNode.set((String) l.getAllServers().toArray()[0]);
 
         runtime.invalidateLayout();
