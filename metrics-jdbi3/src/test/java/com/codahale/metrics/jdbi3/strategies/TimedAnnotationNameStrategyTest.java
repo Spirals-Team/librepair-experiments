@@ -46,14 +46,14 @@ public class TimedAnnotationNameStrategyTest extends AbstractStrategyTest {
     public void testAnnotationOnMethod() throws Exception {
         when(ctx.getExtensionMethod()).thenReturn(new ExtensionMethod(Foo.class, Foo.class.getMethod("update")));
         assertThat(timedAnnotationNameStrategy.getStatementName(ctx))
-                .isEqualTo("TimedAnnotationNameStrategyTest$Foo.update");
+                .isEqualTo("com.codahale.metrics.jdbi3.strategies.TimedAnnotationNameStrategyTest$Foo.update");
     }
 
     @Test
     public void testAnnotationOnMethodWithCustomName() throws Exception {
         when(ctx.getExtensionMethod()).thenReturn(new ExtensionMethod(Foo.class, Foo.class.getMethod("customUpdate")));
         assertThat(timedAnnotationNameStrategy.getStatementName(ctx))
-                .isEqualTo("TimedAnnotationNameStrategyTest$Foo.custom-update");
+                .isEqualTo("com.codahale.metrics.jdbi3.strategies.TimedAnnotationNameStrategyTest$Foo.custom-update");
     }
 
     @Test
@@ -66,7 +66,7 @@ public class TimedAnnotationNameStrategyTest extends AbstractStrategyTest {
     public void testAnnotationOnClass() throws Exception {
         when(ctx.getExtensionMethod()).thenReturn(new ExtensionMethod(Bar.class, Bar.class.getMethod("update")));
         assertThat(timedAnnotationNameStrategy.getStatementName(ctx))
-                .isEqualTo("TimedAnnotationNameStrategyTest$Bar.update");
+                .isEqualTo("com.codahale.metrics.jdbi3.strategies.TimedAnnotationNameStrategyTest$Bar.update");
     }
 
     @Test
