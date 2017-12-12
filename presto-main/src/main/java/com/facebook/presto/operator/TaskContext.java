@@ -168,12 +168,6 @@ public class TaskContext
 
         // always update last execution start time
         lastExecutionStartTime.set(now);
-
-        taskStateMachine.addStateChangeListener(state -> {
-            if (state.isDone()) {
-                transferredBytesMemoryContext.close();
-            }
-        });
     }
 
     public void failed(Throwable cause)
