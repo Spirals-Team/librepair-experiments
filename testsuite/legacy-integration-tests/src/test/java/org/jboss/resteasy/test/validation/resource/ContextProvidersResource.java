@@ -42,7 +42,7 @@ public class ContextProvidersResource {
     @Path("get/form")
     public MultipartFormDataOutput getForm() {
         MultipartFormDataOutput output = new MultipartFormDataOutput();
-        output.addFormData("bill", "Bill-2", MediaType.TEXT_PLAIN_TYPE);
+        output.addFormData("bill", new ContextProvidersCustomer("Bill-2"), MediaType.APPLICATION_XML_TYPE, "tmp2");
         output.addFormData("bob", "Bob", MediaType.TEXT_PLAIN_TYPE);
         output.addFormData("bill", new ContextProvidersCustomer("Bill"), MediaType.APPLICATION_XML_TYPE, "tmp1");
         return output;
