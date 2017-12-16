@@ -68,7 +68,7 @@ public class SpoutWithMockedConsumerSetupHelper {
         if (!mockingDetails(subscriptionMock).isMock()) {
             throw new IllegalStateException("Use a mocked subscription when using this method, it helps avoid complex stubbing");
         }
-
+        
         Set<TopicPartition> assignedPartitionsSet = new HashSet<>(Arrays.asList(assignedPartitions));
         
         when(consumerMock.assignment()).thenReturn(assignedPartitionsSet);
@@ -77,7 +77,7 @@ public class SpoutWithMockedConsumerSetupHelper {
             listener.onPartitionsAssigned(assignedPartitionsSet);
             return null;
         }).when(subscriptionMock).subscribe(any(), any(ConsumerRebalanceListener.class), any());
-
+        
         KafkaConsumerFactory<K, V> consumerFactory = (kafkaSpoutConfig) -> consumerMock;
         KafkaSpout<K, V> spout = new KafkaSpout<>(spoutConfig, consumerFactory);
         

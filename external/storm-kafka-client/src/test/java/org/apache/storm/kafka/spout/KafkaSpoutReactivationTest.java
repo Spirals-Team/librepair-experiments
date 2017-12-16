@@ -117,7 +117,7 @@ public class KafkaSpoutReactivationTest {
             }
 
             KafkaSpoutMessageId ackAfterDeactivateMessageId = emitOne();
-
+            
             //Cycle spout activation
             spout.deactivate();
             SingleTopicKafkaUnitSetupHelper.verifyAllMessagesCommitted(consumerSpy, commitCapture, beforeReactivationEmits - 1);

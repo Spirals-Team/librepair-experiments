@@ -53,9 +53,9 @@ public class SingleTopicKafkaUnitSetupHelper {
             kafkaUnit.sendMessage(producerRecord);
         }
     }
-
+    
     /*
-     * Asserts that commitSync has been called once,
+     * Asserts that commitSync has been called once, 
      * that there are only commits on one topic,
      * and that the committed offset covers messageCount messages
      */
