@@ -26,6 +26,15 @@ public class ManagementView extends AbstractView {
         super(runtime);
     }
 
+    /**
+     * Checks if a given workflow with the given workflow ID is active or not.
+     * If returns True - the workflow is active
+     * If returns False - the workflow is either completed successfully or failed.
+     *
+     * @param server     Node endpoint on which the workflow is running.
+     * @param workflowId Workflow UUID
+     * @return True if active. Else False
+     */
     public boolean isWorkflowActive(String server, UUID workflowId) {
         return layoutHelper(l -> {
             QueryResponse response = runtime.getRouter(server)
