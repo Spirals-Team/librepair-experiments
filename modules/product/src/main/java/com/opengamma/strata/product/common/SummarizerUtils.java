@@ -143,7 +143,7 @@ public final class SummarizerUtils {
   //-------------------------------------------------------------------------
   /**
    * Converts pay/receive to a string.
-   *
+   * 
    * @param payReceive  the value
    * @return the string form
    */

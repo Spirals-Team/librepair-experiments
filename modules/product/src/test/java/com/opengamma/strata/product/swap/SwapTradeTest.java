@@ -53,8 +53,9 @@ public class SwapTradeTest {
         .id(TRADE_INFO.getId().orElse(null))
         .portfolioItemType(PortfolioItemType.TRADE)
         .productType(ProductType.SWAP)
-        .currencies(Currency.GBP, Currency.USD)
-        .description("7M Pay Fixed / Rec Fixed : 15Jan12-15Aug12")
+        .currencies(Currency.GBP, Currency.EUR, Currency.USD)
+        .description(
+            "7M Pay [GBP-LIBOR-3M, EUR/GBP-ECB, EUR-EONIA] / Rec [GBP-LIBOR-3M, EUR/GBP-ECB, EUR-EONIA] : 15Jan12-15Aug12")
         .build();
     assertEquals(trade.summarize(), expected);
   }
