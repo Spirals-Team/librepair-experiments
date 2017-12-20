@@ -100,7 +100,8 @@ public class Orchestrator {
      * an existing workflow that is executing on the same endpoint,
      * then just return the corresponding workflow id. Dispatch is the only
      * place where workflows are created based on reading activeWorkflows
-     * and therefore needs to be synchronized.
+     * and therefore needs to be synchronized to prevent launching multiple
+     * workflows for the same endpoint concurrently.
      *
      * @param msg corfu message containing the create workflow request
      * @param ctx netty ChannelHandlerContext

@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
 
 /**
  * The type of requests that can be made to the Orchestrator Service.
- *
+ * 
  * @author Maithem
  */
 @AllArgsConstructor
