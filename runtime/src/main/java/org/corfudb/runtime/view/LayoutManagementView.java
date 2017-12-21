@@ -136,6 +136,8 @@ public class LayoutManagementView extends AbstractView {
         newLayout.setRuntime(runtime);
         attemptConsensus(newLayout);
 
+        runtime.invalidateLayout();
+
         try {
             reconfigureSequencerServers(currentLayout, newLayout, false);
         } catch (InterruptedException ie) {
@@ -143,7 +145,6 @@ public class LayoutManagementView extends AbstractView {
             throw new UnrecoverableCorfuInterruptedError(ie);
         } catch (ExecutionException ee) {
             log.error("removeNode: Bootstrapping sequencer failed due to exception : ", ee);
-            throw new UnrecoverableCorfuError(ee);
         }
     }
 
