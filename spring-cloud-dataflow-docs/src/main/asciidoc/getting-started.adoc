@@ -1,0 +1,160 @@
+[[getting-started]]
+= Getting started
+
+[partintro]
+--
+If you're just getting started with Spring Cloud Data Flow, this is the section
+for you! Here we answer the basic "`what?`", "`how?`" and "`why?`" questions. You'll
+find a gentle introduction to Spring Cloud Data Flow along with installation instructions.
+We'll then build our first Spring Cloud Data Flow application, discussing some core principles as
+we go.
+--
+
+[[getting-started-system-requirements]]
+== System Requirements
+
+You need Java installed (Java 8 or later), and to build, you need to have Maven installed as well.
+
+You need to have an RDBMS for storing stream, task and app states in the database. The `local` Data Flow server by default uses embedded H2 database for this.
+
+You also need to have link:https://redis.io[Redis] running if you are running any streams that involve analytics applications. Redis may also be required run the unit/integration tests.
+
+For the deployed streams and tasks to communicate, either link:http://www.rabbitmq.com[RabbitMQ] or link:http://kafka.apache.org[Kafka] needs to be installed.
+
+[[getting-started-deploying-spring-cloud-dataflow]]
+== Installation
+. Download the Spring Cloud Data Flow Server and Shell apps:
++
+[source,bash,subs=attributes]
+----
+wget http://repo.spring.io/{version-type-lowercase}/org/springframework/cloud/spring-cloud-dataflow-server-local/{project-version}/spring-cloud-dataflow-server-local-{project-version}.jar
+
+wget http://repo.spring.io/{version-type-lowercase}/org/springframework/cloud/spring-cloud-dataflow-shell/{project-version}/spring-cloud-dataflow-shell-{project-version}.jar
+----
++
+. Download http://cloud.spring.io/spring-cloud-skipper/[Skipper] if you would like the added features of upgrading and rolling back Streams since Data Flow delegates to Skipper for those features.
++
+[source,yaml,options=nowrap,subs=attributes]
+----
+wget http://repo.spring.io/{skipper-version-type-lowercase}/org/springframework/cloud/spring-cloud-skipper-server/{skipper-version}/spring-cloud-skipper-server-{skipper-version}.jar
+wget http://repo.spring.io/{skipper-version-type-lowercase}/org/springframework/cloud/spring-cloud-skipper-shell/{skipper-version}/spring-cloud-skipper-shell-{skipper-version}.jar
+----
++
+. Launch Skipper
++
+In the directory where you downloaded skipper, run the server using `java -jar`
++
+[source,bash,subs=attributes]
+----
+$ java -jar spring-cloud-skipper-server-{skipper-version}.jar
+----
++
+. Launch the Data Flow Server
++
+In the directory where you downloaded Data Flow, run the server using `java -jar`
++
+[source,bash,subs=attributes]
+----
+$ java -jar spring-cloud-dataflow-server-local-{project-version}.jar
+----
++
+. Launch the Data Flow Shell:
++
+[source,bash,subs=attributes]
+----
+$ java -jar spring-cloud-dataflow-shell-{project-version}.jar
+----
++
+If the Data Flow Server and shell are not running on the same host, point the shell to the Data Flow server URL:
++
+[source,bash]
+----
+server-unknown:>dataflow config server http://198.51.100.0
+Successfully targeted http://198.51.100.0
+dataflow:>
+----
++
+If Skipper and the Data Flow server are not running on the same host, set the configuration property `spring.cloud.skipper.client.uri` to the location of Skipper, e.g.
++
+[source,bash,subs=attributes]
+----
+$ java -jar -jar spring-cloud-dataflow-server-local-{project-version}.jar --spring.cloud.config.skipper.client.uri=http://192.51.100.1:7577/api
+----
+
+[[getting-started-deploying-streams-spring-cloud-dataflow]]
+== Deploying Streams
+. Import Apps
++
+By default, the application registry will be empty.
+Let's register two applications, `http` and `log` that communicate using RabbitMQ.
++
+```
+dataflow:>app register --name http --type source --uri maven://org.springframework.cloud.stream.app:http-source-rabbit:1.2.0.RELEASE
+Successfully registered application 'source:http'
+
+dataflow:>app register --name log --type sink --uri maven://org.springframework.cloud.stream.app:log-sink-rabbit:1.1.0.RELEASE
+Successfully registered application 'sink:log'
+```
++
+For more details, such as how to register applications that are based on docker containers or use Kafka as the messaging middleware, review the section on how to <<streams.adoc#spring-cloud-dataflow-register-stream-apps, register applications>>.
++
+NOTE: Depending on your environment, you may need to configure the Data Flow Server to point to a custom
+Maven repository location or configure proxy settings.  See <<configuration-maven>> for more information.
++
+There are two options for deploying Streams.  The "traditional" way that Data Flow has always used and a new way that delegates to the Skipper server.  Deploying using Skipper will enable you to update and rollback the streams while the traditional way will not.
++
+. Create Streams without Skipper
++
+You can now use the shell commands to list available applications (source/processors/sink) and create streams. For example:
++
+[source,bash]
+----
+dataflow:> stream create --name httptest --definition "http --server.port=9000 | log" --deploy
+----
++
+NOTE: You will need to wait a little while until the apps are actually deployed successfully
+before posting data.  Look in the log file of the Data Flow server for the location of the log
+files for the `http` and `log` applications.  Tail the log file for each application to verify
+the application has started.
++
+Now post some data
++
+[source,bash]
+----
+dataflow:> http post --target http://localhost:9000 --data "hello world"
+----
+Look to see if `hello world` ended up in log files for the `log` application.
++
+. Create Streams with Skipper
++
+You can now use the shell commands to list available applications (source/processors/sink) and create streams. For example:
++
+[source,bash]
+----
+dataflow:> stream create --name httptest --definition "http --server.port=9000 | log"
+dataflow:> stream skipper deploy --name httptest
+----
++
+NOTE: You will need to wait a little while until the apps are actually deployed successfully
+before posting data.  Look in the log file of the Skipper server for the location of the log
+files for the `http` and `log` applications.  Tail the log file for each application to verify
+the application has started.
++
+Now post some data
+[source,bash]
+----
+dataflow:> http post --target http://localhost:9000 --data "hello world"
+----
+Look to see if `hello world` ended up in log files for the `log` application.
+
+You can read more about the general features of using Skipper to deploy streams in the section <<spring-cloud-dataflow-stream-lifecycle-skipper>> and how to upgrade and rollback streams in the section <<spring-cloud-dataflow-streams-skipper>>.
+
+[NOTE]
+====
+When deploying locally, each app (and each app instance, in case of `count>1`) gets a dynamically assigned `server.port`
+unless you explicitly assign one with `--server.port=x`. In both cases, this setting is propagated as a configuration
+property that will override any lower-level setting that you may have used (_e.g._ in `application.yml` files).
+====
+
+== Deploying Tasks
+Refer to the section, <<spring-cloud-dataflow-register-task-apps>>, for an example on how to get started using Tasks in Spring Cloud Data Flow.
