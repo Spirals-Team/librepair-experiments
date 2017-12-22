@@ -140,7 +140,6 @@ public class PeriodicPollPolicy implements IFailureDetectorPolicy {
                     // incorrect epoch in map and increment counter.
                     // If the node is consistently on the wrong epoch we continue incrementing
                     // the counter.
-
                     if (pingedNodeEpoch == historyNodeEpoch
                             .getOrDefault(historyServers[ii], -1L)) {
 
@@ -153,7 +152,6 @@ public class PeriodicPollPolicy implements IFailureDetectorPolicy {
                     // For any other exception mark node as failure.
                     log.debug("Ping failed for {}. Cause : {}", historyServers[ii], e);
                     historyPollFailures[ii]++;
-
                 }
             });
         }

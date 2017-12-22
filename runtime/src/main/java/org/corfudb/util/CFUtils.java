@@ -54,7 +54,6 @@ public class CFUtils {
                 if (throwableD.isInstance(ee.getCause())) {
                     throw (D) ee.getCause();
                 }
-
                 throw new RuntimeException(ee.getCause());
             }
     }

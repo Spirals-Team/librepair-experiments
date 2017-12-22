@@ -21,11 +21,9 @@ public interface IFailureHandlerPolicy {
      * @param failedNodes   Set of failed nodes.
      * @param healedNodes   Set of healed nodes.
      * @return generated layout
-     * @throws LayoutModificationException .
      */
     Layout generateLayout(Layout currentLayout,
                           CorfuRuntime corfuRuntime,
                           Set<String> failedNodes,
-                          Set<String> healedNodes)
-            throws LayoutModificationException;
+                          Set<String> healedNodes);
 }
