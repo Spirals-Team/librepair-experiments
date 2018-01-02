@@ -186,36 +186,28 @@ public abstract class BaseRoute<P extends BaseNavigationPosition, F extends Base
 
     public abstract int getPositionCount();
 
-    protected void move(int index, int upOrDown) {
+    public void top(int index, int topOffset) {
         List<P> positions = getPositions();
         P move = positions.get(index);
-        P replace = positions.get(index + upOrDown);
-        positions.set(index + upOrDown, move);
-        positions.set(index, replace);
+        for (int i = index; i > topOffset; i--)
+            positions.set(i, positions.get(i - 1));
+        positions.set(topOffset, move);
     }
 
-    public void top(int index, int topOffset) {
-        while (index > topOffset) {
-            up(index, index - 1);
-            index--;
-        }
-    }
-
-    public void down(int fromIndex, int toIndex) {
-        while (fromIndex < toIndex)
-            move(fromIndex++, +1);
-    }
-
-    public void up(int fromIndex, int toIndex) {
-        while (fromIndex > toIndex)
-            move(fromIndex--, -1);
+    public void move(int firstIndex, int secondIndex) {
+        List<P> positions = getPositions();
+        P from = positions.get(firstIndex);
+        P to = positions.get(secondIndex);
+        positions.set(firstIndex, to);
+        positions.set(secondIndex, from);
     }
 
     public void bottom(int index, int bottomOffset) {
-        while (index < getPositionCount() - 1 - bottomOffset) {
-            down(index, index + 1);
-            index++;
-        }
+        List<P> positions = getPositions();
+        P move = positions.get(index);
+        for (int i = index; i < getPositionCount() - 1 - bottomOffset; i++)
+            positions.set(i, positions.get(i + 1));
+        positions.set(getPositionCount() - 1 - bottomOffset, move);
     }
 
     public abstract void add(int index, P position);
