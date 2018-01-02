@@ -84,7 +84,7 @@ import java.util.TimeZone;
  * </tr>
  * <tr>
  * <td>{@code includeRequestParameters}</td>
- * <td>false</td>
+ * <td>true</td>
  * <td>Whether to include the request parameters.</td>
  * </tr>
  * <tr>
@@ -112,7 +112,7 @@ import java.util.TimeZone;
 @JsonTypeName("access-json")
 public class AccessJsonLayoutBaseFactory extends AbstractJsonLayoutBaseFactory<IAccessEvent> {
 
-    private boolean includeRemoteAddr = true;
+    private boolean includeRemoteAddress = true;
     private boolean includeRemoteUser = true;
     private boolean includeRequestTime = true;
     private boolean includeRequestURI = true;
@@ -124,7 +124,7 @@ public class AccessJsonLayoutBaseFactory extends AbstractJsonLayoutBaseFactory<I
     private boolean includeRemoteHost = false;
     private boolean includeServerName = false;
     private boolean includeRequestHeaders = false;
-    private boolean includeRequestParameters = false;
+    private boolean includeRequestParameters = true;
     private boolean includeUserAgent = true;
     private boolean includeResponseHeaders = false;
     private boolean includeLocalPort = false;
@@ -132,13 +132,13 @@ public class AccessJsonLayoutBaseFactory extends AbstractJsonLayoutBaseFactory<I
     private boolean includeResponseContent = false;
 
     @JsonProperty
-    public boolean isIncludeRemoteAddr() {
-        return includeRemoteAddr;
+    public boolean isIncludeRemoteAddress() {
+        return includeRemoteAddress;
     }
 
     @JsonProperty
-    public void setIncludeRemoteAddr(boolean includeRemoteAddr) {
-        this.includeRemoteAddr = includeRemoteAddr;
+    public void setIncludeRemoteAddress(boolean includeRemoteAddress) {
+        this.includeRemoteAddress = includeRemoteAddress;
     }
 
     @JsonProperty
@@ -318,7 +318,7 @@ public class AccessJsonLayoutBaseFactory extends AbstractJsonLayoutBaseFactory<I
         jsonLayout.setContext(context);
         jsonLayout.setIncludeTimestamp(isIncludeTimestamp());
 
-        jsonLayout.setIncludeRemoteAddr(includeRemoteAddr);
+        jsonLayout.setIncludeRemoteAddr(includeRemoteAddress);
         jsonLayout.setIncludeRequestContent(includeRequestContent);
         jsonLayout.setIncludeRequestHeaders(includeRequestHeaders);
         jsonLayout.setIncludeRequestParameters(includeRequestParameters);

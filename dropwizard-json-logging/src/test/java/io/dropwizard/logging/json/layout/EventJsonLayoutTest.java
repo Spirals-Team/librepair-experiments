@@ -114,11 +114,11 @@ public class EventJsonLayoutTest {
         Map<String, Object> map = new EventJsonLayout(jsonFormatter, timestampFormatter, throwableProxyConverter,
             ImmutableMap.of(), ImmutableMap.of("serviceName", "userService", "serviceBuild", 207))
             .toJsonMap(event);
-        assertThat(map).containsOnly(entry("@timestamp", timestamp),
+        assertThat(map).containsOnly(entry("timestamp", timestamp),
             entry("thread", "main"),
             entry("level", "INFO"),
             entry("logger", logger),
-            entry("@message", message),
+            entry("message", message),
             entry("mdc", mdc),
             entry("serviceName", "userService"),
             entry("serviceBuild", 207));

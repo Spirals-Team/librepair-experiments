@@ -90,7 +90,7 @@ public class LayoutIntegrationTests {
         assertThat(factory.isPrettyPrint()).isFalse();
         assertThat(factory.isIncludeTimestamp()).isTrue();
         assertThat(factory.isAppendLineSeparator()).isTrue();
-        assertThat(factory.isIncludeRemoteAddr()).isFalse();
+        assertThat(factory.isIncludeRemoteAddress()).isFalse();
         assertThat(factory.isIncludeRemoteUser()).isTrue();
         assertThat(factory.isIncludeRequestTime()).isFalse();
         assertThat(factory.isIncludeRequestURI()).isFalse();
