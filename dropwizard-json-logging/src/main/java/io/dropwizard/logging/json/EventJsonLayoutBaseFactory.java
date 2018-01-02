@@ -29,7 +29,7 @@ import java.util.TimeZone;
  * <td>Whether to include the thread name.</td>
  * </tr>
  * <tr>
- * <td>{@code includeMdc}</td>
+ * <td>{@code includeMDC}</td>
  * <td>true</td>
  * <td>Whether to include the MDC properties.</td>
  * </tr>

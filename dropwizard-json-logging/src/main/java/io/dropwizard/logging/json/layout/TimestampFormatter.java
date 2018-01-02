@@ -6,7 +6,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
 /**
- * A more fast timestamp formatter than the default one in `logback-contrib`.
+ * A faster timestamp formatter than the default one in Logback.
  * Also produces timestamps as numbers if the timestamp formatting is disabled.
  */
 public class TimestampFormatter {
