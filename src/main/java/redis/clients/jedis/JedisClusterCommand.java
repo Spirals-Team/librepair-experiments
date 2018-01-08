@@ -137,7 +137,7 @@ public abstract class JedisClusterCommand<T> {
         throw jce;
       }
 
-      return runWithRetries(key, attempts - 1, tryRandomNode, null);
+      return runWithRetries(key, attempts - 1, tryRandomNode, redirect);
     } catch (JedisRedirectionException jre) {
       // if MOVED redirection occurred,
       if (jre instanceof JedisMovedDataException) {
