@@ -93,7 +93,7 @@ public class CorfuServer {
                     + "<keystore> -f <keystore_password_file>] [-r <truststore> -w "
                     + "<truststore_password_file>] [-b] [-g -o <username_file> -j <password_file>] "
                     + "[-k <seqcache>] [-T <threads>] [-i <channel-implementation>] [-H <seconds>] "
-                    + "[-I <cluster-id>] [-x <ciphers>] [-z <tls-protocols>] [-p <prefix>]"
+                    + "[-I <cluster-id>] [-x <ciphers>] [-z <tls-protocols>]] [-P <prefix>]"
                     + " [--agent] <port>\n"
                     + "\n"
                     + "Options:\n"
