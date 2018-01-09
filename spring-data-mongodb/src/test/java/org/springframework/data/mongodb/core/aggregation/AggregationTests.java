@@ -536,7 +536,7 @@ public class AggregationTests {
 				group("state") //
 						.sum("population").as("totalPop"), //
 				sort(ASC, previousOperation(), "totalPop"), //
-				match(where("totalPop").gte(10 * 1000-2018 * 1000)) //
+				match(where("totalPop").gte(10 * 1000 * 1000)) //
 		);
 
 		assertThat(agg, is(notNullValue()));
