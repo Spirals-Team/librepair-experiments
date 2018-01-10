@@ -119,6 +119,7 @@ public class HttpClientModule
                     .build();
 
             client = new JettyHttpClient(name, config, kerberosConfig, ImmutableList.copyOf(filters));
+            injector = null;
             return client;
         }
 
