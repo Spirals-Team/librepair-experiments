@@ -398,7 +398,6 @@ public class HttpClientConfig
     }
 
     @Config("http-client.max-threads")
-    @LegacyConfig("http-client.threads")
     public HttpClientConfig setMaxThreads(int maxThreads)
     {
         this.maxThreads = maxThreads;

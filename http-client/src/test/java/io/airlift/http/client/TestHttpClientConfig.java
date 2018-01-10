@@ -26,7 +26,6 @@ import javax.validation.constraints.NotNull;
 
 import java.util.Map;
 
-import static io.airlift.configuration.testing.ConfigAssertions.assertDeprecatedEquivalence;
 import static io.airlift.http.client.HttpClientConfig.JAVAX_NET_SSL_KEY_STORE;
 import static io.airlift.http.client.HttpClientConfig.JAVAX_NET_SSL_KEY_STORE_PASSWORD;
 import static io.airlift.http.client.HttpClientConfig.JAVAX_NET_SSL_TRUST_STORE;
@@ -144,16 +143,15 @@ public class TestHttpClientConfig
     @Test
     public void testDeprecatedProperties()
     {
+        Map<String, String> currentProperties = new ImmutableMap.Builder<String, String>()
+                .put("http-client.idle-timeout", "111m")
+                .build();
 
-        assertDeprecatedEquivalence(
-                HttpClientConfig.class,
-                ImmutableMap.of("http-client.idle-timeout", "42s"),
-                ImmutableMap.of("http-client.read-timeout", "42s"));
+        Map<String, String> oldProperties = new ImmutableMap.Builder<String, String>()
+                .put("http-client.read-timeout", "111m")
+                .build();
 
-        assertDeprecatedEquivalence(
-                HttpClientConfig.class,
-                ImmutableMap.of("http-client.max-threads", "123"),
-                ImmutableMap.of("http-client.threads", "123"));
+        ConfigAssertions.assertDeprecatedEquivalence(HttpClientConfig.class, currentProperties, oldProperties);
     }
 
     @Test
