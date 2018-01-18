@@ -1,0 +1,71 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long qw(:config no_ignore_case);
+use Perun::Agent;
+use Perun::Common qw(printMessage);
+
+sub help {
+	return qq{
+	Adds a Facility manager. User id and Facility are required fields.
+	------------------------------------
+	Available options:
+	--facilityId      | -f facility id
+	--facilityName    | -F facility name
+	--authGroupId     | -a authorized groupId
+	--authGroupName   | -A authorized group Name
+	--authGroupVoId   | -o authorized group VO Id
+	--authGroupVoName | -O authorized group VO Name
+	--userId          | -u user id
+	--batch           | -b batch
+	--help            | -h prints this help
+
+	};
+}
+
+my ($facilityId, $userId, $facilityName, $authGroupId, $authGroupName, $authGroupVoId, $authGroupVoName, $batch);
+GetOptions ("help|h"   => sub {
+		print help();
+		exit 0;
+	}, 
+	"batch|b"       => \$batch,
+	"facilityId|f=i"   => \$facilityId,
+	"facilityName|F=s" => \$facilityName,
+	"userId|u=i"       => \$userId,
+	"authGroupId|a=i"  => \$authGroupId,
+	"authGroupName|A=s"  => \$authGroupName,
+	"authGroupVoId|o=i"  => \$authGroupVoId,
+	"authGroupVoName|O=s"  => \$authGroupVoName
+) || die help();
+
+# Check options
+unless (defined($facilityId) or (defined($facilityName))) { die "ERROR: facilityId or facilityName is required \n";}
+
+my $agent = Perun::Agent->new();
+my $facilitiesAgent = $agent->getFacilitiesAgent;
+
+unless ($facilityId) {
+	my $facility = $facilitiesAgent->getFacilityByName( name => $facilityName );
+	$facilityId = $facility->getId;
+}
+if (defined $userId) {
+	$facilitiesAgent->addAdmin( facility => $facilityId, user => $userId );
+
+	printMessage("User Id:$userId successfully added as a Facility Id:$facilityId manager", $batch);
+} else {
+	unless (defined $authGroupId or defined $authGroupName) { die "ERROR: authorizedGroupId or authorizedGroupName is required \n";}
+	unless (defined $authGroupId) {
+		unless (defined $authGroupVoId or defined $authGroupVoName) { die "ERROR: authorizedGroupVoId or authorizedGroupVoName is required \n";} 
+
+		my $groupsAgent = $agent->getGroupsAgent;
+		unless (defined $authGroupVoId) {
+			my $vo = $agent->getVosAgent->getVoByShortName( shortName => $authGroupVoName ); 
+			$authGroupVoId = $vo->getId;
+		}
+		my $group = $groupsAgent->getGroupByName( vo => $authGroupVoId, name => $authGroupName );
+		$authGroupId = $group->getId;
+	}
+	$facilitiesAgent->addAdmin( facility => $facilityId, authorizedGroup => $authGroupId);
+	printMessage("Group Id:$authGroupId successfully added as a Facility Id:$facilityId manager", $batch);
+}

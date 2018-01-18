@@ -1,0 +1,1817 @@
+-- database version 3.1.45 (don't forget to update insert statement at the end of file)
+
+create user perunv3 identified by password;
+grant create session to perunv3;
+grant create sequence to perunv3;
+grant create table to perunv3;
+grant create view to perunv3;
+grant unlimited tablespace to perunv3;
+
+connect perunv3
+
+create table vos (
+	id integer not null,
+	name nvarchar2(128) not null,
+	short_name nvarchar2(32) not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table users (
+	id integer not null,
+	first_name nvarchar2(64),
+	last_name nvarchar2(64),
+	middle_name nvarchar2(64),
+	title_before nvarchar2(40),
+	title_after nvarchar2(40),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	service_acc char(1) default '0' not null,
+	sponsored_acc char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table owners (
+	id integer not null,
+	name nvarchar2(128) not null,
+	contact nvarchar2(100),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	type nvarchar2(128) not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table cabinet_categories (
+	id integer not null,
+	name nvarchar2(128) not null,
+	rank number(38,1) not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table cabinet_publication_systems (
+	id integer not null,
+	friendlyName nvarchar2(128) not null,
+	url nvarchar2(128) not null,
+	username nvarchar2(64),
+	password nvarchar2(64),
+	loginNamespace nvarchar2(128) not null,
+	type nvarchar2(128) not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table cabinet_publications (
+	id integer not null,
+	externalId integer not null,
+	publicationSystemId integer not null,
+	title nvarchar2(1024) not null,
+	year integer not null,
+	main nvarchar2(4000),
+	isbn nvarchar2(32),
+	categoryId integer not null,
+	createdBy nvarchar2(1300) default user not null,
+	createdDate date not null,
+	rank number (38,1) default 0 not null,
+	doi nvarchar2(256),
+	locked nvarchar2(1) default 0 not null ,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table cabinet_authorships (
+	id integer not null,
+	publicationId integer not null,
+	userId integer not null,
+	createdBy nvarchar2(1300) default user not null,
+	createdDate date not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table cabinet_thanks (
+	id integer not null,
+	publicationid integer not null,
+	ownerId integer not null,
+	createdBy nvarchar2(1300) default user not null,
+	createdDate date not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table facilities (
+	id integer not null,
+	name nvarchar2(128) not null,
+	dsc nvarchar2(1024),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table resources (
+	id integer not null,
+	facility_id integer not null,
+	name nvarchar2(128) not null,
+	dsc nvarchar2(1024),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	vo_id integer not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table destinations (
+	id integer not null,
+	destination nvarchar2(1024) not null,
+	type nvarchar2(20) not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table facility_owners (
+	facility_id integer not null,
+	owner_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table facility_contacts (
+	name nvarchar2(128) not null,
+	facility_id integer not null,
+	owner_id integer,
+	user_id integer,
+	group_id integer
+);
+
+create table groups (
+	id integer not null,
+	name nvarchar2(4000) not null,
+	dsc nvarchar2(1024),
+	vo_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	parent_group_id integer,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table members (
+	id integer not null,
+	user_id integer not null,
+	vo_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	sponsored char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table routing_rules (
+	id integer not null,
+	routing_rule nvarchar2(512) not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table dispatcher_settings (
+	ip_address nvarchar2(40) not null,
+	port integer not null,
+	last_check_in date default (sysdate),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table engines (
+	id integer not null,
+	ip_address nvarchar2(40) not null,
+	port integer not null,
+	last_check_in date default (sysdate),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table engine_routing_rule (
+	engine_id integer not null,
+	routing_rule_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table processing_rules (
+	id integer not null,
+	processing_rule nvarchar2(1024) not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table roles (
+	id integer not null,
+	name nvarchar2(32) not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table action_types (
+	id integer not null,
+	action_type nvarchar2(20) not null,
+	description nvarchar2(1024)
+);
+
+create table membership_types (
+	id integer not null,
+	membership_type nvarchar2(10) not null,
+	description nvarchar2(1024)
+);
+
+create table attr_names (
+	id integer not null,
+	default_attr_id integer,
+	attr_name nvarchar2(384) not null,
+	friendly_name nvarchar2(128) not null,
+	namespace nvarchar2(256) not null,
+	type nvarchar2(256) not null,
+	dsc nvarchar2(1024),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer,
+	display_name nvarchar2(256)
+);
+
+create table attributes_authz (
+	attr_id integer not null,
+	role_id integer not null,
+	action_type_id integer not null
+);
+
+create table authz (
+	user_id integer,
+	role_id integer not null,
+	vo_id integer,
+	facility_id integer,
+	member_id integer,
+	group_id integer,
+	service_id integer,
+	resource_id integer,
+	service_principal_id integer,
+	sponsored_user_id integer,
+	created_by_uid integer,
+	modified_by_uid integer,
+	authorized_group_id integer,
+	security_team_id integer
+);
+
+create table hosts (
+	id integer not null,
+	hostname nvarchar2(128) not null,
+	facility_id integer not null,
+	dsc nvarchar2(1024),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table host_attr_values (
+	host_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table auditer_consumers (
+	id integer not null,
+	name nvarchar2(256) not null,
+	last_processed_id integer,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table services (
+	id integer not null,
+	name nvarchar2(128) not null,
+    description nvarchar2(1024),
+    delay integer not null default 10,
+    recurrence integer not null default 2,
+    enabled char(1) not null default '1',
+    script nvarchar2(256) not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table service_processing_rule (
+	service_id integer not null,
+	processing_rule_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table service_required_attrs (
+	service_id integer not null,
+	attr_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table specific_user_users (
+	user_id integer not null,
+	specific_user_id integer not null,
+	created_by_uid integer,
+	modified_by_uid integer,
+	modified_at date default sysdate not null,
+	status char(1) default '0' not null,
+	type varchar(20) default 'service' not null
+);
+
+create table service_denials (
+	id integer not null,
+	service_id integer not null,
+	facility_id integer,
+	destination_id integer,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table service_dependencies (
+	service_id integer not null,
+	dependency_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer,
+	type nvarchar2(16) default 'SERVICE' not null
+);
+
+create table resource_services (
+	service_id integer not null,
+	resource_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table application (
+	id integer not null,
+	vo_id integer not null,
+	user_id integer,
+	apptype nvarchar2(128) not null,
+	extSourceName nvarchar2(4000),
+	extSourceType nvarchar2(4000),
+	fed_info nvarchar2(4000),
+	state nvarchar2(128),
+	extSourceLoa integer,
+	group_id integer,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table application_form (
+	id integer not null,
+	vo_id integer not null,
+	automatic_approval char(1),
+	automatic_approval_extension char(1),
+	module_name nvarchar2(128),
+	group_id integer,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table application_form_items (
+	id integer not null,
+	form_id integer not null,
+	ordnum integer not null,
+	shortname nvarchar2(128) not null,
+	required char(1),
+	type nvarchar2(128),
+	fed_attr nvarchar2(128),
+	dst_attr nvarchar2(384),
+	regex nvarchar2(4000),
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table application_form_item_apptypes (
+	item_id integer not null,
+	apptype nvarchar2(128) not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table application_form_item_texts (
+	item_id integer not null,
+	locale nvarchar2(128) not null,
+	label nvarchar2(4000),
+	options nvarchar2(4000),
+	help nvarchar2(4000),
+	error_message nvarchar2(4000),
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table application_data (
+	id integer not null,
+	app_id integer not null,
+	item_id integer,
+	shortname nvarchar2(128),
+	value nvarchar2(4000),
+	assurance_level nvarchar2(128),
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table application_mails (
+	id integer not null,
+	form_id integer not null,
+	app_type nvarchar2(30) not null,
+	mail_type nvarchar2(30) not null,
+	send nvarchar2(1) not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table application_mail_texts (
+	mail_id integer not null,
+	locale nvarchar2(10) not null,
+	subject nvarchar2(1024),
+	text nvarchar2(4000),
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table application_reserved_logins (
+	login nvarchar2(256) not null,
+	namespace nvarchar2(30) not null,
+	app_id integer not null,
+	created_by nvarchar2(1300) default user not null,
+	created_at date default sysdate not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table facility_service_destinations (
+	service_id integer not null,
+	facility_id integer not null,
+	destination_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer,
+	propagation_type nvarchar2(10) default 'PARALLEL'
+);
+
+create table entityless_attr_values (
+	subject nvarchar2(256) not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table facility_attr_values (
+	facility_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table group_attr_values (
+	group_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table resource_attr_values (
+	resource_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table group_resource_attr_values (
+	group_id integer not null,
+	resource_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table groups_members (
+	group_id integer not null,
+	member_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer,
+	membership_type integer not null,
+	source_group_id integer not null
+);
+
+create table groups_resources (
+	group_id integer not null,
+	resource_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table member_attr_values (
+	member_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table member_group_attr_values (
+	member_id integer not null,
+	group_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table member_resource_attr_values (
+	member_id integer not null,
+	resource_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table user_attr_values (
+	user_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table user_facility_attr_values (
+	user_id integer not null,
+	facility_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table vo_attr_values (
+	vo_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table ext_sources (
+	id integer not null,
+	name nvarchar2(256) not null,
+	type nvarchar2(64),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table ext_sources_attributes (
+	ext_sources_id integer not null,
+	attr_name nvarchar2(128) not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table vo_ext_sources (
+	vo_id integer not null,
+	ext_sources_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table "group_ext_sources" (
+	group_id integer not null,
+	ext_source_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table user_ext_sources (
+	id integer not null,
+	user_id integer not null,
+	login_ext nvarchar2(1300) not null,
+	ext_sources_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	loa integer,
+	last_access date default sysdate not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table service_packages (
+	id integer not null,
+	name nvarchar2(128) not null,
+	description nvarchar2(512),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table service_service_packages (
+	service_id integer not null,
+	package_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table tasks (
+	id integer not null,
+	service_id integer not null,
+	facility_id integer not null,
+	schedule date not null,
+	recurrence integer not null,
+	delay integer not null,
+	status nvarchar2(16) not null,
+	start_time date,
+	end_time date,
+	engine_id integer,
+	created_at date default sysdate not null,
+	err_message nvarchar2(4000),
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table tasks_results (
+	id integer not null,
+	task_id integer not null,
+	destination_id integer not null,
+	status nvarchar2(16) not null,
+	err_message nvarchar2(4000),
+	std_message nvarchar2(4000),
+	return_code integer,
+	timestamp date,
+	engine_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table auditer_log (
+	id integer not null,
+	msg clob not null,
+	actor nvarchar2(256) not null,
+	created_at date default sysdate not null ,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+
+create table service_principals (
+	id integer not null,
+	description nvarchar2(1024),
+	name nvarchar2(128) not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table reserved_logins (
+	login nvarchar2(256),
+	namespace nvarchar2(128),
+	application nvarchar2(256),
+	id nvarchar2(1024),
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table pn_audit_message (
+	message clob,
+	id integer NOT NULL,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table pn_object (
+	id integer NOT NULL,
+	name nvarchar2(256),
+	properties nvarchar2(4000),
+	class_name nvarchar2(512),
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table pn_pool_message (
+	id integer NOT NULL,
+	regex_id integer NOT NULL,
+	template_id integer NOT NULL,
+	key_attributes nvarchar2(4000) NOT NULL,
+	created date default sysdate NOT NULL,
+	notif_message clob NOT NULL,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table pn_receiver (
+	id integer NOT NULL,
+	target nvarchar2(256) NOT NULL,
+	type_of_receiver nvarchar2(256) NOT NULL,
+	template_id integer NOT NULL,
+	created_by_uid integer,
+	modified_by_uid integer,
+	locale nvarchar2(512)
+);
+
+create table pn_regex (
+	id integer NOT NULL,
+	note nvarchar2(256),
+	regex nvarchar2(4000) NOT NULL,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table pn_template (
+	id integer NOT NULL,
+	primary_properties nvarchar2(4000) NOT NULL,
+	notify_trigger nvarchar2(100),
+	youngest_message_time integer,
+	oldest_message_time integer,
+	name nvarchar2(512),
+	sender nvarchar2(4000),
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table pn_template_message (
+	id integer NOT NULL,
+	template_id integer NOT NULL,
+	locale nvarchar2(5) NOT NULL,
+	message nvarchar2(4000),
+	created_by_uid integer,
+	modified_by_uid integer,
+	subject nvarchar2(512)
+);
+
+create table pn_template_regex (
+	regex_id integer NOT NULL,
+	template_id integer NOT NULL,
+	id integer NOT NULL,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table pn_regex_object (
+	id integer NOT NULL,
+	regex_id integer NOT NULL,
+	object_id integer NOT NULL,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table groups_groups (
+	result_gid integer not null,
+	operand_gid integer not null,
+	parent_flag char(1) default '0' not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null
+);
+
+create table res_tags (
+	id integer not null,
+	vo_id integer not null,
+	tag_name nvarchar2(1024) not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table tags_resources (
+	tag_id integer not null,
+	resource_id integer not null
+);
+
+create table configurations (
+	property nvarchar2(32) not null,
+	value nvarchar2(128) not null
+);
+
+create table mailchange (
+	id integer not null,
+	value clob not null,
+	user_id integer not null,
+	created_at date default sysdate not null,
+	created_by varchar(1300) default user not null,
+	created_by_uid integer
+);
+
+create table pwdreset (
+	id integer not null,
+	namespace nvarchar2(512) not null,
+	user_id integer not null,
+	created_at date default sysdate not null,
+	created_by varchar(1300) default user not null,
+	created_by_uid integer
+);
+
+create table security_teams (
+	id integer not null,
+	name nvarchar2(128) not null,
+	description nvarchar2(1024),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table security_teams_facilities (
+	security_team_id integer not null,
+	facility_id integer not null,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table blacklists (
+	security_team_id integer not null,
+	user_id integer not null,
+	description nvarchar2(1024),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+create table resources_bans (
+  id integer not null,
+  member_id integer not null,
+  resource_id integer not null,
+  description nvarchar2(1024),
+  banned_to date not null,
+  created_at date default sysdate not null,
+  created_by nvarchar2(1300) default user not null,
+  modified_at date default sysdate not null,
+  modified_by nvarchar2(1300) default user not null,
+  created_by_uid integer,
+  modified_by_uid integer
+);
+
+create table facilities_bans (
+	id integer not null,
+  user_id integer not null,
+  facility_id integer not null,
+  description nvarchar2(1024),
+  banned_to date not null,
+  created_at date default sysdate not null,
+  created_by nvarchar2(1300) default user not null,
+  modified_at date default sysdate not null,
+  modified_by nvarchar2(1300) default user not null,
+  created_by_uid integer,
+  modified_by_uid integer
+);
+
+create table user_ext_source_attr_values (
+	user_ext_source_id integer not null,
+	attr_id integer not null,
+	attr_value nvarchar2(4000),
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	status char(1) default '0' not null,
+	attr_value_text clob,
+	created_by_uid integer,
+	modified_by_uid integer
+);
+
+CREATE TABLE members_sponsored (
+	active char(1) default '1' not null,
+	sponsored_id INTEGER NOT NULL,
+	sponsor_id INTEGER NOT NULL,
+	created_at date default sysdate not null,
+	created_by nvarchar2(1300) default user not null,
+	created_by_uid integer,
+	modified_at date default sysdate not null,
+	modified_by nvarchar2(1300) default user not null,
+	modified_by_uid integer
+);
+
+
+create sequence ATTR_NAMES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence AUDITER_CONSUMERS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence AUDITER_LOG_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence DESTINATIONS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence EXT_SOURCES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence FACILITIES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence GROUPS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence HOSTS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence MEMBERS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence OWNERS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PROCESSING_RULES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence RESOURCES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence ROUTING_RULES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence SERVICES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence SERVICE_DENIALS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence SERVICE_PACKAGES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence TASKS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence TASKS_RESULTS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence USERS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence USER_EXT_SOURCES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence VOS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence CABINET_PUBLICATIONS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence CABINET_PUB_SYS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence CABINET_AUTHORSHIPS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence CABINET_THANKS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence CABINET_CATEGORIES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence ROLES_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence SERVICE_PRINCIPALS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence APPLICATION_FORM_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence APPLICATION_FORM_ITEMS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence APPLICATION_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence APPLICATION_DATA_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence APPLICATION_MAILS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PN_OBJECT_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PN_POOL_MESSAGE_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PN_RECEIVER_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PN_REGEX_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PN_TEMPLATE_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PN_AUDIT_MESSAGE_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PN_TEMPLATE_REGEX_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PN_TEMPLATE_MESSAGE_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PN_REGEX_OBJECT_SEQ maxvalue 1.0000E+28 nocache;
+create sequence ACTION_TYPES_SEQ maxvalue 1.0000E+28 nocache;
+create sequence RES_TAGS_SEQ maxvalue 1.0000E+28 nocache;
+create sequence MAILCHANGE_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence PWDRESET_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence RESOURCES_BANS_ID_SEQ maxvalue 1.0000E+28 nocache;
+create sequence FACILITIES_BANS_ID_SEQ maxvalue 1.0000E+28 nocache;
+
+create index idx_namespace on attr_names(namespace);
+create index idx_authz_user_role_id on authz (user_id,role_id);
+create index idx_authz_authz_group_role_id on authz (authorized_group_id,role_id);
+create index IDX_FK_CABTHANK_PUB on cabinet_thanks(publicationid);
+create index IDX_FK_USREX_USR on user_ext_sources(user_id);
+create index IDX_FK_USREX_USERSRC on user_ext_sources(ext_sources_id);
+create index IDX_FK_MEM_USER on members(user_id);
+create index IDX_FK_MEM_VO on members(vo_id);
+create index IDX_FK_HOST_FAC on hosts(facility_id);
+create index IDX_FK_SRV_SRV on services(service_id);
+create index IDX_FK_DEST_SRV on facility_service_destinations(service_id);
+create index IDX_FK_DEST_FAC on facility_service_destinations(facility_id);
+create index IDX_FK_DEST_DESTC on facility_service_destinations(destination_id);
+create index IDX_FK_VOUSRSRC_USRSRC on vo_ext_sources(ext_sources_id);
+create index IDX_FK_VOUSRSRC_VOS on vo_ext_sources(vo_id);
+create index IDX_FK_GROUPSRC_SRC on group_ext_sources(ext_source_id);
+create index IDX_FK_GROUPSRC_GROUP on group_ext_sources(group_id);
+create index IDX_FK_USRCATT_USRC on ext_sources_attributes(ext_sources_id);
+create index IDX_FK_ATTNAM_ATTNAM on attr_names(default_attr_id);
+create index IDX_FK_RSRC_FAC on resources(facility_id);
+create index IDX_FK_RSRC_VO on resources(vo_id);
+create index IDX_FK_FACCONT_FAC on facility_contacts(facility_id);
+create index IDX_FK_FACCONT_USR on facility_contacts(user_id);
+create index IDX_FK_FACCONT_OWN on facility_contacts(owner_id);
+create index IDX_FK_FACCONT_GRP on facility_contacts(group_id);
+create index IDX_FK_RESATVAL_RES on resource_attr_values(resource_id);
+create index IDX_FK_RESATVAL_RESATNAM on resource_attr_values(attr_id);
+create index IDX_FK_USRAV_USR on user_attr_values(user_id);
+create index IDX_FK_USRAV_ACCATTNAM on user_attr_values(attr_id);
+create index IDX_FK_FACOW_FAC on facility_owners(facility_id);
+create index IDX_FK_FACOW_OW on facility_owners(owner_id);
+create index IDX_FK_FACATTVAL_NAM on facility_attr_values(attr_id);
+create index IDX_FK_FACATTVAL_FAC on facility_attr_values(facility_id);
+create index IDX_FK_VOATTVAL_NAM on vo_attr_values(attr_id);
+create index IDX_FK_VOATTVAL_VO on vo_attr_values(vo_id);
+create index IDX_FK_SRVPKG_SRV on service_service_packages(service_id);
+create index IDX_FK_SRVPKG_PKG on service_service_packages(package_id);
+create index IDX_FK_GRP_VOS on groups(vo_id);
+create index IDX_FK_GRP_GRP on groups(parent_group_id);
+create index IDX_FK_MEMRAV_MEM on member_resource_attr_values(member_id);
+create index IDX_FK_MEMRAV_RSRC on member_resource_attr_values(resource_id);
+create index IDX_FK_MEMRAV_ACCATTNAM on member_resource_attr_values(attr_id);
+create index IDX_FK_MEMGAV_MEM on member_group_attr_values(member_id);
+create index IDX_FK_MEMGAV_GRP on member_group_attr_values(group_id);
+create index IDX_FK_MEMGAV_ACCATTNAM on member_group_attr_values(attr_id);
+create index IDX_FK_USRFACAV_MEM on user_facility_attr_values(user_id);
+create index IDX_FK_USRFACAV_FAC on user_facility_attr_values(facility_id);
+create index IDX_FK_USRFACAV_ACCATTNAM on user_facility_attr_values(attr_id);
+create index IDX_FK_TASK_SRV on tasks(service_id);
+create index IDX_FK_TASK_FAC on tasks(facility_id);
+create index IDX_FK_TASK_ENG on tasks(engine_id);
+create index IDX_FK_TASKRES_TASK on tasks_results(task_id);
+create index IDX_FK_TASKRES_DEST on tasks_results(destination_id);
+create index IDX_FK_TASKRES_ENG on tasks_results(engine_id);
+create index IDX_FK_SRVDEN_SRV on service_denials(service_id);
+create index IDX_FK_SRVDEN_FAC on service_denials(facility_id);
+create index IDX_FK_SRVDEN_DEST on service_denials(destination_id);
+create index IDX_SRVDEN_U on service_denials(COALESCE(service_id, '0'), COALESCE(facility_id, '0'), COALESCE(destination_id, '0'));
+create index IDX_FK_SRVDEP_SRV on service_dependencies(service_id);
+create index IDX_FK_SRVDEP_DEPSRV on service_dependencies(dependency_id);
+create index IDX_FK_SRVREQATTR_SRV on service_required_attrs(service_id);
+create index IDX_FK_SRVREQATTR_ATTR on service_required_attrs(attr_id);
+create index IDX_FK_RESRCSRV_SRV on resource_services(service_id);
+create index IDX_FK_RESRCSRV_RSRC on resource_services(resource_id);
+create index IDX_FK_ENGRR_ENG on engine_routing_rule(engine_id);
+create index IDX_FK_ENGRR_RR on engine_routing_rule(routing_rule_id);
+create index IDX_FK_SERVPR_SERV on service_processing_rule(service_id);
+create index IDX_FK_SERVPR_PR on service_processing_rule(processing_rule_id);
+create index IDX_FK_MEMATTVAL_MEM on member_attr_values(member_id);
+create index IDX_FK_MEMATTVAL_ATTR on member_attr_values(attr_id);
+create index IDX_FK_GRPATTVAL_GRP on group_attr_values(group_id);
+create index IDX_FK_GRPATTVAL_ATTR on group_attr_values(attr_id);
+create index IDX_FK_GRPRESAV_GRP on group_resource_attr_values(group_id);
+create index IDX_FK_GRPRESAV_RES on group_resource_attr_values(resource_id);
+create index IDX_FK_GRPRESAV_ATTR on group_resource_attr_values(attr_id);
+create index IDX_FK_HOSTAV_HOST on host_attr_values(host_id);
+create index IDX_FK_HOSTAV_ATTRT on host_attr_values(attr_id);
+create index IDX_FK_ENTLATVAL_ATTR on entityless_attr_values(attr_id);
+create index IDX_FK_CATPUB_SYS on cabinet_publications(publicationSystemid);
+create index IDX_FK_CABPUB_CAT on cabinet_publications(categoryid);
+create index IDX_FK_AUTHZ_ROLE on authz(role_id);
+create index IDX_FK_AUTHZ_USER on authz(user_id);
+create index IDX_FK_AUTHZ_AUTHZ_GROUP on authz(authorized_group_id);
+create index IDX_FK_AUTHZ_VO on authz(vo_id);
+create index IDX_FK_AUTHZ_FAC on authz(facility_id);
+create index IDX_FK_AUTHZ_MEM on authz(member_id);
+create index IDX_FK_AUTHZ_GROUP on authz(group_id);
+create index IDX_FK_AUTHZ_SERVICE on authz(service_id);
+create index IDX_FK_AUTHZ_RES on authz(resource_id);
+create index IDX_FK_AUTHZ_SER_PRINC on authz(service_principal_id);
+create index IDX_FK_AUTHZ_SPONSU on authz(sponsored_user_id);
+create index IDX_FK_AUTHZ_SEC_TEAM on authz(security_team_id);
+create index IDX_FK_GRRES_GR on groups_resources(group_id);
+create index IDX_FK_GRRES_RES on groups_resources(resource_id);
+create index IDX_FK_GRPMEM_GR on groups_members(group_id);
+create index IDX_FK_GRPMEM_MEM on groups_members(member_id);
+create index IDX_FK_GRPMEM_MEMTYPE on groups_members(membership_type);
+create index IDX_FK_APPLFORM_VO on application_form(vo_id);
+create index IDX_FK_APPLFORM_GROUP on application_form(group_id);
+create index IDX_FK_APPLFRMIT_APPLFORM on application_form_items(form_id);
+create index IDX_FK_APPLFRMITTYP_APPLFRMIT on application_form_item_apptypes(item_id);
+create index IDX_FK_APPLFRMITTXT_APPLFRMIT on application_form_item_texts(item_id);
+create index IDX_FK_APP_VO on application(vo_id);
+create index IDX_FK_APP_USER on application(user_id);
+create index IDX_FK_APP_GROUP on application(group_id);
+create index IDX_FK_APPDATA_APP on application_data(app_id);
+create index IDX_FK_APPDATA_APPLFRMIT on application_data(item_id);
+create index IDX_FK_APPLOGIN_APPID on application_reserved_logins(app_id);
+create index IDX_FK_APPMAIL_APPFORM on application_mails(form_id);
+create index IDX_FK_APPMAILTXT_APPMAILS on application_mail_texts(mail_id);
+create index IDX_FK_CABAUT_PUB on cabinet_authorships(publicationId);
+create index IDX_FK_CABAUT_USR on cabinet_authorships(userId);
+create index IDX_FK_PN_POOLMSG_TMPL on pn_pool_message(template_id);
+create index IDX_FK_PN_RECEIVER_TMPL on pn_receiver(template_id);
+create index IDX_FK_PN_TMPLMSG_TMPL on pn_template_message(template_id);
+create index IDX_FK_PN_TMPLRGX_RGX on pn_template_regex(regex_id);
+create index IDX_FK_PN_TMPLRGX_TMPL on pn_template_regex(template_id);
+create index IDX_FK_PN_RGXOBJ_RGX on pn_regex_object(regex_id);
+create index IDX_FK_PN_RGXOBJ_OBJ on pn_regex_object(object_id);
+create index IDX_FK_SPECIFU_U_UI on specific_user_users(user_id);
+create index IDX_FK_SPECIFU_U_SUI on specific_user_users(specific_user_id);
+create index IDX_FK_GRP_GRP_RGID on groups_groups(result_gid);
+create index IDX_FK_GRP_GRP_OGID on groups_groups(operand_gid);
+create index IDX_FK_ATTRAUTHZ_ACTIONTYP on attributes_authz(action_type_id);
+create index IDX_FK_ATTRAUTHZ_ROLE on attributes_authz(role_id);
+create index IDX_FK_ATTRAUTHZ_ATTR on attributes_authz(attr_id);
+create index IDX_FK_RESTAGS_VOS on res_tags(vo_id);
+create index IDX_FK_TAGS_RES_TAGS on tags_resources(tag_id);
+create index IDX_FK_TAGS_RES_RES on tags_resources(resource_id);
+create index IDX_FK_MAILCHANGE_USER_ID on mailchange(user_id);
+create index IDX_FK_PWDRESET_USER_ID on pwdreset(user_id);
+create index IDX_FK_SEC_TEAM_FACS_SEC on security_teams_facilities (security_team_id);
+create index IDX_FK_SEC_TEAM_FACS_FAC on security_teams_facilities (facility_id);
+create index IDX_FK_BLLIST_USER on blacklists (user_id);
+create index IDX_FK_BLLIST_SECTEAM on blacklists (security_team_id);
+create index IDX_FK_RES_BAN_MEMBER on resources_bans (member_id);
+create index IDX_FK_RES_BAN_RES on resources_bans (resource_id);
+create index IDX_FK_FAC_BAN_USER on facilities_bans (user_id);
+create index IDX_FK_FAC_BAN_FAC on facilities_bans (facility_id);
+create index IDX_FK_UES_ATTR_VALUES_UES on user_ext_source_attr_values (user_ext_source_id);
+create index IDX_FK_UES_ATTR_VALUES_ATTR on user_ext_source_attr_values (attr_id);
+create index IDX_FK_MEMSPONS_USR ON members_sponsored(sponsor_id);
+create index IDX_FK_MEMSPONS_MEM ON members_sponsored(sponsored_id);
+
+alter table auditer_log add (constraint AUDLOG_PK primary key (id));
+alter table auditer_consumers add (constraint AUDCON_PK primary key (id),
+constraint AUDCON_U unique(name));
+alter table users add (
+constraint USR_PK primary key (id),
+constraint USR_SRVACC_CHK check (service_acc in ('0','1'))
+);
+alter table vos add (constraint VO_PK primary key (id),
+constraint VO_U unique (name)
+);
+alter table ext_sources add (
+constraint USRSRC_PK primary key(id),
+constraint USRSRC_U unique (name)
+);
+alter table facilities add (constraint FAC_PK primary key(id),
+constraint FAC_NAME_U UNIQUE (name)
+);
+alter table user_ext_sources add (
+constraint USREX_P primary key(id),
+constraint USREX_U unique (ext_sources_id,login_ext),
+constraint USREX_USR_FK foreign key (user_id) references users(id),
+constraint USREX_USERSRC_FK foreign key(ext_sources_id) references ext_sources(id)
+);
+alter table members add (constraint MEM_PK primary key(id),
+constraint MEM_USER_FK foreign key(user_id) references users(id),
+constraint MEM_VO_FK foreign key(vo_id) references vos(id),
+constraint MEM_USER_VO_U unique (vo_id, user_id)
+);
+alter table owners add (constraint OW_PK primary key (id),
+constraint OW_U unique (name)
+);
+alter table hosts add (constraint HOST_PK primary key (id),
+constraint HOST_FAC_FK foreign key(facility_id) references facilities(id)
+);
+alter table services add (
+constraint SERV_PK primary key(id),
+constraint SERV_U unique(name)
+);
+alter table destinations add(
+constraint DEST_PK primary key (id),
+constraint DEST_U unique (destination,type)
+);
+alter table facility_service_destinations add (
+constraint DEST_SRV_FK foreign key (service_id) references services(id),
+constraint DEST_FAC_FK foreign key (facility_id) references facilities(id),
+constraint DEST_DEST_FK foreign key(destination_id) references destinations(id)
+);
+alter table vo_ext_sources add (
+constraint VOUSRSRC_PK primary key (vo_id,ext_sources_id),
+constraint VOUSRSRC_USRSRC_FK foreign key(ext_sources_id) references ext_sources(id),
+constraint VOUSRSRC_VOS_FK foreign key(vo_id) references vos(id)
+);
+alter table ext_sources_attributes add (
+constraint USRCATT_USRC_FK foreign key (ext_sources_id) references ext_sources(id)
+);
+alter table attr_names add (constraint ATTNAM_PK primary key(id),
+constraint ATTNAM_U unique (attr_name),
+constraint ATTFULLNAM_U unique (friendly_name,namespace),
+constraint ATTNAM_ATTNAM_FK foreign key (default_attr_id) references attr_names(id)
+);
+alter table resources add (
+constraint RSRC_PK primary key (id),
+constraint RSRC_FAC_FK foreign key (facility_id) references facilities(id),
+constraint RSRC_VO_FK foreign key (vo_id) references vos(id)
+);
+alter table resource_attr_values add (
+constraint RESATVAL_PK primary key (resource_id,attr_id),
+constraint RESATVAL_RES_FK foreign key(resource_id) references resources(id),
+constraint RESATVAL_RESATNAM_FK foreign key(attr_id) references attr_names(id)
+);
+alter table user_attr_values add (
+constraint USRAV_USR_FK foreign key (user_id) references users(id),
+constraint USRAV_ACCATTNAM_FK foreign key (attr_id) references attr_names(id),
+constraint USRAV_U unique(user_id,attr_id)
+);
+alter table facility_owners add (
+constraint FACOW_PK primary key (facility_id,owner_id),
+constraint FACOW_FAC_FK foreign key (facility_id) references facilities(id),
+constraint FACOW_OW_FK foreign key (owner_id) references owners(id)
+);
+alter table facility_attr_values add (
+constraint FACATTVAL_PK primary key (facility_id,attr_id),
+constraint FACATTVAL_NAM_FK foreign key (attr_id) references attr_names(id),
+constraint FACATTVAL_FAC_FK foreign key (facility_id) references facilities (id)
+);
+alter table vo_attr_values add (
+constraint VOATTVAL_PK primary key (vo_id,attr_id),
+constraint VOATTVAL_NAM_FK foreign key (attr_id) references attr_names(id),
+constraint VOATTVAL_VO_FK foreign key (vo_id) references vos (id)
+);
+alter table service_packages add(
+constraint PKG_PK primary key (id),
+constraint PKG_NAME unique(name)
+);
+alter table service_service_packages add (
+constraint SRVPKG_SRV_PK primary key(service_id,package_id),
+constraint SRVPKG_SRV_FK foreign key(service_id) references services(id),
+constraint SRVPKG_PKG_FK foreign key(package_id) references service_packages(id)
+);
+alter table groups add (
+constraint GRP_PK primary key (id),
+constraint GRP_NAM_VO_PARENTG_U unique (name,vo_id,parent_group_id),
+constraint GRP_VOS_FK foreign key (vo_id) references vos(id),
+constraint GRP_GRP_FK foreign key (parent_group_id) references groups(id)
+);
+alter table group_ext_sources add (
+constraint GROUPSRC_PK primary key (group_id,ext_source_id),
+constraint GROUPSRC_SRC_FK foreign key(ext_source_id) references ext_sources(id),
+constraint GROUPSRC_GROUPS_FK foreign key(group_id) references groups(id)
+);
+alter table member_resource_attr_values add (
+constraint MEMRAV_MEM_FK foreign key (member_id) references members(id),
+constraint MEMRAV_RSRC_FK foreign key (resource_id) references resources(id),
+constraint MEMRAV_ACCATTNAM_FK foreign key (attr_id) references attr_names(id),
+constraint MEMRAV_U unique(member_id,resource_id,attr_id)
+);
+alter table member_group_attr_values add (
+constraint MEMGAV_MEM_FK foreign key (member_id) references members(id),
+constraint MEMGAV_GRP_FK foreign key (group_id) references groups(id),
+constraint MEMGAV_ACCATTNAM_FK foreign key (attr_id) references attr_names(id),
+constraint MEMGAV_U unique(member_id,group_id,attr_id)
+);
+alter table user_facility_attr_values add (
+constraint USRFACAV_MEM_FK foreign key (user_id) references users(id),
+constraint USRFACAV_FAC_FK foreign key (facility_id) references facilities(id),
+constraint USRFACAV_ACCATTNAM_FK foreign key (attr_id) references attr_names(id),
+constraint USRFACAV_U unique(user_id,facility_id,attr_id)
+);
+alter table engines add (constraint ENG_PK primary key (id)
+);
+alter table tasks add (
+constraint TASK_PK primary key (id),
+constraint TASK_U unique (service_id, facility_id),
+constraint TASK_SRV_FK foreign key (service_id) references services(id),
+constraint TASK_FAC_FK foreign key (facility_id) references facilities(id),
+constraint TASK_ENG_FK foreign key (engine_id) references engines (id),
+constraint TASK_STAT_CHK check (status in ('WAITING', 'PLANNED', 'GENERATING', 'GENERROR', 'GENERATED', 'SENDING', 'DONE', 'SENDERROR', 'ERROR'))
+);
+alter table tasks_results add (
+constraint TASKS_RESULTS_PK primary key (id),
+constraint TASKRES_TASK_FK foreign key (task_id) references tasks(id),
+constraint TASKRES_DEST_FK foreign key (destination_id) references destinations(id),
+constraint TASKRES_ENG_FK foreign key (engine_id) references engines (id),
+constraint TASKRES_STAT_CHK check (status in ('DONE','ERROR','FATAL_ERROR','DENIED'))
+);
+alter table service_denials add (
+constraint SRVDEN_PK primary key (id),
+constraint SRVDEN_EXSRV_FK foreign key (service_id) references services(id),
+constraint SRVDEN_FAC_FK foreign key (facility_id) references facilities(id),
+constraint SRVDEN_DEST_FK foreign key (destination_id) references destinations(id),
+constraint SRVDEN_U check(service_id is not null and ((facility_id is not null and destination_id is null) or (facility_id is null and destination_id is not null))
+);
+alter table service_dependencies add (
+constraint SRVDEP_SRV_FK foreign key (service_id) references services(id),
+constraint SRVDEP_DEPSRV_FK foreign key (dependency_id) references services(id),
+constraint SRVDEP_TYPE_CHK check (type in ('SERVICE','DESTINATION')),
+constraint SRVDEP_U unique(service_id,dependency_id)
+);
+alter table service_required_attrs add (
+constraint SRVREQATTR_PK primary key (service_id,attr_id),
+constraint SRVREQATTR_SRV_FK foreign key(service_id) references services(id),
+constraint SRVREQATTR_ATTR_FK foreign key(attr_id) references attr_names(id)
+);
+alter table resource_services add(
+constraint RESRCSRV_PK primary key (service_id,resource_id),
+constraint RESRCSRV_SRV_FK foreign key (service_id) references services(id),
+constraint RESRCSRV_RSRC_FK foreign key (resource_id) references resources(id)
+);
+alter table routing_rules add (
+constraint ROUTRUL_PK primary key (id)
+);
+alter table engine_routing_rule add (
+constraint ENGRR_ENG_FK foreign key (engine_id) references engines(id),
+constraint ENGRR_RR_FK foreign key (routing_rule_id) references routing_rules(id)
+);
+alter table processing_rules add (
+constraint PROCRUL_PK primary key (id)
+);
+alter table service_processing_rule add (
+constraint SERVPR_SERV_FK foreign key (service_id) references services(id),
+constraint SERVPR_PR_FK foreign key (processing_rule_id) references processing_rules(id)
+);
+alter table member_attr_values add (
+constraint MEMATTVAL_PK primary key (member_id,attr_id),
+constraint MEMATTVAL_MEM_FK foreign key (member_id) references members(id),
+constraint MEMATTVAL_ATTR_FK foreign key (attr_id) references attr_names(id)
+);
+alter table group_attr_values add (
+constraint GRPATTVAL_PK primary key (group_id,attr_id),
+constraint GRPATTVAL_GRP_FK foreign key (group_id) references groups(id),
+constraint GRPATTVAL_ATTR_FK foreign key (attr_id) references attr_names(id)
+);
+alter table group_resource_attr_values add (
+constraint GRPRESAV_PK primary key (group_id,resource_id,attr_id),
+constraint GRPRESAV_GRP_FK foreign key (group_id) references groups(id),
+constraint GRPRESAV_RES_FK foreign key (resource_id) references resources(id),
+constraint GRPRESAV_ATTR_FK foreign key (attr_id) references attr_names(id)
+);
+alter table host_attr_values add (
+constraint HOSTAV_PK primary key (host_id,attr_id),
+constraint HOSTAV_HOST_FK foreign key (host_id) references hosts(id),
+constraint HOSTAV_ATTR_FK foreign key (attr_id) references attr_names(id)
+);
+alter table entityless_attr_values add (
+constraint ENTLATVAL_PK primary key(subject,attr_id),
+constraint ENTLATVAL_ATTR_FK foreign key (attr_id) references attr_names(id)
+);
+
+alter table cabinet_categories add (
+constraint CAB_CAT_PK primary key (id)
+);
+
+alter table cabinet_publication_systems add (
+constraint CAB_PUBSYS_PK primary key (id)
+);
+
+alter table cabinet_publications add (
+constraint CAB_PUB_PK primary key (id),
+constraint CATPUB_SYS_FK foreign key(publicationSystemId) references cabinet_publication_systems(id),
+constraint CABPUB_CAT_FK foreign key(categoryId) references cabinet_categories(id)
+);
+
+alter table cabinet_authorships add (
+constraint CAB_AU_PK primary key (id),
+constraint CABAUT_PUB_FK foreign key(publicationId) references cabinet_publications(id),
+constraint CABAUT_USR_FK foreign key(userId) references users(id)
+);
+
+alter table cabinet_thanks add (
+constraint CAB_TH_PK primary key (id),
+constraint CABTHANK_PUB_FK foreign key(publicationid) references cabinet_publications(id));
+
+alter table roles add (
+constraint ROLES_PK primary key (id),
+constraint ROLES_NAME_U unique (name)
+);
+
+alter table service_principals add (
+constraint SER_PRINC_PK primary key (id)
+);
+
+alter table security_teams add (
+constraint SEC_TEAM_PK primary key (id)
+);
+
+alter table security_teams_facilities add (
+constraint SEC_TEAM_FACS_PK primary key (security_team_id, facility_id),
+constraint SEC_TEAM_FACS_SEC_FK foreign key (security_team_id) references security_teams(id),
+constraint SEC_TEAM_FACS_FAC_FK foreign key (facility_id) references facilities(id)
+);
+
+alter table blacklists add (
+constraint BLLIST_PK primary key (security_team_id,user_id),
+constraint BLLIST_SECTEAM_FK foreign key (security_team_id) references security_teams (id),
+constraint BLLIST_USER_FK foreign key (user_id) references users(id)
+);
+
+alter table resources_bans add (
+constraint res_bans_pk primary key (id),
+constraint res_bans_u unique(member_id, resource_id),
+constraint res_bans_mem_fk foreign key (member_id) references members (id),
+constraint res_bans_res_fk foreign key (resource_id) references resources (id)
+);
+
+alter table facilities_bans add (
+constraint fac_bans_pk primary key (id),
+constraint fac_bans_u unique(user_id, facility_id),
+constraint fac_bans_usr_fk foreign key (user_id) references users (id),
+constraint fac_bans_fac_fk foreign key (facility_id) references facilities (id)
+);
+
+alter table authz add (
+constraint AUTHZ_ROLE_FK foreign key (role_id) references roles(id),
+constraint AUTHZ_USER_FK foreign key (user_id) references users(id),
+constraint AUTHZ_AUTHZ_GROUP_FK foreign key (authorized_group_id) references groups(id),
+constraint AUTHZ_VO_FK foreign key (vo_id) references vos(id),
+constraint AUTHZ_FAC_FK foreign key (facility_id) references facilities(id),
+constraint AUTHZ_MEM_FK foreign key (member_id) references members(id),
+constraint AUTHZ_GROUP_FK foreign key (group_id) references groups(id),
+constraint AUTHZ_SERVICE_FK foreign key (service_id) references services(id),
+constraint AUTHZ_RES_FK foreign key (resource_id) references resources(id),
+constraint AUTHZ_SER_PRINC_FK foreign key (service_principal_id) references service_principals(id),
+constraint AUTHZ_SEC_TEAM_FK foreign key (security_team_id) references security_teams(id),
+constraint AUTHZ_SPONSU_FK foreign key (sponsored_user_id) references users(id),
+constraint AUTHZ_USER_SERPRINC_AUTGRP_CHK check (decode(user_id,null,0,1)+decode(service_principal_id,null,0,1)+decode(authorized_group_id,null,0,1) = 1),
+constraint AUTHZ_U unique (user_id,authorized_group_id,role_id,vo_id,facility_id,member_id,group_id,service_id,resource_id,service_principal_id,security_team_id,sponsored_user_id)
+);
+
+alter table facility_contacts add (
+constraint FACCONT_FAC_FK foreign key (facility_id) references facilities(id),
+constraint FACCONT_USR_FK foreign key (user_id) references users(id),
+constraint FACCONT_OWN_FK foreign key (owner_id) references owners(id),
+constraint FACCONT_GRP_FK foreign key (group_id) references groups(id),
+constraint FACCONT_USR_OWN_GRP_CHK check (decode(user_id,null,0,1)+decode(owner_id,null,0,1)+decode(group_id,null,0,1) = 1),
+constraint FACCONT_U2 unique (user_id,owner_id,group_id,facility_id,name)
+);
+
+alter table groups_resources add (
+constraint GRRES_GRP_RES_U unique (group_id,resource_id),
+constraint GRRES_GR_FK foreign key (group_id) references groups(id),
+constraint GRRES_RES_FK foreign key (resource_id) references resources(id)
+);
+
+alter table membership_types add (
+constraint MEMTYPE_PK primary key (id)
+);
+alter table groups_members add (
+constraint GRPMEM_PK primary key (member_id,group_id, source_group_id),
+constraint GRPMEM_GR_FK foreign key (group_id) references groups(id),
+constraint GRPMEM_MEM_FK foreign key (member_id) references members(id),
+constraint GRPMEM_MEMTYPE_FK foreign key (membership_type) references membership_types(id)
+);
+
+alter table application_form add (
+constraint APPLFORM_PK primary key (id),
+constraint APPLFORM_U unique (vo_id,group_id),
+constraint APPLFORM_VO_FK foreign key (vo_id) references vos(id) on delete cascade,
+constraint APPLFORM_GROUP_FK foreign key (group_id) references groups(id) on delete cascade
+);
+
+alter table application_form_items add (
+constraint APPLFRMIT_PK primary key (id),
+constraint APPLFRMIT_APPLFORM_FK foreign key (form_id) references application_form(id) on delete cascade
+);
+
+alter table application_form_item_apptypes add (
+constraint APPLFRMITTYP_APPLFRMIT_FK foreign key (item_id) references application_form_items(id) on delete cascade
+);
+
+alter table application_form_item_texts add (
+constraint APPLFRMITTXT_PK primary key(item_id,locale),
+constraint APPLFRMITTXT_APPLFRMIT_FK foreign key (item_id) references application_form_items(id) on delete cascade
+);
+
+
+alter table application add (
+constraint APP_PK primary key (id),
+constraint APP_VO_FK foreign key (vo_id) references vos(id) on delete cascade,
+constraint APP_USER_FK foreign key (user_id) references users(id) on delete cascade,
+constraint APP_GROUP_FK foreign key (group_id) references groups(id) on delete cascade,
+constraint APP_STATE_CHK check (state in ('REJECTED','NEW','VERIFIED','APPROVED'))
+);
+
+alter table application_data add (
+constraint APPDATA_PK primary key (id),
+constraint APPDATA_APP_FK foreign key (app_id) references application(id) on delete cascade,
+constraint APPDATA_APPLFRMIT_FK foreign key (item_id) references application_form_items(id) on delete cascade
+);
+
+alter table application_reserved_logins add (
+constraint APP_LOGINS_PK primary key(login, namespace),
+constraint APPLOGIN_APPID_FK foreign key(app_id) references application(id)
+);
+
+alter table application_mails add (
+constraint APPMAILS_PK primary key (id),
+constraint APPMAILS_U unique (form_id,app_type,mail_type),
+constraint APPMAIL_APPFORM_FK foreign key (form_id) references application_form(id) on delete cascade
+);
+
+alter table application_mail_texts add (
+constraint APPMAILTXT_PK primary key (mail_id, locale),
+constraint APPMAILTXT_APPMAILS_FK foreign key (mail_id) references application_mails(id) on delete cascade
+);
+
+alter table reserved_logins add (
+constraint RESERVLOGINS_PK primary key (login,namespace)
+);
+
+alter table pn_audit_message add (
+constraint PN_AUDMSG_PK primary key (id)
+);
+
+alter table pn_object add (
+constraint PN_OBJECT_PK primary key (id)
+);
+
+alter table pn_template add (
+constraint PN_TMPL_PK primary key (id)
+);
+
+alter table pn_pool_message add (
+constraint PN_POOLMSG_PK primary key (id),
+constraint PN_POOLMSG_TMPL_FK foreign key (template_id) references pn_template(id)
+);
+
+alter table pn_receiver add (
+constraint PN_RECEIVER_PK primary key (id),
+constraint PN_RECEIVER_TMPL_FK foreign key (template_id) references pn_template(id)
+);
+
+alter table pn_regex add (
+constraint PN_REGEX_PK primary key (id)
+);
+
+alter table pn_template_message add (
+constraint PN_TMPLMSG_PK primary key (id),
+constraint PN_TMPLMSG_TMPL_FK foreign key (template_id) references pn_template(id) DEFERRABLE
+);
+
+alter table pn_template_regex add (
+constraint PN_TMPLRGX_PK primary key (id),
+constraint PN_TMPLRGX_RGX_FK foreign key (regex_id) references pn_regex(id),
+constraint PN_TMPLRGX_TMPL_FK foreign key (template_id) references pn_template(id)
+);
+
+alter table pn_regex_object add (
+constraint PN_RGXOBJ_PK primary key (id),
+constraint PN_RGXOBJ_RGX_FK foreign key (regex_id) references pn_regex(id),
+constraint PN_RGXOBJ_OBJ_FK foreign key (object_id) references pn_object(id)
+);
+
+alter table specific_user_users add (
+constraint ACC_SPECIFU_U_PK primary key (user_id,specific_user_id),
+constraint ACC_SPECIFU_U_UID_FK foreign key (user_id) references users(id),
+constraint ACC_SPECIFU_U_SUID_FK foreign key (specific_user_id) references users(id),
+constraint SPECIFU_U_STATUS_CHK check (status in ('0','1'))
+);
+
+alter table groups_groups add (
+constraint GRP_GRP_PK primary key (result_gid,operand_gid),
+constraint GRP_GRP_RGID_FK foreign key (result_gid) references groups(id),
+constraint GRP_GRP_OGID_FK foreign key (operand_gid) references groups(id),
+constraint GRP_GRP_PARENT_CHK check (parent_flag in ('0','1'))
+);
+
+alter table action_types add (
+constraint ACTIONTYP_PK primary key (id),
+constraint ACTIONTYP_U unique (action_type),
+constraint ACTIONTYP_AT_CHK check (action_type in ('read','write'))
+);
+
+alter table attributes_authz add (
+constraint ATTRAUTHZ_PK primary key (attr_id,role_id,action_type_id),
+constraint ATTRAUTHZ_ATTR_FK foreign key (attr_id) references attr_names (id),
+constraint ATTRAUTHZ_ROLE_FK foreign key (role_id) references roles(id),
+constraint ATTRAUTHZ_ACTIONTYP_FK foreign key (action_type_id) references action_types(id)
+);
+
+alter table res_tags add (
+constraint RESTAGS_PK primary key (id),
+constraint RESTAGS_U unique (vo_id, tag_name),
+constraint RESTAGS_VOS_FK foreign key (vo_id) references vos(id)
+);
+
+alter table tags_resources add (
+constraint TAGS_RES_PK primary key (tag_id,resource_id),
+constraint TAGS_RES_TAGS_FK foreign key (tag_id) references res_tags(id),
+constraint TAGS_RES_RES_FK foreign key (resource_id) references resources(id)
+);
+
+alter table configurations add (
+constraint CONFIG_PK primary key (property),
+constraint CONFIG_PROP_CHK check (property in ('DATABASE VERSION'))
+);
+
+alter table mailchange add (
+constraint mailchange_pk primary key (id),
+constraint mailchange_u_fk foreign key (user_id) references users(id)
+);
+
+alter table pwdreset add (
+constraint pwdreset_pk primary key (id),
+constraint pwdreset_u_fk foreign key (user_id) references users(id)
+);
+
+alter table user_ext_source_attr_values add (
+constraint UESATTRVAL_PK primary key (user_ext_source_id, attr_id),
+constraint UESATTRVAL_UES_FK foreign key (user_ext_source_id) references user_ext_sources(id),
+constraint UESATTRVAL_ATTR_FK foreign key (attr_id) references attr_names(id)
+);
+
+alter table members_sponsored add (
+	constraint MEMSPONS_MEM_FK foreign key (sponsored_id) references members(id),
+	constraint MEMSPONS_USR_FK foreign key (sponsor_id) references users(id)
+);
+
+-- set initial Perun DB version
+insert into configurations values ('DATABASE VERSION','3.1.45');
+
+-- insert membership types
+insert into membership_types (id, membership_type, description) values (1, 'DIRECT', 'Member is directly added into group');
+insert into membership_types (id, membership_type, description) values (2, 'INDIRECT', 'Member is added indirectly through UNION relation');
+
+-- insert action types
+insert into action_types (id, action_type, description) values (ACTION_TYPES_SEQ.nextval, 'read', 'Can read value.');
+insert into action_types (id, action_type, description) values (ACTION_TYPES_SEQ.nextval, 'write', 'Can write, rewrite and remove value.');
