@@ -1,0 +1,213 @@
+== Configuration
+
+This section explains configuration parameters of Smart Testing.
+Notice that they are all summarized at <<Reference Card>> section.
+
+Also Smart Testing can be configured with a configuration file instead of System properties.
+You can read about configuration file at <<Configuration File>>.
+
+=== Modes
+
+So far in <<What is this?>> section we explained that *Smart testing* changes the order of test execution plan
+to run first the important tests and then the rest. This is know as `ordering` mode, but that's not the only one.
+
+`ordering`:: `ordering` mode as its name suggests orders the test execution plan so important tests are executed first
+and then the rest.
+
+`selecting`:: `selecting` mode just selects the important tests and execute them, skipping the rest of the tests.
+
+The `const:core/src/main/java/org/arquillian/smart/testing/configuration/Configuration.java[name="DEFAULT_MODE"]` is the **default** mode.
+
+In order to define the mode use `const:core/src/main/java/org/arquillian/smart/testing/configuration/Configuration.java[name="SMART_TESTING_MODE"]` Java system property with either one.
+
+[NOTE]
+====
+To get fast feedback loop, you can use surefire's skip after `N` failures/errors feature by setting system property `surefire.skipAfterFailureCount` to `N` or by following configuration:
+
+[[skip-config]]
+[source,xml]
+----
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-surefire-plugin</artifactId>
+    <version>${version.surefire.plugin}</version>
+    <configuration>
+      <skipAfterFailureCount>N</skipAfterFailureCount>
+    </configuration>
+</plugin>
+----
+copyToClipboard:skip-config[]
+
+However this functionality cannot be fully guaranteed (real first failure) in concurrent mode due to race conditions.
+Read `http://maven.apache.org/surefire/maven-surefire-plugin/examples/skip-after-failure.html[skipAfterFailureCount]` for more information.
+====
+
+=== Strategies
+
+Until now, you've read that smart testing is changing test execution plan running or only including important tests.
+But how do we know which tests are important and which ones not?
+
+There are several strategies that you can choose from which determine what are the *important* tests.
+Currently we have following strategies in place: `new`, `changed`, `affected`, `failed` and `categorized`.
+
+To set them you need to set Java system property `const:core/src/main/java/org/arquillian/smart/testing/configuration/Configuration.java[name="SMART_TESTING"]` to one or more strategies in comma-separated value form.
+
+Smart Testing is able to auto correct misspelled strategies in case of setting Java System property `const:core/src/main/java/org/arquillian/smart/testing/configuration/Configuration.java[name="SMART_TESTING_AUTOCORRECT"]` to true.
+
+Subsequent sections dive deeper into each and every one of them.
+
+==== New
+
+`New` strategy uses _SCM_ information (currently only _Git_ is supported) to detect *new* tests and treat them as *important*
+tests to run them first (_ordering_) or filtered (_selecting_).
+
+So internally this strategy inspects your _SCM_ history (and local changes) and all tests that were added (so they are effectively new)
+are marked as important ones.
+
+This strategy can be configured in several ways through Java system properties:
+
+* `const:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_HEAD"]` and `const:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_TAIL"]` are used to set the range of commits you want to inspect for new tests.
+The values can be commit ids or using `const:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="HEAD"]` notation.
+For example: `-Dconst:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_HEAD"]=HEAD -Dconst:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_TAIL"]=HEAD~`
+By default if not specified, default value is `HEAD`.
+* `const:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_LAST_CHANGES"]` can be used to set the number of commits from `HEAD` that you want to inspect.
+For example `-Dconst:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_LAST_CHANGES"]=3` will be equivalent as `-Dconst:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_HEAD"]=HEAD -Dconst:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_TAIL"]=HEAD~~~`.
+
+TIP: Those properties might be in particular handy when used in the CI builds.
+For example in Jenkins when using https://wiki.jenkins.io/display/JENKINS/Git+Plugin[Git Plugin] you can configure your build as follows:
+`$ mvn clean verify -Dconst:core/src/main/java/org/arquillian/smart/testing/configuration/Configuration.java[name="SMART_TESTING"]=new, affected -Dconst:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_HEAD"]=GIT_COMMIT -Dconst:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_TAIL"]=GIT_PREVIOUS_COMMIT`
+
+Currently not committed changes (those that are _added_ and _untracked_) are considered as important tests as well.
+This effectively means that if you don't specify any commit range, only these information is considered.
+
+==== Changed
+
+`Changed` strategy is like <<New>> strategy, but it uses only tests that are *modified* (they were already committed in the past)
+instead of *new* ones.
+
+In this strategy not committed changes (those that are _modified_ or _changed_) are considered as important tests as well.
+
+TIP: Usually `new` and `changed` strategies are used together `-Dconst:core/src/main/java/org/arquillian/smart/testing/configuration/Configuration.java[name="SMART_TESTING"]=new, changed`.
+
+==== Affected
+
+`Affected` strategy uses a different approach to choose what are the *important* tests to run first (_ordering_) or filtered (_selecting_).
+This strategy also relies on _SCM_ information but in this case it retrieves any *new* or *modified* business class
+between commits range and local changes as well.
+
+TIP: `const:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_HEAD"]`, `const:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_RANGE_TAIL"]` and `const:core/src/main/java/org/arquillian/smart/testing/scm/ScmRunnerProperties.java[name="SCM_LAST_CHANGES"]` Java system properties are valid as well.
+
+When this strategy gets all changes then inspect all tests of current project checking which ones _imports_ these classes.
+If the test exercises a business class that has been modified, we treat it as *important*  so it will be executed earlier in the test plan.
+
+.About transitivity
+****
+Our approach does not find only direct test classes related to the business code which was changed, but takes into an account transitivity. This means that any import of a business class is considered as a dependency of the test too.
+
+Suppose we have `ATest.java` which imports `A.java`.
+At the same time `A.java` imports `B.java` (ATest -> A -> B).
+If `B.java` is modified, then `ATest.java` is considered an *important* test too.
+
+By default this import transitivity is applied to all imports except the ones from `java`.
+
+Sometimes you might want to stop this transitivity before reaching these imports, for example in case of developing an application with any third-party library, you'd probably want to *exclude* its imports.
+Or maybe just *include* imports from your business code, for example all imports from `org.superbiz`.
+
+*Affected* provides a way to provide _inclusions_ and _exclusions_ in smart-testing.yml:
+
+.smart-testing.yml
+----
+strategies: affected
+strategiesConfiguration:
+    affected:
+      transitivity: true
+      exclusions:
+         - org.springframework.*
+         - org.apache.commons.*
+      inclusions:
+         - org.mysuperbiz.*
+----
+
+You can overwrite inclusions/exclusions by using `const:strategies/affected/src/main/java/org/arquillian/smart/testing/strategies/affected/AffectedConfiguration.java[name="SMART_TESTING_AFFECTED_INCLUSIONS"]`/`const:strategies/affected/src/main/java/org/arquillian/smart/testing/strategies/affected/AffectedConfiguration.java[name="SMART_TESTING_AFFECTED_EXCLUSIONS"]` which accepts comma-separated values.
+For example: `-Dconst:strategies/affected/src/main/java/org/arquillian/smart/testing/strategies/affected/AffectedConfiguration.java[name="SMART_TESTING_AFFECTED_INCLUSIONS"]=org.mysuperbiz.*`.
+
+IMPORTANT: Exclusions has precedence over inclusions.
+
+You can also disable transitivity by setting `-Dconst:strategies/affected/src/main/java/org/arquillian/smart/testing/strategies/affected/AffectedConfiguration.java[name="SMART_TESTING_AFFECTED_TRANSITIVITY"]` to `false`.
+
+****
+
+IMPORTANT: This strategy is currently only applicable for _white box_ testing approach. At this point our approach is to
+ analyze direct code dependencies, but we are working on broader use cases.
+
+WARNING: At this moment, this strategy does not work with Java 9.
+
+===== Explicitly Set
+
+By default affected strategy uses _imports_ of tests to build the graph of collaborators.
+This approach is fine for unit tests (white box tests) but might not work in all cases of high level tests (black box test).
+
+There are some test technologies that allows you to deploy an application locally and then run tests against it.
+For example Wildfly Swarm has `@DefaultDeployment` annotation or Spring (Boot) deploys all application automatically.
+
+This means that production classes are not directly imported into the test, so there is no way to get a relationship between test and production classes.
+For this reason `affected` provides an annotation to set package(s) of production classes that are deployed by the test.
+
+The first thing you need to do is register following artifact into your build script: `org.arquillian.smart.testing:api:<version>`.
+
+Then you can annotate your test with `org.arquillian.smart.testing.strategies.affected.ComponentUnderTest` annotation.
+
+For example:
+
+[source, java]
+----
+include::../strategies/affected/src/test/java/org/arquillian/smart/testing/strategies/affected/fakeproject/test/ZTest.java[tag=docs]
+----
+
+In previous example all classes belonging to packages and subpackages specified at `packages` attribute are considered as classes used by the test.
+
+You can also use `packageOf` attribute to set a reference class.
+With this attribute all classes that are placed in the same package as the reference class are considered as classes used by the test.
+With this approach your tests are resilient to package name changes.
+
+If none of the attributes are set, then all production classes with same package as test and its subpackages are added automatically as classes used by the test.
+
+===== Regular Files
+
+By default affected strategy uses _imports_ of tests to build the graph of collaborators or if you use the <<Explicitly Set>>, you can explicitly set class dependencies from an annotation.
+This approach is fine for Java classes, but a project usually contains another kind of files such as configuration files like `persistence.xml`, deployment files like `kubernetes.json` or build tool like `pom.xml`.
+
+You can react to these file changes as well and execute some specific tests in these cases by using a special annotation provided by `affected` strategy.
+
+The first thing you need to do is register following artifact into your build script: `org.arquillian.smart.testing:api:<version>`.
+
+Then you can annotate your test with `org.arquillian.smart.testing.strategies.affected.WatchFile` annotation.
+
+For example:
+
+[source, java]
+----
+include::../strategies/affected/src/test/java/org/arquillian/smart/testing/strategies/affected/fakeproject/test/XTest.java[tag=docs]
+----
+
+In previous example when `src/main/resources/META-INF/persistence.xml` file is added or modified, then the test is eligible to be run.
+
+IMPORTANT: Location is relative to current project/module. This means that if you want to refer to a file that it is in another module, you need to navigate to parent folder by using `..` symbol. For example: `../myothermodule/src/main/resources/applicationcontext.xml`.
+
+==== Failed
+
+`Failed` strategy just gets all tests that failed from previous executions and mark them as *important* tests to run first (_ordering_) or not filtered (_selecting_).
+
+This strategy uses the _JUnit_ XML https://github.com/apache/maven-surefire/blob/master/maven-surefire-plugin/src/site/resources/xsd/surefire-test-report.xsd[report] for reading past executions.
+All reports from previous local build are automatically copied by the maven extension to a temp directory `${project.directory}/const:core/src/main/java/org/arquillian/smart/testing/hub/storage/local/DuringExecutionLocalStorage.java[name="SMART_TESTING_WORKING_DIRECTORY_NAME"]/const:core/src/main/java/org/arquillian/smart/testing/hub/storage/local/DuringExecutionLocalStorage.java[name="TEMPORARY_SUBDIRECTORY"]/const:core/src/main/java/org/arquillian/smart/testing/hub/storage/local/TemporaryInternalFiles.java[name="TEMP_REPORT_DIR"]` and when the build is finished the directory is removed.
+
+
+==== Categorized
+
+`Categorized` strategy selects tests based in the JUnit 4 annotation `@Category` and the classes specified in it. With this strategy, you can easily set which classes you want to run without any need of changing your `pom.xml` file with complicated profiles.
+
+You can say which categories should be executed by saying either the fully qualified names of the classes or just simple class names (case sensitivity can be set via configuration). For more information about the parameters see <<_categorized_configuration_options, Configuration Options>>.
+
+****
+NOTE: It works on the level of classes, so it doesn't reflect method annotations.
+****
