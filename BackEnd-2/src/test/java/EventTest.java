@@ -300,7 +300,7 @@ public class EventTest {
             events.get(i).setPulseAverage(i);
         }
         for(int i=0;i<100;i++){
-            assertTrue(events.get(i).getPulseAverage()!=i);
+            assertTrue(events.get(i).getPulseAverage()==i);
         }
 
     }
