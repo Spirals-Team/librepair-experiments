@@ -1,0 +1,1 @@
+\COPY data_collect.snapshots_properties_attributes TO './src/main/resources/db/changelog/snapshots_properties_attributes.csv' DELIMITER ';' CSV HEADER ENCODING 'UTF-8' QUOTE '''' ;
