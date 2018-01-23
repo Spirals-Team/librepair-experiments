@@ -1,0 +1,17 @@
+package org.jboss.resteasy.plugins.validation.hibernate;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+/**
+ * 
+ * @deprecated Use resteasy-validator-provider-11.
+ */
+@Deprecated
+@Target({ElementType.METHOD})
+@Retention(RetentionPolicy.RUNTIME)
+public @interface DoNotValidateRequest {
+
+}
