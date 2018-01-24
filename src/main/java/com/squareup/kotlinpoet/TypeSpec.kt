@@ -90,7 +90,7 @@ class TypeSpec private constructor(builder: TypeSpec.Builder) {
         val allSuperTypes = supertype + superinterfaces.map { CodeBlock.of(" %T", it) }
 
         if (allSuperTypes.isNotEmpty()) {
-          codeWriter.emitCode(" : ")
+          codeWriter.emitCode(" :")
           codeWriter.emitCode(allSuperTypes.joinToCode(","))
         }
         codeWriter.emit(" {\n")
