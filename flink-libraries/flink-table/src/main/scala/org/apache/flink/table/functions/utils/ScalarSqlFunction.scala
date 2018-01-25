@@ -112,10 +112,15 @@ object ScalarSqlFunction {
           .getParameterTypes(foundSignature)
           .map(typeFactory.createTypeFromTypeInfo)
 
-        inferredTypes.zipWithIndex.foreach {
-          case (inferredType, i) =>
-            if (operandTypes.length > 0) {
-              operandTypes(i) = inferredType
+        operandTypes.zipWithIndex.foreach {
+          case (_, i) =>
+            if (i < inferredTypes.length - 1) {
+              operandTypes(i) = inferredTypes(i)
+            } else if (null != inferredTypes.last.getComponentType) {
+              // last arguments is a collection, the array type
+              operandTypes(i) = inferredTypes.last.getComponentType
+            } else {
+              operandTypes(i) = inferredTypes.last
             }
         }
       }
@@ -142,7 +147,7 @@ object ScalarSqlFunction {
         var max = -1
         signatures.foreach(sig => {
           var len = sig.length
-          if (len > 0 && sig(sig.length -1).isArray) {
+          if (len > 0 && sig(sig.length - 1).isArray) {
             max = 254  // according to JVM spec 4.3.3
             len = sig.length - 1
           }

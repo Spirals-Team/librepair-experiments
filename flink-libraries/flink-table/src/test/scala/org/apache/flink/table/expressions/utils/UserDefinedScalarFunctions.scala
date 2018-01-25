@@ -126,6 +126,12 @@ object Func12 extends ScalarFunction {
   }
 }
 
+object ShouldNotExecuteFunc extends ScalarFunction {
+  def eval(s: String): Boolean = {
+    throw new Exception("This func should never be executed")
+  }
+}
+
 class RichFunc0 extends ScalarFunction {
   var openCalled = false
   var closeCalled = false
@@ -228,5 +234,13 @@ object Func14 extends ScalarFunction {
   @varargs
   def eval(a: Int*): Int = {
     a.sum
+  }
+}
+
+object Func15 extends ScalarFunction {
+
+  @varargs
+  def eval(a: String, b: Int*): String = {
+    a + b.length
   }
 }
