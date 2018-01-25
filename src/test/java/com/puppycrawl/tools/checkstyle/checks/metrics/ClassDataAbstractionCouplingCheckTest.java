@@ -21,6 +21,7 @@ package com.puppycrawl.tools.checkstyle.checks.metrics;
 
 import static com.puppycrawl.tools.checkstyle.checks.metrics.ClassDataAbstractionCouplingCheck.MSG_KEY;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.io.File;
@@ -31,6 +32,7 @@ import org.junit.Test;
 import antlr.CommonHiddenStreamToken;
 import com.puppycrawl.tools.checkstyle.BaseCheckTestSupport;
 import com.puppycrawl.tools.checkstyle.DefaultConfiguration;
+import com.puppycrawl.tools.checkstyle.api.CheckstyleException;
 import com.puppycrawl.tools.checkstyle.api.DetailAST;
 import com.puppycrawl.tools.checkstyle.api.TokenTypes;
 import com.puppycrawl.tools.checkstyle.utils.CommonUtils;
@@ -103,13 +105,18 @@ public class ClassDataAbstractionCouplingCheckTest extends BaseCheckTestSupport 
         checkConfig.addAttribute("excludedPackages",
             "com.puppycrawl.tools.checkstyle.checks.metrics.inputs.a.");
 
-        final String[] expected = {
-            "8:1: " + getCheckMessage(MSG_KEY, 2, 0, "[AAClass, ABClass]"),
-            "12:5: " + getCheckMessage(MSG_KEY, 2, 0, "[BClass, CClass]"),
-            "18:1: " + getCheckMessage(MSG_KEY, 1, 0, "[CClass]"),
-        };
-        verify(checkConfig,
-            getPath("InputClassCouplingExcludedPackagesEndingWithDot.java"), expected);
+        try {
+            createChecker(checkConfig);
+            fail("exception expected");
+        }
+        catch (CheckstyleException ex) {
+            assertTrue(ex.getMessage().startsWith(
+                "cannot initialize module com.puppycrawl.tools.checkstyle.TreeWalker - "
+                    + "Cannot set property 'excludedPackages' to "
+                    + "'com.puppycrawl.tools.checkstyle.checks.metrics.inputs.a.' in module "
+                    + "com.puppycrawl.tools.checkstyle.checks.metrics."
+                    + "ClassDataAbstractionCouplingCheck"));
+        }
     }
 
     @Test

@@ -20,6 +20,8 @@
 package com.puppycrawl.tools.checkstyle.checks.metrics;
 
 import static com.puppycrawl.tools.checkstyle.checks.metrics.ClassFanOutComplexityCheck.MSG_KEY;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.File;
 import java.io.IOException;
@@ -29,6 +31,7 @@ import org.junit.Test;
 
 import com.puppycrawl.tools.checkstyle.BaseCheckTestSupport;
 import com.puppycrawl.tools.checkstyle.DefaultConfiguration;
+import com.puppycrawl.tools.checkstyle.api.CheckstyleException;
 import com.puppycrawl.tools.checkstyle.api.TokenTypes;
 import com.puppycrawl.tools.checkstyle.utils.CommonUtils;
 
@@ -98,13 +101,18 @@ public class ClassFanOutComplexityCheckTest extends BaseCheckTestSupport {
         checkConfig.addAttribute("excludedPackages",
             "com.puppycrawl.tools.checkstyle.checks.metrics.inputs.a.");
 
-        final String[] expected = {
-            "8:1: " + getCheckMessage(MSG_KEY, 2, 0),
-            "12:5: " + getCheckMessage(MSG_KEY, 2, 0),
-            "18:1: " + getCheckMessage(MSG_KEY, 1, 0),
-        };
-        verify(checkConfig,
-            getPath("InputClassFanOutComplexityExcludedPackagesWithEndingDot.java"), expected);
+        try {
+            createChecker(checkConfig);
+            fail("exception expected");
+        }
+        catch (CheckstyleException ex) {
+            assertTrue(ex.getMessage().startsWith(
+                "cannot initialize module com.puppycrawl.tools.checkstyle.TreeWalker - "
+                    + "Cannot set property 'excludedPackages' to "
+                    + "'com.puppycrawl.tools.checkstyle.checks.metrics.inputs.a.' in module "
+                    + "com.puppycrawl.tools.checkstyle.checks.metrics."
+                    + "ClassFanOutComplexityCheck"));
+        }
     }
 
     @Test

@@ -24,6 +24,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -35,6 +36,7 @@ import com.puppycrawl.tools.checkstyle.api.DetailAST;
 import com.puppycrawl.tools.checkstyle.api.FullIdent;
 import com.puppycrawl.tools.checkstyle.api.TokenTypes;
 import com.puppycrawl.tools.checkstyle.utils.CheckUtils;
+import com.puppycrawl.tools.checkstyle.utils.CommonUtils;
 
 /**
  * Base class for coupling calculation.
@@ -131,6 +133,15 @@ public abstract class AbstractClassCouplingCheck extends AbstractCheck {
      * @param excludedPackages the list of packages to ignore.
      */
     public final void setExcludedPackages(String... excludedPackages) {
+        final List<String> invalidIdentifiers = Arrays.stream(excludedPackages)
+            .filter(x -> !CommonUtils.isName(x))
+            .collect(Collectors.toList());
+        if (!invalidIdentifiers.isEmpty()) {
+            throw new IllegalArgumentException(
+                "the following values are not valid identifiers: "
+                    + invalidIdentifiers.stream().collect(Collectors.joining(", ", "[", "]")));
+        }
+
         this.excludedPackages = Collections.unmodifiableSet(Arrays.stream(excludedPackages)
             .map(x -> x + DOT).collect(Collectors.toSet()));
     }
