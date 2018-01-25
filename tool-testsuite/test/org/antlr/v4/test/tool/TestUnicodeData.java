@@ -101,6 +101,14 @@ public class TestUnicodeData {
 	}
 
 	@Test
+	public void testUnicodeScriptEquals() {
+		assertTrue(UnicodeData.getPropertyCodePoints("Script=Zyyy").contains('0'));
+		assertTrue(UnicodeData.getPropertyCodePoints("Script=Latn").contains('X'));
+		assertTrue(UnicodeData.getPropertyCodePoints("Script=Hani").contains(0x4E04));
+		assertTrue(UnicodeData.getPropertyCodePoints("Script=Cyrl").contains(0x0404));
+	}
+
+	@Test
 	public void testUnicodeScriptAliases() {
 		assertTrue(UnicodeData.getPropertyCodePoints("Common").contains('0'));
 		assertTrue(UnicodeData.getPropertyCodePoints("Latin").contains('X'));
@@ -109,11 +117,98 @@ public class TestUnicodeData {
 	}
 
 	@Test
+	public void testUnicodeBlocks() {
+		assertTrue(UnicodeData.getPropertyCodePoints("InASCII").contains('0'));
+		assertTrue(UnicodeData.getPropertyCodePoints("InCJK").contains(0x4E04));
+		assertTrue(UnicodeData.getPropertyCodePoints("InCyrillic").contains(0x0404));
+		assertTrue(UnicodeData.getPropertyCodePoints("InMisc_Pictographs").contains(0x1F4A9));
+	}
+
+	@Test
+	public void testUnicodeBlockEquals() {
+		assertTrue(UnicodeData.getPropertyCodePoints("Block=ASCII").contains('0'));
+		assertTrue(UnicodeData.getPropertyCodePoints("Block=CJK").contains(0x4E04));
+		assertTrue(UnicodeData.getPropertyCodePoints("Block=Cyrillic").contains(0x0404));
+		assertTrue(UnicodeData.getPropertyCodePoints("Block=Misc_Pictographs").contains(0x1F4A9));
+	}
+
+	@Test
+	public void testUnicodeBlockAliases() {
+		assertTrue(UnicodeData.getPropertyCodePoints("InBasic_Latin").contains('0'));
+		assertTrue(UnicodeData.getPropertyCodePoints("InMiscellaneous_Mathematical_Symbols_B").contains(0x29BE));
+	}
+
+	@Test
+	public void testEnumeratedPropertyEquals() {
+		assertTrue(
+				"U+1F481 INFORMATION DESK PERSON is an emoji modifier base",
+				UnicodeData.getPropertyCodePoints("Grapheme_Cluster_Break=E_Base").contains(0x1F481));
+
+		assertFalse(
+				"U+1F47E ALIEN MONSTER is not an emoji modifier",
+				UnicodeData.getPropertyCodePoints("Grapheme_Cluster_Break=E_Base").contains(0x1F47E));
+
+		assertTrue(
+				"U+0E33 THAI CHARACTER SARA AM is a spacing mark",
+				UnicodeData.getPropertyCodePoints("Grapheme_Cluster_Break=E_Base").contains(0x1F481));
+
+		assertFalse(
+				"U+1038 MYANMAR SIGN VISARGA is not a spacing mark",
+				UnicodeData.getPropertyCodePoints("Grapheme_Cluster_Break=E_Base").contains(0x1038));
+
+		assertTrue(
+				"U+00A1 INVERTED EXCLAMATION MARK has ambiguous East Asian Width",
+				UnicodeData.getPropertyCodePoints("East_Asian_Width=Ambiguous").contains(0x00A1));
+
+		assertFalse(
+				"U+00A2 CENT SIGN does not have ambiguous East Asian Width",
+				UnicodeData.getPropertyCodePoints("East_Asian_Width=Ambiguous").contains(0x00A2));
+
+	}
+
+        @Test
+        public void extendedPictographic() {
+		assertTrue(
+				"U+1F588 BLACK PUSHPIN is in Extended Pictographic",
+				UnicodeData.getPropertyCodePoints("Extended_Pictographic").contains(0x1F588));
+		assertFalse(
+				"0 is not in Extended Pictographic",
+				UnicodeData.getPropertyCodePoints("Extended_Pictographic").contains('0'));
+        }
+
+        @Test
+        public void emojiPresentation() {
+		assertTrue(
+				"U+1F4A9 PILE OF POO is in EmojiPresentation=EmojiDefault",
+				UnicodeData.getPropertyCodePoints("EmojiPresentation=EmojiDefault").contains(0x1F4A9));
+		assertFalse(
+				"0 is not in EmojiPresentation=EmojiDefault",
+				UnicodeData.getPropertyCodePoints("EmojiPresentation=EmojiDefault").contains('0'));
+		assertFalse(
+				"A is not in EmojiPresentation=EmojiDefault",
+				UnicodeData.getPropertyCodePoints("EmojiPresentation=EmojiDefault").contains('A'));
+		assertFalse(
+				"U+1F4A9 PILE OF POO is not in EmojiPresentation=TextDefault",
+				UnicodeData.getPropertyCodePoints("EmojiPresentation=TextDefault").contains(0x1F4A9));
+		assertTrue(
+				"0 is in EmojiPresentation=TextDefault",
+				UnicodeData.getPropertyCodePoints("EmojiPresentation=TextDefault").contains('0'));
+		assertFalse(
+				"A is not in EmojiPresentation=TextDefault",
+				UnicodeData.getPropertyCodePoints("EmojiPresentation=TextDefault").contains('A'));
+        }
+
+	@Test
 	public void testPropertyCaseInsensitivity() {
 		assertTrue(UnicodeData.getPropertyCodePoints("l").contains('x'));
 		assertFalse(UnicodeData.getPropertyCodePoints("l").contains('0'));
 		assertTrue(UnicodeData.getPropertyCodePoints("common").contains('0'));
 		assertTrue(UnicodeData.getPropertyCodePoints("Alnum").contains('0'));
+	}
+
+	@Test
+	public void testPropertyDashSameAsUnderscore() {
+		assertTrue(UnicodeData.getPropertyCodePoints("InLatin-1").contains('\u00F0'));
 	}
 
 	@Test
