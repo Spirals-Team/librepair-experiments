@@ -435,8 +435,8 @@ public class JacocoPublisherTest extends AbstractJacocoTestBase {
 		assertTrue(new File(run.getRootDir(), "jacoco/classes/Test2.class").exists()); // will be copied accidentally
 
 		assertTrue(logContent.toString().contains("WARNING: You are using directory patterns with trailing /, /* or /**"));
-		assertTrue(logContent.toString().contains("tst\\classes 2 files"));
-		assertTrue(logContent.toString().contains("tst\\classes\\sub 1 files"));
+		assertTrue(logContent.toString().replace("\\","/").contains("tst/classes 2 files"));
+		assertTrue(logContent.toString().replace("\\","/").contains("tst/classes/sub 1 files"));
 		verify(taskListener, run);
 	}
 }
