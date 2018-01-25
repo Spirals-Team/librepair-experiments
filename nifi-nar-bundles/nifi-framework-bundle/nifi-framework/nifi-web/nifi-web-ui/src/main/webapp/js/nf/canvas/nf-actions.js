@@ -406,18 +406,24 @@
          * @param {selection} selection     The selection
          */
         show: function (selection) {
+            // deselect the current selection
+            var currentlySelected = nfCanvasUtils.getSelection();
+            currentlySelected.classed('selected', false);
+
+            // select only the component/connection in question
+            selection.classed('selected', true);
+
             if (selection.size() === 1) {
-                // deselect the current selection
-                var currentlySelected = nfCanvasUtils.getSelection();
-                currentlySelected.classed('selected', false);
-
-                // select only the component/connection in question
-                selection.classed('selected', true);
                 nfActions.center(selection);
-
-                // inform Angular app that values have changed
-                nfNgBridge.digest();
+            } else {
+                nfNgBridge.injector.get('navigateCtrl').zoomFit();
             }
+
+            // update URL deep linking params
+            nfCanvasUtils.setURLParameters(nfCanvasUtils.getGroupId(), selection);
+
+            // inform Angular app that values have changed
+            nfNgBridge.digest();
         },
 
         /**
@@ -935,14 +941,19 @@
                             }
                         }
 
+                        // update URL deep linking params
+                        nfCanvasUtils.setURLParameters();
+
                         // refresh the birdseye
                         nfBirdseye.refresh();
                         // inform Angular app values have changed
                         nfNgBridge.digest();
                     }).fail(nfErrorHandler.handleAjaxError);
                 } else {
+                    var parentGroupId = nfCanvasUtils.getGroupId();
+
                     // create a snippet for the specified component and link to the data flow
-                    var snippet = nfSnippet.marshal(selection);
+                    var snippet = nfSnippet.marshal(selection, parentGroupId);
                     nfSnippet.create(snippet).done(function (response) {
                         // remove the snippet, effectively removing the components
                         nfSnippet.remove(response.snippet.id).done(function () {
@@ -983,6 +994,9 @@
                             if (components.has('Connection')) {
                                 nfConnection.remove(components.get('Connection'));
                             }
+
+                            // update URL deep linking params
+                            nfCanvasUtils.setURLParameters();
 
                             // refresh the birdseye
                             nfBirdseye.refresh();
@@ -1502,7 +1516,8 @@
                         var templateDescription = $('#new-template-description').val();
 
                         // create a snippet
-                        var snippet = nfSnippet.marshal(selection);
+                        var parentGroupId = nfCanvasUtils.getGroupId();
+                        var snippet = nfSnippet.marshal(selection, parentGroupId);
 
                         // create the snippet
                         nfSnippet.create(snippet).done(function (response) {
@@ -1569,8 +1584,9 @@
             var origin = nfCanvasUtils.getOrigin(selection);
 
             // copy the snippet details
+            var parentGroupId = nfCanvasUtils.getGroupId();
             nfClipboard.copy({
-                snippet: nfSnippet.marshal(selection),
+                snippet: nfSnippet.marshal(selection, parentGroupId),
                 origin: origin
             });
         },
@@ -1608,6 +1624,8 @@
                         deferred.reject(xhr.responseText);
                     };
 
+                    var destinationProcessGroupId = nfCanvasUtils.getGroupId();
+
                     // create a snippet from the details
                     nfSnippet.create(data['snippet']).done(function (createResponse) {
                         // determine the origin of the bounding box of the copy
@@ -1622,7 +1640,7 @@
                         }
 
                         // copy the snippet to the new location
-                        nfSnippet.copy(createResponse.snippet.id, origin).done(function (copyResponse) {
+                        nfSnippet.copy(createResponse.snippet.id, origin, destinationProcessGroupId).done(function (copyResponse) {
                             var snippetFlow = copyResponse.flow;
 
                             // update the graph accordingly
