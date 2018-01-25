@@ -27,73 +27,60 @@ import org.apache.flink.api.common.typeutils.TypeSerializer
 import org.apache.flink.api.common.state.ValueStateDescriptor
 import org.apache.flink.api.java.typeutils.RowTypeInfo
 import org.apache.flink.api.common.state.ValueState
-import org.apache.flink.api.java.typeutils.runtime.RowSerializer
+import org.apache.flink.table.functions.{Accumulator, AggregateFunction}
 
 class UnboundedProcessingOverProcessFunction(
-    private val aggregates: Array[Aggregate[_]],
-    private val projectionsMapping: Array[(Int, Int)],
-    private val aggregateMapping: Array[(Int, Int)],
-    private val  intermediateRowType: RowTypeInfo,
-  @transient private val returnType: TypeInformation[Row])
+    private val aggregates: Array[AggregateFunction[_]],
+    private val aggFields: Array[Int],
+    private val forwardedFieldCount: Int,
+    private val intermediateRowType: RowTypeInfo,
+    private val returnType: TypeInformation[Row])
   extends RichProcessFunction[Row, Row]{
 
-  protected var stateSerializer: TypeSerializer[Row] = _
-  protected var stateDescriptor: ValueStateDescriptor[Row] = _
+  Preconditions.checkNotNull(aggregates)
+  Preconditions.checkNotNull(aggFields)
+  Preconditions.checkArgument(aggregates.length == aggFields.length)
 
   private var output: Row = _
   private var state: ValueState[Row] = _
+  private val aggregateWithIndex: Array[(AggregateFunction[_], Int)] = aggregates.zipWithIndex
 
   override def open(config: Configuration) {
-    Preconditions.checkNotNull(aggregates)
-    Preconditions.checkNotNull(projectionsMapping)
-    Preconditions.checkNotNull(aggregateMapping)
-    Preconditions.checkArgument(aggregates.length == aggregateMapping.length)
-
-    val finalRowLength: Int = projectionsMapping.length + aggregateMapping.length
-    output = new Row(finalRowLength)
-    stateSerializer = intermediateRowType.createSerializer(getRuntimeContext.getExecutionConfig)
-    stateDescriptor = new ValueStateDescriptor[Row]("overState", stateSerializer)
+    output = new Row(forwardedFieldCount + aggregates.length)
+    val stateSerializer: TypeSerializer[Row] =
+      intermediateRowType.createSerializer(getRuntimeContext.getExecutionConfig)
+    val stateDescriptor: ValueStateDescriptor[Row] =
+      new ValueStateDescriptor[Row]("overState", stateSerializer)
     state = getRuntimeContext.getState(stateDescriptor)
   }
 
   override def processElement(
-    value2: Row,
+    input: Row,
     ctx: Context,
     out: Collector[Row]): Unit = {
-    val value1 = state.value()
-    val accumulatorRow = new Row(intermediateRowType.getArity)
 
-    if (null != value1) {
-      // copy all fields of value1 into accumulatorRow
-      (0 until intermediateRowType.getArity)
-      .foreach(i => accumulatorRow.setField(i, value1.getField(i)))
-      // merge value2 to accumulatorRow
-      aggregates.foreach(_.merge(value2, accumulatorRow))
-      // Set projections value to final output.
-      projectionsMapping.foreach {
-        case (after, previous) =>
-          accumulatorRow.setField(after, value2.getField(previous))
+    var accumulators = state.value()
+
+    if (null == accumulators) {
+      accumulators = new Row(aggregates.length)
+      aggregateWithIndex.foreach { case (agg, i) =>
+        accumulators.setField(i, agg.createAccumulator())
       }
-    } else {
-      // copy all fields of value1 into accumulatorRow
-      (0 until intermediateRowType.getArity)
-      .foreach(i => accumulatorRow.setField(i, value2.getField(i)))
-
-    }
-    state.update(accumulatorRow)
-
-    // Set input value to final output.
-    projectionsMapping.foreach {
-      case (after, previous) =>
-        output.setField(after, accumulatorRow.getField(previous))
     }
 
-    // Evaluate final aggregate value and set to output.
-    aggregateMapping.foreach {
-      case (after, previous) =>
-        output.setField(after, aggregates(previous).evaluate(accumulatorRow))
+    for (i <- 0 until forwardedFieldCount) {
+      output.setField(i, input.getField(i))
     }
-    //TODO add window information When we implement FLINK-4680.
+
+    for (i <- 0 until aggregates.length) {
+      val index = forwardedFieldCount + i
+      val accumulator = accumulators.getField(i).asInstanceOf[Accumulator];
+      aggregates(i).accumulate(accumulator, input.getField(aggFields(i)))
+      output.setField(index, aggregates(i).getValue(accumulator))
+      accumulators.setField(i, accumulator)
+    }
+    state.update(accumulators)
+
     out.collect(output)
   }
 

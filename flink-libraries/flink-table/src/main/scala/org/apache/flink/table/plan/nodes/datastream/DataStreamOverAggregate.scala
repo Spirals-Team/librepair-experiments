@@ -18,7 +18,7 @@
 package org.apache.flink.table.plan.nodes.datastream
 
 import org.apache.calcite.plan.{RelOptCluster, RelTraitSet}
-import org.apache.calcite.rel.`type`.{RelDataType, RelDataTypeFieldImpl}
+import org.apache.calcite.rel.`type`.RelDataType
 import org.apache.calcite.rel.core.AggregateCall
 import org.apache.calcite.rel.{RelNode, RelWriter, SingleRel}
 import org.apache.flink.api.common.typeinfo.TypeInformation
@@ -34,7 +34,7 @@ import org.apache.calcite.rel.core.Window
 import org.apache.calcite.rel.core.Window.Group
 import java.util.{List => JList}
 
-import org.apache.flink.table.functions.{ProcTimeType, RowTime, RowTimeType, TimeModeType}
+import org.apache.flink.table.functions.{ProcTimeType, RowTimeType}
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.IndexedSeq
@@ -116,17 +116,17 @@ class DataStreamOverAggregate(
 
     val inputDS = input.asInstanceOf[DataStreamRel].translateToPlan(tableEnv)
 
-    if (overWindow.orderKeys.getFieldCollations.size() !=1){
+    if (overWindow.orderKeys.getFieldCollations.size() != 1) {
       throw new TableException(
         "Unsupported use of OVER windows. All aggregates must be ordered on a time mode column.")
     }
 
-    val timeMode = inputType
+    val timeType = inputType
       .getFieldList
       .get(overWindow.orderKeys.getFieldCollations.get(0).getFieldIndex)
       .getValue
 
-    timeMode match {
+    timeType match {
       case _: ProcTimeType =>
         // both ROWS and RANGE clause with UNBOUNDED PRECEDING and CURRENT ROW condition.
         if (overWindow.lowerBound.isUnbounded &&
@@ -134,14 +134,13 @@ class DataStreamOverAggregate(
           createUnboundedAndCurrentRowProcessingTimeOverWindow(inputDS)
         } else {
           throw new TableException(
-            "Unsupported use of OVER windows." +
               "OVER window only support ProcessingTime UNBOUNDED PRECEDING and CURRENT ROW " +
               "condition.")
         }
       case _: RowTimeType =>
-        throw new TableException("Row-Time OVER window not supported.")
+        throw new TableException("OVER Window of the EventTime type is not currently supported.")
       case _ =>
-        throw new TableException("Unsupported TimeMode.")
+        throw new TableException(s"Unsupported time type {$timeType}")
     }
 
   }
@@ -155,7 +154,7 @@ class DataStreamOverAggregate(
       namedAggregates: IndexedSeq[CalcitePair[AggregateCall, String]]
       ) = genPartitionKeysAndNamedAggregates
 
-    val inputIndicies = (0 until inputType.getFieldCount).toArray
+    val inputIndices = (0 until inputType.getFieldCount).toArray
 
     // get the output types
     val fieldTypes: Array[TypeInformation[_]] = getRowType
@@ -166,40 +165,25 @@ class DataStreamOverAggregate(
 
     val aggString = aggregationToString(
       inputType,
-      inputIndicies,
+      inputIndices,
       getRowType,
       namedAggregates,
       Seq())
 
-    val prepareOpName = s"prepare select: ($aggString)"
     val keyedAggOpName = s"partitionBy: (${groupingToString(inputType, partitionKeys)}), " +
       s"overWindow: ($overWindow), " +
       s"select: ($aggString)"
 
-    val mapFunction = AggregateUtil.createPrepareMapFunction(
-      namedAggregates,
-      inputIndicies,
-      inputType)
-
-    val mappedInput = inputDS.map(mapFunction).name(prepareOpName)
-
     val result: DataStream[Row] =
-    // check whether all aggregates support partial aggregate
-      if (AggregateUtil.doAllSupportPartialAggregation(
-        namedAggregates.map(_.getKey),
-        inputType,
-        partitionKeys.length)) {
-
         // partitioned aggregation
         if (partitionKeys.length > 0) {
-
           val processFunction = AggregateUtil.CreateUnboundedProcessingOverProcessFunction(
             namedAggregates,
             inputType,
             getRowType,
-            inputIndicies)
+            inputIndices)
 
-          mappedInput
+          inputDS
           .keyBy(partitionKeys: _*)
           .process(processFunction)
           .returns(rowTypeInfo)
@@ -210,10 +194,6 @@ class DataStreamOverAggregate(
         else {
           throw TableException("non-partitioned over Aggregation is currently not supported...")
         }
-      }
-      else {
-        throw TableException("non-Incremental over Aggregation is currently not supported...")
-      }
     result
   }
 
@@ -227,4 +207,3 @@ class DataStreamOverAggregate(
     (overWindow, partitionKeys, namedAggregates)
   }
 }
-

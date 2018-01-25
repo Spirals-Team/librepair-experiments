@@ -197,7 +197,7 @@ class SqlITCase extends StreamingMultipleProgramsTestBase {
 
     tEnv.registerTable("T1", t1)
 
-    val sqlQuery = "SELECT ProcTime()," +
+    val sqlQuery = "SELECT " +
       "c, " +
       "count(a) OVER (PARTITION BY c ORDER BY ProcTime()  RANGE UNBOUNDED preceding) as cnt1, " +
       "sum(a) OVER (PARTITION BY c ORDER BY ProcTime() RANGE UNBOUNDED preceding) as cnt2 " +
@@ -225,7 +225,8 @@ class SqlITCase extends StreamingMultipleProgramsTestBase {
 
     val sqlQuery = "SELECT " +
       "c, " +
-      "count(a) OVER (PARTITION BY c ROWS BETWEEN UNBOUNDED preceding AND CURRENT ROW) as cnt1 " +
+      "count(a) OVER (PARTITION BY c ORDER BY ProcTime() ROWS BETWEEN UNBOUNDED preceding AND " +
+      "CURRENT ROW) as cnt1 " +
       "from T1"
 
     val result = tEnv.sql(sqlQuery).toDataStream[Row]
