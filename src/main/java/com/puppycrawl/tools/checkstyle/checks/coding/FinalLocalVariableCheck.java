@@ -400,7 +400,7 @@ public class FinalLocalVariableCheck extends AbstractCheck {
      * @param containType the token type which has to be present in the branch
      * @return the matching token, or null if no match
      */
-    public static DetailAST findLastChildWhichContainsSpecifiedToken(DetailAST ast, int childType,
+    private static DetailAST findLastChildWhichContainsSpecifiedToken(DetailAST ast, int childType,
                                                               int containType) {
         DetailAST returnValue = null;
         for (DetailAST astIterator = ast.getFirstChild(); astIterator != null;
