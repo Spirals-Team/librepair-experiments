@@ -35,7 +35,7 @@ public class ExtremTracProtocolDecoder extends BaseProtocolDecoder {
     private static final Pattern PATTERN = new PatternBuilder()
             .text("$GPRMC,")
             .number("(d+),")                     // device id
-            .number("(dd)(dd)(dd).d+,")          // time (hhmmss.ms)
+            .number("(dd)(dd)(dd).d+,")          // time
             .expression("([AV]),")               // validity
             .number("(d+)(dd.d+),")              // latitude
             .expression("([NS]),")
@@ -43,7 +43,7 @@ public class ExtremTracProtocolDecoder extends BaseProtocolDecoder {
             .expression("([EW]),")
             .number("(d+.?d*),")                 // speed
             .number("(d+.?d*),")                 // course
-            .number("(dd)(dd)(dd),")             // date (ddmmyy)
+            .number("(dd)(dd)(dd),")             // date
             .any()
             .compile();
 

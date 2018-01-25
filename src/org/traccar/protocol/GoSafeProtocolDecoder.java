@@ -121,7 +121,7 @@ public class GoSafeProtocolDecoder extends BaseProtocolDecoder {
             .number("d+,")                       // protocol version
             .number("(d+),")                     // imei
             .text("GPS:")
-            .number("(dd)(dd)(dd);")             // time (hhmmss)
+            .number("(dd)(dd)(dd);")             // time
             .number("d;").optional()             // fix type
             .expression("([AV]);")               // validity
             .number("([NS])(d+.d+);")            // latitude
@@ -129,7 +129,7 @@ public class GoSafeProtocolDecoder extends BaseProtocolDecoder {
             .number("(d+)?;")                    // speed
             .number("(d+);")                     // course
             .number("(d+.?d*)").optional()       // hdop
-            .number("(dd)(dd)(dd)")              // date (ddmmyy)
+            .number("(dd)(dd)(dd)")              // date
             .any()
             .compile();
 

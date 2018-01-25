@@ -66,7 +66,7 @@ public class CarcellProtocolDecoder extends BaseProtocolDecoder {
             .number("(d),")                      // painel
             .number("(d+),")                     // battery voltage
             .or()
-            .number("(dd),")                     // time until delivery
+            .number("(dd),")                     // time
             .expression("([AF])")                // panic
             .number("(d),")                      // aux
             .number("(d{2,4}),")                 // battery voltage

@@ -73,6 +73,8 @@ public class H02ProtocolDecoder extends BaseProtocolDecoder {
             position.set(Position.KEY_ALARM, Position.ALARM_SOS);
         } else if (!BitUtil.check(status, 2)) {
             position.set(Position.KEY_ALARM, Position.ALARM_OVERSPEED);
+        } else if (!BitUtil.check(status, 19)) {
+            position.set(Position.KEY_ALARM, Position.ALARM_POWER_CUT);
         }
 
         position.set(Position.KEY_IGNITION, BitUtil.check(status, 10));
@@ -149,7 +151,7 @@ public class H02ProtocolDecoder extends BaseProtocolDecoder {
             .number("(d+),")                     // imei
             .expression("[^,]+,")
             .any()
-            .number("(?:(dd)(dd)(dd))?,")        // time (hhmmss)
+            .number("(?:(dd)(dd)(dd))?,")        // time
             .expression("([AV])?,")              // validity
             .groupBegin()
             .number("-(d+)-(d+.d+),")            // latitude
@@ -176,7 +178,7 @@ public class H02ProtocolDecoder extends BaseProtocolDecoder {
             .expression("..,")                   // manufacturer
             .number("(d+),")                     // imei
             .text("NBR,")
-            .number("(dd)(dd)(dd),")             // time (hhmmss)
+            .number("(dd)(dd)(dd),")             // time
             .number("(d+),")                     // mcc
             .number("(d+),")                     // mnc
             .number("d+,")                       // gsm delay time

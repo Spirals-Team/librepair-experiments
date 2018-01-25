@@ -40,7 +40,7 @@ public class L100ProtocolDecoder extends BaseProtocolDecoder {
             .text("ATL")
             .number("(d{15}),")                  // imei
             .text("$GPRMC,")
-            .number("(dd)(dd)(dd).(ddd),")       // time (hhmmss.sss)
+            .number("(dd)(dd)(dd).ddd,")         // time
             .expression("([AV]),")               // validity
             .number("(dd)(dd.d+),")              // latitude
             .expression("([NS]),")
@@ -48,7 +48,7 @@ public class L100ProtocolDecoder extends BaseProtocolDecoder {
             .expression("([EW]),")
             .number("(d+.?d*)?,")                // speed
             .number("(d+.?d*)?,")                // course
-            .number("(dd)(dd)(dd),")             // date (ddmmyy)
+            .number("(dd)(dd)(dd),")             // date
             .any()
             .text("#")
             .number("([01]+),")                  // io status
@@ -92,7 +92,7 @@ public class L100ProtocolDecoder extends BaseProtocolDecoder {
         position.setDeviceId(deviceSession.getDeviceId());
 
         DateBuilder dateBuilder = new DateBuilder()
-                .setTime(parser.nextInt(), parser.nextInt(), parser.nextInt(), parser.nextInt());
+                .setTime(parser.nextInt(), parser.nextInt(), parser.nextInt());
 
         position.setValid(parser.next().equals("A"));
         position.setLatitude(parser.nextCoordinate());

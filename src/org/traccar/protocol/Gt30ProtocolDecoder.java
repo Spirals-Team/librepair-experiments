@@ -38,7 +38,7 @@ public class Gt30ProtocolDecoder extends BaseProtocolDecoder {
             .expression("(.{14})")               // device id
             .number("x{4}")                      // type
             .expression("(.)?")                  // alarm
-            .number("(dd)(dd)(dd).(ddd),")       // time (hhmmss.sss)
+            .number("(dd)(dd)(dd).(d+),")        // time
             .expression("([AV]),")               // validity
             .number("(d+)(dd.d+),")              // latitude
             .expression("([NS]),")

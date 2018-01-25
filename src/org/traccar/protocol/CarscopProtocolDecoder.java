@@ -35,7 +35,7 @@ public class CarscopProtocolDecoder extends BaseProtocolDecoder {
     private static final Pattern PATTERN = new PatternBuilder()
             .text("*")
             .any()
-            .number("(dd)(dd)(dd)")              // time (hhmmss)
+            .number("(dd)(dd)(dd)")              // time
             .expression("([AV])")                // validity
             .number("(dd)(dd.dddd)")             // latitude
             .expression("([NS])")
