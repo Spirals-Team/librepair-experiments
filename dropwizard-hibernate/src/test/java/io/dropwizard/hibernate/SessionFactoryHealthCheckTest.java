@@ -47,8 +47,7 @@ public class SessionFactoryHealthCheckTest {
         final NativeQuery query = mock(NativeQuery.class);
         when(session.createNativeQuery(anyString())).thenReturn(query);
 
-        assertThat(healthCheck.execute())
-                .isEqualTo(HealthCheck.Result.healthy());
+        assertThat(healthCheck.execute().isHealthy()).isTrue();
 
         final InOrder inOrder = inOrder(factory, session, transaction, query);
         inOrder.verify(factory).openSession();
