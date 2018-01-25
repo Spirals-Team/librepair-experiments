@@ -50,13 +50,24 @@ public class Search implements Serializable, DebugDumpable {
     public static final String F_ITEMS = "items";
     public static final String F_ADVANCED_QUERY = "advancedQuery";
     public static final String F_ADVANCED_ERROR = "advancedError";
+    public static final String F_FULL_TEXT = "fullText";
 
     private static final Trace LOGGER = TraceManager.getTrace(Search.class);
 
+    public static enum SearchViewType{
+        BASIC_SEARCH,
+        ADVANCED_SEARCH,
+        FULL_TEXT_SEARCH
+    };
+
+    private SearchViewType searchType;
+
     private boolean showAdvanced = false;
+    private boolean isFullTextSearchEnabled = false;
 
     private String advancedQuery;
     private String advancedError;
+    private String fullText;
 
     private Class<? extends ObjectType> type;
     private Map<ItemPath, ItemDefinition> allDefinitions;
@@ -65,9 +76,19 @@ public class Search implements Serializable, DebugDumpable {
     private List<SearchItem> items = new ArrayList<>();
 
     public Search(Class<? extends ObjectType> type, Map<ItemPath, ItemDefinition> allDefinitions) {
+        this(type, allDefinitions, false);
+    }
+
+    public Search(Class<? extends ObjectType> type, Map<ItemPath, ItemDefinition> allDefinitions, boolean isFullTextSearchEnabled) {
         this.type = type;
         this.allDefinitions = allDefinitions;
 
+        this.isFullTextSearchEnabled = isFullTextSearchEnabled;
+        if (isFullTextSearchEnabled ){
+            searchType = SearchViewType.FULL_TEXT_SEARCH;
+        } else {
+            searchType = SearchViewType.BASIC_SEARCH;
+        }
         availableDefinitions.addAll(allDefinitions.values());
     }
 
@@ -133,8 +154,13 @@ public class Search implements Serializable, DebugDumpable {
 
     public ObjectQuery createObjectQuery(PrismContext ctx) {
         LOGGER.debug("Creating query from {}", this);
-
-        return showAdvanced ? createObjectQueryAdvanced(ctx) : createObjectQuerySimple(ctx);
+        if (SearchViewType.ADVANCED_SEARCH.equals(searchType)){
+            return createObjectQueryAdvanced(ctx);
+        } else if (SearchViewType.FULL_TEXT_SEARCH.equals(searchType)){
+            return createObjectQueryFullText(ctx);
+        } else {
+            return createObjectQuerySimple(ctx);
+        }
     }
 
     public ObjectQuery createObjectQuerySimple(PrismContext ctx) {
@@ -262,6 +288,14 @@ public class Search implements Serializable, DebugDumpable {
         this.advancedQuery = advancedQuery;
     }
 
+    public String getFullText() {
+        return fullText;
+    }
+
+    public void setFullText(String fullText) {
+        this.fullText = fullText;
+    }
+
     public ObjectQuery createObjectQueryAdvanced(PrismContext ctx) {
         try {
             advancedError = null;
@@ -277,6 +311,16 @@ public class Search implements Serializable, DebugDumpable {
         }
 
         return null;
+    }
+
+    public ObjectQuery createObjectQueryFullText(PrismContext ctx) {
+        if (StringUtils.isEmpty(fullText)){
+            return null;
+        }
+        ObjectQuery query = QueryBuilder.queryFor(type, ctx)
+                .fullText(fullText)
+                .build();
+        return query;
     }
 
     private ObjectFilter createAdvancedObjectFilter(PrismContext ctx) throws SchemaException {
@@ -299,6 +343,23 @@ public class Search implements Serializable, DebugDumpable {
         }
 
         return false;
+    }
+
+
+    public SearchViewType getSearchType() {
+        return searchType;
+    }
+
+    public void setSearchType(SearchViewType searchType) {
+        this.searchType = searchType;
+    }
+
+    public boolean isFullTextSearchEnabled() {
+        return isFullTextSearchEnabled;
+    }
+
+    public void setFullTextSearchEnabled(boolean fullTextSearchEnabled) {
+        isFullTextSearchEnabled = fullTextSearchEnabled;
     }
 
     private String createErrorMessage(Exception ex) {

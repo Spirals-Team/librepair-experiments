@@ -52,4 +52,5 @@ public class SystemConfigurationTypeUtil {
         }
         return sysconfigObject.asObjectable().getInternals().getMaxModelClicks();
     }
+
 }
