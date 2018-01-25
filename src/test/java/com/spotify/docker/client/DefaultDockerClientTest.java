@@ -2173,7 +2173,7 @@ public class DefaultDockerClientTest {
 
   @Test
   public void testEventFiltersWithSpaces() throws Exception {
-    requireDockerApiVersionAtLeast("1.22", "Docker events");
+    requireDockerApiVersionAtLeast("1.24", "Docker events and health check");
 
     sut.pull(BUSYBOX_LATEST);
     final String containerName = randomName();
