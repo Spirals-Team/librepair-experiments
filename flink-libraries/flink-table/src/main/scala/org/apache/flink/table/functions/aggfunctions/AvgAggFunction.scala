@@ -51,6 +51,15 @@ abstract class IntegralAvgAggFunction[T] extends AggregateFunction[T] {
     }
   }
 
+  override def retract(accumulator: Accumulator, value: Any): Unit = {
+    if (value != null) {
+      val v = value.asInstanceOf[Number].longValue()
+      val accum = accumulator.asInstanceOf[IntegralAvgAccumulator]
+      accum.f0 -= v
+      accum.f1 -= 1L
+    }
+  }
+
   override def getValue(accumulator: Accumulator): T = {
     val accum = accumulator.asInstanceOf[IntegralAvgAccumulator]
     if (accum.f1 == 0) {
@@ -72,7 +81,12 @@ abstract class IntegralAvgAggFunction[T] extends AggregateFunction[T] {
     ret
   }
 
-  override def getAccumulatorType(): TypeInformation[_] = {
+  override def resetAccumulator(accumulator: Accumulator): Unit = {
+    accumulator.asInstanceOf[IntegralAvgAccumulator].f0 = 0L
+    accumulator.asInstanceOf[IntegralAvgAccumulator].f1 = 0L
+  }
+
+  override def getAccumulatorType: TypeInformation[_] = {
     new TupleTypeInfo(
       new IntegralAvgAccumulator().getClass,
       BasicTypeInfo.LONG_TYPE_INFO,
@@ -137,6 +151,15 @@ abstract class BigIntegralAvgAggFunction[T] extends AggregateFunction[T] {
     }
   }
 
+  override def retract(accumulator: Accumulator, value: Any): Unit = {
+    if (value != null) {
+      val v = value.asInstanceOf[Long]
+      val a = accumulator.asInstanceOf[BigIntegralAvgAccumulator]
+      a.f0 = a.f0.subtract(BigInteger.valueOf(v))
+      a.f1 -= 1L
+    }
+  }
+
   override def getValue(accumulator: Accumulator): T = {
     val a = accumulator.asInstanceOf[BigIntegralAvgAccumulator]
     if (a.f1 == 0) {
@@ -158,7 +181,12 @@ abstract class BigIntegralAvgAggFunction[T] extends AggregateFunction[T] {
     ret
   }
 
-  override def getAccumulatorType(): TypeInformation[_] = {
+  override def resetAccumulator(accumulator: Accumulator): Unit = {
+    accumulator.asInstanceOf[BigIntegralAvgAccumulator].f0 = BigInteger.ZERO
+    accumulator.asInstanceOf[BigIntegralAvgAccumulator].f1 = 0
+  }
+
+  override def getAccumulatorType: TypeInformation[_] = {
     new TupleTypeInfo(
       new BigIntegralAvgAccumulator().getClass,
       BasicTypeInfo.BIG_INT_TYPE_INFO,
@@ -209,6 +237,15 @@ abstract class FloatingAvgAggFunction[T] extends AggregateFunction[T] {
     }
   }
 
+  override def retract(accumulator: Accumulator, value: Any): Unit = {
+    if (value != null) {
+      val v = value.asInstanceOf[Number].doubleValue()
+      val accum = accumulator.asInstanceOf[FloatingAvgAccumulator]
+      accum.f0 -= v
+      accum.f1 -= 1L
+    }
+  }
+
   override def getValue(accumulator: Accumulator): T = {
     val accum = accumulator.asInstanceOf[FloatingAvgAccumulator]
     if (accum.f1 == 0) {
@@ -230,7 +267,12 @@ abstract class FloatingAvgAggFunction[T] extends AggregateFunction[T] {
     ret
   }
 
-  override def getAccumulatorType(): TypeInformation[_] = {
+  override def resetAccumulator(accumulator: Accumulator): Unit = {
+    accumulator.asInstanceOf[FloatingAvgAccumulator].f0 = 0
+    accumulator.asInstanceOf[FloatingAvgAccumulator].f1 = 0L
+  }
+
+  override def getAccumulatorType: TypeInformation[_] = {
     new TupleTypeInfo(
       new FloatingAvgAccumulator().getClass,
       BasicTypeInfo.DOUBLE_TYPE_INFO,
@@ -281,12 +323,17 @@ class DecimalAvgAggFunction extends AggregateFunction[BigDecimal] {
     if (value != null) {
       val v = value.asInstanceOf[BigDecimal]
       val accum = accumulator.asInstanceOf[DecimalAvgAccumulator]
-      if (accum.f1 == 0) {
-        accum.f0 = v
-      } else {
-        accum.f0 = accum.f0.add(v)
-      }
+      accum.f0 = accum.f0.add(v)
       accum.f1 += 1L
+    }
+  }
+
+  override def retract(accumulator: Accumulator, value: Any): Unit = {
+    if (value != null) {
+      val v = value.asInstanceOf[BigDecimal]
+      val accum = accumulator.asInstanceOf[DecimalAvgAccumulator]
+      accum.f0 = accum.f0.subtract(v)
+      accum.f1 -= 1L
     }
   }
 
@@ -311,7 +358,12 @@ class DecimalAvgAggFunction extends AggregateFunction[BigDecimal] {
     ret
   }
 
-  override def getAccumulatorType(): TypeInformation[_] = {
+  override def resetAccumulator(accumulator: Accumulator): Unit = {
+    accumulator.asInstanceOf[DecimalAvgAccumulator].f0 = BigDecimal.ZERO
+    accumulator.asInstanceOf[DecimalAvgAccumulator].f1 = 0L
+  }
+
+  override def getAccumulatorType: TypeInformation[_] = {
     new TupleTypeInfo(
       new DecimalAvgAccumulator().getClass,
       BasicTypeInfo.BIG_DEC_TYPE_INFO,

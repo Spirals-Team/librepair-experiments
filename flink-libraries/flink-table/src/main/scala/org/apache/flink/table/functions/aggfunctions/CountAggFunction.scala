@@ -40,6 +40,12 @@ class CountAggFunction extends AggregateFunction[Long] {
     }
   }
 
+  override def retract(accumulator: Accumulator, value: Any): Unit = {
+    if (value != null) {
+      accumulator.asInstanceOf[CountAccumulator].f0 -= 1L
+    }
+  }
+
   override def getValue(accumulator: Accumulator): Long = {
     accumulator.asInstanceOf[CountAccumulator].f0
   }
@@ -56,6 +62,10 @@ class CountAggFunction extends AggregateFunction[Long] {
 
   override def createAccumulator(): Accumulator = {
     new CountAccumulator
+  }
+
+  override def resetAccumulator(accumulator: Accumulator): Unit = {
+    accumulator.asInstanceOf[CountAccumulator].f0 = 0L
   }
 
   override def getAccumulatorType(): TypeInformation[_] = {

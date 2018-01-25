@@ -47,66 +47,75 @@ class DataSetTumbleCountWindowAggReduceGroupFunction(
     private val finalRowArity: Int)
   extends RichGroupReduceFunction[Row, Row] {
 
-  private var aggregateBuffer: Row = _
+  Preconditions.checkNotNull(aggregates)
+  Preconditions.checkNotNull(groupKeysMapping)
+
   private var output: Row = _
   private val accumStartPos: Int = groupKeysMapping.length
-  private val intermediateRowArity: Int = accumStartPos + aggregates.length + 1
-  private val maxMergeLen = 16
-  val accumulatorList = Array.fill(aggregates.length) {
-    new JArrayList[Accumulator]()
+
+  val accumulatorList: Array[JArrayList[Accumulator]] = Array.fill(aggregates.length) {
+    new JArrayList[Accumulator](2)
   }
 
   override def open(config: Configuration) {
-    Preconditions.checkNotNull(aggregates)
-    Preconditions.checkNotNull(groupKeysMapping)
-    aggregateBuffer = new Row(intermediateRowArity)
     output = new Row(finalRowArity)
+
+    // init lists with two empty accumulators
+    for (i <- aggregates.indices) {
+      val accumulator = aggregates(i).createAccumulator()
+      accumulatorList(i).add(accumulator)
+      accumulatorList(i).add(accumulator)
+    }
   }
 
   override def reduce(records: Iterable[Row], out: Collector[Row]): Unit = {
 
     var count: Long = 0
-    accumulatorList.foreach(_.clear())
-
     val iterator = records.iterator()
+    var i = 0
 
     while (iterator.hasNext) {
-      val record = iterator.next()
 
       if (count == 0) {
-        // clear the accumulator list for all aggregate
-        accumulatorList.foreach(_.clear())
+        // reset first accumulator
+        i = 0
+        while (i < aggregates.length) {
+          aggregates(i).resetAccumulator(accumulatorList(i).get(0))
+          i += 1
+        }
       }
 
-      // collect the accumulators for each aggregate
-      for (i <- aggregates.indices) {
-        accumulatorList(i).add(record.getField(accumStartPos + i).asInstanceOf[Accumulator])
-      }
+      val record = iterator.next()
       count += 1
 
-      // for every maxMergeLen accumulators, we merge them into one
-      if (count % maxMergeLen == 0) {
-        for (i <- aggregates.indices) {
-          val agg = aggregates(i)
-          val accumulator = agg.merge(accumulatorList(i))
-          accumulatorList(i).clear()
-          accumulatorList(i).add(accumulator)
-        }
+      i = 0
+      while (i < aggregates.length) {
+        // insert received accumulator into acc list
+        val newAcc = record.getField(accumStartPos + i).asInstanceOf[Accumulator]
+        accumulatorList(i).set(1, newAcc)
+        // merge acc list
+        val retAcc = aggregates(i).merge(accumulatorList(i))
+        // insert result into acc list
+        accumulatorList(i).set(0, retAcc)
+        i += 1
       }
 
       if (windowSize == count) {
         // set group keys value to final output.
-        groupKeysMapping.foreach {
-          case (after, previous) =>
-            output.setField(after, record.getField(previous))
+        i = 0
+        while (i < groupKeysMapping.length) {
+          val (after, previous) = groupKeysMapping(i)
+          output.setField(after, record.getField(previous))
+          i += 1
         }
 
         // merge the accumulators and then get value for the final output
-        aggregateMapping.foreach {
-          case (after, previous) =>
-            val agg = aggregates(previous)
-            val accumulator = agg.merge(accumulatorList(previous))
-            output.setField(after, agg.getValue(accumulator))
+        i = 0
+        while (i < aggregateMapping.length) {
+          val (after, previous) = aggregateMapping(i)
+          val agg = aggregates(previous)
+          output.setField(after, agg.getValue(accumulatorList(previous).get(0)))
+          i += 1
         }
 
         // emit the output
