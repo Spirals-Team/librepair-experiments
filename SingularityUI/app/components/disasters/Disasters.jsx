@@ -26,11 +26,14 @@ class Disasters extends Component {
       })).isRequired,
       automatedActionsDisabled: PropTypes.bool.isRequired
     }).isRequired,
+    taskCredits: PropTypes.object,
     priorityFreeze: PropTypes.object,
     user: PropTypes.string,
-    fetchDisabledActions: PropTypes.func.isRequired,
-    fetchDisastersData: PropTypes.func.isRequired,
-    fetchPriorityFreeze: PropTypes.func.isRequired
+    disabledActions: PropTypes.arrayOf(PropTypes.shape({
+      type: PropTypes.string.isRequired,
+      message: PropTypes.string,
+      user: PropTypes.string
+    })).isRequired,
   };
 
   constructor(props) {
@@ -42,11 +45,12 @@ class Disasters extends Component {
     return (
       <div>
         <DisabledActions disabledActions={this.props.disabledActions} user={this.props.user} />
-        <ManageDisasters 
+        <ManageDisasters
           disasters={this.props.disastersData.disasters}
           priorityFreeze={this.props.priorityFreeze}
           user={this.props.user}
           automatedActionsDisabled={this.props.disastersData.automatedActionsDisabled}
+          taskCredits={this.props.taskCredits}
         />
         <DisasterStats stats={this.props.disastersData.stats} />
       </div>
@@ -61,6 +65,7 @@ function mapStateToProps(state) {
     user,
     disastersData: state.api.disastersData.data,
     disabledActions: state.api.disabledActions.data,
+    taskCredits: state.api.taskCredits.data,
     priorityFreeze: _.isEmpty(priorityFreeze) ? {} : priorityFreeze
   };
 }

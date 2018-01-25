@@ -19,7 +19,6 @@ import TaskSearch from './components/taskSearch/TaskSearch';
 import DeployDetail from './components/deployDetail/DeployDetail';
 import RequestForm from './components/requestForm/RequestForm';
 import NewDeployForm from './components/newDeployForm/NewDeployForm';
-import { Tail, AggregateTail } from './components/logs/Tail';
 import TaskInstanceRedirect from './components/requestDetail/TaskInstanceRedirect';
 import RequestDetailPage from './components/requestDetail/RequestDetailPage';
 import Group from './components/groupDetail/GroupDetail.jsx';
@@ -27,6 +26,7 @@ import Disasters from './components/disasters/Disasters';
 import TaskLogTailerContainer from './containers/TaskLogTailerContainer';
 import RequestLogTailerContainer from './containers/RequestLogTailerContainer';
 import CustomLogTailerContainer from './containers/CustomLogTailerContainer';
+import { Tail, AggregateTail } from './components/logs/Tail';
 
 const getFilenameFromSplat = (splat) => _.last(splat.split('/'));
 
@@ -43,19 +43,19 @@ const routes = (
       <Route path=":requestId/task-search" component={TaskSearch} title="Task Search" />
       <Route path=":requestId/deploy" component={NewDeployForm} title="New Deploy" />
       <Route path=":requestId/deploy/:deployId" component={DeployDetail} title={(params) => `Deploy ${params.deployId}`} />
-      <Route path=":requestId/tail/**" component={AggregateTail} title={(params) => `Tail of ${getFilenameFromSplat(params.splat)}`} />
-      <Route path=":requestId/new-tail/**" component={RequestLogTailerContainer} title={(params) => `Tail of ${getFilenameFromSplat(params.splat)}`} />
+      <Route path=":requestId/old-tail/**" component={AggregateTail} title={(params) => `Tail of ${getFilenameFromSplat(params.splat)}`} />
+      <Route path=":requestId/tail/**" component={RequestLogTailerContainer} title={(params) => `Tail of ${getFilenameFromSplat(params.splat)}`} />
       <Route path=":requestId/instance/:instanceNo" component={TaskInstanceRedirect} />
       <IndexRoute component={NotFound} title="Not Found" />
     </Route>
     <Route path="tasks(/:state)(/:requestsSubFilter)(/:searchFilter)" component={TasksPage} title="Tasks" />
     <Route path="task">
       <Route path=":taskId(/files**)" component={TaskDetail} title={(params) => params.taskId} />
-      <Route path=":taskId/tail/**" component={Tail} title={(params) => `Tail of ${getFilenameFromSplat(params.splat)}`} />
-      <Route path=":taskId/new-tail/**" component={TaskLogTailerContainer} title={(params) => `Tail of ${getFilenameFromSplat(params.splat)}`} />
+      <Route path=":taskId/old-tail/**" component={Tail} title={(params) => `Tail of ${getFilenameFromSplat(params.splat)}`} />
+      <Route path=":taskId/tail/**" component={TaskLogTailerContainer} title={(params) => `Tail of ${getFilenameFromSplat(params.splat)}`} />
       <IndexRoute component={NotFound} title="Not Found" />
     </Route>
-    <Route path="new-tail/**" component={CustomLogTailerContainer} title="New Tailer" />
+    <Route path="tail/**" component={CustomLogTailerContainer} title="Tailer" />
     <Route path="racks(/:state)" component={Racks} title="Racks" />
     <Route path="slaves(/:state)" component={Slaves} title="Slaves" />
     <Route path="slave-usage" component={SlaveUsage} />

@@ -23,6 +23,7 @@ import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.Timer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
@@ -101,12 +102,11 @@ public class SingularityMainModule implements Module {
   public static final String NEW_TASK_THREADPOOL_NAME = "_new_task_threadpool";
   public static final Named NEW_TASK_THREADPOOL_NAMED = Names.named(NEW_TASK_THREADPOOL_NAME);
 
-  public static final String STATUS_UPDATE_THREADPOOL_NAME = "_status_update_threadpool";
-  public static final Named STATUS_UPDATE_THREADPOOL_NAMED = Names.named(STATUS_UPDATE_THREADPOOL_NAME);
-
   public static final String CURRENT_HTTP_REQUEST = "_singularity_current_http_request";
 
   public static final String LOST_TASKS_METER = "singularity.lost.tasks.meter";
+
+  public static final String STATUS_UPDATE_DELTA_TIMER = "singularity.status.update.delta.timer";
 
   private final SingularityConfiguration configuration;
 
@@ -129,7 +129,7 @@ public class SingularityMainModule implements Module {
 
     binder.bind(SingularityDriverManager.class).in(Scopes.SINGLETON);
     binder.bind(SingularityLeaderController.class).in(Scopes.SINGLETON);
-    if (configuration.getSmtpConfiguration().isPresent()) {
+    if (configuration.getSmtpConfigurationOptional().isPresent()) {
       binder.bind(SingularityMailer.class).to(SmtpMailer.class).in(Scopes.SINGLETON);
     } else {
       binder.bind(SingularityMailer.class).toInstance(NoopMailer.getInstance());
@@ -168,10 +168,6 @@ public class SingularityMainModule implements Module {
     binder.bind(ScheduledExecutorService.class).annotatedWith(NEW_TASK_THREADPOOL_NAMED).toProvider(new SingularityManagedScheduledExecutorServiceProvider(configuration.getCheckNewTasksScheduledThreads(),
         configuration.getThreadpoolShutdownDelayInSeconds(),
         "check-new-task")).in(Scopes.SINGLETON);
-
-    binder.bind(ScheduledExecutorService.class).annotatedWith(STATUS_UPDATE_THREADPOOL_NAMED).toProvider(new SingularityManagedScheduledExecutorServiceProvider(1,
-        configuration.getThreadpoolShutdownDelayInSeconds(),
-        "status-update-handler")).in(Scopes.SINGLETON);
 
     binder.bind(SingularityGraphiteReporterManaged.class).in(Scopes.SINGLETON);
 
@@ -239,7 +235,7 @@ public class SingularityMainModule implements Module {
   @Provides
   @Singleton
   public Optional<SentryConfiguration> sentryConfiguration(final SingularityConfiguration config) {
-    return config.getSentryConfiguration();
+    return config.getSentryConfigurationOptional();
   }
 
   @Provides
@@ -288,13 +284,13 @@ public class SingularityMainModule implements Module {
   @Provides
   @Singleton
   public Optional<SMTPConfiguration> smtpConfiguration(final SingularityConfiguration config) {
-    return config.getSmtpConfiguration();
+    return config.getSmtpConfigurationOptional();
   }
 
   @Provides
   @Singleton
   public Optional<S3Configuration> s3Configuration(final SingularityConfiguration config) {
-    return config.getS3Configuration();
+    return config.getS3ConfigurationOptional();
   }
 
   @Provides
@@ -365,5 +361,12 @@ public class SingularityMainModule implements Module {
   @Named(LOST_TASKS_METER)
   public Meter providesLostTasksMeter(MetricRegistry registry) {
     return registry.meter("com.hubspot.singularity.lostTasks");
+  }
+
+  @Provides
+  @Singleton
+  @Named(STATUS_UPDATE_DELTA_TIMER)
+  public Timer providesStatusUpdateDeltaMeter(MetricRegistry registry) {
+    return registry.timer("com.hubspot.singularity.statusUpdateDelta");
   }
 }
