@@ -109,7 +109,7 @@ public class InputParenPad
     }
 
     String foo() {
-        return ( (Object // warning
+        return ( (Object
                 ) bar( ( 1 > 2 ) ? // warning
                         ( ( 3 < 4 )? false : true ) : // warning
                         ( ( 1 == 1 ) ? false : true) ) ).toString(); // warning
