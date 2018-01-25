@@ -55,7 +55,7 @@ public class ProjectMeasuresQueryValidator {
 
   private Set<String> getMetrics(ProjectMeasuresQuery query) {
     Set<String> metricKeys = query.getMetricCriteria().stream().map(MetricCriterion::getMetricKey).collect(toHashSet());
-    if (query.getSort() != null && SORT_BY_NAME.equals(query.getSort())) {
+    if (query.getSort() != null && !SORT_BY_NAME.equals(query.getSort())) {
       metricKeys.add(query.getSort());
     }
     return metricKeys;
