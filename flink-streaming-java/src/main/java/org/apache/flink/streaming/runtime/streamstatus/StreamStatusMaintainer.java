@@ -15,25 +15,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.flink.streaming.runtime.streamstatus;
 
-package org.apache.flink.runtime.checkpoint;
+import org.apache.flink.annotation.Internal;
 
-import org.apache.flink.api.common.JobID;
-import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
-import org.apache.flink.runtime.rpc.RpcGateway;
+/**
+ * Interface that allows toggling the current {@link StreamStatus} as well as retrieving it.
+ */
+@Internal
+public interface StreamStatusMaintainer extends StreamStatusProvider {
 
-public interface CheckpointCoordinatorGateway extends RpcGateway {
+	/**
+	 * Toggles the current stream status. This method should only have effect
+	 * if the supplied stream status is different from the current status.
+	 *
+	 * @param streamStatus the new status to toggle to
+	 */
+	void toggleStreamStatus(StreamStatus streamStatus);
 
-	void acknowledgeCheckpoint(
-			final JobID jobID,
-			final ExecutionAttemptID executionAttemptID,
-			final long checkpointId,
-			final CheckpointMetrics checkpointMetrics,
-			final SubtaskState subtaskState);
-
-	void declineCheckpoint(
-			JobID jobID,
-			ExecutionAttemptID executionAttemptID,
-			long checkpointId,
-			Throwable cause);
 }
