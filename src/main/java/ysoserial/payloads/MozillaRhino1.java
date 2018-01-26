@@ -2,8 +2,11 @@ package ysoserial.payloads;
 
 import com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl;
 import org.mozilla.javascript.*;
+import ysoserial.payloads.annotation.Authors;
 import ysoserial.payloads.annotation.Dependencies;
+import ysoserial.payloads.annotation.PayloadTest;
 import ysoserial.payloads.util.Gadgets;
+import ysoserial.payloads.util.JavaVersion;
 import ysoserial.payloads.util.PayloadRunner;
 
 import javax.management.BadAttributeValueExpException;
@@ -15,7 +18,9 @@ import java.lang.reflect.Method;
     by @matthias_kaiser
 */
 @SuppressWarnings({"rawtypes", "unchecked"})
+@PayloadTest( precondition = "isApplicableJavaVersion")
 @Dependencies({"rhino:js:1.7R2"})
+@Authors({ Authors.MATTHIASKAISER })
 public class MozillaRhino1 implements ObjectPayload<Object> {
 
     public Object getObject(final String command) throws Exception {
@@ -63,4 +68,9 @@ public class MozillaRhino1 implements ObjectPayload<Object> {
     public static void main(final String[] args) throws Exception {
         PayloadRunner.run(MozillaRhino1.class, args);
     }
+
+    public static boolean isApplicableJavaVersion() {
+        return JavaVersion.isBadAttrValExcReadObj();
+    }
+
 }

