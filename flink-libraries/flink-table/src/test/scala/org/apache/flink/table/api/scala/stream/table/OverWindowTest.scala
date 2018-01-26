@@ -19,8 +19,9 @@ package org.apache.flink.table.api.scala.stream.table
 
 import org.apache.flink.api.scala._
 import org.apache.flink.table.api.java.utils.UserDefinedAggFunctions.WeightedAvgWithRetract
-import org.apache.flink.table.api.{Table, ValidationException}
 import org.apache.flink.table.api.scala._
+import org.apache.flink.table.expressions.utils.Func1
+import org.apache.flink.table.api.Table
 import org.apache.flink.table.utils.TableTestUtil._
 import org.apache.flink.table.utils.{StreamTableTestUtil, TableTestBase}
 import org.junit.Test
@@ -30,80 +31,46 @@ class OverWindowTest extends TableTestBase {
   val table: Table = streamUtil.addTable[(Int, String, Long)]("MyTable",
     'a, 'b, 'c, 'proctime.proctime, 'rowtime.rowtime)
 
-  @Test(expected = classOf[ValidationException])
-  def testInvalidWindowAlias(): Unit = {
-    val result = table
-      .window(Over partitionBy 'c orderBy 'rowtime preceding 2.rows as 'w)
-      .select('c, 'b.count over 'x)
-    streamUtil.tEnv.optimize(result.getRelNode, updatesAsRetraction = true)
-  }
-
-  @Test(expected = classOf[ValidationException])
-  def testOrderBy(): Unit = {
-    val result = table
-      .window(Over partitionBy 'c orderBy 'abc preceding 2.rows as 'w)
-      .select('c, 'b.count over 'w)
-    streamUtil.tEnv.optimize(result.getRelNode, updatesAsRetraction = true)
-  }
-
-  @Test(expected = classOf[ValidationException])
-  def testPrecedingAndFollowingUsingIsLiteral(): Unit = {
-    val result = table
-      .window(Over partitionBy 'c orderBy 'rowtime preceding 2 following "xx" as 'w)
-      .select('c, 'b.count over 'w)
-    streamUtil.tEnv.optimize(result.getRelNode, updatesAsRetraction = true)
-  }
-
-  @Test(expected = classOf[ValidationException])
-  def testPrecedingAndFollowingUsingSameType(): Unit = {
-    val result = table
-      .window(Over partitionBy 'c orderBy 'rowtime preceding 2.rows following CURRENT_RANGE as 'w)
-      .select('c, 'b.count over 'w)
-    streamUtil.tEnv.optimize(result.getRelNode, updatesAsRetraction = true)
-  }
-
-  @Test(expected = classOf[ValidationException])
-  def testPartitionByWithUnresolved(): Unit = {
-    val result = table
-      .window(Over partitionBy 'a + 'b orderBy 'rowtime preceding 2.rows as 'w)
-      .select('c, 'b.count over 'w)
-    streamUtil.tEnv.optimize(result.getRelNode, updatesAsRetraction = true)
-  }
-
-  @Test(expected = classOf[ValidationException])
-  def testPartitionByWithNotKeyType(): Unit = {
-    val table2 = streamUtil.addTable[(Int, String, Either[Long, String])]("MyTable2", 'a, 'b, 'c)
-
-    val result = table2
-      .window(Over partitionBy 'c orderBy 'rowtime preceding 2.rows as 'w)
-      .select('c, 'b.count over 'w)
-    streamUtil.tEnv.optimize(result.getRelNode, updatesAsRetraction = true)
-  }
-
-  @Test(expected = classOf[ValidationException])
-  def testPrecedingValue(): Unit = {
-    val result = table
-      .window(Over orderBy 'rowtime preceding -1.rows as 'w)
-      .select('c, 'b.count over 'w)
-    streamUtil.tEnv.optimize(result.getRelNode, updatesAsRetraction = true)
-  }
-
-  @Test(expected = classOf[ValidationException])
-  def testFollowingValue(): Unit = {
-    val result = table
-      .window(Over orderBy 'rowtime preceding 1.rows following -2.rows as 'w)
-      .select('c, 'b.count over 'w)
-    streamUtil.tEnv.optimize(result.getRelNode, updatesAsRetraction = true)
-  }
-
-  @Test(expected = classOf[ValidationException])
-  def testUdAggWithInvalidArgs(): Unit = {
+  @Test
+  def testScalarFunctionsOnOverWindow() = {
     val weightedAvg = new WeightedAvgWithRetract
+    val plusOne = Func1
 
     val result = table
-      .window(Over orderBy 'rowtime preceding 1.minutes as 'w)
-      .select('c, weightedAvg('b, 'a) over 'w)
-    streamUtil.tEnv.optimize(result.getRelNode, updatesAsRetraction = true)
+      .window(Over partitionBy 'b orderBy 'proctime preceding UNBOUNDED_ROW as 'w)
+      .select(
+        plusOne('a.sum over 'w as 'wsum) as 'd,
+        ('a.count over 'w).exp(),
+        (weightedAvg('c, 'a) over 'w) + 1,
+        "AVG:".toExpr + (weightedAvg('c, 'a) over 'w),
+        array(weightedAvg('c, 'a) over 'w, 'a.count over 'w))
+
+    val expected =
+      unaryNode(
+        "DataStreamCalc",
+        unaryNode(
+          "DataStreamOverAggregate",
+          unaryNode(
+            "DataStreamCalc",
+            streamTableNode(0),
+            term("select", "a", "b", "c", "proctime")
+          ),
+          term("partitionBy", "b"),
+          term("orderBy", "proctime"),
+          term("rows", "BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"),
+          term("select", "a", "b", "c", "proctime",
+               "SUM(a) AS w0$o0",
+               "COUNT(a) AS w0$o1",
+               "WeightedAvgWithRetract(c, a) AS w0$o2")
+        ),
+        term("select",
+             s"${plusOne.functionIdentifier}(w0$$o0) AS d",
+             "EXP(CAST(w0$o1)) AS _c1",
+             "+(w0$o2, 1) AS _c2",
+             "||('AVG:', CAST(w0$o2)) AS _c3",
+             "ARRAY(w0$o2, w0$o1) AS _c4")
+      )
+    streamUtil.verifyTable(result, expected)
   }
 
   @Test
@@ -623,9 +590,5 @@ class OverWindowTest extends TableTestBase {
 
     streamUtil.verifyTable(result, expected)
   }
-
 }
 
-object OverWindowTest{
-  case class Pojo(id: Long, name: String)
-}
