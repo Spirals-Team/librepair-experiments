@@ -1,4 +1,20 @@
+﻿## 1.0.4
+ * STORM-2395: storm.cmd supervisor calls the wrong class name
+ * STORM-2385: pacemaker_state_factory.clj does not compile on branch-1.0.x
+ * STORM-2389: Avoid instantiating Event Logger when topology.eventlogger.executors=0
+ * STORM-2386: Fail-back Blob deletion also fails in BlobSynchronizer.syncBlobs
+ * STORM-2360: Storm-Hive: Thrift version mismatch with storm-core
+ * STORM-2372: Pacemaker client doesn't clean up heartbeats properly
+ * STORM-2326: Upgrade log4j and slf4j
+ * STORM-2350: Storm-HDFS's listFilesByModificationTime is broken
+
 ## 1.0.3
+ * STORM-2197: NimbusClient connectins leak due to leakage in ThriftClient
+ * STORM-2321: Handle blobstore zk key deletion in KeySequenceNumber.
+ * STORM-2324: Fix deployment failure if resources directory is missing in topology jar
+ * STORM-2335: Fix broken Topology visualization with empty ':transferred' in executor stats
+ * STORM-2336: Close Localizer and AsyncLocalizer when supervisor is shutting down
+ * STORM-2338: Subprocess exception handling is broken in storm.py on Windows environment
  * STORM-2337: Broken documentation generation for storm-metrics-profiling-internal-actions.md and windows-users-guide.md
  * STORM-2325: Logviewer doesn't consider 'storm.local.hostname'
  * STORM-1742: More accurate 'complete latency'
