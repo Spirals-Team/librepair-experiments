@@ -18,12 +18,13 @@
 
 package org.apache.flink.table.api.scala.stream.sql
 
+import org.apache.flink.api.common.time.Time
 import org.apache.flink.api.scala._
 import org.apache.flink.table.api.scala.stream.sql.OverWindowITCase.EventTimeSourceFunction
 import org.apache.flink.streaming.api.functions.source.SourceFunction
 import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.watermark.Watermark
-import org.apache.flink.table.api.{TableEnvironment, TableException}
+import org.apache.flink.table.api.{StreamQueryConfig, TableEnvironment, TableException}
 import org.apache.flink.table.api.scala._
 import org.apache.flink.table.api.scala.stream.utils.{StreamITCase, StreamTestData, StreamingWithStateTestBase}
 import org.apache.flink.types.Row
@@ -68,7 +69,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       "from T1"
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
   }
 
@@ -93,7 +94,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       "FROM MyTable"
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -135,7 +136,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       "    ORDER BY proctime ROWS BETWEEN 10 PRECEDING AND CURRENT ROW) AS minC " +
       "FROM MyTable"
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -178,7 +179,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       "from T1"
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -205,7 +206,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       "from T1"
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -216,6 +217,9 @@ class OverWindowITCase extends StreamingWithStateTestBase {
 
   @Test
   def testProcTimeUnboundedNonPartitionedRangeOver(): Unit = {
+    val queryConfig =
+      new StreamQueryConfig().withIdleStateRetentionTime(Time.hours(2), Time.hours(3))
+
     val env = StreamExecutionEnvironment.getExecutionEnvironment
     env.setStateBackend(getStateBackend)
     val tEnv = TableEnvironment.getTableEnvironment(env)
@@ -234,8 +238,8 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       "sum(a) OVER (ORDER BY proctime RANGE UNBOUNDED preceding) as cnt2 " +
       "from T1"
 
-    val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    val result = tEnv.sql(sqlQuery).toAppendStream[Row](queryConfig)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -260,7 +264,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       "from T1"
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List("1", "2", "3", "4", "5", "6", "7", "8", "9")
@@ -322,7 +326,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       " FROM T1"
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -383,7 +387,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       "FROM T1"
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -451,7 +455,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       " FROM T1"
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -512,7 +516,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
       "FROM T1"
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -573,7 +577,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
     tEnv.registerTable("T1", t1)
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -639,7 +643,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
     tEnv.registerTable("T1", t1)
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = mutable.MutableList(
@@ -701,7 +705,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
     tEnv.registerTable("T1", t1)
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(
@@ -762,7 +766,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
     tEnv.registerTable("T1", t1)
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = mutable.MutableList(
@@ -837,7 +841,7 @@ class OverWindowITCase extends StreamingWithStateTestBase {
     tEnv.registerTable("T1", t1)
 
     val result = tEnv.sql(sqlQuery).toAppendStream[Row]
-    result.addSink(new StreamITCase.StringSink)
+    result.addSink(new StreamITCase.StringSink[Row])
     env.execute()
 
     val expected = List(

@@ -73,7 +73,7 @@ import org.apache.flink.streaming.runtime.partitioner.KeyGroupStreamPartitioner;
 import org.apache.flink.streaming.runtime.partitioner.StreamPartitioner;
 
 /**
- * A {@code KeyedStream} represents a {@link DataStream} on which operator state is
+ * A {@link KeyedStream} represents a {@link DataStream} on which operator state is
  * partitioned by key using a provided {@link KeySelector}. Typical operations supported by a
  * {@code DataStream} are also possible on a {@code KeyedStream}, with the exception of
  * partitioning methods such as shuffle, forward and keyBy.
@@ -265,13 +265,15 @@ public class KeyedStream<T, KEY> extends DataStream<T> {
 	public <R> SingleOutputStreamOperator<R> process(ProcessFunction<T, R> processFunction) {
 
 		TypeInformation<R> outType = TypeExtractor.getUnaryOperatorReturnType(
-				processFunction,
-				ProcessFunction.class,
-				false,
-				true,
-				getType(),
-				Utils.getCallLocationName(),
-				true);
+			processFunction,
+			ProcessFunction.class,
+			0,
+			1,
+			new int[]{0},
+			new int[]{2, 0},
+			getType(),
+			Utils.getCallLocationName(),
+			true);
 
 		return process(processFunction, outType);
 	}

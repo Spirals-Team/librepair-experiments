@@ -44,8 +44,9 @@ SLEEP_TIME=20
 LOG4J_PROPERTIES=${HERE}/log4j-travis.properties
 
 # Maven command to run. We set the forkCount manually, because otherwise Maven sees too many cores
-# on the Travis VMs.
-MVN="mvn -Dflink.forkCount=2 -Dflink.forkCountTestPackage=1 -B $PROFILE -Dlog.dir=${ARTIFACTS_DIR} -Dlog4j.configuration=file://$LOG4J_PROPERTIES clean install"
+# on the Travis VMs. Set forkCountTestPackage to 1 for container-based environment (4 GiB memory)
+# and 2 for sudo-enabled environment (7.5 GiB memory).
+MVN="mvn -Dflink.forkCount=2 -Dflink.forkCountTestPackage=2 -B $PROFILE -Dlog.dir=${ARTIFACTS_DIR} -Dlog4j.configuration=file://$LOG4J_PROPERTIES clean install"
 
 MVN_PID="${ARTIFACTS_DIR}/watchdog.mvn.pid"
 MVN_EXIT="${ARTIFACTS_DIR}/watchdog.mvn.exit"
@@ -163,7 +164,7 @@ watchdog () {
 	done
 }
 
-# Check the final fat jar for illegal artifacts
+# Check the final fat jar for illegal or missing artifacts
 check_shaded_artifacts() {
 	jar tf build-target/lib/flink-dist*.jar > allClasses
 	ASM=`cat allClasses | grep '^org/objectweb/asm/' | wc -l`
@@ -182,6 +183,13 @@ check_shaded_artifacts() {
 		exit 1
 	fi
 
+	SNAPPY=`cat allClasses | grep '^org/xerial/snappy' | wc -l`
+	if [ $SNAPPY == "0" ]; then
+		echo "=============================================================================="
+		echo "Missing snappy dependencies in fat jar"
+		echo "=============================================================================="
+		exit 1
+	fi
 }
 
 # =============================================================================
