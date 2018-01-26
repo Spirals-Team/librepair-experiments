@@ -18,7 +18,6 @@
 
 package org.apache.flink.yarn;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.client.CliFrontend;
 import org.apache.flink.client.deployment.ClusterDescriptor;
 import org.apache.flink.configuration.ConfigConstants;
@@ -706,10 +705,12 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 
 		// normalize classpath by sorting
 		Collections.sort(classPaths);
-		String effectiveClassPath = StringUtils.join(classPaths, File.pathSeparator);
 
 		// classpath assembler
-		StringBuilder classPathBuilder = new StringBuilder(effectiveClassPath);
+		StringBuilder classPathBuilder = new StringBuilder();
+		for (String classPath : classPaths) {
+			classPathBuilder.append(classPath).append(File.pathSeparator);
+		}
 
 		// Setup jar for ApplicationMaster
 		LocalResource appMasterJar = Records.newRecord(LocalResource.class);
