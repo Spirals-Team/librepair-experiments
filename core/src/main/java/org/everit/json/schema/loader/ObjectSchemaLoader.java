@@ -4,6 +4,7 @@ import org.everit.json.schema.ObjectSchema;
 import org.everit.json.schema.Schema;
 
 import static java.util.Objects.requireNonNull;
+import static org.everit.json.schema.loader.SpecificationVersion.DRAFT_6;
 
 /**
  * @author erosb
@@ -41,12 +42,23 @@ class ObjectSchemaLoader {
         });
         ls.schemaJson().maybe("dependencies").map(JsonValue::requireObject)
                 .ifPresent(deps -> addDependencies(builder, deps));
+        if (DRAFT_6.equals(ls.specVersion())) {
+            ls.schemaJson().maybe("propertyNames")
+                    .map(defaultLoader::loadChild)
+                    .map(Schema.Builder::build)
+                    .ifPresent(builder::propertyNameSchema);
+        }
         return builder;
     }
 
     private void populatePropertySchemas(JsonObject propertyDefs,
             ObjectSchema.Builder builder) {
-        propertyDefs.forEach((key, value) -> addPropertySchemaDefinition(key, value, builder));
+        propertyDefs.forEach((key, value) -> {
+                    if (!key.equals(ls.specVersion().idKeyword())
+                            || value instanceof JsonObject) {
+                        addPropertySchemaDefinition(key, value, builder);
+                    }
+                });
     }
 
     private void addPropertySchemaDefinition(String keyOfObj, JsonValue definition, ObjectSchema.Builder builder) {

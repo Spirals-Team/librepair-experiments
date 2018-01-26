@@ -1,22 +1,25 @@
 package org.everit.json.schema.loader;
 
-import org.everit.json.schema.SchemaException;
-import org.json.JSONException;
-import org.json.JSONObject;
-import org.json.JSONPointer;
-import org.json.JSONPointerException;
-import org.json.JSONTokener;
+import static java.util.Arrays.asList;
+import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
 import java.nio.charset.Charset;
+import java.util.LinkedList;
 import java.util.function.Supplier;
 
-import static java.lang.String.format;
-import static java.util.Objects.requireNonNull;
+import org.everit.json.schema.SchemaException;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.json.JSONPointerException;
+import org.json.JSONTokener;
 
 /**
  * @author erosb
@@ -30,7 +33,7 @@ class JsonPointerEvaluator {
 
         private final JsonObject containingDocument;
 
-        private final JsonObject queryResult;
+        private final JsonValue queryResult;
 
         /**
          * Constructor.
@@ -40,7 +43,7 @@ class JsonPointerEvaluator {
          * @param queryResult
          *         the JSON object being the result of the query execution.
          */
-        QueryResult(JsonObject containingDocument, JsonObject queryResult) {
+        QueryResult(JsonObject containingDocument, JsonValue queryResult) {
             this.containingDocument = requireNonNull(containingDocument, "containingDocument cannot be null");
             this.queryResult = requireNonNull(queryResult, "queryResult cannot be null");
         }
@@ -59,7 +62,7 @@ class JsonPointerEvaluator {
          *
          * @return the JSON object being the result of the query execution.
          */
-        public JsonObject getQueryResult() {
+        public JsonValue getQueryResult() {
             return queryResult;
         }
 
@@ -70,6 +73,7 @@ class JsonPointerEvaluator {
         BufferedReader buffReader = null;
         InputStreamReader reader = null;
         try {
+            System.out.println("getting " + url);
             InputStream responseStream = client.get(url);
             reader = new InputStreamReader(responseStream, Charset.defaultCharset());
             buffReader = new BufferedReader(reader);
@@ -102,7 +106,12 @@ class JsonPointerEvaluator {
         return new JsonPointerEvaluator(() -> document, fragment);
     }
 
-    static final JsonPointerEvaluator forURL(SchemaClient schemaClient, String url) {
+    private static JsonObject configureBasedOnState(JsonObject obj, LoadingState callingState) {
+        obj.ls = new LoadingState(callingState.config, callingState.pointerSchemas, obj, obj, null, emptyList());
+        return obj;
+    }
+
+    static final JsonPointerEvaluator forURL(SchemaClient schemaClient, String url, LoadingState callingState) {
         int poundIdx = url.indexOf('#');
         String fragment;
         String toBeQueried;
@@ -113,7 +122,7 @@ class JsonPointerEvaluator {
             fragment = url.substring(poundIdx);
             toBeQueried = url.substring(0, poundIdx);
         }
-        return new JsonPointerEvaluator(() -> executeWith(schemaClient, toBeQueried), fragment);
+        return new JsonPointerEvaluator(() -> configureBasedOnState(executeWith(schemaClient, toBeQueried), callingState), fragment);
     }
 
     private final Supplier<JsonObject> documentProvider;
@@ -142,21 +151,38 @@ class JsonPointerEvaluator {
             throw new IllegalArgumentException("JSON pointers must start with a '#'");
         }
         try {
-            JsonObject result = queryFrom(document);
+            JsonValue result;
+            LinkedList<String> tokens = new LinkedList<>(asList(path));
+            tokens.poll();
+            if (tokens.isEmpty()) {
+                result = document;
+            } else {
+                result = queryFrom(document, tokens);
+            }
             return new QueryResult(document, result);
         } catch (JSONPointerException e) {
             throw new SchemaException(e.getMessage());
         }
     }
 
-    private JsonObject queryFrom(JsonObject document) {
-        JSONObject docAsJSONObj = new JSONObject(document.toMap());
-        JSONObject resultAsJSONObj = (JSONObject) new JSONPointer(fragment).queryFrom(docAsJSONObj);
-        if (resultAsJSONObj == null) {
-            throw new JSONPointerException(format("could not query schema document by pointer [%s]", fragment));
-        } else {
-            return new JsonObject(resultAsJSONObj.toMap());
+    private String unescape(String token) {
+        try {
+            return URLDecoder.decode(token, "utf-8").replace("~1", "/").replace("~0", "~").replace("\\\"", "\"").replace("\\\\", "\\");
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(e);
         }
+    }
+
+    private JsonValue queryFrom(JsonValue document, LinkedList<String> tokens) {
+        String key = unescape(tokens.poll());
+        JsonValue next = document.canBeMappedTo(JsonObject.class, obj -> obj.childFor(key))
+                .orMappedTo(JsonArray.class, arr -> arr.at(Integer.parseInt(key)))
+                .requireAny();
+
+        if (tokens.isEmpty()) {
+            return next;
+        }
+        return queryFrom(next, tokens);
     }
 
 }

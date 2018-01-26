@@ -1,9 +1,12 @@
 package org.everit.json.schema;
 
 import org.everit.json.schema.internal.JSONPrinter;
+import org.json.JSONException;
 
 import java.math.BigDecimal;
 import java.util.Objects;
+
+import static java.lang.String.format;
 
 /**
  * Number schema validator.
@@ -18,6 +21,10 @@ public class NumberSchema extends Schema {
         private Number minimum;
 
         private Number maximum;
+
+        private Number exclusiveMinimumLimit;
+
+        private Number exclusiveMaximumLimit;
 
         private Number multipleOf;
 
@@ -69,6 +76,15 @@ public class NumberSchema extends Schema {
             return this;
         }
 
+        public Builder exclusiveMinimum(Number exclusiveMimimumLimit) {
+            this.exclusiveMinimumLimit = exclusiveMimimumLimit;
+            return this;
+        }
+
+        public Builder exclusiveMaximum(Number exclusiveMaximumLimit) {
+            this.exclusiveMaximumLimit = exclusiveMaximumLimit;
+            return this;
+        }
     }
 
     public static Builder builder() {
@@ -86,6 +102,10 @@ public class NumberSchema extends Schema {
     private final boolean exclusiveMinimum;
 
     private final boolean exclusiveMaximum;
+
+    private final Number exclusiveMinimumLimit;
+
+    private final Number exclusiveMaximumLimit;
 
     private final boolean requiresInteger;
 
@@ -107,14 +127,21 @@ public class NumberSchema extends Schema {
         this.multipleOf = builder.multipleOf;
         this.requiresNumber = builder.requiresNumber;
         this.requiresInteger = builder.requiresInteger;
+        this.exclusiveMinimumLimit = builder.exclusiveMinimumLimit;
+        this.exclusiveMaximumLimit = builder.exclusiveMaximumLimit;
     }
 
     private void checkMaximum(final double subject) {
         if (maximum != null) {
             if (exclusiveMaximum && maximum.doubleValue() <= subject) {
-                throw failure(subject + " is not lower than " + maximum, "exclusiveMaximum");
+                throw failure(subject + " is not less than " + maximum, "exclusiveMaximum");
             } else if (maximum.doubleValue() < subject) {
-                throw failure(subject + " is not lower or equal to " + maximum, "maximum");
+                throw failure(subject + " is not less or equal to " + maximum, "maximum");
+            }
+        }
+        if (exclusiveMaximumLimit != null) {
+            if (subject >= exclusiveMaximumLimit.doubleValue()) {
+                throw failure(format("is not less than " + exclusiveMaximumLimit), "exclusiveMaximum");
             }
         }
     }
@@ -122,9 +149,14 @@ public class NumberSchema extends Schema {
     private void checkMinimum(final double subject) {
         if (minimum != null) {
             if (exclusiveMinimum && subject <= minimum.doubleValue()) {
-                throw failure(subject + " is not higher than " + minimum, "exclusiveMinimum");
+                throw failure(subject + " is not greater than " + minimum, "exclusiveMinimum");
             } else if (subject < minimum.doubleValue()) {
-                throw failure(subject + " is not higher or equal to " + minimum, "minimum");
+                throw failure(subject + " is not greater or equal to " + minimum, "minimum");
+            }
+        }
+        if (exclusiveMinimumLimit != null) {
+            if (subject <= exclusiveMinimumLimit.doubleValue()) {
+                throw failure(subject + " is not greater than " + exclusiveMinimumLimit, "exclusiveMinimum");
             }
         }
     }
@@ -190,6 +222,8 @@ public class NumberSchema extends Schema {
                     requiresNumber == that.requiresNumber &&
                     exclusiveMinimum == that.exclusiveMinimum &&
                     exclusiveMaximum == that.exclusiveMaximum &&
+                    Objects.equals(exclusiveMinimumLimit, that.exclusiveMinimumLimit) &&
+                    Objects.equals(exclusiveMaximumLimit, that.exclusiveMaximumLimit) &&
                     requiresInteger == that.requiresInteger &&
                     Objects.equals(minimum, that.minimum) &&
                     Objects.equals(maximum, that.maximum) &&
@@ -212,12 +246,19 @@ public class NumberSchema extends Schema {
         writer.ifPresent("multipleOf", multipleOf);
         writer.ifTrue("exclusiveMinimum", exclusiveMinimum);
         writer.ifTrue("exclusiveMaximum", exclusiveMaximum);
+        try {
+            writer.ifPresent("exclusiveMinimum", exclusiveMinimumLimit);
+            writer.ifPresent("exclusiveMaximum", exclusiveMaximumLimit);
+        } catch (JSONException e) {
+            throw new IllegalStateException("overloaded use of exclusiveMinimum or exclusiveMaximum keyword");
+        }
     }
 
     @Override
     public int hashCode() {
         return Objects
-                .hash(super.hashCode(), requiresNumber, minimum, maximum, multipleOf, exclusiveMinimum, exclusiveMaximum, requiresInteger);
+                .hash(super.hashCode(), requiresNumber, minimum, maximum, multipleOf, exclusiveMinimum, exclusiveMaximum,
+                        exclusiveMinimumLimit, exclusiveMaximumLimit, requiresInteger);
     }
 
     @Override

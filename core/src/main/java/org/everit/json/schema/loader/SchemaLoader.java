@@ -1,25 +1,11 @@
 package org.everit.json.schema.loader;
 
-import org.everit.json.schema.ArraySchema;
-import org.everit.json.schema.BooleanSchema;
-import org.everit.json.schema.CombinedSchema;
-import org.everit.json.schema.EmptySchema;
-import org.everit.json.schema.EnumSchema;
-import org.everit.json.schema.FalseSchema;
-import org.everit.json.schema.FormatValidator;
-import org.everit.json.schema.NotSchema;
-import org.everit.json.schema.NullSchema;
-import org.everit.json.schema.NumberSchema;
-import org.everit.json.schema.ObjectSchema;
-import org.everit.json.schema.ReferenceSchema;
-import org.everit.json.schema.Schema;
-import org.everit.json.schema.SchemaException;
-import org.everit.json.schema.TrueSchema;
-import org.everit.json.schema.loader.internal.DefaultSchemaClient;
-import org.everit.json.schema.loader.internal.ReferenceResolver;
-import org.everit.json.schema.loader.internal.WrappingFormatValidator;
-import org.json.JSONObject;
-import org.json.JSONPointer;
+import static java.util.Arrays.asList;
+import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
+import static org.everit.json.schema.FormatValidator.v4Defaults;
+import static org.everit.json.schema.loader.SpecificationVersion.DRAFT_4;
+import static org.everit.json.schema.loader.SpecificationVersion.DRAFT_6;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -33,12 +19,26 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-import static java.util.Arrays.asList;
-import static java.util.Collections.emptyList;
-import static java.util.Objects.requireNonNull;
-import static org.everit.json.schema.FormatValidator.v4Defaults;
-import static org.everit.json.schema.loader.SpecificationVersion.DRAFT_4;
-import static org.everit.json.schema.loader.SpecificationVersion.DRAFT_6;
+import org.everit.json.schema.ArraySchema;
+import org.everit.json.schema.BooleanSchema;
+import org.everit.json.schema.CombinedSchema;
+import org.everit.json.schema.ConstSchema;
+import org.everit.json.schema.EmptySchema;
+import org.everit.json.schema.EnumSchema;
+import org.everit.json.schema.FalseSchema;
+import org.everit.json.schema.FormatValidator;
+import org.everit.json.schema.NotSchema;
+import org.everit.json.schema.NullSchema;
+import org.everit.json.schema.NumberSchema;
+import org.everit.json.schema.ObjectSchema;
+import org.everit.json.schema.ReferenceSchema;
+import org.everit.json.schema.Schema;
+import org.everit.json.schema.SchemaException;
+import org.everit.json.schema.TrueSchema;
+import org.everit.json.schema.loader.internal.DefaultSchemaClient;
+import org.everit.json.schema.loader.internal.WrappingFormatValidator;
+import org.json.JSONObject;
+import org.json.JSONPointer;
 
 /**
  * Loads a JSON schema's JSON representation into schema validator instances.
@@ -56,9 +56,9 @@ public class SchemaLoader {
 
         SchemaClient httpClient = new DefaultSchemaClient();
 
-        JsonValue schemaJson;
+        Object schemaJson;
 
-        JsonValue rootSchemaJson;
+        Object rootSchemaJson;
 
         Map<String, ReferenceSchema.Builder> pointerSchemas = new HashMap<>();
 
@@ -112,9 +112,7 @@ public class SchemaLoader {
 
         @Deprecated
         public JSONObject getRootSchemaJson() {
-            return toOrgJSONObject(rootSchemaJson == null
-                    ? schemaJson.requireObject()
-                    : rootSchemaJson.requireObject());
+            return new JSONObject((Map<String, Object>) (rootSchemaJson == null ? schemaJson : rootSchemaJson));
         }
 
         public SchemaLoaderBuilder httpClient(SchemaClient httpClient) {
@@ -150,25 +148,23 @@ public class SchemaLoader {
 
         @Deprecated
         SchemaLoaderBuilder rootSchemaJson(JSONObject rootSchemaJson) {
-            return rootSchemaJson(new JsonObject(rootSchemaJson.toMap()));
+            return rootSchemaJson(rootSchemaJson.toMap());
         }
 
-        SchemaLoaderBuilder rootSchemaJson(JsonValue rootSchemaJson) {
+        SchemaLoaderBuilder rootSchemaJson(Object rootSchemaJson) {
             this.rootSchemaJson = rootSchemaJson;
             return this;
         }
 
-        @Deprecated
         public SchemaLoaderBuilder schemaJson(JSONObject schemaJson) {
-            return schemaJson(new JsonObject(schemaJson.toMap()));
+            return schemaJson(schemaJson.toMap());
         }
 
         public SchemaLoaderBuilder schemaJson(Object schema) {
-            return schemaJson(JsonValue.of(schema));
-        }
-
-        public SchemaLoaderBuilder schemaJson(JsonValue schemaJson) {
-            this.schemaJson = schemaJson;
+            if (schema instanceof JSONObject) {
+                schema = (((JSONObject) schema).toMap());
+            }
+            this.schemaJson = schema;
             return this;
         }
 
@@ -189,20 +185,10 @@ public class SchemaLoader {
             return this;
         }
 
-        LoaderConfig config() {
-            return new LoaderConfig(httpClient, formatValidators, specVersion);
-        }
     }
 
     private static final List<String> NUMBER_SCHEMA_PROPS = asList("minimum", "maximum",
-            "minimumExclusive", "maximumExclusive", "multipleOf");
-
-    private static final List<String> OBJECT_SCHEMA_PROPS = asList("properties", "required",
-            "minProperties",
-            "maxProperties",
-            "dependencies",
-            "patternProperties",
-            "additionalProperties");
+            "exclusiveMinimum", "exclusiveMaximum", "multipleOf");
 
     private static final List<String> STRING_SCHEMA_PROPS = asList("minLength", "maxLength",
             "pattern", "format");
@@ -244,6 +230,8 @@ public class SchemaLoader {
 
     private final LoadingState ls;
 
+    private final ExclusiveLimitHandler exclusiveLimitHandler;
+
     private URI extractURIFromIdAttribute(JsonObject obj) {
         return obj.maybe(config.specVersion.idKeyword()).map(JsonValue::requireString)
                 .map(rawId -> {
@@ -267,20 +255,28 @@ public class SchemaLoader {
      *         {@code null}.
      */
     public SchemaLoader(SchemaLoaderBuilder builder) {
-        URI id = builder.id;
-        this.config = new LoaderConfig(builder.httpClient, builder.formatValidators, builder.specVersion);
-        if (id == null) {
-            id = builder.schemaJson
-                    .canBeMappedTo(JsonObject.class, this::extractURIFromIdAttribute)
-                    .orMappedTo(Boolean.class, bool -> (URI) null)
-                    .requireAny();
+        SpecificationVersion specVersion = builder.specVersion;
+        if (builder.schemaJson instanceof Map) {
+            Map<String, Object> schemaObj = (Map<String, Object>) builder.schemaJson;
+            Object schemaValue = schemaObj.get("$schema");
+            if (schemaValue != null) {
+                specVersion = SpecificationVersion.getByMetaSchemaUrl((String) schemaValue);
+            }
         }
+        this.config = new LoaderConfig(builder.httpClient, builder.formatValidators, specVersion);
         this.ls = new LoadingState(config,
                 builder.pointerSchemas,
                 builder.rootSchemaJson == null ? builder.schemaJson : builder.rootSchemaJson,
                 builder.schemaJson,
-                id,
+                builder.id,
                 builder.pointerToCurrentObj);
+        this.exclusiveLimitHandler = ExclusiveLimitHandler.ofSpecVersion(config.specVersion);
+    }
+
+    SchemaLoader(LoadingState ls) {
+        this.ls = ls;
+        this.config = ls.config;
+        this.exclusiveLimitHandler = ExclusiveLimitHandler.ofSpecVersion(ls.specVersion());
     }
 
     /**
@@ -305,6 +301,11 @@ public class SchemaLoader {
             subschemas.add(loadForExplicitType(raw.requireString()).build());
         });
         return CombinedSchema.anyOf(subschemas);
+    }
+
+    private Schema.Builder buildConstSchema() {
+        return ConstSchema.builder()
+                .permittedValue(ls.schemaJson().require("const").unwrap());
     }
 
     private EnumSchema.Builder buildEnumSchema() {
@@ -341,10 +342,10 @@ public class SchemaLoader {
         ls.schemaJson().maybe("minimum").map(JsonValue::requireNumber).ifPresent(builder::minimum);
         ls.schemaJson().maybe("maximum").map(JsonValue::requireNumber).ifPresent(builder::maximum);
         ls.schemaJson().maybe("multipleOf").map(JsonValue::requireNumber).ifPresent(builder::multipleOf);
-        ls.schemaJson().maybe("exclusiveMinimum").map(JsonValue::requireBoolean)
-                .ifPresent(builder::exclusiveMinimum);
-        ls.schemaJson().maybe("exclusiveMaximum").map(JsonValue::requireBoolean)
-                .ifPresent(builder::exclusiveMaximum);
+        ls.schemaJson().maybe("exclusiveMinimum")
+                .ifPresent(exclMin -> exclusiveLimitHandler.handleExclusiveMinimum(exclMin, builder));
+        ls.schemaJson().maybe("exclusiveMaximum")
+                .ifPresent(exclMax -> exclusiveLimitHandler.handleExclusiveMaximum(exclMax, builder));
         return builder;
     }
 
@@ -356,6 +357,8 @@ public class SchemaLoader {
         Schema.Builder builder;
         if (ls.schemaJson().containsKey("enum")) {
             builder = buildEnumSchema();
+        } else if (ls.schemaJson().containsKey("const") && config.specVersion == DRAFT_6) {
+            builder = buildConstSchema();
         } else {
             builder = new CombinedSchemaLoader(ls, this).load()
                     .orElseGet(() -> {
@@ -427,25 +430,13 @@ public class SchemaLoader {
     }
 
     Schema.Builder<?> loadChild(JsonValue childJson) {
-        SchemaLoaderBuilder childBuilder = ls.initChildLoader()
-                .schemaJson(childJson)
-                .pointerToCurrentObj(childJson.ls.pointerToCurrentObj)
-                .config(this.config);
-        childJson.canBe(JsonObject.class, obj -> {
-            obj.maybe(config.specVersion.idKeyword()).map(JsonValue::requireString)
-                    .map(childId -> ReferenceResolver.resolve(this.ls.id, childId))
-                    .ifPresent(childBuilder::resolutionScope);
-        })
-                .or(Boolean.class, bool -> {
-                })
-                .requireAny();
-        return childBuilder.build().load();
+        return new SchemaLoader(childJson.ls).load();
     }
 
     Schema.Builder<?> sniffSchemaByProps() {
         if (schemaHasAnyOf(config.specVersion.arrayKeywords())) {
             return buildArraySchema().requiresArray(false);
-        } else if (schemaHasAnyOf(OBJECT_SCHEMA_PROPS)) {
+        } else if (schemaHasAnyOf(config.specVersion.objectKeywords())) {
             return buildObjectSchema().requiresObject(false);
         } else if (schemaHasAnyOf(NUMBER_SCHEMA_PROPS)) {
             return buildNumberSchema().requiresNumber(false);
@@ -453,6 +444,10 @@ public class SchemaLoader {
             return new StringSchemaLoader(ls, config.formatValidators).load().requiresString(false);
         }
         return null;
+    }
+
+    SpecificationVersion specVersion() {
+        return ls.specVersion();
     }
 
     /**

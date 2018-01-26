@@ -15,14 +15,18 @@
  */
 package org.everit.json.schema;
 
-import nl.jqno.equalsverifier.EqualsVerifier;
-import nl.jqno.equalsverifier.Warning;
+import static org.everit.json.schema.TestSupport.buildWithLocation;
+import static org.everit.json.schema.TestSupport.loadAsV6;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
 import org.everit.json.schema.loader.SchemaLoader;
 import org.json.JSONObject;
 import org.junit.Test;
 
-import static org.everit.json.schema.TestSupport.buildWithLocation;
-import static org.junit.Assert.assertTrue;
+import nl.jqno.equalsverifier.EqualsVerifier;
+import nl.jqno.equalsverifier.Warning;
 
 public class NumberSchemaTest {
 
@@ -62,6 +66,33 @@ public class NumberSchemaTest {
                 .expectedKeyword("minimum")
                 .input(9)
                 .expect();
+    }
+
+    @Test
+    public void exclusiveMinimumLimit() {
+        TestSupport.failureOf(NumberSchema.builder().exclusiveMinimum(10))
+                .expectedKeyword("exclusiveMinimum")
+                .expectedMessageFragment("is not greater than 10")
+                .input(10)
+                .expect();
+    }
+
+    @Test
+    public void exclusiveMaximumLimit() {
+        TestSupport.failureOf(NumberSchema.builder().exclusiveMaximum(10))
+                .expectedKeyword("exclusiveMaximum")
+                .expectedMessageFragment("is not less than 10")
+                .input(10)
+                .expect();
+    }
+
+    @Test
+    public void exclusiveLimitsSuccess() {
+        NumberSchema.builder()
+                .exclusiveMinimum(5)
+                .exclusiveMaximum(10)
+                .build()
+                .validate(6);
     }
 
     @Test
@@ -136,6 +167,35 @@ public class NumberSchemaTest {
     }
 
     @Test
+    public void toStringExclusiveLimits() {
+        JSONObject rawSchemaJson = loader.readObj("numberschema.json");
+        rawSchemaJson.put("exclusiveMinimum", 5);
+        rawSchemaJson.put("exclusiveMaximum", 10);
+        String actual = loadAsV6(rawSchemaJson).toString();
+        System.out.println(actual);
+        assertTrue(ObjectComparator.deepEquals(rawSchemaJson, new JSONObject(actual)));
+    }
+
+    @Test
+    public void toStringExclusiveKeywordClash() {
+        NumberSchema subject = NumberSchema.builder()
+                .requiresNumber(true)
+                .minimum(0).maximum(10)
+                .multipleOf(5)
+                .exclusiveMinimum(true)
+                .exclusiveMaximum(true)
+                .exclusiveMinimum(5)
+                .exclusiveMaximum(10)
+                .build();
+        try {
+            subject.toString();
+            fail();
+        } catch (IllegalStateException e) {
+            assertEquals("overloaded use of exclusiveMinimum or exclusiveMaximum keyword", e.getMessage());
+        }
+    }
+
+    @Test
     public void toStringNoExplicitType() {
         JSONObject rawSchemaJson = loader.readObj("numberschema.json");
         rawSchemaJson.remove("type");
@@ -149,5 +209,15 @@ public class NumberSchemaTest {
         rawSchemaJson.put("type", "integer");
         String actual = SchemaLoader.load(rawSchemaJson).toString();
         assertTrue(ObjectComparator.deepEquals(rawSchemaJson, new JSONObject(actual)));
+    }
+
+    @Test
+    public void exclusiveMinimumDoubleBoundary() {
+        NumberSchema.Builder subject = NumberSchema.builder().requiresNumber(true)
+                .exclusiveMinimum(3.0);
+        TestSupport.failureOf(subject)
+                .input(3.0)
+                .expectedMessageFragment("3.0 is not greater than")
+                .expect();
     }
 }
