@@ -86,13 +86,13 @@ public class CheckpointCoordinatorFailureTest extends TestLogger {
 		assertFalse(pendingCheckpoint.isDiscarded());
 
 		final long checkpointId = coord.getPendingCheckpoints().keySet().iterator().next();
-
+		
 		SubtaskState subtaskState = mock(SubtaskState.class);
 		PowerMockito.when(subtaskState.getLegacyOperatorState()).thenReturn(null);
 		PowerMockito.when(subtaskState.getManagedOperatorState()).thenReturn(null);
-
+		
 		AcknowledgeCheckpoint acknowledgeMessage = new AcknowledgeCheckpoint(jid, executionAttemptId, checkpointId, new CheckpointMetrics(), subtaskState);
-
+		
 		try {
 			coord.receiveAcknowledgeMessage(acknowledgeMessage);
 			fail("Expected a checkpoint exception because the completed checkpoint store could not " +

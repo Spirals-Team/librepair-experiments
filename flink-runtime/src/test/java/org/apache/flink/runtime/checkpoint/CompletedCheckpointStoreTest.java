@@ -71,7 +71,7 @@ public abstract class CompletedCheckpointStoreTest extends TestLogger {
 	public void testAddAndGetLatestCheckpoint() throws Exception {
 		CompletedCheckpointStore checkpoints = createCompletedCheckpoints(4);
 		SharedStateRegistry sharedStateRegistry = new SharedStateRegistry();
-
+		
 		// Empty state
 		assertEquals(0, checkpoints.getNumberOfRetainedCheckpoints());
 		assertEquals(0, checkpoints.getAllCheckpoints().size());
@@ -95,7 +95,7 @@ public abstract class CompletedCheckpointStoreTest extends TestLogger {
 	 */
 	@Test
 	public void testAddCheckpointMoreThanMaxRetained() throws Exception {
-		CompletedCheckpointStore checkpoints = createCompletedCheckpoints(1);
+		CompletedCheckpointStore checkpoints = createCompletedCheckpoints(1);   
 		SharedStateRegistry sharedStateRegistry = new SharedStateRegistry();
 
 		TestCompletedCheckpoint[] expected = new TestCompletedCheckpoint[] {

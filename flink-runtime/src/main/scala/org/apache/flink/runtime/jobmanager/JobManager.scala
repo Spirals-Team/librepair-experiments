@@ -1366,7 +1366,7 @@ class JobManager(
                 val allowNonRestored = savepointSettings.allowNonRestoredState()
 
                 executionGraph.getCheckpointCoordinator.restoreSavepoint(
-                  savepointPath,
+                  savepointPath, 
                   allowNonRestored,
                   executionGraph.getAllVertices,
                   executionGraph.getUserClassLoader

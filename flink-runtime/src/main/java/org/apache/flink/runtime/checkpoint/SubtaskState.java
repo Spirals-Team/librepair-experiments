@@ -20,7 +20,7 @@ package org.apache.flink.runtime.checkpoint;
 
 import org.apache.flink.runtime.state.ChainedStateHandle;
 import org.apache.flink.runtime.state.CompositeStateHandle;
-import org.apache.flink.runtime.state.KeyGroupsStateHandle;
+import org.apache.flink.runtime.state.KeyedStateHandle;
 import org.apache.flink.runtime.state.OperatorStateHandle;
 import org.apache.flink.runtime.state.SharedStateRegistry;
 import org.apache.flink.runtime.state.StateObject;
@@ -62,12 +62,12 @@ public class SubtaskState implements CompositeStateHandle {
 	/**
 	 * Snapshot from {@link org.apache.flink.runtime.state.KeyedStateBackend}.
 	 */
-	private final KeyGroupsStateHandle managedKeyedState;
+	private final KeyedStateHandle managedKeyedState;
 
 	/**
 	 * Snapshot written using {@link org.apache.flink.runtime.state.KeyedStateCheckpointOutputStream}.
 	 */
-	private final KeyGroupsStateHandle rawKeyedState;
+	private final KeyedStateHandle rawKeyedState;
 
 	/**
 	 * The state size. This is also part of the deserialized state handle.
@@ -80,8 +80,8 @@ public class SubtaskState implements CompositeStateHandle {
 			ChainedStateHandle<StreamStateHandle> legacyOperatorState,
 			ChainedStateHandle<OperatorStateHandle> managedOperatorState,
 			ChainedStateHandle<OperatorStateHandle> rawOperatorState,
-			KeyGroupsStateHandle managedKeyedState,
-			KeyGroupsStateHandle rawKeyedState) {
+			KeyedStateHandle managedKeyedState,
+			KeyedStateHandle rawKeyedState) {
 
 		this.legacyOperatorState = checkNotNull(legacyOperatorState, "State");
 		this.managedOperatorState = managedOperatorState;
@@ -120,11 +120,11 @@ public class SubtaskState implements CompositeStateHandle {
 		return rawOperatorState;
 	}
 
-	public KeyGroupsStateHandle getManagedKeyedState() {
+	public KeyedStateHandle getManagedKeyedState() {
 		return managedKeyedState;
 	}
 
-	public KeyGroupsStateHandle getRawKeyedState() {
+	public KeyedStateHandle getRawKeyedState() {
 		return rawKeyedState;
 	}
 

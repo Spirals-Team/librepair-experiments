@@ -126,7 +126,7 @@ public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointSto
 		this.checkpointsInZooKeeper = new ZooKeeperStateHandleStore<>(this.client, stateStorage, executor);
 
 		this.checkpointStateHandles = new ArrayDeque<>(maxNumberOfCheckpointsToRetain + 1);
-
+		
 		LOG.info("Initialized in '{}'.", checkpointsPath);
 	}
 
@@ -180,7 +180,7 @@ public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointSto
 	@Override
 	public void addCheckpoint(final CompletedCheckpoint checkpoint, final SharedStateRegistry sharedStateRegistry) throws Exception {
 		checkNotNull(checkpoint, "Checkpoint");
-
+		
 		final String path = checkpointIdToPath(checkpoint.getCheckpointID());
 		final RetrievableStateHandle<CompletedCheckpoint> stateHandle;
 
@@ -295,12 +295,12 @@ public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointSto
 	private void removeSubsumed(
 		final Tuple2<RetrievableStateHandle<CompletedCheckpoint>, String> stateHandleAndPath,
 		final SharedStateRegistry sharedStateRegistry) throws Exception {
-
+		
 		Callable<Void> action = new Callable<Void>() {
 			@Override
 			public Void call() throws Exception {
 				CompletedCheckpoint completedCheckpoint = retrieveCompletedCheckpoint(stateHandleAndPath);
-
+				
 				if (completedCheckpoint != null) {
 					List<StateObject> unreferencedSharedStates = sharedStateRegistry.unregisterAll(completedCheckpoint.getTaskStates().values());
 
@@ -309,7 +309,7 @@ public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointSto
 					} catch (Throwable t) {
 						LOG.warn("Could not properly discard unreferenced shared states.", t);
 					}
-
+					
 					completedCheckpoint.subsume();
 				}
 
@@ -329,7 +329,7 @@ public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointSto
 			@Override
 			public Void call() throws Exception {
 				CompletedCheckpoint completedCheckpoint = retrieveCompletedCheckpoint(stateHandleAndPath);
-
+				
 				if (completedCheckpoint != null) {
 					List<StateObject> unreferencedSharedStates = sharedStateRegistry.unregisterAll(completedCheckpoint.getTaskStates().values());
 
@@ -338,7 +338,7 @@ public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointSto
 					} catch (Throwable t) {
 						LOG.warn("Could not properly discard unreferenced shared states.", t);
 					}
-
+					
 					completedCheckpoint.discard(jobStatus);
 				}
 

@@ -112,7 +112,7 @@ public class CheckpointCoordinator {
 	/** Completed checkpoints. Implementations can be blocking. Make sure calls to methods
 	 * accessing this don't block the job manager actor and run asynchronously. */
 	private final CompletedCheckpointStore completedCheckpointStore;
-
+	
 	/** Registry for shared states */
 	private final SharedStateRegistry sharedStateRegistry;
 
@@ -624,7 +624,7 @@ public class CheckpointCoordinator {
 			throw new IllegalArgumentException("Received DeclineCheckpoint message for job " +
 				message.getJob() + " while this coordinator handles job " + job);
 		}
-
+		
 		final long checkpointId = message.getCheckpointId();
 		final String reason = (message.getReason() != null ? message.getReason().getMessage() : "");
 
@@ -704,7 +704,7 @@ public class CheckpointCoordinator {
 		}
 
 		final long checkpointId = message.getCheckpointId();
-
+		
 		synchronized (lock) {
 			// we need to check inside the lock for being shutdown as well, otherwise we
 			// get races and invalid error log messages
@@ -810,13 +810,13 @@ public class CheckpointCoordinator {
 				if (!pendingCheckpoint.isDiscarded()) {
 					pendingCheckpoint.abortError(e1);
 				}
-
+	
 				throw new CheckpointException("Could not finalize the pending checkpoint " + checkpointId + '.', e1);
 			}
-
+	
 			// the pending checkpoint must be discarded after the finalization
 			Preconditions.checkState(pendingCheckpoint.isDiscarded() && completedCheckpoint != null);
-
+	
 			try {
 				completedCheckpointStore.addCheckpoint(completedCheckpoint, sharedStateRegistry);
 			} catch (Exception exception) {
@@ -825,7 +825,7 @@ public class CheckpointCoordinator {
 					@Override
 					public void run() {
 						sharedStateRegistry.unregisterAll(completedCheckpoint.getTaskStates().values());
-
+						
 						try {
 							completedCheckpoint.discard();
 						} catch (Throwable t) {
@@ -833,7 +833,7 @@ public class CheckpointCoordinator {
 						}
 					}
 				});
-
+				
 				throw new CheckpointException("Could not complete the pending checkpoint " + checkpointId + '.', exception);
 			}
 		} finally {
@@ -841,9 +841,9 @@ public class CheckpointCoordinator {
 
 			triggerQueuedRequests();
 		}
-
+		
 		rememberRecentCheckpointId(checkpointId);
-
+		
 		// drop those pending checkpoints that are at prior to the completed one
 		dropSubsumedCheckpoints(checkpointId);
 
@@ -1014,25 +1014,25 @@ public class CheckpointCoordinator {
 
 	/**
 	 * Restore the state with given savepoint
-	 *
+	 * 
 	 * @param savepointPath    Location of the savepoint
-	 * @param allowNonRestored True if allowing checkpoint state that cannot be
+	 * @param allowNonRestored True if allowing checkpoint state that cannot be 
 	 *                         mapped to any job vertex in tasks.
-	 * @param tasks            Map of job vertices to restore. State for these
-	 *                         vertices is restored via
+	 * @param tasks            Map of job vertices to restore. State for these 
+	 *                         vertices is restored via 
 	 *                         {@link Execution#setInitialState(TaskStateHandles)}.
-	 * @param userClassLoader  The class loader to resolve serialized classes in
-	 *                         legacy savepoint versions.
+	 * @param userClassLoader  The class loader to resolve serialized classes in 
+	 *                         legacy savepoint versions. 
 	 */
 	public boolean restoreSavepoint(
-			String savepointPath,
+			String savepointPath, 
 			boolean allowNonRestored,
 			Map<JobVertexID, ExecutionJobVertex> tasks,
 			ClassLoader userClassLoader) throws Exception {
-
+		
 		Preconditions.checkNotNull(savepointPath, "The savepoint path cannot be null.");
-
-		LOG.info("Starting job from savepoint {} ({})",
+		
+		LOG.info("Starting job from savepoint {} ({})", 
 				savepointPath, (allowNonRestored ? "allowing non restored state" : ""));
 
 		// Load the savepoint as a checkpoint into the system
@@ -1040,13 +1040,13 @@ public class CheckpointCoordinator {
 				job, tasks, savepointPath, userClassLoader, allowNonRestored);
 
 		completedCheckpointStore.addCheckpoint(savepoint, sharedStateRegistry);
-
+		
 		// Reset the checkpoint ID counter
 		long nextCheckpointId = savepoint.getCheckpointID() + 1;
 		checkpointIdCounter.setCount(nextCheckpointId);
-
+		
 		LOG.info("Reset the checkpoint ID to {}.", nextCheckpointId);
-
+		
 		return restoreLatestCheckpointedState(tasks, true, allowNonRestored);
 	}
 
@@ -1079,7 +1079,7 @@ public class CheckpointCoordinator {
 	public CompletedCheckpointStore getCheckpointStore() {
 		return completedCheckpointStore;
 	}
-
+	
 	public SharedStateRegistry getSharedStateRegistry() {
 		return sharedStateRegistry;
 	}
@@ -1192,7 +1192,7 @@ public class CheckpointCoordinator {
 							"belonging to task {} of job {}.", checkpointId, executionAttemptID, jobId, t1
 						);
 					}
-
+					
 					try {
 						subtaskState.discardState();
 					} catch (Throwable t2) {

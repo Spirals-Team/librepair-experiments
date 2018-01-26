@@ -29,10 +29,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A {@code SharedStateRegistry} will be deployed in the
- * {@link org.apache.flink.runtime.checkpoint.CheckpointCoordinator} to
+ * A {@code SharedStateRegistry} will be deployed in the 
+ * {@link org.apache.flink.runtime.checkpoint.CheckpointCoordinator} to 
  * maintain the reference count of those state objects shared among different
- * checkpoints. Each shared state object must be identified by a unique key.
+ * checkpoints. Each shared state object must be identified by a unique key. 
  */
 public class SharedStateRegistry implements Serializable {
 
@@ -87,7 +87,7 @@ public class SharedStateRegistry implements Serializable {
 
 	/**
 	 * Register all the shared states in the given state handles.
-	 *
+	 * 
 	 * @param stateHandles The state handles to register their shared states
 	 */
 	public void registerAll(Collection<? extends CompositeStateHandle> stateHandles) {
@@ -99,10 +99,10 @@ public class SharedStateRegistry implements Serializable {
 			}
 		}
 	}
-
+	
 	/**
 	 * Register all the shared states in the given state handle.
-	 *
+	 * 
 	 * @param stateHandle The state handle to register its shared states
 	 */
 	public void registerAll(CompositeStateHandle stateHandle) {
@@ -116,7 +116,7 @@ public class SharedStateRegistry implements Serializable {
 	/**
 	 * Unregister all the shared states in the given state handles and return
 	 * those unreferenced states after these shared states are unregistered.
-	 *
+	 * 
 	 * @param stateHandles The state handles to unregister their shared states
 	 * @return The states that are not referenced any more
 	 */
