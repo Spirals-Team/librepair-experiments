@@ -23,8 +23,6 @@ import com.dangdang.ddframe.job.lite.internal.storage.JobNodePath;
 import com.dangdang.ddframe.job.lite.lifecycle.api.JobStatisticsAPI;
 import com.dangdang.ddframe.job.lite.lifecycle.domain.JobBriefInfo;
 import com.dangdang.ddframe.job.lite.lifecycle.domain.JobBriefInfo.JobStatus;
-import com.dangdang.ddframe.job.lite.lifecycle.domain.ShardingInfo;
-import com.dangdang.ddframe.job.lite.lifecycle.domain.ShardingInfo.ShardingStatus;
 import com.dangdang.ddframe.job.reg.base.CoordinatorRegistryCenter;
 import com.google.common.base.Joiner;
 import lombok.RequiredArgsConstructor;
@@ -39,7 +37,7 @@ import java.util.Set;
 /**
  * 作业状态展示的实现类.
  *
- * @author zhangliang
+ * @author caohao
  */
 @RequiredArgsConstructor
 public final class JobStatisticsAPIImpl implements JobStatisticsAPI {
@@ -70,26 +68,22 @@ public final class JobStatisticsAPIImpl implements JobStatisticsAPI {
         if (instances.isEmpty()) {
             return JobStatus.CRASHED;
         }
-        Set<String> shardingInstanceServerIps = new HashSet<>();
+        Set<String> shardingInstances = new HashSet<>();
         for (String each : regCenter.getChildrenKeys(jobNodePath.getShardingNodePath())) {
             String instanceId = regCenter.get(jobNodePath.getShardingNodePath(each, "instance"));
             if (!instanceId.isEmpty()) {
-                shardingInstanceServerIps.add(instanceId.split("@-@")[0]);
+                shardingInstances.add(instanceId);
             }
         }
-        Set<String> serverIps = new HashSet<>();
-        Set<String> disabledServerIps = new HashSet<>();
+        if (!instances.containsAll(shardingInstances)) {
+            return JobStatus.SHARDING_ERROR;
+        }
         for (String each : regCenter.getChildrenKeys(jobNodePath.getServerNodePath())) {
             if ("DISABLED".equals(regCenter.get(jobNodePath.getServerNodePath(each)))) {
-                disabledServerIps.add(each);
-            } else {
-                serverIps.add(each);
+                return JobStatus.DISABLED;
             }
         }
-        if (disabledServerIps.equals(shardingInstanceServerIps)) {
-            return JobStatus.DISABLED;
-        }
-        return serverIps.equals(shardingInstanceServerIps) ? JobStatus.OK : JobStatus.SHARDING_ERROR;
+        return JobStatus.OK;
     }
     
     private String getJobShardingItems(final String jobName) {
@@ -142,31 +136,5 @@ public final class JobStatisticsAPIImpl implements JobStatisticsAPI {
         } else {
             return JobStatus.OK;
         }
-    }
-    
-    @Override
-    public Collection<ShardingInfo> getShardingInfo(final String jobName) {
-        String executionRootPath = new JobNodePath(jobName).getShardingNodePath();
-        if (!regCenter.isExisted(executionRootPath)) {
-            return Collections.emptyList();
-        }
-        List<String> items = regCenter.getChildrenKeys(executionRootPath);
-        List<ShardingInfo> result = new ArrayList<>(items.size());
-        for (String each : items) {
-            result.add(getShardingInfo(jobName, each));
-        }
-        Collections.sort(result);
-        return result;
-    }
-    
-    private ShardingInfo getShardingInfo(final String jobName, final String item) {
-        ShardingInfo result = new ShardingInfo();
-        result.setItem(Integer.parseInt(item));
-        JobNodePath jobNodePath = new JobNodePath(jobName);
-        boolean running = regCenter.isExisted(jobNodePath.getShardingNodePath(item, "running"));
-        boolean completed = regCenter.isExisted(jobNodePath.getShardingNodePath(item, "completed"));
-        result.setFailover(regCenter.isExisted(jobNodePath.getShardingNodePath(item, "failover")));
-        result.setStatus(ShardingStatus.getShardingStatus(running, completed));
-        return result;
     }
 }
