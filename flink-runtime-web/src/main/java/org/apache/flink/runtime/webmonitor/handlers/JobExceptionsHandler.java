@@ -22,6 +22,7 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import org.apache.flink.runtime.execution.ExecutionState;
 import org.apache.flink.runtime.executiongraph.AccessExecutionGraph;
 import org.apache.flink.runtime.executiongraph.AccessExecutionVertex;
+import org.apache.flink.runtime.executiongraph.ErrorInfo;
 import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
 import org.apache.flink.runtime.webmonitor.ExecutionGraphHolder;
 import org.apache.flink.runtime.webmonitor.history.ArchivedJson;
@@ -75,10 +76,10 @@ public class JobExceptionsHandler extends AbstractExecutionGraphRequestHandler {
 		gen.writeStartObject();
 		
 		// most important is the root failure cause
-		String rootException = graph.getFailureCauseAsString();
-		if (rootException != null && !rootException.equals(ExceptionUtils.STRINGIFIED_NULL_EXCEPTION)) {
-			gen.writeStringField("root-exception", rootException);
-			gen.writeNumberField("timestamp", graph.getFailureTimestamp());
+		ErrorInfo rootException = graph.getFailureCause();
+		if (rootException != null && !rootException.getExceptionAsString().equals(ExceptionUtils.STRINGIFIED_NULL_EXCEPTION)) {
+			gen.writeStringField("root-exception", rootException.getExceptionAsString());
+			gen.writeNumberField("timestamp", rootException.getTimestamp());
 		}
 
 		// we additionally collect all exceptions (up to a limit) that occurred in the individual tasks

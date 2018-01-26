@@ -71,13 +71,7 @@ public class ArchivedExecutionGraph implements AccessExecutionGraph, Serializabl
 	 * The exception that caused the job to fail. This is set to the first root exception
 	 * that was not recoverable and triggered job failure
 	 */
-	private final String failureCause;
-
-	/**
-	 * The timestamp of the exception that cause the job to fail. This is set to the timestamp of the first root
-	 * exception that was not recoverable and trigger job failure.
-	 */
-	private final long failureTimestamp;
+	private final ErrorInfo failureCause;
 
 	// ------ Fields that are only relevant for archived execution graphs ------------
 	private final String jsonPlan;
@@ -99,8 +93,7 @@ public class ArchivedExecutionGraph implements AccessExecutionGraph, Serializabl
 			List<ArchivedExecutionJobVertex> verticesInCreationOrder,
 			long[] stateTimestamps,
 			JobStatus state,
-			String failureCause,
-			long failureTimestamp,
+			ErrorInfo failureCause,
 			String jsonPlan,
 			StringifiedAccumulatorResult[] archivedUserAccumulators,
 			Map<String, SerializedValue<Object>> serializedUserAccumulators,
@@ -116,7 +109,6 @@ public class ArchivedExecutionGraph implements AccessExecutionGraph, Serializabl
 		this.stateTimestamps = stateTimestamps;
 		this.state = state;
 		this.failureCause = failureCause;
-		this.failureTimestamp = failureTimestamp;
 		this.jsonPlan = jsonPlan;
 		this.archivedUserAccumulators = archivedUserAccumulators;
 		this.serializedUserAccumulators = serializedUserAccumulators;
@@ -149,13 +141,8 @@ public class ArchivedExecutionGraph implements AccessExecutionGraph, Serializabl
 	}
 
 	@Override
-	public String getFailureCauseAsString() {
+	public ErrorInfo getFailureCause() {
 		return failureCause;
-	}
-
-	@Override
-	public long getFailureTimestamp() {
-		return failureTimestamp;
 	}
 
 	@Override

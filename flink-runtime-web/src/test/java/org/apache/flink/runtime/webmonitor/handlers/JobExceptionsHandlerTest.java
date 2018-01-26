@@ -67,8 +67,8 @@ public class JobExceptionsHandlerTest {
 	private static void compareExceptions(AccessExecutionGraph originalJob, String json) throws IOException {
 		JsonNode result = ArchivedJobGenerationUtils.mapper.readTree(json);
 
-		Assert.assertEquals(originalJob.getFailureCauseAsString(), result.get("root-exception").asText());
-		Assert.assertEquals(originalJob.getFailureTimestamp(), result.get("timestamp").asLong());
+		Assert.assertEquals(originalJob.getFailureCause().getExceptionAsString(), result.get("root-exception").asText());
+		Assert.assertEquals(originalJob.getFailureCause().getTimestamp(), result.get("timestamp").asLong());
 
 		ArrayNode exceptions = (ArrayNode) result.get("all-exceptions");
 

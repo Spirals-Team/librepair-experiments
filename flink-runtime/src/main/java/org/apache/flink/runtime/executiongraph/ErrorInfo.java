@@ -17,14 +17,29 @@
  */
 package org.apache.flink.runtime.executiongraph;
 
+import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.Preconditions;
+
+import java.io.IOException;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
+
 /**
  * Simple container to hold an exception and the corresponding timestamp.
  */
-class ErrorInfo {
-	private final Throwable exception;
+public class ErrorInfo implements Serializable {
+
+	private static final long serialVersionUID = -6138942031953594202L;
+
+	private final transient Throwable exception;
 	private final long timestamp;
 
-	ErrorInfo(Throwable exception, long timestamp) {
+	private volatile String exceptionAsString;
+
+	public ErrorInfo(Throwable exception, long timestamp) {
+		Preconditions.checkNotNull(exception);
+		Preconditions.checkArgument(timestamp > 0);
+
 		this.exception = exception;
 		this.timestamp = timestamp;
 	}
@@ -39,11 +54,31 @@ class ErrorInfo {
 	}
 
 	/**
+	 * Returns the contained exception as a string.
+	 *
+	 * @return failure causing exception as a string, or {@code "(null)"}
+	 */
+	public String getExceptionAsString() {
+		if (exceptionAsString == null) {
+			exceptionAsString = ExceptionUtils.stringifyException(exception);
+		}
+		return exceptionAsString;
+	}
+
+	/**
 	 * Returns the timestamp for the contained exception.
 	 *
 	 * @return timestamp of contained exception, or 0 if no exception was set yet
 	 */
-	long getTimestamp() {
+	public long getTimestamp() {
 		return timestamp;
+	}
+
+	private void writeObject(ObjectOutputStream out) throws IOException {
+		// make sure that the exception was stringified so it isn't lost during serialization
+		if (exceptionAsString == null) {
+			exceptionAsString = ExceptionUtils.stringifyException(exception);
+		}
+		out.defaultWriteObject();
 	}
 }

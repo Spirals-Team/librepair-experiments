@@ -362,7 +362,7 @@ public class ExecutionGraphSignalsTest {
 
 		assertEquals(JobStatus.SUSPENDED, eg.getState());
 
-		assertEquals(exception, eg.getFailureCause());
+		assertEquals(exception, eg.getFailureCause().getException());
 	}
 
 	// STOP only supported if all sources are stoppable 
