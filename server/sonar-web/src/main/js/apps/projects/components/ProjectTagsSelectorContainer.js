@@ -20,8 +20,7 @@
 //@flow
 import React from 'react';
 import { connect } from 'react-redux';
-import debounce from 'lodash/debounce';
-import without from 'lodash/without';
+import { debounce, without } from 'lodash';
 import TagsSelector from '../../../components/tags/TagsSelector';
 import { searchProjectTags } from '../../../api/components';
 import { setProjectTags } from '../store/actions';
@@ -38,7 +37,7 @@ type State = {
   searchResult: Array<string>
 };
 
-const PAGE_SIZE = 20;
+const LIST_SIZE = 10;
 
 class ProjectTagsSelectorContainer extends React.PureComponent {
   props: Props;
@@ -56,7 +55,10 @@ class ProjectTagsSelectorContainer extends React.PureComponent {
   }
 
   onSearch = (query: string) => {
-    searchProjectTags({ q: query || '', ps: PAGE_SIZE }).then(result => {
+    searchProjectTags({
+      q: query || '',
+      ps: Math.min(this.props.selectedTags.length - 1 + LIST_SIZE, 100)
+    }).then(result => {
       this.setState({
         searchResult: result.tags
       });
@@ -78,6 +80,7 @@ class ProjectTagsSelectorContainer extends React.PureComponent {
         position={this.props.position}
         tags={this.state.searchResult}
         selectedTags={this.props.selectedTags}
+        listSize={LIST_SIZE}
         onSearch={this.onSearch}
         onSelect={this.onSelect}
         onUnselect={this.onUnselect}
