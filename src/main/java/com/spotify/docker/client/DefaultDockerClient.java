@@ -72,6 +72,7 @@ import com.spotify.docker.client.exceptions.ExecNotFoundException;
 import com.spotify.docker.client.exceptions.ExecStartConflictException;
 import com.spotify.docker.client.exceptions.ImageNotFoundException;
 import com.spotify.docker.client.exceptions.NetworkNotFoundException;
+import com.spotify.docker.client.exceptions.NodeNotFoundException;
 import com.spotify.docker.client.exceptions.NonSwarmNodeException;
 import com.spotify.docker.client.exceptions.NotFoundException;
 import com.spotify.docker.client.exceptions.PermissionException;
@@ -109,6 +110,8 @@ import com.spotify.docker.client.messages.Version;
 import com.spotify.docker.client.messages.Volume;
 import com.spotify.docker.client.messages.VolumeList;
 import com.spotify.docker.client.messages.swarm.Node;
+import com.spotify.docker.client.messages.swarm.NodeInfo;
+import com.spotify.docker.client.messages.swarm.NodeSpec;
 import com.spotify.docker.client.messages.swarm.Secret;
 import com.spotify.docker.client.messages.swarm.SecretCreateResponse;
 import com.spotify.docker.client.messages.swarm.SecretSpec;
@@ -1969,6 +1972,80 @@ public class DefaultDockerClient implements DockerClient, Closeable {
 
     WebTarget resource = resource().path("nodes");
     return request(GET, NODE_LIST, resource, resource.request(APPLICATION_JSON_TYPE));
+  }
+
+  @Override
+  public NodeInfo inspectNode(final String nodeId) throws DockerException, InterruptedException {
+    assertApiVersionIsAbove("1.24");
+
+    WebTarget resource = resource().path("nodes")
+        .path(nodeId);
+
+    try {
+      return request(GET, NodeInfo.class, resource, resource.request(APPLICATION_JSON_TYPE));
+    } catch (DockerRequestException e) {
+      switch (e.status()) {
+        case 404:
+          throw new NodeNotFoundException(nodeId);
+        case 503:
+          throw new NonSwarmNodeException("Node " + nodeId + " is not in a swarm", e);
+        default:
+          throw e;
+      }
+    }
+  }
+
+  @Override
+  public void updateNode(final String nodeId, final Long version, final NodeSpec nodeSpec)
+      throws DockerException, InterruptedException {
+    assertApiVersionIsAbove("1.24");
+
+    WebTarget resource = resource().path("nodes")
+        .path(nodeId)
+        .path("update")
+        .queryParam("version", version);
+
+    try {
+      request(POST, String.class, resource, resource.request(APPLICATION_JSON_TYPE),
+          Entity.json(nodeSpec));
+    } catch (DockerRequestException e) {
+      switch (e.status()) {
+        case 404:
+          throw new NodeNotFoundException(nodeId);
+        case 503:
+          throw new NonSwarmNodeException("Node " + nodeId + " is not a swarm node", e);
+        default:
+          throw e;
+      }
+    }
+  }
+
+  @Override
+  public void deleteNode(final String nodeId) throws DockerException, InterruptedException {
+    deleteNode(nodeId, false);
+  }
+
+  @Override
+  public void deleteNode(final String nodeId, final boolean force)
+      throws DockerException, InterruptedException {
+    assertApiVersionIsAbove("1.24");
+
+    final WebTarget resource = resource().path("nodes")
+        .path(nodeId)
+        .queryParam("force", String.valueOf(force));
+
+    try {
+      request(DELETE, resource, resource.request(APPLICATION_JSON_TYPE));
+    } catch (DockerRequestException e) {
+      switch (e.status()) {
+        case 404:
+          throw new NodeNotFoundException(nodeId);
+        case 503:
+          throw new NonSwarmNodeException("Node " + nodeId + " is not a swarm node", e);
+        default:
+          throw e;
+      }
+    }
   }
 
   @Override

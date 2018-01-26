@@ -18,7 +18,7 @@
  * -/-/-
  */
 
-package com.spotify.docker.client.messages;
+package com.spotify.docker.client.messages.swarm;
 
 import static com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY;
 import static com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE;
@@ -27,37 +27,25 @@ import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.auto.value.AutoValue;
-import com.google.common.collect.ImmutableList;
-import java.util.List;
-
-import javax.annotation.Nullable;
 
 
 @AutoValue
 @JsonAutoDetect(fieldVisibility = ANY, getterVisibility = NONE, setterVisibility = NONE)
-public abstract class ServiceCreateResponse {
+public abstract class ManagerStatus {
 
-  @JsonProperty("ID")
-  public abstract String id();
+  @JsonProperty("Leader")
+  public abstract Boolean leader();
 
-  /**
-   * @since API 1.25
-   */
-  @Nullable
-  @JsonProperty("Warnings")
-  public abstract ImmutableList<String> warnings();
+  @JsonProperty("Reachability")
+  public abstract String reachability();
 
-  static ServiceCreateResponse create(
-          @JsonProperty("ID") final String id) {
-    return create(id, null);
-  }
+  @JsonProperty("Addr")
+  public abstract String addr();
 
   @JsonCreator
-  static ServiceCreateResponse create(
-          @JsonProperty("ID") final String id,
-          @JsonProperty("Warnings") final List<String> warnings) {
-    final ImmutableList<String> warningsT = warnings == null
-            ? null : ImmutableList.copyOf(warnings);
-    return new AutoValue_ServiceCreateResponse(id, warningsT);
+  static ManagerStatus create(@JsonProperty("Leader") final Boolean leader,
+                              @JsonProperty("Reachability") final String reachability,
+                              @JsonProperty("Addr") final String address) {
+    return new AutoValue_ManagerStatus(leader, reachability, address);
   }
 }
