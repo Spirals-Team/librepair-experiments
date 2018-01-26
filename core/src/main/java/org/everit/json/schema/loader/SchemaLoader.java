@@ -1,0 +1,467 @@
+package org.everit.json.schema.loader;
+
+import org.everit.json.schema.ArraySchema;
+import org.everit.json.schema.BooleanSchema;
+import org.everit.json.schema.CombinedSchema;
+import org.everit.json.schema.EmptySchema;
+import org.everit.json.schema.EnumSchema;
+import org.everit.json.schema.FalseSchema;
+import org.everit.json.schema.FormatValidator;
+import org.everit.json.schema.NotSchema;
+import org.everit.json.schema.NullSchema;
+import org.everit.json.schema.NumberSchema;
+import org.everit.json.schema.ObjectSchema;
+import org.everit.json.schema.ReferenceSchema;
+import org.everit.json.schema.Schema;
+import org.everit.json.schema.SchemaException;
+import org.everit.json.schema.TrueSchema;
+import org.everit.json.schema.loader.internal.DefaultSchemaClient;
+import org.everit.json.schema.loader.internal.ReferenceResolver;
+import org.everit.json.schema.loader.internal.WrappingFormatValidator;
+import org.json.JSONObject;
+import org.json.JSONPointer;
+
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
+import static java.util.Arrays.asList;
+import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
+import static org.everit.json.schema.FormatValidator.v4Defaults;
+import static org.everit.json.schema.loader.SpecificationVersion.DRAFT_4;
+import static org.everit.json.schema.loader.SpecificationVersion.DRAFT_6;
+
+/**
+ * Loads a JSON schema's JSON representation into schema validator instances.
+ */
+public class SchemaLoader {
+
+    static JSONObject toOrgJSONObject(JsonObject value) {
+        return new JSONObject(value.toMap());
+    }
+
+    /**
+     * Builder class for {@link SchemaLoader}.
+     */
+    public static class SchemaLoaderBuilder {
+
+        SchemaClient httpClient = new DefaultSchemaClient();
+
+        JsonValue schemaJson;
+
+        JsonValue rootSchemaJson;
+
+        Map<String, ReferenceSchema.Builder> pointerSchemas = new HashMap<>();
+
+        URI id;
+
+        List<String> pointerToCurrentObj = emptyList();
+
+        Map<String, FormatValidator> formatValidators = new HashMap<>(v4Defaults());
+
+        SpecificationVersion specVersion = DRAFT_4;
+
+        /**
+         * Registers a format validator with the name returned by {@link FormatValidator#formatName()}.
+         *
+         * @param formatValidator
+         * @return {@code this}
+         */
+        public SchemaLoaderBuilder addFormatValidator(FormatValidator formatValidator) {
+            formatValidators.put(formatValidator.formatName(), formatValidator);
+            return this;
+        }
+
+        /**
+         * @param formatName
+         *         the name which will be used in the schema JSON files to refer to this {@code formatValidator}
+         * @param formatValidator
+         *         the object performing the validation for schemas which use the {@code formatName} format
+         * @return {@code this}
+         * @deprecated instead it is better to override {@link FormatValidator#formatName()}
+         * and use {@link #addFormatValidator(FormatValidator)}
+         */
+        @Deprecated
+        public SchemaLoaderBuilder addFormatValidator(String formatName,
+                final FormatValidator formatValidator) {
+            if (!Objects.equals(formatName, formatValidator.formatName())) {
+                formatValidators.put(formatName, new WrappingFormatValidator(formatName, formatValidator));
+            } else {
+                formatValidators.put(formatName, formatValidator);
+            }
+            return this;
+        }
+
+        public SchemaLoaderBuilder draftV6Support() {
+            this.specVersion = DRAFT_6;
+            return this;
+        }
+
+        public SchemaLoader build() {
+            return new SchemaLoader(this);
+        }
+
+        @Deprecated
+        public JSONObject getRootSchemaJson() {
+            return toOrgJSONObject(rootSchemaJson == null
+                    ? schemaJson.requireObject()
+                    : rootSchemaJson.requireObject());
+        }
+
+        public SchemaLoaderBuilder httpClient(SchemaClient httpClient) {
+            this.httpClient = httpClient;
+            return this;
+        }
+
+        /**
+         * Sets the initial resolution scope of the schema. {@code id} and {@code $ref} attributes
+         * accuring in the schema will be resolved against this value.
+         *
+         * @param id
+         *         the initial (absolute) URI, used as the resolution scope.
+         * @return {@code this}
+         */
+        public SchemaLoaderBuilder resolutionScope(String id) {
+            try {
+                return resolutionScope(new URI(id));
+            } catch (URISyntaxException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        public SchemaLoaderBuilder resolutionScope(URI id) {
+            this.id = id;
+            return this;
+        }
+
+        SchemaLoaderBuilder pointerSchemas(Map<String, ReferenceSchema.Builder> pointerSchemas) {
+            this.pointerSchemas = pointerSchemas;
+            return this;
+        }
+
+        @Deprecated
+        SchemaLoaderBuilder rootSchemaJson(JSONObject rootSchemaJson) {
+            return rootSchemaJson(new JsonObject(rootSchemaJson.toMap()));
+        }
+
+        SchemaLoaderBuilder rootSchemaJson(JsonValue rootSchemaJson) {
+            this.rootSchemaJson = rootSchemaJson;
+            return this;
+        }
+
+        @Deprecated
+        public SchemaLoaderBuilder schemaJson(JSONObject schemaJson) {
+            return schemaJson(new JsonObject(schemaJson.toMap()));
+        }
+
+        public SchemaLoaderBuilder schemaJson(Object schema) {
+            return schemaJson(JsonValue.of(schema));
+        }
+
+        public SchemaLoaderBuilder schemaJson(JsonValue schemaJson) {
+            this.schemaJson = schemaJson;
+            return this;
+        }
+
+        SchemaLoaderBuilder formatValidators(Map<String, FormatValidator> formatValidators) {
+            this.formatValidators = formatValidators;
+            return this;
+        }
+
+        SchemaLoaderBuilder pointerToCurrentObj(List<String> pointerToCurrentObj) {
+            this.pointerToCurrentObj = requireNonNull(pointerToCurrentObj);
+            return this;
+        }
+
+        private SchemaLoaderBuilder config(LoaderConfig config) {
+            this.formatValidators = config.formatValidators;
+            this.httpClient = config.httpClient;
+            this.specVersion = config.specVersion;
+            return this;
+        }
+
+        LoaderConfig config() {
+            return new LoaderConfig(httpClient, formatValidators, specVersion);
+        }
+    }
+
+    private static final List<String> NUMBER_SCHEMA_PROPS = asList("minimum", "maximum",
+            "minimumExclusive", "maximumExclusive", "multipleOf");
+
+    private static final List<String> OBJECT_SCHEMA_PROPS = asList("properties", "required",
+            "minProperties",
+            "maxProperties",
+            "dependencies",
+            "patternProperties",
+            "additionalProperties");
+
+    private static final List<String> STRING_SCHEMA_PROPS = asList("minLength", "maxLength",
+            "pattern", "format");
+
+    public static SchemaLoaderBuilder builder() {
+        return new SchemaLoaderBuilder();
+    }
+
+    /**
+     * Loads a JSON schema to a schema validator using a {@link DefaultSchemaClient default HTTP
+     * client}.
+     *
+     * @param schemaJson
+     *         the JSON representation of the schema.
+     * @return the schema validator object
+     */
+    public static Schema load(final JSONObject schemaJson) {
+        return SchemaLoader.load(schemaJson, new DefaultSchemaClient());
+    }
+
+    /**
+     * Creates Schema instance from its JSON representation.
+     *
+     * @param schemaJson
+     *         the JSON representation of the schema.
+     * @param httpClient
+     *         the HTTP client to be used for resolving remote JSON references.
+     * @return the created schema
+     */
+    public static Schema load(final JSONObject schemaJson, final SchemaClient httpClient) {
+        SchemaLoader loader = builder()
+                .schemaJson(schemaJson)
+                .httpClient(httpClient)
+                .build();
+        return loader.load().build();
+    }
+
+    private final LoaderConfig config;
+
+    private final LoadingState ls;
+
+    private URI extractURIFromIdAttribute(JsonObject obj) {
+        return obj.maybe(config.specVersion.idKeyword()).map(JsonValue::requireString)
+                .map(rawId -> {
+                    try {
+                        return new URI(rawId);
+                    } catch (URISyntaxException e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .orElse(null);
+    }
+
+    /**
+     * Constructor.
+     *
+     * @param builder
+     *         the builder containing the properties. Only {@link SchemaLoaderBuilder#id} is
+     *         nullable.
+     * @throws NullPointerException
+     *         if any of the builder properties except {@link SchemaLoaderBuilder#id id} is
+     *         {@code null}.
+     */
+    public SchemaLoader(SchemaLoaderBuilder builder) {
+        URI id = builder.id;
+        this.config = new LoaderConfig(builder.httpClient, builder.formatValidators, builder.specVersion);
+        if (id == null) {
+            id = builder.schemaJson
+                    .canBeMappedTo(JsonObject.class, this::extractURIFromIdAttribute)
+                    .orMappedTo(Boolean.class, bool -> (URI) null)
+                    .requireAny();
+        }
+        this.ls = new LoadingState(config,
+                builder.pointerSchemas,
+                builder.rootSchemaJson == null ? builder.schemaJson : builder.rootSchemaJson,
+                builder.schemaJson,
+                id,
+                builder.pointerToCurrentObj);
+    }
+
+    /**
+     * Constructor.
+     *
+     * @deprecated use {@link SchemaLoader#SchemaLoader(SchemaLoaderBuilder)} instead.
+     */
+    @Deprecated SchemaLoader(final String id, final JSONObject schemaJson,
+            final JSONObject rootSchemaJson, final Map<String, ReferenceSchema.Builder> pointerSchemas,
+            final SchemaClient httpClient) {
+        this(builder().schemaJson(schemaJson)
+                .rootSchemaJson(rootSchemaJson)
+                .resolutionScope(id)
+                .httpClient(httpClient)
+                .pointerSchemas(pointerSchemas));
+    }
+
+    private CombinedSchema.Builder buildAnyOfSchemaForMultipleTypes() {
+        JsonArray subtypeJsons = ls.schemaJson().require("type").requireArray();
+        Collection<Schema> subschemas = new ArrayList<>(subtypeJsons.length());
+        subtypeJsons.forEach((j, raw) -> {
+            subschemas.add(loadForExplicitType(raw.requireString()).build());
+        });
+        return CombinedSchema.anyOf(subschemas);
+    }
+
+    private EnumSchema.Builder buildEnumSchema() {
+        Set<Object> possibleValues = new HashSet<>();
+        ls.schemaJson().require("enum").requireArray().forEach((i, item) -> possibleValues.add(item.unwrap()));
+        return EnumSchema.builder().possibleValues(possibleValues);
+    }
+
+    private NotSchema.Builder buildNotSchema() {
+        Schema mustNotMatch = loadChild(ls.schemaJson().require("not")).build();
+        return NotSchema.builder().mustNotMatch(mustNotMatch);
+    }
+
+    private Schema.Builder<?> buildSchemaWithoutExplicitType() {
+        if (ls.schemaJson().isEmpty()) {
+            return EmptySchema.builder();
+        }
+        if (ls.schemaJson().containsKey("$ref")) {
+            String ref = ls.schemaJson().require("$ref").requireString();
+            return new ReferenceLookup(ls, config.httpClient).lookup(ref, ls.schemaJson());
+        }
+        Schema.Builder<?> rval = sniffSchemaByProps();
+        if (rval != null) {
+            return rval;
+        }
+        if (ls.schemaJson().containsKey("not")) {
+            return buildNotSchema();
+        }
+        return EmptySchema.builder();
+    }
+
+    private NumberSchema.Builder buildNumberSchema() {
+        NumberSchema.Builder builder = NumberSchema.builder();
+        ls.schemaJson().maybe("minimum").map(JsonValue::requireNumber).ifPresent(builder::minimum);
+        ls.schemaJson().maybe("maximum").map(JsonValue::requireNumber).ifPresent(builder::maximum);
+        ls.schemaJson().maybe("multipleOf").map(JsonValue::requireNumber).ifPresent(builder::multipleOf);
+        ls.schemaJson().maybe("exclusiveMinimum").map(JsonValue::requireBoolean)
+                .ifPresent(builder::exclusiveMinimum);
+        ls.schemaJson().maybe("exclusiveMaximum").map(JsonValue::requireBoolean)
+                .ifPresent(builder::exclusiveMaximum);
+        return builder;
+    }
+
+    private Schema.Builder loadSchemaBoolean(Boolean rawBoolean) {
+        return rawBoolean ? TrueSchema.builder() : FalseSchema.builder();
+    }
+
+    private Schema.Builder loadSchemaObject(JsonObject o) {
+        Schema.Builder builder;
+        if (ls.schemaJson().containsKey("enum")) {
+            builder = buildEnumSchema();
+        } else {
+            builder = new CombinedSchemaLoader(ls, this).load()
+                    .orElseGet(() -> {
+                        if (!ls.schemaJson().containsKey("type") || ls.schemaJson().containsKey("$ref")) {
+                            return buildSchemaWithoutExplicitType();
+                        } else {
+                            return loadForType(ls.schemaJson().require("type"));
+                        }
+                    });
+        }
+        ls.schemaJson().maybe(config.specVersion.idKeyword()).map(JsonValue::requireString).ifPresent(builder::id);
+        ls.schemaJson().maybe("title").map(JsonValue::requireString).ifPresent(builder::title);
+        ls.schemaJson().maybe("description").map(JsonValue::requireString).ifPresent(builder::description);
+        builder.schemaLocation(new JSONPointer(ls.pointerToCurrentObj).toURIFragment());
+        return builder;
+    }
+
+    /**
+     * Populates a {@code Schema.Builder} instance from the {@code schemaJson} schema definition.
+     *
+     * @return the builder which already contains the validation criteria of the schema, therefore
+     * {@link Schema.Builder#build()} can be immediately used to acquire the {@link Schema}
+     * instance to be used for validation
+     */
+    public Schema.Builder<?> load() {
+        return ls.schemaJson
+                .canBeMappedTo(Boolean.class, this::loadSchemaBoolean)
+                .orMappedTo(JsonObject.class, this::loadSchemaObject)
+                .requireAny();
+    }
+
+    private Schema.Builder<?> loadForExplicitType(final String typeString) {
+        switch (typeString) {
+        case "string":
+            return new StringSchemaLoader(ls, config.formatValidators).load();
+        case "integer":
+            return buildNumberSchema().requiresInteger(true);
+        case "number":
+            return buildNumberSchema();
+        case "boolean":
+            return BooleanSchema.builder();
+        case "null":
+            return NullSchema.builder();
+        case "array":
+            return buildArraySchema();
+        case "object":
+            return buildObjectSchema();
+        default:
+            throw new SchemaException(String.format("unknown type: [%s]", typeString));
+        }
+    }
+
+    private ObjectSchema.Builder buildObjectSchema() {
+        return new ObjectSchemaLoader(ls, this).load();
+    }
+
+    private ArraySchema.Builder buildArraySchema() {
+        return new ArraySchemaLoader(ls, config, this).load();
+    }
+
+    Schema.Builder loadForType(JsonValue type) {
+        return type.canBeMappedTo(JsonArray.class, arr -> (Schema.Builder) buildAnyOfSchemaForMultipleTypes())
+                .orMappedTo(String.class, this::loadForExplicitType)
+                .requireAny();
+    }
+
+    private boolean schemaHasAnyOf(Collection<String> propNames) {
+        return propNames.stream().filter(ls.schemaJson()::containsKey).findAny().isPresent();
+    }
+
+    Schema.Builder<?> loadChild(JsonValue childJson) {
+        SchemaLoaderBuilder childBuilder = ls.initChildLoader()
+                .schemaJson(childJson)
+                .pointerToCurrentObj(childJson.ls.pointerToCurrentObj)
+                .config(this.config);
+        childJson.canBe(JsonObject.class, obj -> {
+            obj.maybe(config.specVersion.idKeyword()).map(JsonValue::requireString)
+                    .map(childId -> ReferenceResolver.resolve(this.ls.id, childId))
+                    .ifPresent(childBuilder::resolutionScope);
+        })
+                .or(Boolean.class, bool -> {
+                })
+                .requireAny();
+        return childBuilder.build().load();
+    }
+
+    Schema.Builder<?> sniffSchemaByProps() {
+        if (schemaHasAnyOf(config.specVersion.arrayKeywords())) {
+            return buildArraySchema().requiresArray(false);
+        } else if (schemaHasAnyOf(OBJECT_SCHEMA_PROPS)) {
+            return buildObjectSchema().requiresObject(false);
+        } else if (schemaHasAnyOf(NUMBER_SCHEMA_PROPS)) {
+            return buildNumberSchema().requiresNumber(false);
+        } else if (schemaHasAnyOf(STRING_SCHEMA_PROPS)) {
+            return new StringSchemaLoader(ls, config.formatValidators).load().requiresString(false);
+        }
+        return null;
+    }
+
+    /**
+     * @param formatName
+     * @return
+     * @deprecated
+     */
+    @Deprecated Optional<FormatValidator> getFormatValidator(String formatName) {
+        return Optional.ofNullable(config.formatValidators.get(formatName));
+    }
+
+}
