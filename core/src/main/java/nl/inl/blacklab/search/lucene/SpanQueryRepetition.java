@@ -125,13 +125,11 @@ public class SpanQueryRepetition extends BLSpanQueryAbstract {
 
 	@Override
 	public BLSpanWeight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
-		if (min < 1)
-			throw new RuntimeException("Query should have been rewritten! (min < 1)");
 		BLSpanWeight weight = clauses.get(0).createWeight(searcher, needsScores);
 		return new SpanWeightRepetition(weight, searcher, needsScores ? getTermContexts(weight) : null);
 	}
 
-	public class SpanWeightRepetition extends BLSpanWeight {
+	class SpanWeightRepetition extends BLSpanWeight {
 
 		final BLSpanWeight weight;
 
@@ -155,8 +153,9 @@ public class SpanQueryRepetition extends BLSpanQueryAbstract {
 			BLSpans spans = weight.getSpans(context, requiredPostings);
 			if (spans == null)
 				return null;
-			BLSpans blSpans = BLSpans.optSortUniq(spans, !hitsStartPointSorted(), !hitsAreUnique());
-			return new SpansRepetition(blSpans, min, max);
+			if (!hitsStartPointSorted() || !hitsAreUnique())
+				spans = BLSpans.optSortUniq(spans, !hitsStartPointSorted(), !hitsAreUnique());
+			return new SpansRepetition(spans, min == 0 ? 1 : min, max);
 		}
 
 	}
@@ -241,8 +240,8 @@ public class SpanQueryRepetition extends BLSpanQueryAbstract {
 	}
 
 	@Override
-	public long estimatedNumberOfHits(IndexReader reader) {
-		return clauses.get(0).estimatedNumberOfHits(reader);
+	public long reverseMatchingCost(IndexReader reader) {
+		return clauses.get(0).reverseMatchingCost(reader);
 	}
 
 }

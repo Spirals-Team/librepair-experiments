@@ -67,7 +67,7 @@ public class SpanQueryCaptureGroup extends BLSpanQueryAbstract {
 		return new SpanWeightCaptureGroup(weight, searcher, needsScores ? getTermContexts(weight) : null);
 	}
 
-	public class SpanWeightCaptureGroup extends BLSpanWeight {
+	class SpanWeightCaptureGroup extends BLSpanWeight {
 
 		final BLSpanWeight weight;
 
@@ -142,7 +142,7 @@ public class SpanQueryCaptureGroup extends BLSpanQueryAbstract {
 	}
 
 	@Override
-	public long estimatedNumberOfHits(IndexReader reader) {
-		return clauses.get(0).estimatedNumberOfHits(reader);
+	public long reverseMatchingCost(IndexReader reader) {
+		return clauses.get(0).reverseMatchingCost(reader);
 	}
 }

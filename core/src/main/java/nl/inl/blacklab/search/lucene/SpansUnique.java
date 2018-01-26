@@ -25,7 +25,7 @@ import nl.inl.blacklab.search.Span;
 /**
  * Remove consecutive duplicate hits from a source spans.
  */
-public class SpansUnique extends BLSpans {
+class SpansUnique extends BLSpans {
 
 	private BLSpans src;
 
@@ -39,7 +39,7 @@ public class SpansUnique extends BLSpans {
 	 * @param src (startpoint-sorted) Spans to make unique
 	 */
 	public SpansUnique(BLSpans src) {
-		this.src = src; //Sort
+		this.src = src; // NOTE: must be startpoint sorted! (caller's responsibility)
 	}
 
 	@Override

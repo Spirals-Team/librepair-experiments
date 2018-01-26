@@ -229,13 +229,12 @@ public final class BLSpanOrQuery extends BLSpanQuery {
 
 	@Override
 	public boolean hitsEndPointSorted() {
-		// Cannot guarantee because we're merging from different sources.
-		return false;
+		return hitsAllSameLength();
 	}
 
 	@Override
 	public boolean hitsStartPointSorted() {
-		// Our way of merging guarantees this, as it should for almost all BLSpans
+		// Our way of merging guarantees this
 		return true;
 	}
 
@@ -590,13 +589,13 @@ public final class BLSpanOrQuery extends BLSpanQuery {
 	}
 
 	@Override
-	public long estimatedNumberOfHits(IndexReader reader) {
+	public long reverseMatchingCost(IndexReader reader) {
 		// Add the costs of our clauses, since we won't
 		// be able to skip any hits.
 		int cost = 0;
 		for (SpanQuery cl: getClauses()) {
 			BLSpanQuery clause = (BLSpanQuery)cl;
-			cost += clause.estimatedNumberOfHits(reader);
+			cost += clause.reverseMatchingCost(reader);
 		}
 		return cost;
 	}

@@ -16,7 +16,7 @@ import nl.inl.blacklab.search.Hit;
  * Ensure hits from a SpanQuery are sorted by start- or endpoint
  * (within document), and optionally eliminate duplicate hits.
  */
-public class SpanQuerySorted extends BLSpanQuery {
+class SpanQuerySorted extends BLSpanQuery {
 	private BLSpanQuery src;
 
 	boolean sortByEndpoint;
@@ -59,7 +59,7 @@ public class SpanQuerySorted extends BLSpanQuery {
 		return new SpanWeightSorted(weight, searcher, needsScores ? getTermContexts(weight) : null);
 	}
 
-	public class SpanWeightSorted extends BLSpanWeight {
+	class SpanWeightSorted extends BLSpanWeight {
 
 		final BLSpanWeight weight;
 
@@ -160,7 +160,7 @@ public class SpanQuerySorted extends BLSpanQuery {
 	}
 
 	@Override
-	public long estimatedNumberOfHits(IndexReader reader) {
-		return src.estimatedNumberOfHits(reader);
+	public long reverseMatchingCost(IndexReader reader) {
+		return src.reverseMatchingCost(reader);
 	}
 }

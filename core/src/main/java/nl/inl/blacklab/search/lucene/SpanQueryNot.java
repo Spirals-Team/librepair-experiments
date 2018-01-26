@@ -128,7 +128,7 @@ public class SpanQueryNot extends BLSpanQueryAbstract {
 		return new SpanWeightNot(weight, searcher, needsScores ? getTermContexts(weight) : null);
 	}
 
-	public class SpanWeightNot extends BLSpanWeight {
+	class SpanWeightNot extends BLSpanWeight {
 
 		final BLSpanWeight weight;
 
@@ -226,9 +226,9 @@ public class SpanQueryNot extends BLSpanQueryAbstract {
 	}
 
 	@Override
-	public long estimatedNumberOfHits(IndexReader reader) {
+	public long reverseMatchingCost(IndexReader reader) {
 		// Should be rewritten, but if it can't, calculate a rough indication of the number of token hits
-		long freq = clauses.get(0).estimatedNumberOfHits(reader);
+		long freq = clauses.get(0).reverseMatchingCost(reader);
 		return LuceneUtil.getSumTotalTermFreq(reader, getRealField()) - freq;
 	}
 

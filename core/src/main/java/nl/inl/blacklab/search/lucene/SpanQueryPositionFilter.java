@@ -108,7 +108,7 @@ public class SpanQueryPositionFilter extends BLSpanQueryAbstract {
 		return new SpanWeightPositionFilter(prodWeight, filterWeight, searcher, contexts);
 	}
 
-	public class SpanWeightPositionFilter extends BLSpanWeight {
+	class SpanWeightPositionFilter extends BLSpanWeight {
 
 		final BLSpanWeight prodWeight, filterWeight;
 
@@ -266,8 +266,8 @@ public class SpanQueryPositionFilter extends BLSpanQueryAbstract {
 	}
 
 	@Override
-	public long estimatedNumberOfHits(IndexReader reader) {
-		return clauses.get(0).estimatedNumberOfHits(reader);
+	public long reverseMatchingCost(IndexReader reader) {
+		return clauses.get(0).reverseMatchingCost(reader);
 	}
 
 	/**

@@ -86,7 +86,7 @@ public class SpanQueryTags extends BLSpanQuery {
 		return new SpanWeightTags(weight, searcher, needsScores ? getTermContexts(weight) : null);
 	}
 
-	public class SpanWeightTags extends BLSpanWeight {
+	class SpanWeightTags extends BLSpanWeight {
 
 		final BLSpanWeight weight;
 
@@ -200,7 +200,7 @@ public class SpanQueryTags extends BLSpanQuery {
 
 	@Override
 	public boolean hitsHaveUniqueStart() {
-		return false;
+		return true;
 	}
 
 	@Override
@@ -210,11 +210,11 @@ public class SpanQueryTags extends BLSpanQuery {
 
 	@Override
 	public boolean hitsAreUnique() {
-		return false;
+		return hitsHaveUniqueStart() || hitsHaveUniqueEnd();
 	}
 
 	@Override
-	public long estimatedNumberOfHits(IndexReader reader) {
-		return clause.estimatedNumberOfHits(reader);
+	public long reverseMatchingCost(IndexReader reader) {
+		return clause.reverseMatchingCost(reader);
 	}
 }
