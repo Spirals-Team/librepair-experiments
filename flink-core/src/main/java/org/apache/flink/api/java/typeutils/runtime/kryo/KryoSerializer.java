@@ -124,8 +124,7 @@ public class KryoSerializer<T> extends TypeSerializer<T> {
 
 	@Override
 	public boolean isImmutableType() {
-		T instance = kryo.newInstance(type);
-		return instance == kryo.copy(instance);
+		return false;
 	}
 
 	@Override

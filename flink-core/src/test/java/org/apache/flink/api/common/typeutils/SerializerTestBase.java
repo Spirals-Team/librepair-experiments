@@ -18,13 +18,11 @@
 
 package org.apache.flink.api.common.typeutils;
 
-import org.apache.commons.lang3.SerializationException;
-import org.apache.commons.lang3.SerializationUtils;
-import org.apache.flink.core.memory.DataInputView;
-import org.apache.flink.core.memory.DataOutputView;
-import org.apache.flink.util.TestLogger;
-import org.junit.Assert;
-import org.junit.Test;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -33,13 +31,14 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNotSame;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import org.apache.flink.util.TestLogger;
+import org.junit.Assert;
+
+import org.apache.commons.lang3.SerializationException;
+import org.apache.commons.lang3.SerializationUtils;
+import org.apache.flink.core.memory.DataInputView;
+import org.apache.flink.core.memory.DataOutputView;
+import org.junit.Test;
 
 /**
  * Abstract test base for serializers.
@@ -110,14 +109,6 @@ public abstract class SerializerTestBase<T> extends TestLogger {
 				T copy = serializer.copy(datum);
 				copy.toString();
 				deepEquals("Copied element is not equal to the original element.", datum, copy);
-
-				if (!serializer.isImmutableType()) {
-					// serializers for mutable objects must create a deep copy
-					assertNotSame(copy, datum);
-				} else {
-					// serializers for immutable objects can copy references and should for performance
-					assertSame(copy, datum);
-				}
 			}
 		}
 		catch (Exception e) {
@@ -137,14 +128,6 @@ public abstract class SerializerTestBase<T> extends TestLogger {
 				T copy = serializer.copy(datum, serializer.createInstance());
 				copy.toString();
 				deepEquals("Copied element is not equal to the original element.", datum, copy);
-
-				if (!serializer.isImmutableType()) {
-					// serializers for mutable objects must create a deep copy
-					assertNotSame(copy, datum);
-				} else {
-					// serializers for immutable objects can copy references and should for performance
-					assertSame(copy, datum);
-				}
 			}
 		}
 		catch (Exception e) {
