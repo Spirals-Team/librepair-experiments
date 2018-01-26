@@ -152,7 +152,7 @@ class GroupAggregationsTest extends TableTestBase {
           unaryNode(
             "DataStreamCalc",
             streamTableNode(0),
-            term("select", "c", "a", "MOD(b, 3) AS d")
+            term("select", "a", "MOD(b, 3) AS d", "c")
           ),
           term("groupBy", "d"),
           term("select", "d", "MIN(c) AS TMP_0", "AVG(a) AS TMP_1")
@@ -174,19 +174,15 @@ class GroupAggregationsTest extends TableTestBase {
 
     val expected =
       unaryNode(
-        "DataStreamCalc",
+        "DataStreamGroupAggregate",
         unaryNode(
-          "DataStreamGroupAggregate",
-          unaryNode(
-            "DataStreamCalc",
-            streamTableNode(0),
-            term("select", "b", "a")
-          ),
-          term("groupBy", "b"),
-          term("select", "b", "SUM(a) AS TMP_0")
+          "DataStreamCalc",
+          streamTableNode(0),
+          term("select", "b", "a"),
+          term("where", "=(b, 2)")
         ),
-        term("select", "b", "TMP_0"),
-        term("where", "=(b, 2)")
+        term("groupBy", "b"),
+        term("select", "b", "SUM(a) AS TMP_0")
       )
     util.verifyTable(resultTable, expected)
   }

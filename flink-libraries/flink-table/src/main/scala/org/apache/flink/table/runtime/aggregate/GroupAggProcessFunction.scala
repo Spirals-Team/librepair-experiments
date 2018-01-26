@@ -17,84 +17,131 @@
  */
 package org.apache.flink.table.runtime.aggregate
 
+import java.lang.{Long => JLong}
+
 import org.apache.flink.configuration.Configuration
 import org.apache.flink.streaming.api.functions.ProcessFunction
 import org.apache.flink.types.Row
-import org.apache.flink.util.{Collector, Preconditions}
+import org.apache.flink.util.Collector
 import org.apache.flink.api.common.state.ValueStateDescriptor
 import org.apache.flink.api.java.typeutils.RowTypeInfo
 import org.apache.flink.api.common.state.ValueState
-import org.apache.flink.table.functions.{Accumulator, AggregateFunction}
+import org.apache.flink.table.api.Types
+import org.apache.flink.table.codegen.{Compiler, GeneratedAggregationsFunction}
+import org.slf4j.LoggerFactory
+import org.apache.flink.table.runtime.types.CRow
 
 /**
   * Aggregate Function used for the groupby (without window) aggregate
   *
-  * @param aggregates           the list of all
-  *                             [[org.apache.flink.table.functions.AggregateFunction]] used for
-  *                             this aggregation
-  * @param aggFields            the position (in the input Row) of the input value for each
-  *                             aggregate
-  * @param groupings            the position (in the input Row) of the grouping keys
-  * @param aggregationStateType the row type info of aggregation
+  * @param genAggregations      Generated aggregate helper function
+  * @param aggregationStateType The row type info of aggregation
   */
 class GroupAggProcessFunction(
-    private val aggregates: Array[AggregateFunction[_]],
-    private val aggFields: Array[Array[Int]],
-    private val groupings: Array[Int],
-    private val aggregationStateType: RowTypeInfo)
-  extends ProcessFunction[Row, Row] {
+    private val genAggregations: GeneratedAggregationsFunction,
+    private val aggregationStateType: RowTypeInfo,
+    private val generateRetraction: Boolean)
+  extends ProcessFunction[CRow, CRow]
+    with Compiler[GeneratedAggregations] {
 
-  Preconditions.checkNotNull(aggregates)
-  Preconditions.checkNotNull(aggFields)
-  Preconditions.checkArgument(aggregates.length == aggFields.length)
+  val LOG = LoggerFactory.getLogger(this.getClass)
+  private var function: GeneratedAggregations = _
 
-  private var output: Row = _
+  private var newRow: CRow = _
+  private var prevRow: CRow = _
+  private var firstRow: Boolean = _
+  // stores the accumulators
   private var state: ValueState[Row] = _
+  // counts the number of added and retracted input records
+  private var cntState: ValueState[JLong] = _
 
   override def open(config: Configuration) {
-    output = new Row(groupings.length + aggregates.length)
+    LOG.debug(s"Compiling AggregateHelper: $genAggregations.name \n\n " +
+      s"Code:\n$genAggregations.code")
+    val clazz = compile(
+      getRuntimeContext.getUserCodeClassLoader,
+      genAggregations.name,
+      genAggregations.code)
+    LOG.debug("Instantiating AggregateHelper.")
+    function = clazz.newInstance()
+
+    newRow = new CRow(function.createOutputRow(), true)
+    prevRow = new CRow(function.createOutputRow(), false)
+
     val stateDescriptor: ValueStateDescriptor[Row] =
       new ValueStateDescriptor[Row]("GroupAggregateState", aggregationStateType)
     state = getRuntimeContext.getState(stateDescriptor)
+    val inputCntDescriptor: ValueStateDescriptor[JLong] =
+      new ValueStateDescriptor[JLong]("GroupAggregateInputCounter", Types.LONG)
+    cntState = getRuntimeContext.getState(inputCntDescriptor)
   }
 
   override def processElement(
-      input: Row,
-      ctx: ProcessFunction[Row, Row]#Context,
-      out: Collector[Row]): Unit = {
+      inputC: CRow,
+      ctx: ProcessFunction[CRow, CRow]#Context,
+      out: Collector[CRow]): Unit = {
 
-    var i = 0
+    val input = inputC.row
 
+    // get accumulators and input counter
     var accumulators = state.value()
+    var inputCnt = cntState.value()
 
     if (null == accumulators) {
-      accumulators = new Row(aggregates.length)
-      i = 0
-      while (i < aggregates.length) {
-        accumulators.setField(i, aggregates(i).createAccumulator())
-        i += 1
-      }
+      firstRow = true
+      accumulators = function.createAccumulators()
+      inputCnt = 0L
+    } else {
+      firstRow = false
     }
 
     // Set group keys value to the final output
-    i = 0
-    while (i < groupings.length) {
-      output.setField(i, input.getField(groupings(i)))
-      i += 1
+    function.setForwardedFields(input, newRow.row)
+    function.setForwardedFields(input, prevRow.row)
+
+    // Set previous aggregate result to the prevRow
+    function.setAggregationResults(accumulators, prevRow.row)
+
+    // update aggregate result and set to the newRow
+    if (inputC.change) {
+      inputCnt += 1
+      // accumulate input
+      function.accumulate(accumulators, input)
+      function.setAggregationResults(accumulators, newRow.row)
+    } else {
+      inputCnt -= 1
+      // retract input
+      function.retract(accumulators, input)
+      function.setAggregationResults(accumulators, newRow.row)
     }
 
-    // Set aggregate result to the final output
-    i = 0
-    while (i < aggregates.length) {
-      val index = groupings.length + i
-      val accumulator = accumulators.getField(i).asInstanceOf[Accumulator]
-      aggregates(i).accumulate(accumulator, input.getField(aggFields(i)(0)))
-      output.setField(index, aggregates(i).getValue(accumulator))
-      i += 1
-    }
-    state.update(accumulators)
+    if (inputCnt != 0) {
+      // we aggregated at least one record for this key
 
-    out.collect(output)
+      // update the state
+      state.update(accumulators)
+      cntState.update(inputCnt)
+
+      // if this was not the first row and we have to emit retractions
+      if (generateRetraction && !firstRow) {
+        if (prevRow.row.equals(newRow.row)) {
+          // newRow is the same as before. Do not emit retraction and acc messages
+          return
+        } else {
+          // retract previous result
+          out.collect(prevRow)
+        }
+      }
+      // emit the new result
+      out.collect(newRow)
+
+    } else {
+      // we retracted the last record for this key
+      // sent out a delete message
+      out.collect(prevRow)
+      // and clear all state
+      state.clear()
+      cntState.clear()
+    }
   }
-
 }

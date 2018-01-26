@@ -12,6 +12,7 @@
  */
 package org.apache.flink.python.api.functions;
 
+import org.apache.flink.api.common.typeinfo.PrimitiveArrayTypeInfo;
 import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.python.api.streaming.data.PythonDualInputStreamer;
@@ -34,9 +35,9 @@ public class PythonCoGroup<IN1, IN2, OUT> extends RichCoGroupFunction<IN1, IN2, 
 	private final PythonDualInputStreamer<IN1, IN2, OUT> streamer;
 	private final transient TypeInformation<OUT> typeInformation;
 
-	public PythonCoGroup(int envID, int setID, TypeInformation<OUT> typeInformation) {
+	public PythonCoGroup(Configuration config, int envID, int setID, TypeInformation<OUT> typeInformation) {
 		this.typeInformation = typeInformation;
-		streamer = new PythonDualInputStreamer<>(this, envID, setID, true);
+		streamer = new PythonDualInputStreamer<>(this, config, envID, setID, typeInformation instanceof PrimitiveArrayTypeInfo);
 	}
 
 	/**
