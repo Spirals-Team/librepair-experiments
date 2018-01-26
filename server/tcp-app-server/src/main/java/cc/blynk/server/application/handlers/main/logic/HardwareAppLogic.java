@@ -5,6 +5,7 @@ import cc.blynk.server.application.handlers.main.auth.AppStateHolder;
 import cc.blynk.server.core.dao.SessionDao;
 import cc.blynk.server.core.model.DashBoard;
 import cc.blynk.server.core.model.auth.Session;
+import cc.blynk.server.core.model.auth.User;
 import cc.blynk.server.core.model.enums.PinType;
 import cc.blynk.server.core.model.widgets.FrequencyWidget;
 import cc.blynk.server.core.model.widgets.Target;
@@ -21,8 +22,7 @@ import org.apache.logging.log4j.Logger;
 
 import static cc.blynk.server.core.protocol.enums.Command.APP_SYNC;
 import static cc.blynk.server.core.protocol.enums.Command.HARDWARE;
-import static cc.blynk.utils.BlynkByteBufUtil.deviceNotInNetwork;
-import static cc.blynk.utils.BlynkByteBufUtil.illegalCommandBody;
+import static cc.blynk.utils.BlynkByteBufUtil.*;
 import static cc.blynk.utils.StringUtils.*;
 
 /**
@@ -93,12 +93,14 @@ public class HardwareAppLogic {
         switch (operation) {
             case 'u' :
                 String[] splitBody = split3(split[1]);
-                final int widgetId = ParseUtil.parseInt(splitBody[1]);
+                long widgetId = ParseUtil.parseLong(splitBody[1]);
                 Widget deviceSelector = dash.getWidgetByIdOrThrow(widgetId);
                 if (deviceSelector instanceof DeviceSelector) {
                     final int selectedDeviceId = ParseUtil.parseInt(splitBody[2]);
                     ((DeviceSelector) deviceSelector).value = selectedDeviceId;
-                    AppSyncLogic.sendSyncAndOk(ctx, dash, selectedDeviceId, message.id);
+                    ctx.write(ok(message.id), ctx.voidPromise());
+                    dash.sendSyncs(ctx.channel(), selectedDeviceId);
+                    ctx.flush();
                 }
                 break;
             case 'w' :
@@ -132,7 +134,7 @@ public class HardwareAppLogic {
                     ctx.writeAndFlush(deviceNotInNetwork(message.id), ctx.voidPromise());
                 }
 
-                process(dash, targetId, session, pin, pinType, value, now);
+                process(state.user, dash, targetId, session, pin, pinType, value, now);
 
                 break;
 
@@ -156,9 +158,9 @@ public class HardwareAppLogic {
         }
     }
 
-    private void process(DashBoard dash, int deviceId, Session session, byte pin, PinType pinType, String value, long now) {
+    private void process(User user, DashBoard dash, int deviceId, Session session, byte pin, PinType pinType, String value, long now) {
         try {
-            eventorProcessor.process(session, dash, deviceId, pin, pinType, value, now);
+            eventorProcessor.process(user, session, dash, deviceId, pin, pinType, value, now);
             webhookProcessor.process(session, dash, deviceId, pin, pinType, value, now);
         } catch (Exception e) {
             log.error("Error processing eventor/webhook.", e);

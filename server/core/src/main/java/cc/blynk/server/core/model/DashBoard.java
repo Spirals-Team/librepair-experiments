@@ -5,10 +5,7 @@ import cc.blynk.server.core.model.device.Device;
 import cc.blynk.server.core.model.device.Tag;
 import cc.blynk.server.core.model.enums.PinType;
 import cc.blynk.server.core.model.enums.Theme;
-import cc.blynk.server.core.model.widgets.MultiPinWidget;
-import cc.blynk.server.core.model.widgets.OnePinWidget;
-import cc.blynk.server.core.model.widgets.Target;
-import cc.blynk.server.core.model.widgets.Widget;
+import cc.blynk.server.core.model.widgets.*;
 import cc.blynk.server.core.model.widgets.controls.Timer;
 import cc.blynk.server.core.model.widgets.notifications.Notification;
 import cc.blynk.server.core.model.widgets.others.eventor.Eventor;
@@ -19,9 +16,12 @@ import cc.blynk.server.workers.timer.TimerWorker;
 import cc.blynk.utils.JsonParser;
 import cc.blynk.utils.ParseUtil;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
 
 import java.util.*;
 
+import static cc.blynk.server.core.model.widgets.AppSyncWidget.ANY_TARGET;
 import static cc.blynk.utils.ArrayUtil.*;
 
 /**
@@ -78,13 +78,25 @@ public class DashBoard {
         }
         //special case. #237 if no widget - storing without widget.
         if (!hasWidget) {
-            if (pinsStorage == Collections.EMPTY_MAP) {
-                pinsStorage = new HashMap<>();
-            }
-            pinsStorage.put(new PinStorageKey(deviceId, type, pin), value);
+            putPinStorageValue(deviceId, type, pin, value);
         }
 
         this.updatedAt = now;
+    }
+
+    public void putPinPropertyStorageValue(int deviceId, PinType type, byte pin, String property, String value) {
+        puntPinStorageValue(new PinPropertyStorageKey(deviceId, type, pin, property), value);
+    }
+
+    private void putPinStorageValue(int deviceId, PinType type, byte pin, String value) {
+        puntPinStorageValue(new PinStorageKey(deviceId, type, pin), value);
+    }
+
+    private void puntPinStorageValue(PinStorageKey key, String value) {
+        if (pinsStorage == Collections.EMPTY_MAP) {
+            pinsStorage = new HashMap<>();
+        }
+        pinsStorage.put(key, value);
     }
 
     public void activate() {
@@ -274,15 +286,33 @@ public class DashBoard {
     public void cleanPinStorage(Widget widget) {
         if (widget instanceof OnePinWidget) {
             OnePinWidget onePinWidget = (OnePinWidget) widget;
-            pinsStorage.remove(new PinStorageKey(onePinWidget.deviceId, onePinWidget.pinType, onePinWidget.pin));
+            if (onePinWidget.pinType != null) {
+                pinsStorage.remove(new PinStorageKey(onePinWidget.deviceId, onePinWidget.pinType, onePinWidget.pin));
+            }
         } else if (widget instanceof MultiPinWidget) {
             MultiPinWidget multiPinWidget = (MultiPinWidget) widget;
             if (multiPinWidget.pins != null) {
                 for (Pin pin : multiPinWidget.pins) {
-                    if (pin != null) {
+                    if (pin != null && pin.pinType != null) {
                         pinsStorage.remove(new PinStorageKey(multiPinWidget.deviceId, pin.pinType, pin.pin));
                     }
                 }
+            }
+        }
+    }
+
+    public void sendSyncs(Channel appChannel, int targetId) {
+        for (Widget widget : widgets) {
+            if (widget instanceof AppSyncWidget && appChannel.isWritable()) {
+                ((AppSyncWidget) widget).sendAppSync(appChannel, id, targetId);
+            }
+        }
+
+        for (Map.Entry<PinStorageKey, String> entry : pinsStorage.entrySet()) {
+            PinStorageKey key = entry.getKey();
+            if ((targetId == ANY_TARGET || targetId == key.deviceId) && appChannel.isWritable()) {
+                ByteBuf byteBuf = key.makeByteBuf(id, entry.getValue());
+                appChannel.write(byteBuf, appChannel.voidPromise());
             }
         }
     }

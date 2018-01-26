@@ -13,6 +13,7 @@ import cc.blynk.server.core.model.widgets.others.eventor.Eventor;
 import cc.blynk.server.core.model.widgets.others.eventor.Rule;
 import cc.blynk.server.core.model.widgets.others.eventor.model.action.BaseAction;
 import cc.blynk.server.core.model.widgets.others.eventor.model.action.SetPinAction;
+import cc.blynk.server.core.model.widgets.others.eventor.model.action.SetPinActionType;
 import cc.blynk.server.core.model.widgets.others.eventor.model.action.WaitAction;
 import cc.blynk.server.core.model.widgets.others.eventor.model.action.notification.MailAction;
 import cc.blynk.server.core.model.widgets.others.eventor.model.action.notification.NotifyAction;
@@ -89,13 +90,13 @@ public class EventorTest extends IntegrationBase {
     private static BaseAction resolveAction(String action, Pin pin, String value) {
         switch (action) {
             case "setpin" :
-                return new SetPinAction(pin, value);
+                return new SetPinAction(pin.pin, pin.pinType, value);
             case "wait" :
                 return new WaitAction();
             case "notify" :
                 return new NotifyAction(value);
             case "mail" :
-                return new MailAction(value);
+                return new MailAction("Subj", value);
             case "twit" :
                 return new TwitAction(value);
 
@@ -167,13 +168,13 @@ public class EventorTest extends IntegrationBase {
             System.out.println(JsonParser.mapper.writeValueAsString(eventor));
         }
 
-        Pin pin = new Pin(1, PinType.VIRTUAL);
+        Pin pin = new Pin((byte) 1, PinType.VIRTUAL);
 
         BaseAction[] actions = new BaseAction[] {
-                new SetPinAction(pin, "pinValuetoSEt"),
-                new WaitAction(360, new SetPinAction(pin, "pinValueToSet")),
+                new SetPinAction(pin.pin, pin.pinType, "pinValuetoSEt"),
+                new WaitAction(360, new SetPinAction(pin.pin, pin.pinType, "pinValueToSet")),
                 new NotifyAction("Hello!!!"),
-                new MailAction("Hello mail")
+                new MailAction("Subj", "Hello mail")
         };
 
         for (BaseAction action : actions) {
@@ -375,6 +376,39 @@ public class EventorTest extends IntegrationBase {
         verify(twitterWrapper, timeout(500)).send(eq("token"), eq("secret"), eq("Yo!!!!!"));
     }
 
+    @Test
+    public void testSimpleRule8Email() throws Exception {
+        Eventor eventor = oneRuleEventor("if v1 = 37 then mail Yo!!!!!");
+
+        clientPair.appClient.send("createWidget 1\0" + JsonParser.mapper.writeValueAsString(eventor));
+        verify(clientPair.appClient.responseMock, timeout(500)).channelRead(any(), eq(ok(1)));
+
+        clientPair.appClient.send("createWidget 1\0{\"id\":432, \"width\":1, \"height\":1, \"x\":0, \"y\":0, \"type\":\"EMAIL\"}");
+        verify(clientPair.appClient.responseMock, timeout(500)).channelRead(any(), eq(new ResponseMessage(2, OK)));
+
+        clientPair.hardwareClient.send("hardware vw 1 37");
+        verify(clientPair.appClient.responseMock, timeout(500)).channelRead(any(), eq(produce(1, HARDWARE, b("1 vw 1 37"))));
+
+        ArgumentCaptor<AndroidGCMMessage> objectArgumentCaptor = ArgumentCaptor.forClass(AndroidGCMMessage.class);
+        verify(mailWrapper, timeout(500).times(1)).sendText(eq("dima@mail.ua"), eq("Subj"), eq("Yo!!!!!"));
+    }
+
+    @Test
+    public void testSimpleRule8EmailAndFormat() throws Exception {
+        Eventor eventor = oneRuleEventor("if v1 = 37 then mail Yo/pin/!!!!!");
+
+        clientPair.appClient.send("createWidget 1\0" + JsonParser.mapper.writeValueAsString(eventor));
+        verify(clientPair.appClient.responseMock, timeout(500)).channelRead(any(), eq(ok(1)));
+
+        clientPair.appClient.send("createWidget 1\0{\"id\":432, \"width\":1, \"height\":1, \"x\":0, \"y\":0, \"type\":\"EMAIL\"}");
+        verify(clientPair.appClient.responseMock, timeout(500)).channelRead(any(), eq(new ResponseMessage(2, OK)));
+
+        clientPair.hardwareClient.send("hardware vw 1 37");
+        verify(clientPair.appClient.responseMock, timeout(500)).channelRead(any(), eq(produce(1, HARDWARE, b("1 vw 1 37"))));
+
+        ArgumentCaptor<AndroidGCMMessage> objectArgumentCaptor = ArgumentCaptor.forClass(AndroidGCMMessage.class);
+        verify(mailWrapper, timeout(500).times(1)).sendText(eq("dima@mail.ua"), eq("Subj"), eq("Yo37!!!!!"));
+    }
 
     @Test
     public void testSimpleRuleCreateUpdateConditionWorks() throws Exception {
@@ -493,7 +527,12 @@ public class EventorTest extends IntegrationBase {
         //here is special case. right now eventor for digital pins supports only LOW/HIGH values
         //that's why eventor doesn't work with PWM pins, as they handled as analog, where HIGH doesn't work.
         SetPinAction setPinAction = (SetPinAction) eventor.rules[0].actions[0];
-        setPinAction.pin.pwmMode = true;
+        Pin pin = setPinAction.pin;
+        eventor.rules[0].actions[0] = new SetPinAction(
+                new Pin(pin.pin, true, false, pin.pinType, null, 0, 255, null),
+                setPinAction.value,
+                SetPinActionType.CUSTOM
+        );
 
         clientPair.appClient.send("createWidget 1\0" + JsonParser.mapper.writeValueAsString(eventor));
         verify(clientPair.appClient.responseMock, timeout(500)).channelRead(any(), eq(ok(1)));
