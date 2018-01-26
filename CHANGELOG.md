@@ -1,4 +1,5 @@
 ## 2.0.0
+ * STORM-2327: Introduce ConfigurableTopology
  * STORM-2323: Precondition for Leader Nimbus should check all topology blobs and also corresponding dependencies.
  * STORM-2305: STORM-2279 calculates task index different from grouper code
  * STORM-1292: port backtype.storm.messaging-test to java
@@ -195,6 +196,9 @@
  * STORM-1769: Added a test to check local nimbus with notifier plugin
 
 ## 1.1.0
+ * STORM-2331: Emitting from JavaScript should work when not anchoring.
+ * STORM-2320:  DRPC client printer class reusable for local and remote DRPC.
+ * STORM-2225: change spout config to be simpler.
  * STORM-2330: Fix storm sql code generation for UDAF with non standard sql types
  * STORM-2298: Don't kill Nimbus when ClusterMetricsConsumer is failed to initialize
  * STORM-2301: [storm-cassandra] upgrade cassandra driver to 3.1.2
