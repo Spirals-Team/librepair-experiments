@@ -595,17 +595,17 @@ public final class AuthorizationFramework {
 
     private boolean performCheck(Nameable entity, Predicate<AuthorizationPluginWrapper> predicate) {
         boolean overallDecision = true;
-        LOGGER.log(Level.FINE, "Authorization for \"{0}\"",
+        LOGGER.log(Level.FINEST, "Authorization for \"{0}\"",
                 new Object[]{entity.getName()});
         for (AuthorizationPluginWrapper plugin : getPlugins()) {
             // run the plugin's test method
             try {
-                LOGGER.log(Level.FINE, "Plugin \"{0}\" [{1}] testing a name \"{2}\"",
+                LOGGER.log(Level.FINEST, "Plugin \"{0}\" [{1}] testing a name \"{2}\"",
                         new Object[]{plugin.getClassname(), plugin.getRole(), entity.getName()});
 
                 boolean pluginDecision = predicate.test(plugin);
 
-                LOGGER.log(Level.FINE, "Plugin \"{0}\" [{1}] testing a name \"{2}\" => {3}",
+                LOGGER.log(Level.FINEST, "Plugin \"{0}\" [{1}] testing a name \"{2}\" => {3}",
                         new Object[]{plugin.getClassname(), plugin.getRole(), entity.getName(),
                             pluginDecision ? "true" : "false"});
 
@@ -629,7 +629,7 @@ public final class AuthorizationFramework {
                                 entity.getName()),
                         ex);
 
-                LOGGER.log(Level.FINE, "Plugin \"{0}\" [{1}] testing a name \"{2}\" => {3}",
+                LOGGER.log(Level.FINEST, "Plugin \"{0}\" [{1}] testing a name \"{2}\" => {3}",
                         new Object[]{plugin.getClassname(), plugin.getRole(), entity.getName(),
                             "false (failed)"});
 
@@ -643,7 +643,7 @@ public final class AuthorizationFramework {
                 }
             }
         }
-        LOGGER.log(Level.FINE, "Authorization for \"{0}\" => {1}",
+        LOGGER.log(Level.FINEST, "Authorization for \"{0}\" => {1}",
                 new Object[]{entity.getName(), overallDecision ? "true" : "false"});
         return overallDecision;
     }

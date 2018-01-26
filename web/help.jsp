@@ -27,6 +27,7 @@ org.opensolaris.opengrok.search.SearchEngine"
 /* ---------------------- help.jsp start --------------------- */
 {
     PageConfig cfg = PageConfig.get(request);
+    cfg.checkSourceRootExistence();
     cfg.setTitle("OpenGrok Help");
 }
 %><%@
@@ -42,7 +43,7 @@ include file="httpheader.jspf"
 include file="pageheader.jspf"
 
             %></div>
-            <div id="Masthead"></div>
+            <div id="Masthead">Help page</div>
         </div>
         <div id="sbar">
             <div id="menu"><%@

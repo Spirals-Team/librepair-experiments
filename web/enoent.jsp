@@ -19,13 +19,14 @@ CDDL HEADER END
 Copyright (c) 2005, 2017, Oracle and/or its affiliates. All rights reserved.
 Portions Copyright 2011 Jens Elkner.
 
---%><%@page session="false" isErrorPage="true" import="
+--%><%@page session="false" errorPage="error.jsp" isErrorPage="true" import="
 org.opensolaris.opengrok.web.Prefix,
 org.opensolaris.opengrok.configuration.RuntimeEnvironment"
  %><%
 /* ---------------------- enoent.jsp start --------------------- */
 {
     PageConfig cfg = PageConfig.get(request);
+    cfg.checkSourceRootExistence();
     cfg.setTitle("File not found");
 
     String context = request.getContextPath();
@@ -43,7 +44,7 @@ include file="httpheader.jspf"
 include file="pageheader.jspf"
 
         %></div>
-        <div id="Masthead"></div>
+        <div id="Masthead">Error: file not found</div>
         <div id="sbar"><%@
 
 include file="menu.jspf"
@@ -54,13 +55,7 @@ include file="menu.jspf"
 {
     PageConfig cfg = PageConfig.get(request);
     String configError = "";
-    if (cfg.getSourceRootPath().isEmpty()) {
-        configError = "CONFIGURATION parameter has not been configured in "
-            + "web.xml! Please configure your webapp.";
-    } else if (!cfg.getEnv().getSourceRootFile().isDirectory()) {
-        configError = "The source root specified in your configuration does "
-            + "not point to a valid directory! Please configure your webapp.";
-    } else if (!cfg.hasHistory()) {
+    if (!cfg.hasHistory()) {
         configError = "Resource lacks history info. Was remote SCM side up when indexing occurred? "
             + "Cleanup history cache dir(or just the .gz for the file or db record) and rerun indexer making sure remote side will respond during indexing.";
    }

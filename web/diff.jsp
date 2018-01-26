@@ -21,7 +21,7 @@ CDDL HEADER END
 Copyright (c) 2006, 2017, Oracle and/or its affiliates. All rights reserved.
 
 Portions Copyright 2011 Jens Elkner.
---%><%@page import="
+--%><%@page errorPage="error.jsp" import="
 java.io.ByteArrayInputStream,
 java.io.OutputStream,
 java.io.BufferedReader,
@@ -45,14 +45,16 @@ private String getAnnotateRevision(DiffData data) {
     if (data.type == DiffType.OLD || data.type == DiffType.NEW) {
         String rev = data.rev[data.type == DiffType.NEW ? 1 : 0];
         return "<script type=\"text/javascript\">/* <![CDATA[ */ "
-            + "document.rev = " + Util.htmlize(Util.jsStringLiteral(rev))
-            + "; /* ]]> */</script>";
+            + "document.rev = function() { return " + Util.htmlize(Util.jsStringLiteral(rev))
+            + "; } /* ]]> */</script>";
     }
     return "";
 }
 %>
 <%
 {
+    PageConfig cfg = PageConfig.get(request);
+    cfg.checkSourceRootExistence();
     /**
      * This block must be the first block before any other output in the
      * response.
@@ -62,7 +64,6 @@ private String getAnnotateRevision(DiffData data) {
      * a collision with the response streams and the "getOutputStream() has
      * already been called" exception occurs.
      */
-    PageConfig cfg = PageConfig.get(request);
     DiffData data = cfg.getDiffData();
     request.setAttribute("diff.jsp-data", data);
     if (data.type == DiffType.TEXT
@@ -92,7 +93,7 @@ private String getAnnotateRevision(DiffData data) {
 
 include file="mast.jsp"
 
-%><script src="<%=request.getContextPath()%>/js/diff-0.0.1.js" type="text/javascript"></script><%
+%><%
 /* ---------------------- diff.jsp start --------------------- */
 {
     PageConfig cfg = PageConfig.get(request);
@@ -533,3 +534,4 @@ include file="mast.jsp"
 include file="foot.jspf"
 
 %>
+<script src="<%=request.getContextPath()%>/js/diff-0.0.1.js" type="text/javascript"></script>

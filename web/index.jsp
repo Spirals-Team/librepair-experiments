@@ -20,7 +20,13 @@ Copyright (c) 2005, 2017, Oracle and/or its affiliates. All rights reserved.
 
 Portions Copyright 2011 Jens Elkner.
 
---%><%@ page session="false" errorPage="error.jsp" %><%@
+--%><%@ page session="false" errorPage="error.jsp" %>
+<%
+{
+    PageConfig cfg = PageConfig.get(request);
+    cfg.checkSourceRootExistence();
+}
+%><%@
 
 include file="projects.jspf"
 
@@ -29,7 +35,6 @@ include file="projects.jspf"
 {
     PageConfig cfg = PageConfig.get(request);
     cfg.setTitle("Search");
-    cfg.checkSourceRootExistence();
 }
 %><%@
 
@@ -66,3 +71,4 @@ include file="repos.jspf"
 include file="foot.jspf"
 
 %>
+<script src="<%=request.getContextPath()%>/js/repos-0.0.1.js" type="text/javascript"></script>
