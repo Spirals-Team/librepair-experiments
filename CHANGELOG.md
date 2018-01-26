@@ -1,4 +1,5 @@
 ﻿## 2.0.0
+ * STORM-2333: CGroup memory and CPU metrics
  * STORM-2374: Storm Kafka Client Test Topologies Must be Serializable
  * STORM-2372: Pacemaker client doesn't clean up heartbeats properly
  * STORM-2334: Join Bolt implementation
@@ -203,10 +204,12 @@
  * STORM-1521: When using Kerberos login from keytab with multiple bolts/executors ticket is not renewed in hbase bolt.
  * STORM-1769: Added a test to check local nimbus with notifier plugin
 
-## 1.1.1
-* STORM-1363: TridentKafkaState should handle null values from TridentTupleToKafkaMapper.getMessageFromTuple()
-
 ## 1.1.0
+ * STORM-2391: Move HdfsSpoutTopology from storm-starter to storm-hdfs-examples
+ * STORM-2389: Avoid instantiating Event Logger when topology.eventlogger.executors=0
+ * STORM-2386: Fail-back Blob deletion also fails in BlobSynchronizer.syncBlobs.
+ * STORM-1363: TridentKafkaState should handle null values from TridentTupleToKafkaMapper.getMessageFromTuple()
+ * STORM-2381: Add logging of JDBC connection string in storm-jdbc integration for debugging failures.
  * STORM-2340: fix AutoCommitMode issue in KafkaSpout
  * STORM-2344: Flux YAML File Viewer for Nimbus UI
  * STORM-2281: Running Multiple Kafka Spouts (Trident) Throws Illegal State Exception
