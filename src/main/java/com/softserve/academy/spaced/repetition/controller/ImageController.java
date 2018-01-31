@@ -101,11 +101,11 @@ public class ImageController {
     /**
      * Delete the selected image
      *
-     * @param id - Image id, which we want to dleteById
+     * @param id - Image id, which we want to delete
      * @return - HttpStatus.OK if the operation of deleting was made successfull
-     * @throws NotAuthorisedUserException - is dropping when the user which wants to dleteById the image is not authorised
-     * @throws CanNotBeDeletedException   - is dropping when the image which we want to dleteById is already in use
-     * @throws NotOwnerOperationException - is dropping when the the image which we want to dleteById not belongs to us as
+     * @throws NotAuthorisedUserException - is dropping when the user which wants to delete the image is not authorised
+     * @throws CanNotBeDeletedException   - is dropping when the image which we want to delete is already in use
+     * @throws NotOwnerOperationException - is dropping when the the image which we want to delete not belongs to us as
      *                                    to owner
      */
     @Auditable(action = AuditingAction.DELETE_IMAGE)

@@ -30,7 +30,7 @@ public class CardImageServiceImpl implements CardImageService {
     }
 
     @Override
-    public void dleteById(Long cardImageID) {
+    public void deleteById(Long cardImageID) {
         cardImageRepository.delete(cardImageID);
     }
 }

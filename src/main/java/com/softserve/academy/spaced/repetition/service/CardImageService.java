@@ -9,5 +9,5 @@ public interface CardImageService {
 
     void addCardImage(List<String> imageList, Card card);
 
-    void dleteById(Long cardImageID);
+    void deleteById(Long cardImageID);
 }

@@ -5,7 +5,7 @@ package com.softserve.academy.spaced.repetition.service;
  */
 public interface AccountVerificationByEmailService {
     /**
-     * Verifies account, and addCardImage account with updated field 'deactivated' from true to false.
+     * Verifies account, and save account with updated field 'deactivated' from true to false.
      *
      * @param token must not be {@literal null}.
      */

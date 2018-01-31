@@ -34,7 +34,7 @@ public class CardImageServiceTest {
 
     @Before
     public void setUp() {
-        final Long CARD_ID = 1L;
+        final Long CARD_ID = 1l;
         oneImageList = new ArrayList<>();
         oneImageList.add("base64");
         oneImageList.add("imageInBase64");
@@ -46,7 +46,7 @@ public class CardImageServiceTest {
                 "Java runs on a variety of platforms, such as Windows, Mac OS, and the\n" +
                         "    various versions of UNIX/Linux like HP-Unix, Sun Solaris, Redhat Linux, Ubuntu,\n" +
                         "    CentOS, etc.", null);
-        cardImage = DomainFactory.createCardImage(1L, "very long string", card);
+        cardImage = DomainFactory.createCardImage(1l, "very long string", card);
     }
 
     @Test

@@ -112,7 +112,7 @@ public class UserProfileControllerTest {
 
     @Test
     public void testDeleteProfile() throws Exception {
-        mockMvc.perform(get("/api/private/user/dleteById")
+        mockMvc.perform(get("/api/private/user/delete")
                 .accept(MediaType.APPLICATION_JSON)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
@@ -121,7 +121,7 @@ public class UserProfileControllerTest {
     @Test
     public void testNotAuthorizedDeleteProfile() throws Exception {
         doThrow(NotAuthorisedUserException.class).when(userService).deleteAccount();
-        mockMvc.perform(get("/api/private/user/dleteById")
+        mockMvc.perform(get("/api/private/user/delete")
                 .accept(MediaType.APPLICATION_JSON)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isUnauthorized());

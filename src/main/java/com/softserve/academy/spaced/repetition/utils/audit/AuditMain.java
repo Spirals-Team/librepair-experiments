@@ -25,7 +25,7 @@ public class AuditMain {
     private AuditRepository auditRepository;
 
     /**
-     * Find out and addCardImage user's activity.
+     * Find out and save user's activity.
      * Save: account email, action type, time, role.
      */
     @After("@annotation(auditable)")

@@ -99,7 +99,6 @@ public class CardController {
         return new ResponseEntity<>(cardPublicDTO, HttpStatus.OK);
     }
 
-
     @Auditable(action = AuditingAction.CREATE_CARD_VIA_COURSE_AND_DECK)
     @PostMapping(value = "/api/category/{categoryId}/courses/{courseId}/decks/{deckId}/cards")
     @PreAuthorize(value = "@accessToUrlService.hasAccessToDeck(#categoryId, #courseId, #deckId)")
@@ -176,6 +175,7 @@ public class CardController {
         CardPublicDTO cardPublicDTO = DTOBuilder.buildDtoForEntity(card, CardPublicDTO.class, selfLink);
         return new ResponseEntity<>(cardPublicDTO, HttpStatus.OK);
     }
+
 
     @Auditable(action = AuditingAction.DELETE_CARD)
     @DeleteMapping(value = {"/api/category/{categoryId}/decks/{deckId}/cards/{cardId}",

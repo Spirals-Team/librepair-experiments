@@ -23,9 +23,9 @@ public class AnkiCardUploader implements CardUploader {
         File newFile = new File(FILE_PATH);
         newFile.createNewFile();
         relativePath = newFile.getAbsolutePath();
-        try (FileOutputStream fos = new FileOutputStream(newFile)) {
-            fos.write(file.getBytes());
-        }
+        FileOutputStream fos = new FileOutputStream(newFile);
+        fos.write(file.getBytes());
+        fos.close();
         return relativePath;
     }
 }
