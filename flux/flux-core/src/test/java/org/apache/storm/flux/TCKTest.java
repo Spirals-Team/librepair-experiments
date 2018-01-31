@@ -234,7 +234,7 @@ public class TCKTest {
 
     @Test
     public void testVariableSubstitution() throws Exception {
-        TopologyDef topologyDef = FluxParser.parseResource("/configs/substitution-test.yaml", false, true, "src/test/resources/configs/test.properties", true);
+        TopologyDef topologyDef = FluxParser.parseResource("/configs/substitution-test.yaml", false, true, "/configs/test.properties", true);
         assertTrue(topologyDef.validate());
         Config conf = FluxBuilder.buildConfig(topologyDef);
         ExecutionContext context = new ExecutionContext(topologyDef, conf);
