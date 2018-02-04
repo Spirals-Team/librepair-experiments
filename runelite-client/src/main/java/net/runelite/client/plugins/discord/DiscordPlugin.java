@@ -28,14 +28,13 @@ import com.google.common.eventbus.Subscribe;
 import com.google.inject.Inject;
 import com.google.inject.Provides;
 import java.time.temporal.ChronoUnit;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Skill;
 import net.runelite.api.events.ExperienceChanged;
 import net.runelite.api.events.GameStateChanged;
-import net.runelite.api.events.GameTick;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.discord.DiscordService;
 import net.runelite.client.plugins.Plugin;
@@ -43,7 +42,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.task.Schedule;
 
 @PluginDescriptor(
-	name = "Diary Progress plugin"
+	name = "Discord plugin"
 )
 public class DiscordPlugin extends Plugin
 {
@@ -57,7 +56,7 @@ public class DiscordPlugin extends Plugin
 	private DiscordService discordService;
 
 	private final DiscordState discordState = new DiscordState();
-	private Set<Skill> loginExpSkill = new HashSet<>();
+	private Map<Skill, Integer> skillExp = new HashMap<>();
 
 	@Provides
 	private DiscordConfig provideConfig(ConfigManager configManager)
@@ -79,7 +78,10 @@ public class DiscordPlugin extends Plugin
 	@Subscribe
 	public void onXpChanged(ExperienceChanged event)
 	{
-		if (loginExpSkill.add(event.getSkill()))
+		final int exp = client.getSkillExperience(event.getSkill());
+		final Integer previous = skillExp.put(event.getSkill(), exp);
+
+		if (previous == null || previous >= exp)
 		{
 			return;
 		}
@@ -132,7 +134,7 @@ public class DiscordPlugin extends Plugin
 	{
 		if (gameState == GameState.LOGIN_SCREEN)
 		{
-			loginExpSkill.clear();
+			skillExp.clear();
 			discordState.triggerEvent(DiscordGameEventType.IN_MENU, config.actionDelay());
 		}
 		else if (client.getGameState() == GameState.LOGGED_IN)
