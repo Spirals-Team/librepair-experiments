@@ -527,7 +527,7 @@ public class KafkaSpout<K, V> extends BaseRichSpout {
         kafkaConsumer.commitAsync(offsetsToCommit, null);
         LOG.debug("Committed offsets {} to Kafka", offsetsToCommit);
     }
-
+    
     private void commitOffsetsForAckedTuples(Set<TopicPartition> assignedPartitions) {
         // Find offsets that are ready to be committed for every assigned topic partition
         final Map<TopicPartition, OffsetManager> assignedOffsetManagers = offsetManagers.entrySet().stream()

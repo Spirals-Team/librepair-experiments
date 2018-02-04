@@ -116,7 +116,7 @@ public class KafkaSpoutConfig<K, V> implements Serializable {
 
     /**
      * Defines how the {@link KafkaSpout} seeks the offset to be used in the first poll to Kafka upon topology deployment.
-     * By default this parameter is set to UNCOMMITTED_EARLIEST.
+     * By default this parameter is set to UNCOMMITTED_EARLIEST. 
      */
     public enum FirstPollOffsetStrategy {
         /**
@@ -219,7 +219,7 @@ public class KafkaSpoutConfig<K, V> implements Serializable {
         }
 
         /**
-         * Set a {@link KafkaConsumer} property.
+         * Set a {@link KafkaConsumer} property. 
          */
         public Builder<K, V> setProp(String key, Object value) {
             kafkaProps.put(key, value);
@@ -227,7 +227,7 @@ public class KafkaSpoutConfig<K, V> implements Serializable {
         }
 
         /**
-         * Set multiple {@link KafkaConsumer} properties.
+         * Set multiple {@link KafkaConsumer} properties. 
          */
         public Builder<K, V> setProp(Map<String, Object> props) {
             kafkaProps.putAll(props);
@@ -235,7 +235,7 @@ public class KafkaSpoutConfig<K, V> implements Serializable {
         }
 
         /**
-         * Set multiple {@link KafkaConsumer} properties.
+         * Set multiple {@link KafkaConsumer} properties. 
          */
         public Builder<K, V> setProp(Properties props) {
             props.forEach((key, value) -> {

@@ -60,7 +60,7 @@ public class KafkaSpoutMessagingGuaranteeTest {
 
     @Captor
     private ArgumentCaptor<Map<TopicPartition, OffsetAndMetadata>> commitCapture;
-
+    
     private final TopologyContext contextMock = mock(TopologyContext.class);
     private final SpoutOutputCollector collectorMock = mock(SpoutOutputCollector.class);
     private final Map<String, Object> conf = new HashMap<>();
@@ -212,7 +212,7 @@ public class KafkaSpoutMessagingGuaranteeTest {
             .setProcessingGuarantee(KafkaSpoutConfig.ProcessingGuarantee.NO_GUARANTEE)
             .setTupleTrackingEnforced(true)
             .build();
-
+        
         try (SimulatedTime time = new SimulatedTime()) {
             KafkaSpout<String, String> spout = SpoutWithMockedConsumerSetupHelper.setupSpout(spoutConfig, conf, contextMock, collectorMock, consumerMock,partition);
 
@@ -220,19 +220,19 @@ public class KafkaSpoutMessagingGuaranteeTest {
                 SpoutWithMockedConsumerSetupHelper.createRecords(partition, 0, 1))));
 
             spout.nextTuple();
-
+            
             when(consumerMock.position(partition)).thenReturn(1L);
 
             ArgumentCaptor<KafkaSpoutMessageId> msgIdCaptor = ArgumentCaptor.forClass(KafkaSpoutMessageId.class);
             verify(collectorMock).emit(eq(SingleTopicKafkaSpoutConfiguration.STREAM), anyList(), msgIdCaptor.capture());
             assertThat("Should have captured a message id", msgIdCaptor.getValue(), not(nullValue()));
-
+            
             Time.advanceTime(KafkaSpout.TIMER_DELAY_MS + spoutConfig.getOffsetsCommitPeriodMs());
-
+            
             spout.nextTuple();
-
+            
             verify(consumerMock).commitAsync(commitCapture.capture(), isNull());
-
+            
             Map<TopicPartition, OffsetAndMetadata> commit = commitCapture.getValue();
             assertThat(commit.containsKey(partition), is(true));
             assertThat(commit.get(partition).offset(), is(1L));

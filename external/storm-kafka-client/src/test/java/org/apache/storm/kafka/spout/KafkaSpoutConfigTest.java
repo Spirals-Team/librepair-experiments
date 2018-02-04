@@ -36,7 +36,7 @@ public class KafkaSpoutConfigTest {
 
     @Rule
     public ExpectedException expectedException = ExpectedException.none();
-
+    
     @Test
     public void testBasic() {
         KafkaSpoutConfig<String, String> conf = KafkaSpoutConfig.builder("localhost:1234", "topic").build();
@@ -90,7 +90,7 @@ public class KafkaSpoutConfigTest {
 
         assertEquals(100, conf.getMetricsTimeBucketSizeInSecs());
     }
-
+    
     @Test
     public void testThrowsIfEnableAutoCommitIsSet() {
         expectedException.expect(IllegalStateException.class);
