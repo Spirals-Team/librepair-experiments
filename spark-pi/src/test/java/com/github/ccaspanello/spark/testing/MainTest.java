@@ -13,7 +13,7 @@ import javax.inject.Inject;
 public class MainTest {
 
   public static final String MSG1 = "Invalid number of arguments 0.  Valid number of arguments is 1.";
-  public static final String MSG2 = "Invalid number of arguments 2.  Valid number of arguments is 1.git ";
+  public static final String MSG2 = "Invalid number of arguments 2.  Valid number of arguments is 1.";
   public static final String MSG3 = "Input foo is not an integer.  Please enter an integer.";
 
   @Inject
