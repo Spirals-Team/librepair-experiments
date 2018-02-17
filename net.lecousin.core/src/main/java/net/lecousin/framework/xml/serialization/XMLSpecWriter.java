@@ -1,0 +1,375 @@
+package net.lecousin.framework.xml.serialization;
+
+import java.io.IOException;
+import java.math.BigInteger;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
+import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
+import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
+import net.lecousin.framework.io.IO;
+import net.lecousin.framework.io.buffering.SimpleBufferedWritable;
+import net.lecousin.framework.io.serialization.AbstractSerializationSpecWriter;
+import net.lecousin.framework.io.serialization.SerializationClass.Attribute;
+import net.lecousin.framework.io.serialization.SerializationContext;
+import net.lecousin.framework.io.serialization.SerializationContext.AttributeContext;
+import net.lecousin.framework.io.serialization.SerializationContext.CollectionContext;
+import net.lecousin.framework.io.serialization.SerializationContext.ObjectContext;
+import net.lecousin.framework.io.serialization.TypeDefinition;
+import net.lecousin.framework.io.serialization.rules.SerializationRule;
+import net.lecousin.framework.xml.XMLUtil;
+import net.lecousin.framework.xml.XMLWriter;
+
+/** Write an XSD corresponding to what would be serialized in XML. */
+public class XMLSpecWriter extends AbstractSerializationSpecWriter {
+
+	/** Constructor. */
+	public XMLSpecWriter(String rootNamespaceURI, String rootLocalName, Map<String, String> namespaces) {
+		this(rootNamespaceURI, rootLocalName, namespaces, StandardCharsets.UTF_8, true);
+	}
+
+	/** Constructor. */
+	public XMLSpecWriter(String rootNamespaceURI, String rootLocalName, Map<String, String> namespaces, boolean includeXMLDeclaration) {
+		this(rootNamespaceURI, rootLocalName, namespaces, StandardCharsets.UTF_8, includeXMLDeclaration);
+	}
+
+	/** Constructor. */
+	public XMLSpecWriter(String rootNamespaceURI, String rootLocalName, Map<String, String> namespaces, Charset encoding) {
+		this(rootNamespaceURI, rootLocalName, namespaces, encoding, 4096, true);
+	}
+
+	/** Constructor. */
+	public XMLSpecWriter(
+		String rootNamespaceURI, String rootLocalName, Map<String, String> namespaces,
+		Charset encoding, boolean includeXMLDeclaration
+	) {
+		this(rootNamespaceURI, rootLocalName, namespaces, encoding, 4096, includeXMLDeclaration);
+	}
+
+	/** Constructor. */
+	public XMLSpecWriter(String rootNamespaceURI, String rootLocalName, Map<String, String> namespaces, Charset encoding, int bufferSize) {
+		this(rootNamespaceURI, rootLocalName, namespaces, encoding, bufferSize, true);
+	}
+	
+	/** Constructor. */
+	public XMLSpecWriter(
+		String rootNamespaceURI, String rootLocalName, Map<String, String> namespaces,
+		Charset encoding, int bufferSize, boolean includeXMLDeclaration
+	) {
+		this.rootNamespaceURI = rootNamespaceURI;
+		this.rootLocalName = rootLocalName;
+		this.namespaces = namespaces;
+		this.encoding = encoding;
+		this.bufferSize = bufferSize;
+		this.includeXMLDeclaration = includeXMLDeclaration;
+	}
+	
+	protected String rootNamespaceURI;
+	protected String rootLocalName;
+	protected Map<String, String> namespaces;
+	protected Charset encoding;
+	protected int bufferSize;
+	protected boolean includeXMLDeclaration;
+	protected IO.Writable.Buffered bout;
+	protected XMLWriter output;
+	
+	@Override
+	protected ISynchronizationPoint<IOException> initializeSpecWriter(IO.Writable output) {
+		if (output instanceof IO.Writable.Buffered)
+			bout = (IO.Writable.Buffered)output;
+		else
+			bout = new SimpleBufferedWritable(output, bufferSize);
+		this.output = new XMLWriter(bout, encoding, includeXMLDeclaration);
+		if (this.namespaces == null) this.namespaces = new HashMap<>();
+		if (!this.namespaces.containsKey(XMLUtil.XSI_NAMESPACE_URI))
+			this.namespaces.put(XMLUtil.XSI_NAMESPACE_URI, "xsi");
+		if (!this.namespaces.containsKey(XMLUtil.XSD_NAMESPACE_URI))
+			this.namespaces.put(XMLUtil.XSD_NAMESPACE_URI, "xsd");
+		this.output.start(XMLUtil.XSD_NAMESPACE_URI, "schema", namespaces);
+		if (rootNamespaceURI != null)
+			this.output.addAttribute("targetNamespace", rootNamespaceURI);
+		this.output.openElement(XMLUtil.XSD_NAMESPACE_URI, "element", null);
+		return this.output.addAttribute("name", rootLocalName);
+	}
+	
+	@Override
+	protected ISynchronizationPoint<IOException> finalizeSpecWriter() {
+		SynchronizationPoint<IOException> sp = new SynchronizationPoint<>();
+		output.end().listenInline(() -> { bout.flush().listenInline(sp); }, sp);
+		return sp;
+	}
+	
+	@Override
+	protected ISynchronizationPoint<IOException> specifyBooleanValue(SerializationContext context, boolean nullable) {
+		output.addAttribute("type", "xsd:boolean");
+		if (nullable) {
+			if (context instanceof AttributeContext)
+				output.addAttribute("use", "optional");
+			else
+				output.addAttribute("nillable", "true");
+		}
+		if (context instanceof CollectionContext) {
+			output.addAttribute("minOccurs", "0");
+			output.addAttribute("maxOccurs", "unbounded");
+		}
+		return output.closeElement();
+	}
+	
+	@Override
+	protected ISynchronizationPoint<IOException> specifyNumericValue(
+		SerializationContext context, Class<?> type, boolean nullable, Number min, Number max
+	) {
+		if (byte.class.equals(type) ||
+			Byte.class.equals(type))
+			output.addAttribute("type", "xsd:byte");
+		else if (int.class.equals(type) ||
+			Integer.class.equals(type))
+			output.addAttribute("type", "xsd:int");
+		else if (long.class.equals(type) ||
+			Long.class.equals(type))
+			output.addAttribute("type", "xsd:long");
+		else if (short.class.equals(type) ||
+			Short.class.equals(type) ||
+			BigInteger.class.equals(type)
+		)
+			output.addAttribute("type", "xsd:integer");
+		else if (float.class.equals(type) ||
+				Float.class.equals(type))
+			output.addAttribute("type", "xsd:float");
+		else if (double.class.equals(type) ||
+				Double.class.equals(type))
+			output.addAttribute("type", "xsd:double");
+		else
+			output.addAttribute("type", "xsd:decimal");
+		
+		if (nullable) {
+			if (context instanceof AttributeContext)
+				output.addAttribute("use", "optional");
+			else
+				output.addAttribute("nillable", "true");
+		}
+
+		if (context instanceof CollectionContext) {
+			output.addAttribute("minOccurs", "0");
+			output.addAttribute("maxOccurs", "unbounded");
+		}
+		// TODO min, max ? defining a type ??
+		return output.closeElement();
+	}
+	
+	@Override
+	protected ISynchronizationPoint<? extends Exception> specifyStringValue(SerializationContext context, TypeDefinition type) {
+		output.addAttribute("type", "xsd:string");
+		if (context instanceof AttributeContext)
+			output.addAttribute("use", "optional");
+		else
+			output.addAttribute("nillable", "true");
+		if (context instanceof CollectionContext) {
+			output.addAttribute("minOccurs", "0");
+			output.addAttribute("maxOccurs", "unbounded");
+		}
+		// TODO restrictions ?
+		return output.closeElement();
+	}
+	
+	@Override
+	protected ISynchronizationPoint<? extends Exception> specifyCharacterValue(SerializationContext context, boolean nullable) {
+		if (nullable) {
+			if (context instanceof AttributeContext)
+				output.addAttribute("use", "optional");
+			else
+				output.addAttribute("nillable", "true");
+		}
+		if (context instanceof CollectionContext) {
+			output.addAttribute("minOccurs", "0");
+			output.addAttribute("maxOccurs", "unbounded");
+		}
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "simpleType", null);
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "restriction", null);
+		output.addAttribute("base", "xsd:string");
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "length", null);
+		output.addAttribute("value", "1");
+		output.closeElement(); // length
+		output.closeElement(); // restriction
+		output.closeElement(); // simpleType
+		return output.closeElement();
+	}
+	
+	@Override
+	protected ISynchronizationPoint<? extends Exception> specifyEnumValue(SerializationContext context, TypeDefinition type) {
+		if (context instanceof AttributeContext)
+			output.addAttribute("use", "optional");
+		else
+			output.addAttribute("nillable", "true");
+		if (context instanceof CollectionContext) {
+			output.addAttribute("minOccurs", "0");
+			output.addAttribute("maxOccurs", "unbounded");
+		}
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "simpleType", null);
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "restriction", null);
+		output.addAttribute("base", "xsd:string");
+		try {
+			Enum<?>[] values = (Enum<?>[])type.getBase().getMethod("values").invoke(null);
+			for (int i = 0; i < values.length; ++i) {
+				output.openElement(XMLUtil.XSD_NAMESPACE_URI, "enumeration", null);
+				output.addAttribute("value", values[i].name());
+				output.closeElement();
+			}
+		} catch (Throwable t) {
+			/* should not happen */
+		}
+		output.closeElement(); // restriction
+		output.closeElement(); // simpleType
+		return output.closeElement();
+	}
+	
+	@Override
+	protected ISynchronizationPoint<? extends Exception> specifyCollectionValue(CollectionContext context, List<SerializationRule> rules) {
+		if (context.getParent() instanceof AttributeContext)
+			return specifyValue(context, context.getElementType(), rules);
+		output.addAttribute("nillable", "true");
+		if (context.getParent() instanceof CollectionContext) {
+			output.addAttribute("minOccurs", "0");
+			output.addAttribute("maxOccurs", "unbounded");
+		}
+		output.endOfAttributes();
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "complexType", null);
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "sequence", null);
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "element", null);
+		output.addAttribute("name", "element");
+		ISynchronizationPoint<? extends Exception> val = specifyValue(context, context.getElementType(), rules);
+		if (val.isUnblocked()) {
+			if (val.hasError()) return val;
+			output.closeElement(); // sequence
+			output.closeElement(); // complexType
+			return output.closeElement(); // collection
+		}
+		SynchronizationPoint<Exception> sp = new SynchronizationPoint<>();
+		val.listenAsyncSP(new SpecTask(() -> {
+			output.closeElement(); // sequence
+			output.closeElement(); // complexType
+			output.closeElement().listenInlineSP(sp); // collection
+		}), sp);
+		return sp;
+	}
+	
+	@Override
+	protected ISynchronizationPoint<? extends Exception> specifyIOReadableValue(SerializationContext context, List<SerializationRule> rules) {
+		output.addAttribute("type", "xsd:base64Binary");
+		output.addAttribute("nillable", "true");
+		return output.closeElement();
+	}
+	
+	/** Return the name for a type, replacing dollars by minus character. */
+	public static String getTypeName(Class<?> type) {
+		return type.getName().replace('$', '-');
+	}
+	
+	private static class TypeContext {
+		public boolean sequenceStarted = false;
+	}
+	
+	private LinkedList<TypeContext> typesContext = new LinkedList<>();
+
+	@Override
+	protected ISynchronizationPoint<? extends Exception> specifyAnyValue(SerializationContext context) {
+		if (context instanceof CollectionContext) {
+			output.addAttribute("minOccurs", "0");
+			output.addAttribute("maxOccurs", "unbounded");
+		}
+		output.endOfAttributes();
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "complexType", null);
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "sequence", null);
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "any", null);
+		output.addAttribute("minOccurs", "0");
+		output.closeElement();
+		output.closeElement();
+		output.closeElement();
+		return output.closeElement();
+	}
+	
+	@Override
+	protected ISynchronizationPoint<? extends Exception> specifyTypedValue(ObjectContext context, List<SerializationRule> rules) {
+		if (context.getParent() instanceof CollectionContext) {
+			output.addAttribute("minOccurs", "0");
+			output.addAttribute("maxOccurs", "unbounded");
+		}
+		output.addAttribute("nillable", "true");
+		output.endOfAttributes();
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "complexType", null);
+		TypeContext ctx = new TypeContext();
+		typesContext.addFirst(ctx);
+		ISynchronizationPoint<? extends Exception> type = specifyTypeContent(context, rules);
+		if (type.isUnblocked()) {
+			if (type.hasError()) return type;
+			typesContext.removeFirst();
+			if (ctx.sequenceStarted) output.closeElement();
+			output.closeElement(); // complexType
+			return output.closeElement(); // value
+		}
+		SynchronizationPoint<Exception> sp = new SynchronizationPoint<>();
+		type.listenAsyncSP(new SpecTask(() -> {
+			typesContext.removeFirst();
+			if (ctx.sequenceStarted) output.closeElement();
+			output.closeElement(); // complexType
+			output.closeElement().listenInlineSP(sp); // value
+		}), sp);
+		return sp;
+	}
+
+	protected static final boolean isAttribute(Class<?> c) {
+		if (c.isPrimitive()) return true;
+		if (Boolean.class.equals(c)) return true;
+		if (Number.class.isAssignableFrom(c)) return true;
+		if (CharSequence.class.isAssignableFrom(c)) return true;
+		if (Character.class.equals(c)) return true;
+		if (c.isEnum()) return true;
+		return false;
+	}
+	
+	protected static final Comparator<Attribute> attributesComparator = new Comparator<Attribute>() {
+		@Override
+		public int compare(Attribute o1, Attribute o2) {
+			Class<?> c = o1.getType().getBase();
+			if (isAttribute(c)) return 1;
+			c = o2.getType().getBase();
+			if (isAttribute(c)) return -1;
+			return 0;
+		}
+	};
+	
+	@Override
+	protected List<Attribute> sortAttributes(List<Attribute> attributes) {
+		attributes.sort(attributesComparator);
+		return attributes;
+	}
+	
+	@Override
+	protected ISynchronizationPoint<? extends Exception> specifyTypeAttribute(AttributeContext context, List<SerializationRule> rules) {
+		Attribute a = context.getAttribute();
+		Class<?> type = a.getType().getBase();
+		TypeContext ctx = typesContext.getFirst();
+		if (isAttribute(type)) {
+			if (ctx.sequenceStarted) {
+				output.closeElement();
+				ctx.sequenceStarted = false;
+			}
+			output.openElement(XMLUtil.XSD_NAMESPACE_URI, "attribute", null);
+			output.addAttribute("name", a.getName());
+			return specifyValue(context, a.getType(), rules);
+		}
+		if (!ctx.sequenceStarted) {
+			output.openElement(XMLUtil.XSD_NAMESPACE_URI, "sequence", null);
+			ctx.sequenceStarted = true;
+		}
+		output.openElement(XMLUtil.XSD_NAMESPACE_URI, "element", null);
+		output.addAttribute("name", a.getName());
+		return specifyValue(context, a.getType(), rules);
+	}
+	
+}
