@@ -1,0 +1,145 @@
+syntax = "proto2";
+
+package protobuf;
+
+option java_package = "edu.snu.coral.runtime.common.comm";
+option java_outer_classname = "ControlMessage";
+
+enum MessageType {
+    TaskGroupStateChanged = 0;
+    ScheduleTaskGroup = 1;
+    BlockStateChanged = 2;
+    DataSizeMetric = 3;
+    RequestBlockLocation = 4;
+    BlockLocationInfo = 5;
+    ExecutorFailed = 6;
+    ContainerFailed = 7;
+    MetricMessageReceived = 8;
+}
+
+message Message {
+    required MessageType type = 1;
+    required int64 id = 2;
+    required string listenerId = 3; // The id of the message listner (handler).
+    optional TaskGroupStateChangedMsg taskGroupStateChangedMsg = 4;
+    optional ScheduleTaskGroupMsg scheduleTaskGroupMsg = 5;
+    optional BlockStateChangedMsg blockStateChangedMsg = 6;
+    optional DataSizeMetricMsg dataSizeMetricMsg = 7;
+    optional RequestBlockLocationMsg requestBlockLocationMsg = 8;
+    optional BlockLocationInfoMsg blockLocationInfoMsg = 9;
+    optional ExecutorFailedMsg executorFailedMsg = 10;
+    optional ContainerFailedMsg containerFailedMsg = 11;
+    optional MetricMsg metricMsg = 12;
+}
+
+// Messages from Master to Executors
+message ScheduleTaskGroupMsg {
+    required bytes taskGroup = 1;
+}
+
+message BlockLocationInfoMsg {
+    required int64 requestId = 1; // To find the matching request msg
+    required string blockId = 2;
+    optional BlockStateFromExecutor state = 3;
+    optional string ownerExecutorId = 4;
+}
+
+// Messages from Executors to Master
+message TaskGroupStateChangedMsg {
+    required string executorId = 1;
+    required string taskGroupId = 2;
+    required TaskGroupStateFromExecutor state = 3;
+    optional string taskPutOnHoldId = 4;
+    optional RecoverableFailureCause failureCause = 5;
+    required int32 attemptIdx = 6;
+}
+
+enum RecoverableFailureCause {
+    InputReadFailure = 0;
+    OutputWriteFailure = 1;
+    // There is a 3rd cause: container_failure, but this is ommitted here as it is never propagated with a control msg.
+}
+
+message BlockStateChangedMsg {
+    required string executorId = 1;
+    required string blockId = 2;
+    required BlockStateFromExecutor state = 3;
+    required string location = 4; // The location of the block (e.g., executor id or remote store).
+}
+
+message DataSizeMetricMsg {
+    // TODO #511: Refactor metric aggregation for (general) run-rime optimization.
+    repeated int64 partitionSizeInfo = 1;
+    required string blockId = 2;
+    required string srcIRVertexId = 3;
+}
+
+message RequestBlockLocationMsg {
+    required string executorId = 1;
+    required string blockId = 2;
+}
+
+message ExecutorFailedMsg {
+    required string executorId = 1;
+    required bytes exception = 2;
+}
+
+message ContainerFailedMsg {
+    required string executorId = 1;
+}
+
+message MetricMsg {
+    repeated Metric metric = 1;
+}
+
+// Messages between Executors
+
+enum ByteTransferDataDirection {
+    INITIATOR_SENDS_DATA = 0;
+    INITIATOR_RECEIVES_DATA = 1;
+}
+
+message ByteTransferContextSetupMessage {
+    required string initiatorExecutorId = 1;
+    required int32 transferIndex = 2;
+    required ByteTransferDataDirection dataDirection = 3;
+    required bytes contextDescriptor = 4;
+}
+
+message ByteTransferContextDescriptor {
+    required string blockId = 1;
+    required BlockStore blockStore = 2;
+    required string runtimeEdgeId = 3;
+    optional bytes keyRange = 4;
+}
+
+enum TaskGroupStateFromExecutor {
+    READY = 0;
+    EXECUTING = 1;
+    COMPLETE = 2;
+    FAILED_RECOVERABLE = 3;
+    FAILED_UNRECOVERABLE = 4;
+    ON_HOLD = 5;
+}
+
+enum BlockStateFromExecutor {
+    BLOCK_READY = 0;
+    SCHEDULED = 1;
+    COMMITTED = 2;
+    LOST = 3;
+    LOST_BEFORE_COMMIT = 4;
+    REMOVED = 5;
+}
+
+enum BlockStore {
+    MEMORY = 0;
+    SER_MEMORY = 1;
+    LOCAL_FILE = 2;
+    REMOTE_FILE = 3;
+}
+
+// Common messages
+message Metric {
+    required string metricKey = 1;
+    required string metricValue = 2;
+}
