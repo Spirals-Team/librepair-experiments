@@ -1,0 +1,235 @@
+package no.difi.meldingsutveksling.noarkexchange.receive;
+
+import no.difi.meldingsutveksling.config.IntegrasjonspunktProperties;
+import no.difi.meldingsutveksling.core.EDUCore;
+import no.difi.meldingsutveksling.core.EDUCoreConverter;
+import no.difi.meldingsutveksling.core.EDUCoreMarker;
+import no.difi.meldingsutveksling.core.EDUCoreSender;
+import no.difi.meldingsutveksling.dokumentpakking.xml.Payload;
+import no.difi.meldingsutveksling.domain.MeldingsUtvekslingRuntimeException;
+import no.difi.meldingsutveksling.domain.sbdh.EduDocument;
+import no.difi.meldingsutveksling.domain.sbdh.ObjectFactory;
+import no.difi.meldingsutveksling.kvittering.xsd.Kvittering;
+import no.difi.meldingsutveksling.logging.Audit;
+import no.difi.meldingsutveksling.nextmove.ConversationResource;
+import no.difi.meldingsutveksling.nextmove.NextMoveSender;
+import no.difi.meldingsutveksling.noarkexchange.IntegrajonspunktReceiveImpl;
+import no.difi.meldingsutveksling.noarkexchange.MessageException;
+import no.difi.meldingsutveksling.noarkexchange.StandardBusinessDocumentWrapper;
+import no.difi.meldingsutveksling.noarkexchange.schema.receive.StandardBusinessDocument;
+import no.difi.meldingsutveksling.receipt.ConversationService;
+import no.difi.meldingsutveksling.receipt.GenericReceiptStatus;
+import no.difi.meldingsutveksling.receipt.MessageStatus;
+import org.eclipse.persistence.jaxb.JAXBContextFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jms.annotation.JmsListener;
+import org.springframework.jms.core.JmsTemplate;
+import org.springframework.stereotype.Component;
+
+import javax.jms.Session;
+import javax.xml.bind.*;
+import javax.xml.namespace.QName;
+import javax.xml.transform.stream.StreamSource;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+
+import static no.difi.meldingsutveksling.logging.MessageMarkerFactory.markerFrom;
+import static no.difi.meldingsutveksling.nextmove.logging.ConversationResourceMarkers.markerFrom;
+
+/**
+ * The idea behind this queue is to avoid loosing messages before they are saved in Noark System.
+ *
+ * The way it works is that any exceptions that happens in after a message is put on the queue is re-sent to the JMS listener. If
+ * the application is restarted the message is also resent.
+ *
+ * The JMS listener has the responsibility is to forward the message to the archive system.
+ *
+ */
+@Component
+public class InternalQueue {
+
+    private static final String EXTERNAL = "external";
+    private static final String NOARK = "noark";
+    private static final String NEXTMOVE = "nextmove";
+    private static final String DLQ = "ActiveMQ.DLQ";
+
+    private Logger logger = LoggerFactory.getLogger(InternalQueue.class);
+
+    @Autowired
+    private JmsTemplate jmsTemplate;
+
+    private IntegrajonspunktReceiveImpl integrajonspunktReceive;
+
+    @Autowired
+    private IntegrasjonspunktProperties properties;
+
+    @Autowired
+    private EDUCoreSender eduCoreSender;
+
+    @Autowired
+    private ConversationService conversationService;
+
+    @Autowired
+    private NextMoveSender nextMoveSender;
+
+    private static JAXBContext jaxbContextdomain;
+    private static JAXBContext jaxbContext;
+    private static JAXBContext jaxbContextNextmove;
+
+    private final DocumentConverter documentConverter = new DocumentConverter();
+
+    @Autowired
+    InternalQueue(ObjectProvider<IntegrajonspunktReceiveImpl> integrajonspunktReceive) {
+        this.integrajonspunktReceive = integrajonspunktReceive.getIfAvailable();
+    }
+
+    static {
+        try {
+            jaxbContext = JAXBContextFactory.createContext(new Class[]{StandardBusinessDocument.class, Payload.class, Kvittering.class}, null);
+            jaxbContextdomain = JAXBContextFactory.createContext(new Class[]{EduDocument.class, Payload.class, Kvittering.class}, null);
+            jaxbContextNextmove = JAXBContextFactory.createContext(new Class[]{ConversationResource.class}, null);
+        } catch (JAXBException e) {
+            throw new RuntimeException("Could not start internal queue: Failed to create JAXBContext", e);
+        }
+    }
+
+    @JmsListener(destination = NEXTMOVE, containerFactory = "myJmsContainerFactory")
+    public void nextmoveListener(byte[] message, Session session) {
+        try {
+            ByteArrayInputStream bis = new ByteArrayInputStream(message);
+            StreamSource ss = new StreamSource(bis);
+            Unmarshaller unmarshaller = jaxbContextNextmove.createUnmarshaller();
+            ConversationResource cr = unmarshaller.unmarshal(ss, ConversationResource.class).getValue();
+            nextMoveSender.send(cr);
+        } catch (Exception e) {
+            Audit.error("Failed to send message... queue will retry", e);
+            throw new MeldingsUtvekslingRuntimeException(e);
+        }
+    }
+
+    @JmsListener(destination = NOARK, containerFactory = "myJmsContainerFactory")
+    public void noarkListener(byte[] message, Session session) {
+        EduDocument eduDocument = documentConverter.unmarshallFrom(message);
+        try {
+            forwardToNoark(eduDocument);
+        } catch (Exception e) {
+            Audit.warn("Failed to forward message.. queue will retry", eduDocument.createLogstashMarkers());
+            throw e;
+        }
+    }
+
+    @JmsListener(destination = EXTERNAL, containerFactory = "myJmsContainerFactory")
+    public void externalListener(byte[] message, Session session) {
+        EDUCore request = EDUCoreConverter.unmarshallFrom(message);
+        try {
+            eduCoreSender.sendMessage(request);
+        } catch (Exception e) {
+            Audit.warn("Failed to send message... queue will retry", EDUCoreMarker.markerFrom(request));
+            throw e;
+        }
+    }
+
+    /**
+     * Log failed messages as errors
+     */
+    @JmsListener(destination = DLQ)
+    public void dlqListener(byte[] message, Session session) {
+        MessageStatus ms = MessageStatus.of(GenericReceiptStatus.FEIL);
+        String conversationId = "";
+        String errorMsg = "";
+
+        try {
+            EDUCore request = EDUCoreConverter.unmarshallFrom(message);
+            errorMsg = "Failed to send message. Moved to DLQ";
+            Audit.error(errorMsg, EDUCoreMarker.markerFrom(request));
+            conversationId = request.getId();
+        } catch (Exception e) {
+        }
+
+        try {
+            EduDocument eduDocument = documentConverter.unmarshallFrom(message);
+            errorMsg = "Failed to forward message. Moved to DLQ.";
+            Audit.error(errorMsg, eduDocument.createLogstashMarkers());
+            conversationId = eduDocument.getConversationId();
+        } catch (Exception e) {
+        }
+
+        ms.setDescription(errorMsg);
+        conversationService.registerStatus(conversationId, ms);
+    }
+
+    public void enqueueNextmove(ConversationResource cr) {
+        try {
+            Marshaller marshaller = jaxbContextNextmove.createMarshaller();
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            marshaller.marshal(new JAXBElement<>(new QName("uri", "local"), ConversationResource.class, cr), bos);
+            jmsTemplate.convertAndSend(NEXTMOVE, bos.toByteArray());
+        } catch (JAXBException e) {
+            Audit.error("Unable to queue message", markerFrom(cr), e);
+            throw new MeldingsUtvekslingRuntimeException(e);
+        }
+    }
+
+    /**
+     * Place the input parameter on external queue. The external queue sends messages to an external recipient using transport
+     * mechnism.
+     *
+     * @param request the input parameter from IntegrasjonspunktImpl
+     */
+    public void enqueueExternal(EDUCore request) {
+        try {
+            jmsTemplate.convertAndSend(EXTERNAL, EDUCoreConverter.marshallToBytes(request));
+        } catch (Exception e) {
+            Audit.error("Unable to send message", EDUCoreMarker.markerFrom(request), e);
+            throw e;
+        }
+    }
+
+    /**
+     * Places the input parameter on the NOARK queue. The NOARK queue sends messages from external sender to NOARK server.
+     *
+     * @param eduDocument the eduDocument as received by IntegrasjonspunktReceiveImpl from an external source
+     */
+    public void enqueueNoark(EduDocument eduDocument) {
+        jmsTemplate.convertAndSend(NOARK, documentConverter.marshallToBytes(eduDocument));
+    }
+
+    public void forwardToNoark(EduDocument eduDocument) {
+        try {
+            ByteArrayOutputStream os = new ByteArrayOutputStream();
+            JAXBElement<EduDocument> d = new ObjectFactory().createStandardBusinessDocument(eduDocument);
+
+            jaxbContextdomain.createMarshaller().marshal(d, os);
+            byte[] tmp = os.toByteArray();
+
+            JAXBElement<no.difi.meldingsutveksling.noarkexchange.schema.receive.StandardBusinessDocument> toDocument =
+                    (JAXBElement<no.difi.meldingsutveksling.noarkexchange.schema.receive.StandardBusinessDocument>) jaxbContext.createUnmarshaller().unmarshal(new ByteArrayInputStream(tmp));
+
+            final StandardBusinessDocument standardBusinessDocument = toDocument.getValue();
+            Audit.info("SBD extracted", markerFrom(new StandardBusinessDocumentWrapper(standardBusinessDocument)));
+            sendToNoarkSystem(standardBusinessDocument);
+        } catch (JAXBException e) {
+            Audit.error("Failed to unserialize SBD");
+            throw new MeldingsUtvekslingRuntimeException("Could not forward document to archive system", e);
+        }
+    }
+
+    private void sendToNoarkSystem(StandardBusinessDocument standardBusinessDocument) {
+        try {
+            integrajonspunktReceive.forwardToNoarkSystem(standardBusinessDocument);
+        } catch (Exception e) {
+            Audit.error("Failed delivering to archive", markerFrom(new StandardBusinessDocumentWrapper(standardBusinessDocument)), e);
+            if (e instanceof MessageException) {
+                logger.error(markerFrom(new StandardBusinessDocumentWrapper(standardBusinessDocument)), ((MessageException)e).getStatusMessage().getTechnicalMessage(), e);
+            }
+            throw new MeldingsUtvekslingRuntimeException(e);
+        }
+    }
+
+    public void setIntegrajonspunktReceiveImpl(IntegrajonspunktReceiveImpl integrajonspunktReceiveImpl) {
+        this.integrajonspunktReceive = integrajonspunktReceiveImpl;
+    }
+}
