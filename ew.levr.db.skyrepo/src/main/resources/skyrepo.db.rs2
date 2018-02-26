@@ -1,0 +1,610 @@
+// Copyright 2015-2016 Eduworks Corporation and other contributing parties.
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+
+type=#add(_string="true",a="@",b="type");
+context=#add(_string="true",a="@",b="context");
+owner=#add(_string="true",a="@",b="owner");
+reader=#add(_string="true",a="@",b="reader");
+signature=#add(_string="true",a="@",b="signature");
+id=#add(_string="true",a="@",b="id");
+
+urlBase=#urlBase();
+
+inferTypeFromObj=#if(
+	operator="@type",
+	operand="",
+	eq=#skyrepoUrlType(
+		obj="@obj"
+	).replace(
+		simple="true",
+		replace="http://",
+		with=""
+	).replace(
+		simple="true",
+		replace="https://",
+		with=""
+	).replace(
+		simple="true",
+		replace="/",
+		with="."
+	),
+	ne="@type"
+);
+#inferTypeFromObj=inferTypeFromObj;
+
+inferTypeWithoutObj=#if(
+	operator="@type",
+	operand="",
+	eq="_all",
+	ne="@type"
+);
+
+putUrl=#add(
+	a=urlBase,
+	b="/",bb=inferTypeFromObj.toLower(),bbb="/",
+	c=inferTypeFromObj,
+	d="/",
+	g=#urlEncode(obj="@id"),
+	h=#if(
+		operator="@version",
+		operand="",
+		ne=#add(
+			a="?version=",
+			i="@version",
+			j="&version_type=external&refresh=true"
+		),
+		eq="?refresh=true"
+	)
+);
+
+//BUG: Check to see if there are no signature sheet signatures but the owners change, if it changes the owner.
+//20161126 fray: Added rule: "If the object is new, then the writer does not have to own it."
+skyrepoPutInternalTypeCheck = #if(
+	operator="@typeChecked",
+	operand="true",
+	ne=#toObject(obj="@obj").skyRepoCheckType(
+		type=#if(
+			operator="@type",
+			operand="",
+			eq=#toObject(obj="@obj").inferTypeFromObj(),
+			ne="@type"
+		)
+	)
+);
+skyrepoPutInternalIndex = #toObject(obj="@obj").flattenStringFields().httpPost(
+  	url=putUrl,
+  	contentType="application/json",
+  	multipart="false"
+);
+skyrepoPutInternalIndex = #object(a=skyrepoPutInternalTypeCheck,b=skyrepoPutInternalIndex);
+skyrepoPutInternalPermanent = #toObject(obj="@obj").idxPut(
+	indexDir=".",
+	databaseName="skyrepo",
+	index=#toObject(obj="@obj").inferTypeFromObj(),
+	key=#add(_string="true",a="@id",b="/",c="@version")
+);
+putInternal=#object(
+    elasticSearch=skyrepoPutInternalIndex,
+    mapDb=skyrepoPutInternalPermanent
+);
+#skyRepoPutInternal=putInternal;
+#skyrepoPutInternal=putInternal;
+#skyrepoPutInternalTypeCheck=skyrepoPutInternalTypeCheck;
+#skyrepoPutInternalIndex=skyrepoPutInternalIndex;
+#skyrepoPutInternalPermanent=skyrepoPutInternalPermanent;
+
+put=#if(
+    operator="@obj",
+    operand="",
+    ne=#object(
+        a=#toObject(obj="@obj").skyRepoCheckType(type=#if(operator="@type",operand="",eq=#toObject(obj="@obj").inferTypeFromObj(),ne="@type")),
+        c=#if(
+            operator=#owners(obj="@oldObj").count(),
+            operand="0",
+            gt=#if(
+                operator=#signatureSheet().intersect(b=#owners(obj="@oldObj")).count(),
+                operand="0",
+                eq=#if(
+                    operator=#owners(obj="@oldObj").count(),
+                    operand="0",
+                    eq=#error(code="401",msg="This object is public, nobody can own it."),
+                    ne=#if(
+                        operator="@oldObj",
+                        operand="",
+                        ne=#error(code="401",msg="Only an owner of an object may change it.")
+                    )
+                )
+            )
+        ).ccall(
+            oldObj=#skyrepoGet(version="")
+        ),
+        putInternal=putInternal.call(typeChecked="true")
+    )
+).object(z=#toObject(obj="@obj")).cget(z="");
+
+#skyrepoPut=put;
+
+deleteUrl=#add(
+	a=urlBase,
+	b="/",bb=inferTypeWithoutObj.toLower(),bbb="/",
+	c=inferTypeWithoutObj,
+	d="/",
+	g=#urlEncode(obj="@id"),
+	z="?refresh=true"
+);
+
+//BUG: Check to see if there are no signature sheet signatures but the owners change, if it changes the owner.
+delete=#object(
+		b=#if(
+			operator=#owners().count(obj="@oldObj"),
+			operand="0",
+			gt=#if(
+				operator=#signatureSheet().intersect(b=#owners(obj="@oldObj")).count(),
+				operand="0",
+				eq=#if(
+					operator=#signatureSheet().intersect(a=#append(a=#skyrepoAdminPpk().rsaPpkToPk().replace(replace="\r?\n", with=""))).count(),
+					operand="0",
+					eq=#error(code="401",msg="Only an owner of an object may delete it.")
+				)
+			),
+			eq=#if(operator=#signatureSheet().intersect(a=#append(a=#skyrepoAdminPpk().rsaPpkToPk().replace(replace="\r?\n", with=""))).count(),
+					operand="0",
+					disabledeq=#error(code="403",msg="This object is public, nobody can delete it."),
+				)
+		).ccall(
+			oldObj=#skyrepoGet(version="")
+		),
+		elasticSearch=#httpDelete(
+			url=deleteUrl
+		)
+).cget(z="");
+
+#skyrepoDelete=delete;
+
+getUrl=#add(
+	a=urlBase,
+	b="/",bb="@index",bbb="/",
+	c=inferTypeWithoutObj,
+	f="/",
+	g=#urlEncode(obj="@id"),
+	h=#if(
+		operator="@version",
+		operand="",
+		ne=#add(
+			a="?version=",
+			b="@version",
+			c="&version_type=external"
+		)
+	)
+);
+
+get=getUrl.httpGet().toObject();
+
+//Search all indices in the case of no match
+get=#if(
+	operator="@type",
+	operand="",
+	ne=get.call(index=#toLower(obj="@type")),
+	eq=#elasticSettings().keySet().forEach(
+		threaded="false",
+		array="true",
+		paramName="index",
+		op=#if(
+			operator=#toObject(obj="@result").get(found=""),
+			operand="true",
+			eq=#toObject(obj="@result")
+		).call(result=get)
+	).getIndex(index="0")
+);
+//If needed, find version in ElasticSearch reference.
+getVersionFromElastic=get.getByParam(param="_version");
+
+//Get versioned object out of MapDB
+getMapDb=#idxGet(
+	indexDir=".",
+	databaseName="skyrepo",
+	index=#if(operator="@type",operand="",ne="@type"),
+	key=#add(_string="true",a="@id",b="/",c="@version")
+).toObject();
+
+//In case of error or empty, fall back to ElasticSearch.
+getMapDb=#if(operator=getMapDb,operand="",eq=get.cgetByParam(param="_source"),ne=getMapDb);
+getMapDb=#catch(try=getMapDb, any=get.cgetByParam(param="_source"));
+
+//If version isn't provided, locate it in search index.
+get=#if(
+	operator="@version",
+	operand="",
+	eq=getMapDb.call(version=getVersionFromElastic),
+	ne=getMapDb
+);
+
+//Remove objects and fields if the appropriate signatureSheet is not provided.
+get=get.filterResults();
+
+//Instead of returning empty arrays or objects, return nothing.
+get=#if(
+	operator=#toObject(obj="@get").count(),
+	operand="0",
+	ne=#toObject(obj="@get")
+).call(get=get);
+
+#skyrepoGet=get;
+
+ownerSignatureFilterArray = #signatureSheet().cforEach(
+	paramName="signatureKey",
+	threaded="false",
+	op=#object(
+		multi_match=#object(
+			fields=#object(
+				a=owner.add(a="")
+			).valueSet(),
+			type="phrase",
+			query="@signatureKey",
+			analyzer="whitespace_remove"
+		)
+	),
+	array="true"
+);
+
+readerSignatureFilterArray = #signatureSheet().cforEach(
+	paramName="signatureKey",
+	op=#object(
+		multi_match=#object(
+			fields=#object(
+				a=reader.add(a="")
+			).valueSet(),
+			type="phrase",
+			query="@signatureKey",
+			analyzer="whitespace_remove"
+		)
+	),
+	array="true"
+);
+
+ownerReaderFilter=#signatureSheet().cforEach(
+	paramName="signatureKey",
+	op=#add(a="\*",aa=owner,b=':"',c="@signatureKey",d='"').add(a="\*",aa=reader,b=':"',c="@signatureKey",d='"',e=" OR ")
+).flatten(_delimiter=" ");
+
+ownershipObj = #object(
+	should=ownerSignatureFilterArray
+);
+
+ownershipFilters = #object(bool=#if(operator=#add(a="[",b="]").toArray().append(a="all", b="public").has(has="@ownership"), operand="true",
+		ne=ownershipObj,
+		eq=ownershipObj.put(
+			_key="must",
+			_value=#add(a="[",b="]").toArray().append(
+				a=#object(
+					exists=#object(
+						field=owner
+					)
+				)
+			)
+		)
+	)
+);
+
+typeArray=#toArray(obj="@types").cforEach(
+	paramName="type",
+	op=#object(
+		match=#object().put(
+			_key=#add(a=type,b=".(full)"),
+			_value="@type"
+		)
+	),
+	array="true"
+);
+
+searchObj=#object(
+	from="@start",
+	size="@size",
+	version="true",
+	query=#object(
+		bool=#object(
+			must=#object(
+				a=#object(query_string=#object(
+					query=#if(
+						operator=ownerReaderFilter.string(op="trim"),
+						operand="",
+						eq="@q",
+						ne=#add(a="(",b="@q",c=") AND (",d=ownerReaderFilter,e=")")
+					)
+				))
+			).valueSet(),
+			should=#if(
+				operator="@types",
+				operand="",
+				ne=#object(
+					a=typeArray
+				).valueSet()
+			)
+		)
+	),
+	sort=#object(
+		a=#toObject(obj="@sort").catch(any=#object().get(a="")),
+		b=#toArray(obj="@sort",wrapString="false").catch(any=#object().get(a="")),
+		c="@sort"
+	).valueSet().getIndex(index="0"),
+	track_scores="@track_scores",
+	ignore_unavailable="true"
+).put(
+	_key="_source",
+	_value=#object(a="*").valueSet()
+);
+
+protectedTypeArray = #skyRepoGetProtectedTypes().cforEach(
+	paramName="protectedType",
+	threaded="false",
+	op=#object(
+		match=#object().put(
+			_key=#add(a="@",b="type.(full)"),
+			_value="@protectedType"
+		)
+	),
+	array="true"
+);
+
+nonSigOwnershipFilters = #if(operator=#toArray().append(a="all", b="owned").has(has="@ownership"), operand="true",
+	eq=#object(
+		must_not=#if(operator="@ownership", operand="owned",
+			eq=#merge(a=protectedTypeArray, b=ownerSignatureFilterArray).append(
+				a=#object(
+					missing=#object(
+						field=owner
+					)
+				)
+			),
+			ne=#merge(a=protectedTypeArray, b=ownerSignatureFilterArray)
+		)
+	),
+	ne=#if(operator="@ownership", operand="public",
+		eq=#object(
+			must_not=protectedTypeArray.append(
+				a=#object(
+					exists=#object(
+						field=owner
+					)
+				)
+			)
+		),
+		ne=#object(
+			must=protectedTypeArray.append(
+				a=#object(
+					exists=#object(
+						field=owner
+					)
+				)
+			)
+		)
+	)
+);
+
+checkNonSigReaderFilters = #if(
+	operator=#indexOf(str="@q", substr=reader),
+	operand="-1",
+	ne=#if(operator=#signatureSheet().count(), operand="0",
+		eq=#error(msg="Readers only exist in encrypted data. Please provide signatures to allow access to resources."),
+		ne=nonSigOwnershipFilters.put(
+			_key="should",
+			_value=readerSignatureFilterArray
+		)
+	),
+	eq=nonSigOwnershipFilters
+);
+
+nonSigSearchObj = #object(
+	from="@start",
+	size="@size",
+	version="true",
+	query=#object(
+		bool=#object(
+			must=#object(
+				query_string=#object(
+					query="@q"
+				)
+			),
+			filter=#object(
+				bool=#if(operator="@types", operand="",
+					eq=checkNonSigReaderFilters,
+					ne=#object(
+						must=#toArray().append(
+							a=#object(
+								bool=checkNonSigReaderFilters
+							),
+							b=#object(
+								bool=#object(
+									should=typeArray
+								)
+							)
+						)
+					)
+				)
+			)
+		)
+	),
+	sort=#object(
+		a=#toObject(obj="@sort").catch(any=#object().get(a="")),
+		b=#toArray(obj="@sort",wrapString="false").catch(any=#object().get(a="")),
+		c="@sort"
+	).valueSet().getIndex(index="0"),
+	track_scores="@track_scores"
+).put(
+	_key="_source",
+	_value=#object(a="*").valueSet()
+);
+
+searchUrl=#add(
+	a=urlBase,
+	b=#if(operator=#count(obj="@urlRemainder"),operand="1",gt=#toLower(obj="@urlRemainder")),
+	c="/_search"
+);
+
+//2017-06-19 fray: We are now providing errors back to the client instead of empty results. I may regret this.
+errorCheck = #if(
+	operator=#get(obj=#toObject(obj="@obj"),error="").get(root_cause="").getIndex(index="0").get(reason=""),
+	operand="",
+	ne=#error(code=#get(obj=#toObject(obj="@obj"),status=""),msg=#get(obj=#toObject(obj="@obj"),error="").get(root_cause="").getIndex(index="0").get(reason="")),
+	eq=#toObject(obj="@obj")
+);
+errorCheck=#if(operator="@debug",operand="false",ne=errorCheck,eq=#toObject(obj="@obj"));
+#errorCheck = errorCheck;
+
+signatureSearch=searchObj.httpPost(url=searchUrl,contentType="application/json",multipart="false").errorCheck().cget(hits="").cget(hits="").cforEach(
+	paramName="obj",
+	array="true",
+	threaded="false",
+	op=#toObject(obj="@obj")
+).filterResults();
+
+checkRunSignatureSearch = #if(operator=#signatureSheet().count(), operand="0",
+	ne=signatureSearch,
+	eq=#toArray()
+);
+
+nonSigSearch = nonSigSearchObj.httpPost(url=searchUrl,contentType="application/json",multipart="false").errorCheck().cget(hits="").cget(hits="").cforEach(
+	paramName="obj",
+	array="true",
+	threaded="false",
+	op=#toObject(obj="@obj")
+).filterResults();
+
+checkRunNonSigSearch = nonSigSearch;
+
+getResultFromMapDb=#if(operator="@mapDbObj", operand="",
+	eq=#toObject(obj="@elasticObj").getByParam(param="_source"),
+	ne=#toObject(obj="@mapDbObj")
+).ccall(
+	mapDbObj=getMapDb.ccall(
+		type=#toObject(obj="@elasticObj").getByParam(param="_source").inferTypeFromObj(),
+		id=#toObject(obj="@elasticObj").getByParam(param="_id"),
+		version=#toObject(obj="@elasticObj").getByParam(param="_version")
+	)
+);
+
+getResultsFromMapDb = #forEach(
+	obj=#toArray(obj="@results"),
+	paramName="elasticObj",
+	array="true",
+	op=getResultFromMapDb
+);
+
+search = #if(operator=#toArray(obj="@sigResults").count(), operand="@size",
+	eq=#toArray(obj="@sigResults"),
+	lt=#if(
+		operator=#toArray(obj="@sigResults").count(),
+		operand="0",
+		eq=#object(
+			a=#toArray(),
+			b=checkRunNonSigSearch.ccall(
+				start=#string(
+					str="@string",
+					op="substr",
+					begin="0",
+					end=#indexOf(str="@string", substr=".")
+				).ccall(
+					string=#add(
+						a="@start",
+						b=#add(
+							a="-",
+							b=checkRunSignatureSearch.ccall(
+								start="0",
+								size="@start"
+							).toArray().count()
+						),
+						c="-1"
+					).append(a="0").cmax()
+				),
+				size="@size"
+			)
+		).valueSet().union(unique="false"),
+		ne=#object(
+			a=#toArray(obj="@sigResults"),
+			b=checkRunNonSigSearch.ccall(
+				start="0",
+				size=#string(
+					str="@string",
+					op="substr",
+					begin="0",
+					end=#indexOf(str="@string", substr=".")
+				).ccall(
+					string=#add(
+						a="@size",
+						b=#add(
+							a="-",
+							b=#decode(obj="@sigResults").count()
+						)
+					)
+				)
+			)
+		).valueSet().union(unique="false")
+	),
+).ccall(
+	sigResults=checkRunSignatureSearch
+).toParameter(
+	paramName="results",
+	op=getResultsFromMapDb
+).removeDuplicates().filterResults().displayJson(_collapse="true");
+
+#skyrepoSearch=search;
+
+typesObj = #object(
+	query=#object(
+		bool=#object(
+			must=#object(
+				match_all=#object()
+			),
+			must_not=#object(
+				exists=#object(
+					field=owner
+				)
+			),
+			filter=#object(
+				bool=#object(
+					should=#signatureSheet().cforEach(
+						paramName="signatureKey",
+						op=#object(
+							match=#object().put(
+								_key=owner,
+								_value=#object(
+									query="@signatureKey",
+									analyzer="whitespace_remove"
+								)
+							)
+						),
+						array="true"
+					).append(
+						a=#object(
+							bool=#object(
+								must_not=#skyRepoGetProtectedTypes().cforEach(
+									paramName="protectedType",
+									op=#object(
+										match=#object().put(
+											_key=#add(a="@",b="type.(full)"),
+											_value="@protectedType"
+										)
+									),
+									array="true"
+								)
+							)
+						)
+					)
+				)
+			)
+		)
+	),
+	aggs=#object(
+		types=#object(
+			terms=#object(
+				field=#add(a=type,b=".(full)")
+			)
+		)
+	)
+);
+
+types = typesObj.httpPost(url=searchUrl,contentType="application/json", multipart="false").toObject().cget(aggregations="").cget(types="").cget(buckets="").displayJson(_collapse="true");
+
+#skyrepoTypes = types;

@@ -1,0 +1,388 @@
+// Copyright 2015-2016 Eduworks Corporation and other contributing parties.
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+
+schema=#httpGet(obj="@typeUrl").catch(any=#object()).cache(global="true",name=#add(z="@typeUrl",a="httpGet",_string="true")).toObject();
+schemaContext=schema.cgetByParam(param=#add(a="@",b="context",_string="true"));
+
+type=#add(a="@",b="type",_string="true");
+context=#add(a="@",b="context",_string="true");
+protect=#add(a="@",b="protect",_string="true");
+
+obj=#toObject(obj="@obj");
+
+urlType=#add(
+	_string="true",
+	a=obj.getByParam(param=context).string(op="trim",chars="/"),
+	b=#if(operator=obj.getByParam(param=context),operand="",ne="/"),
+	c=obj.getByParam(param=type).replace(replace=obj.getByParam(param=context),with="").string(op="trim",chars="/")
+);
+#skyrepoUrlType=urlType;
+
+mapUrl=#add(
+	_string="true",
+	a=#urlBase(),
+	b="/",
+	c=#inferTypeFromObj().toLower(),
+	d="/_mapping",
+	e="/",
+	f=#inferTypeFromObj()
+);
+
+map=#add(
+	_string="true",
+	a=#urlBase(),
+	d="/_mapping"
+).httpGet().toObject().cache(global="true",name="elasticMapping");
+
+#elasticMapping = map;
+
+properties=map.getByParam(param=#toLower(obj="@type")).get(mappings="").getByParam(param="@type").get(properties="");
+
+//Make sure to check before not having a thing.
+properties=#if(
+	operator=properties,
+	operand="",
+	eq=#object(
+		d=#cache(global="true",remove="true",name="elasticSettings"),
+		e=#cache(global="true",remove="true",name="elasticMapping"),
+		z=properties
+	).get(z=""),
+	ne=properties
+);
+
+settingsUrl = #add(
+	_string="true",
+	a=#urlBase(),
+	c="/_settings",
+);
+
+settings = settingsUrl.httpGet().toObject().cache(global="true",name="elasticSettings");
+
+#elasticSettings=settings;
+
+noSearchList=#object(
+	a="base64:base64"
+).valueSet();
+
+//Iterate over each field about to go into the document.
+//	If the mapping has the field already, skip.
+//	If the prefix.@type == null, skip.
+//	If the schema of the @type of the field (at the appropriate nesting level) is base64:base64, add a mapping to not index the field.
+// ---------------------
+
+prefix=#split(obj="@field",split=".").remove(index=#split(obj="@field",split=".").count().add(z="-1")).flatten(_delimiter=".");
+simpleType=#split(obj="@field",split=".").cgetIndex(index=#split(obj="@field",split=".").count().add(z="-1"));
+
+getCurrentMapping=properties.toDotNotationObject().forEach(
+	paramName="k",
+	valueName="v",
+	threaded="false",
+	op=#if(
+		operator=#startsWith(
+			obj="@k",
+			with=#add(_string="true",
+				a="@typePrefix",
+				b="@field"
+			)
+		),
+		operand="true",
+		eq="@v"
+	)
+);
+
+prefixType=#if(
+	operator=prefix,
+	operand="",
+	eq=urlType,
+	ne=#add(
+		_string="true",
+		a=obj.getByParam(param=prefix.add(z=".@context")).string(op="trim",chars="/"),
+		b=#if(operator=obj.getByParam(param=prefix.add(z=".@context")),operand="",ne="/"),
+		c=obj.getByParam(param=prefix.add(z=".@type")).string(op="trim",chars="/")
+	)
+);
+
+addMappingNoSearch=#object(
+	properties=#object(
+	).put(
+		_key="@field",
+		_value=#object(
+			type="text",
+			index=#false()
+		)
+	)
+).httpPost(url=mapUrl,contentType="application/json",multipart="false");
+
+//Invalidate cache.
+addMappingNoSearch=#object(
+	a=addMappingNoSearch,
+	d=#cache(global="true",remove="true",name="elasticSettings"),
+	e=#cache(global="true",remove="true",name="elasticMapping")
+);
+
+addWhiteSpaceRemovalMapping = #object(
+	properties=getCurrentMapping.put(
+		_key=#add(_string="true",a="@typePrefix",c="@field",d=".analyzer"),
+		_value="whitespace_remove"
+	).put(
+		_key=#add(_string="true",a="@typePrefix",c="@field",d=".type"),
+		_value="text"
+	).fromDotNotationObject()
+).httpPost(url=mapUrl,contentType="application/json",multipart="false");
+
+//Invalidate cache.
+addWhiteSpaceRemovalMapping=#object(
+	a=addWhiteSpaceRemovalMapping,
+	d=#cache(global="true",remove="true",name="elasticSettings"),
+	e=#cache(global="true",remove="true",name="elasticMapping")
+);
+
+addWhiteSpaceRemovalMapping=#if(
+	operator=getCurrentMapping.getByParam(param=#add(a="@typePrefix",c="@field",d=".analyzer")),
+	operand="whitespace_remove",
+	ne=addWhiteSpaceRemovalMapping
+);
+
+addNotAnalyzedMultiField = #object(
+	properties=getCurrentMapping.put(
+		_key=#add(a="@typePrefix",c="@field",d=".fields.(full).type"),
+		_value="keyword"
+	).put(
+		_key=#add(a="@typePrefix",c="@field",d=".fields.(full).index"),
+		_value=#true()
+	).put(
+		_key=#add(a="@typePrefix",c="@field",d=".fields.",e="@field",f=".type"),
+		_value="text"
+	).put(
+		_key=#add(a="@typePrefix",c="@field",d=".fields.",e="@field",f=".index"),
+		_value=#true()
+	).put(
+		_key=#add(a="@typePrefix",c="@field",d=".type"),
+		_value="text"
+	).fromDotNotationObject()
+).httpPost(url=mapUrl,contentType="application/json",multipart="false");
+
+//Invalidate cache.
+addNotAnalyzedMultiField=#object(
+	a=addNotAnalyzedMultiField,
+	d=#cache(global="true",remove="true",name="elasticSettings"),
+	e=#cache(global="true",remove="true",name="elasticMapping")
+);
+
+addNotAnalyzedMultiField=#if(
+	operator=getCurrentMapping.getByParam(param=#add(a="@typePrefix",c="@field",d=".fields.(full).type")),
+	operand="keyword",
+	ne=addNotAnalyzedMultiField
+);
+
+addExcludeFromAllIndex = #object(
+	properties=getCurrentMapping.put(
+		_key=#add(a="@typePrefix",c="@field",d=".include_in_all"),
+		_value="false"
+	).put(
+		_key=#add(a="@typePrefix",c="@field",d=".type"),
+		_value="text"
+	).fromDotNotationObject()
+).httpPost(url=mapUrl,contentType="application/json",multipart="false");
+
+//Invalidate cache.
+addExcludeFromAllIndex=#object(
+	a=addExcludeFromAllIndex,
+	d=#cache(global="true",remove="true",name="elasticSettings"),
+	e=#cache(global="true",remove="true",name="elasticMapping")
+);
+
+addExcludeFromAllIndex=#if(
+	operator=getCurrentMapping.has(has=#add(a="@typePrefix",c="@field",d=".include_in_all")),
+	operand="true",
+	ne=addExcludeFromAllIndex
+);
+
+iterateOverFields=obj.cforEach(
+	paramName="field",
+	valueName="value",
+	threaded="false",
+	op=#if(
+		operator=#toArray(obj="@value").getIndex(index="0").toObject(obj="@value").catch(any=#object()).count(),
+		operand="0",
+		eq=#if(
+			operator=#indexOf(str="@field", substr=#add(a="@", b="owner")),
+			operand="-1",
+			eq=#if(
+				operator=#indexOf(str="@field", substr=#add(a="@", b="reader")),
+				operand="-1",
+				eq=#if(
+					operator=prefixType,
+					operand="",
+					ne=#if(
+						operator=noSearchList.has(has=schemaContext.call(typeUrl=prefixType.reduce()).cgetByParam(param=simpleType).cgetByParam(param=type)),
+						operand="true",
+						eq=addMappingNoSearch,
+						ne=#if(operator="@checkType", operand="false",
+							ne=#if(
+								operator=#indexOf(str="@field", substr=#add(a="@", b="type")),
+								operand="-1",
+								ne=addNotAnalyzedMultiField,
+							)
+						),
+					),
+					eq=#if(operator="@checkType", operand="false",
+						ne=#if(
+							operator=#indexOf(str="@field", substr=#add(a="@", b="type")),
+							operand="-1",
+							ne=addNotAnalyzedMultiField,
+						)
+					)
+				),
+				ne=addExcludeFromAllIndex,
+			),
+			ne=addWhiteSpaceRemovalMapping
+		),
+		ne=#toArray(obj="@value").cforEach(
+			paramName="obj",
+			threaded="false",
+			op=#toObject(obj="@obj").typeIterateOverFields(
+				checkType="false",
+				typePrefix=#add(a="@typePrefix",a="@field",b=".properties.")
+			)
+		)
+	)
+);
+#typeIterateOverFields=iterateOverFields;
+
+// Caches whether the type is protected (should be searchable/viewable by non-owners/readers)
+// ---------------------
+cacheDir = #string(str="./cache");
+cacheName = #string(str="skyRepoCache");
+cacheIndex = #string(str="skyRepoCache");
+cacheKey = #string(str="encryptedTypes");
+
+cacheDb = {
+	indexDir = cacheDir,
+	databaseName = cacheName,
+	index= cacheIndex,
+	key=cacheKey
+};
+
+cachedProtectedTypes = #idxGet(multi="true", cacheDb);
+
+getProtectedTypes = #object(
+	a=#skyRepoPredefinedEncrypted(),
+	b=getProtectedTypes,
+).valueSet().union();
+
+#skyRepoGetProtectedTypes = getProtectedTypes;
+
+addProtectedType = #if(
+	operator="@cacheVal",
+	operand="",
+	eq=#add(a="[",b="]").toArray(),
+	ne=#toArray(obj="@cacheVal")
+).ccall(
+	cacheVal=#cache(name=cacheKey, global="true")
+).append(
+	a="@typeUrl"
+).idxAdd(
+	cacheDb
+);
+
+types=obj.getByParam(param=type).toArray().cforEach(
+	paramName="type",
+	array="true",
+	threaded="false",
+	op=#if(
+		operator=#has(obj="@type",has="http"),
+		operand=true,
+		eq=urlType,
+		ne="@type"
+	)
+);
+
+cacheSchemaProtect=#if(
+	operator=getProtectedTypes.intersect(b=types).count(),
+	operand="0",
+	gt="true",
+	eq=#if(
+		operator=#catch(
+			try=#httpGet(
+				obj="@typeUrl"
+			).catch(
+				any=#object()
+			).cache(
+				global="true",name=#add(z="@typeUrl",a="httpGet")
+			).toObject().getByParam(param=protect),
+			any="false"
+		),
+		operand="true",
+		eq=#object(
+			a=addProtectedType,
+			b="true"
+		).cget(b=""),
+		ne="false"
+	).ccall(
+		typeUrl=types.getIndex(index="0")
+	)
+);
+
+
+// Adds the whitespace_remove analyzer that removes whitespace from a field
+// ---------------------
+
+addAnalyzer = #object(
+	settings=#object(
+		analysis=#object(
+			filter=#object(
+				space_remove=#object(
+					type="pattern_replace",
+					pattern="\s",
+					replacement=""
+				)
+			),
+			analyzer=#object(
+				whitespace_remove=#object(
+					type="custom",
+					tokenizer="keyword",
+					filter=#add(a="[",b="]").toArray().append(a="space_remove")
+				)
+			)
+		)
+	)
+).httpPut(
+    contentType="application/json",
+	url=#add(
+		a=#urlBase(),
+		b="/",c=#toLower(obj="@type")
+	)
+);
+
+//Invalidate cache.
+addAnalyzer=#object(
+	a=addAnalyzer,
+	d=#cache(global="true",remove="true",name="elasticSettings"),
+	e=#cache(global="true",remove="true",name="elasticMapping")
+);
+
+checkAddAnalyzer = #if(
+	operator=#decode(obj="@settings").has(has=#toLower(obj="@type")),
+	operand="true",
+	eq=#if(
+		operator=#decode(obj="@settings").getByParam(param=#toLower(obj="@type")).cget(settings="").cget(index="").cget(analysis="").cget(analyzer="").has(has="whitespace_remove"),
+		operand="true",
+		ne=addAnalyzer
+	),
+	ne=addAnalyzer
+).ccall(
+	settings=settings
+);
+
+#addWhitespaceAnalyzer = checkAddAnalyzer;
+
+checkType = #object(
+	a=checkAddAnalyzer,
+	b=cacheSchemaProtect,
+	c=iterateOverFields
+);
+
+#skyRepoCheckType=checkType;
