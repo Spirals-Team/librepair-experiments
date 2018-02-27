@@ -1,0 +1,181 @@
+/*
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package io.druid.indexer;
+
+import com.google.common.base.Preconditions;
+import com.google.common.collect.Maps;
+import io.druid.java.util.common.DateTimes;
+import io.druid.java.util.common.concurrent.Execs;
+import io.druid.java.util.common.concurrent.ScheduledExecutors;
+import org.joda.time.DateTime;
+import org.joda.time.Duration;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ScheduledExecutorService;
+
+public class TimeWindowMovingAverageCollector
+{
+  private long timeQuantum; // milliseconds
+  private int totalNumWindows;
+  private CircularBuffer<Map<String, Double>> statsBuffer;
+  private ScheduledExecutorService scheduledExecutorService;
+  private DateTime startTime;
+  private DateTime stopTime;
+  private TaskMetricsGetter metricsGetter;
+
+  public TimeWindowMovingAverageCollector(
+      long timeQuantum,
+      int totalNumWindows,
+      TaskMetricsGetter metricsGetter
+  )
+  {
+    this.timeQuantum = timeQuantum;
+    this.totalNumWindows = totalNumWindows;
+    this.metricsGetter = metricsGetter;
+    this.statsBuffer = new CircularBuffer<>(totalNumWindows);
+    this.scheduledExecutorService = Execs.scheduledSingleThreaded("TimeWindowMovingAverageCollector-Exec--%d");
+  }
+
+  public void start()
+  {
+    ScheduledExecutors.scheduleWithFixedDelay(
+        scheduledExecutorService,
+        new Duration(timeQuantum),
+        new Duration(timeQuantum),
+        new Runnable()
+        {
+          @Override
+          public void run()
+          {
+            statsBuffer.add(metricsGetter.getMetrics());
+          }
+        }
+    );
+    startTime = DateTimes.nowUtc();
+  }
+
+  public void stop()
+  {
+    scheduledExecutorService.shutdownNow();
+    stopTime = DateTimes.nowUtc();
+  }
+
+  public DateTime getStartTime()
+  {
+    return startTime;
+  }
+
+  public DateTime getStopTime()
+  {
+    return stopTime;
+  }
+
+  public Map<String, Double> getAverages(int numWindows)
+  {
+    if (numWindows > statsBuffer.size()) {
+      return null;
+    }
+
+    List<String> statKeys = metricsGetter.getKeys();
+    double[] counts = new double[statKeys.size()];
+    for (int i = 0; i < counts.length; i++) {
+      counts[i] = 0;
+    }
+
+    if (statsBuffer.size() > 0) {
+      int effectiveNumWindows = Math.min(numWindows, statsBuffer.size());
+      for (int i = 0; i < effectiveNumWindows; i++) {
+        Map<String, Double> statSnapshot = statsBuffer.getLatest(i);
+        for (int j = 0; j < statKeys.size(); j++) {
+          counts[j] += statSnapshot.get(statKeys.get(j));
+        }
+      }
+
+      for (int i = 0; i < counts.length; i++) {
+        counts[i] = counts[i] / numWindows;
+      }
+    }
+
+    Map<String, Double> averageMap = Maps.newHashMap();
+    for (int i = 0; i < statKeys.size(); i++) {
+      averageMap.put(statKeys.get(i), counts[i]);
+    }
+
+    return averageMap;
+  }
+
+  private static class CircularBuffer<E>
+  {
+    public E[] getBuffer()
+    {
+      return buffer;
+    }
+
+    private final E[] buffer;
+
+    private int start = 0;
+    private int size = 0;
+
+    CircularBuffer(int capacity)
+    {
+      buffer = (E[]) new Object[capacity];
+    }
+
+    void add(E item)
+    {
+      buffer[start++] = item;
+
+      if (start >= buffer.length) {
+        start = 0;
+      }
+
+      if (size < buffer.length) {
+        size++;
+      }
+    }
+
+    E getLatest(int index)
+    {
+      int bufferIndex = start - index - 1;
+      if (bufferIndex < 0) {
+        bufferIndex = buffer.length + bufferIndex;
+      }
+      return buffer[bufferIndex];
+    }
+
+    E get(int index)
+    {
+      Preconditions.checkArgument(index >= 0 && index < size, "invalid index");
+
+      int bufferIndex = (start - size + index) % buffer.length;
+      if (bufferIndex < 0) {
+        bufferIndex += buffer.length;
+      }
+      return buffer[bufferIndex];
+    }
+
+    int size()
+    {
+      return size;
+    }
+  }
+}
+
