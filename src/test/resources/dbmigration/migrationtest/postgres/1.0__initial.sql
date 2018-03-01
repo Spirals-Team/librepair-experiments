@@ -1,0 +1,113 @@
+-- Migrationscripts for ebean unittest
+-- apply changes
+create table migtest_fk_cascade (
+  id                            bigserial not null,
+  one_id                        bigint,
+  constraint pk_migtest_fk_cascade primary key (id)
+);
+
+create table migtest_fk_cascade_one (
+  id                            bigserial not null,
+  constraint pk_migtest_fk_cascade_one primary key (id)
+);
+
+create table migtest_fk_none (
+  id                            bigserial not null,
+  one_id                        bigint,
+  constraint pk_migtest_fk_none primary key (id)
+);
+
+create table migtest_fk_none_via_join (
+  id                            bigserial not null,
+  one_id                        bigint,
+  constraint pk_migtest_fk_none_via_join primary key (id)
+);
+
+create table migtest_fk_one (
+  id                            bigserial not null,
+  constraint pk_migtest_fk_one primary key (id)
+);
+
+create table migtest_fk_set_null (
+  id                            bigserial not null,
+  one_id                        bigint,
+  constraint pk_migtest_fk_set_null primary key (id)
+);
+
+create table migtest_e_basic (
+  id                            serial not null,
+  status                        varchar(1),
+  name                          varchar(127),
+  description                   varchar(127),
+  some_date                     timestamptz,
+  old_boolean                   boolean default false not null,
+  old_boolean2                  boolean,
+  eref_id                       integer,
+  indextest1                    varchar(127),
+  indextest2                    varchar(127),
+  indextest3                    varchar(127),
+  indextest4                    varchar(127),
+  indextest5                    varchar(127),
+  indextest6                    varchar(127),
+  user_id                       integer not null,
+  constraint ck_migtest_e_basic_status check ( status in ('N','A','I')),
+  constraint uq_migtest_e_basic_indextest2 unique (indextest2),
+  constraint uq_migtest_e_basic_indextest6 unique (indextest6),
+  constraint pk_migtest_e_basic primary key (id)
+);
+
+create table migtest_e_history (
+  id                            serial not null,
+  test_string                   varchar(255),
+  constraint pk_migtest_e_history primary key (id)
+);
+
+create table migtest_e_history2 (
+  id                            serial not null,
+  test_string                   varchar(255),
+  constraint pk_migtest_e_history2 primary key (id)
+);
+
+create table migtest_e_ref (
+  id                            serial not null,
+  constraint pk_migtest_e_ref primary key (id)
+);
+
+create table migtest_e_softdelete (
+  id                            serial not null,
+  test_string                   varchar(255),
+  constraint pk_migtest_e_softdelete primary key (id)
+);
+
+create index ix_migtest_e_basic_indextest1 on migtest_e_basic (indextest1);
+create index ix_migtest_e_basic_indextest5 on migtest_e_basic (indextest5);
+alter table migtest_fk_cascade add constraint fk_migtest_fk_cascade_one_id foreign key (one_id) references migtest_fk_cascade_one (id) on delete cascade on update cascade;
+create index ix_migtest_fk_cascade_one_id on migtest_fk_cascade (one_id);
+
+alter table migtest_fk_set_null add constraint fk_migtest_fk_set_null_one_id foreign key (one_id) references migtest_fk_one (id) on delete set null on update set null;
+create index ix_migtest_fk_set_null_one_id on migtest_fk_set_null (one_id);
+
+alter table migtest_e_basic add constraint fk_migtest_e_basic_eref_id foreign key (eref_id) references migtest_e_ref (id) on delete restrict on update restrict;
+create index ix_migtest_e_basic_eref_id on migtest_e_basic (eref_id);
+
+alter table migtest_e_history2 add column sys_period tstzrange not null default tstzrange(current_timestamp, null);
+create table migtest_e_history2_history(like migtest_e_history2);
+create view migtest_e_history2_with_history as select * from migtest_e_history2 union all select * from migtest_e_history2_history;
+
+create or replace function migtest_e_history2_history_version() returns trigger as $$
+begin
+  if (TG_OP = 'UPDATE') then
+    insert into migtest_e_history2_history (sys_period,id, test_string) values (tstzrange(lower(OLD.sys_period), current_timestamp), OLD.id, OLD.test_string);
+    NEW.sys_period = tstzrange(current_timestamp,null);
+    return new;
+  elsif (TG_OP = 'DELETE') then
+    insert into migtest_e_history2_history (sys_period,id, test_string) values (tstzrange(lower(OLD.sys_period), current_timestamp), OLD.id, OLD.test_string);
+    return old;
+  end if;
+end;
+$$ LANGUAGE plpgsql;
+
+create trigger migtest_e_history2_history_upd
+  before update or delete on migtest_e_history2
+  for each row execute procedure migtest_e_history2_history_version();
+
