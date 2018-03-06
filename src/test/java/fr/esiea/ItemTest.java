@@ -32,7 +32,7 @@ public class ItemTest {
      		items[i].updateQuality();
      	assertEquals(12, items[0].quality);
     	assertEquals(22, items[1].quality);
-   		assertEquals(12, items[2].quality);
+   		assertEquals(13, items[2].quality);
     	assertEquals(0, items[3].quality);
     	assertEquals(0, items[4].quality);
     }
