@@ -15,9 +15,9 @@ public class ItemTest {
 
 	@Test
   	public void updateQualityAgedBrieTest(){
-    	Item item = new Item("Aged Brie",-2,10);
-    	item.updateQuality();
-    	assertEquals(12, item.quality);
+    	AgedBrieItem agedBrieItem = new AgedBrieItem("Aged Brie",-2,10);
+    	agedBrieItem.updateQuality();
+    	assertEquals(12, agedBrieItem.quality);
   	}
     
 }
