@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document xmlns="http://maven.apache.org/XDOC/2.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/XDOC/2.0 http://maven.apache.org/xsd/xdoc-2.0.xsd">
+	<properties>
+		<title>Upgrade instructions</title>
+		<author email="nicolas.richeton@gmail.com">Nicolas Richeton</author>
+		<author email="francois-xavier.bonnet@centraliens.net">Francois-Xavier Bonnet</author>
+	</properties>
+	<body>
+		<section name="4.0 -> 4.1">
+			<p>No changes required</p>
+		</section>
+
+		<section name="4.1 -> 5.0">
+
+			<subsection name="esigate-servlet module">
+				<p>
+					The project esigate-core has been split into 2 modules:
+				</p>
+				<ul>
+					<li>esigate-core</li>
+					<li>esigate-servlet</li>
+				</ul>
+				<p>
+					In your project dependencies, you should now use esigate-servlet
+					instead of esigate-core. esigate-servlet depends on esigate-core.
+				</p>
+				<p>
+					In future versions it will be possible in other contexts than a servlet engine,
+					this is why it was necessary to split.
+				</p>
+			</subsection>
+			<subsection name="ESI &amp; Aggregator">
+				<p>
+					ESI tags and comment-based directives are now processed by
+					extensions.
+					These extensions are enabled by default.
+				</p>
+				<ul>
+					<li>org.esigate.extension.Esi				</li>
+					<li>org.esigate.extension.Aggregate			</li>
+				</ul>
+				<p>
+					If you are overriding extensions in esigate.properties and use
+					ESI
+					and/or Aggregator features, you must add the corresponding
+					extension
+					before other rendering extensions (especially
+					ResourceFixup)
+				</p>
+			</subsection>
+			<subsection name="Servlets and servlet filter">
+				<p>
+					The aggregator and proxy servlet have been replaced by a servlet filter
+					that enables more complex url mappings and supports local and 
+					cross-context providers.
+				</p>
+				<p>
+					All the servlets have to be replaced by a unique servlet filter for example:
+				</p>
+				<source><![CDATA[
+<servlet>
+	<servlet-name>provider1</servlet-name>
+	<servlet-class>org.esigate.servlet.ProxyServlet</servlet-class>
+	<init-param>
+		<param-name>provider</param-name>
+		<param-value>provider1</param-value>
+	</init-param>
+</servlet>
+<servlet>
+	<servlet-name>provider2</servlet-name>
+	<servlet-class>org.esigate.servlet.ProxyServlet</servlet-class>
+	<init-param>
+		<param-name>provider</param-name>
+		<param-value>provider2</param-value>
+	</init-param>
+</servlet>
+<servlet-mapping>
+	<servlet-name>provider1</servlet-name>
+	<url-pattern>/*</url-pattern>
+</servlet-mapping>
+<servlet-mapping>
+	<servlet-name>provider2</servlet-name>
+	<url-pattern>/provider2/*</url-pattern>
+</servlet-mapping>
+				]]></source>
+				<p>
+					Will be replaced by:
+				</p>
+				<source><![CDATA[
+<filter>
+	<filter-name>EsiGate</filter-name>
+	<filter-class>org.esigate.servlet.ProxyFilter</filter-class>
+</filter>
+<filter-mapping>
+	<filter-name>EsiGate</filter-name>
+	<url-pattern>/*</url-pattern>
+</filter-mapping>
+				]]></source>
+				<p>
+					And the url mappings have to be moved to esigate.properties file:
+				</p>
+				<source><![CDATA[
+provider1.remoteUrlBase=http://host1/
+provider1.mappings=*
+
+provider1.remoteUrlBase=http://host2/
+provider2.mappings=/provider2/*
+				]]></source>
+				
+			</subsection>
+
+			<subsection name="JSP taglib">
+				<p>
+					JSP taglib has been removed. It can be replaced by the servlet filter (see above)
+					combined with ESI tags. The advantage is that this is compatible with any
+					presentation framework like JSP, JSF components or Wicket components.
+				</p>
+				<p>
+					Here are some examples of JSP tags and their equivalent in ESI tags.
+				</p>
+				<p>JSP taglib:</p>
+				<source><![CDATA[
+<%@taglib uri="http://www.esigate.org/taglib" prefix="assemble"%>
+				]]></source>
+				<p>Equivalent ESI tag:</p>
+				<source><![CDATA[
+ 
+				]]></source>
+				<p>JSP taglib:</p>
+				<source><![CDATA[
+<assemble:includeBase page="block.jsp" />
+				]]></source>
+				<p>Equivalent ESI tag:</p>
+				<source><![CDATA[
+<esi:vars><base href="$(PROVIDER{default})block.jsp" /></esi:vars>
+				]]></source>
+				<p>JSP taglib:</p>
+				<source><![CDATA[
+<assemble:includeblock page="block.jsp" name="block1" />
+				]]></source>
+				<p>Equivalent ESI tag:</p>
+				<source><![CDATA[
+<esi:include src="$(PROVIDER{default})block.jsp" fragment="block1" />
+				]]></source>
+				<p>JSP taglib:</p>
+				<source><![CDATA[
+<assemble:includeblock page="error500.jsp" name="block1" />
+				]]></source>
+				<p>Equivalent ESI tag (Note: default Exception handling is different in ESI tags, that
+				is why we need some code to reproduce exactly the same behavior):</p>
+				<source><![CDATA[
+<esi:try>
+<esi:attempt><esi:include src="$(PROVIDER{default})error500.jsp" fragment="block1" /></esi:attempt>
+<esi:except code="500">500 Internal_Server_Error</esi:except>
+</esi:try>
+				]]></source>
+				<p>JSP taglib:</p>
+				<source><![CDATA[
+<assemble:include-xml source="xml-page.xml" xpath="//html:div/html:div">
+	<assemble:replace expression ="Item">New Item</assemble:replace>
+</assemble:include-xml>
+				]]></source>
+				<p>Equivalent ESI tag:</p>
+				<source><![CDATA[
+<esi:include src="$(PROVIDER{default})xml-page.xml" xpath="//html:div/html:div">
+	<esi:replace expression ="Item">New Item</esi:replace>
+</esi:include>
+				]]></source>
+				<p>JSP taglib:</p>
+				<source><![CDATA[
+<assemble:include-xml source="xml-page.xml" template="/WEB-INF/xml-template.xslt" >
+	<assemble:replace expression ="Item">New Item</assemble:replace>
+</assemble:include-xml>
+				]]></source>
+				<p>Equivalent ESI tag:</p>
+				<source><![CDATA[
+<esi:include src="$(PROVIDER{default})xml-page.xml" stylesheet="/WEB-INF/xml-template.xslt" >
+	<esi:replace expression ="Item">New Item</esi:replace>
+</esi:include>
+				]]></source>
+			</subsection>
+
+			<subsection name="Cache">
+				<p>
+					The HTTP client and cache has been updated to Apache HttpClient
+					4.3.
+					This release fixes handling of "Vary: Cookie" header and has
+					been
+					through major refactoring. All esigate tests have passed, but
+					there
+					may be
+					other small differences in behavior. It would be a good
+					idea to test
+					your
+					applications to ensure they are not broken by these
+					changes.
+				</p>
+
+			</subsection>
+			<subsection name="Events">
+				<p>
+					Event properties are now accessible through getter and setters.
+				</p>
+
+			</subsection>
+			<subsection name="Default option values">
+				<p>
+					"preserveHost" is now set to true by default.
+				</p>
+				<p>
+					Cookies are now forwarded by default. "forwardCookies" parameter has
+					been removed and a new parameter "storeCookiesInSession" has been created
+					to be able to keep some cookies in the session.
+				</p>
+				<p>
+					Aggregator extension is not enabled anymore in the 
+					default extensions list. I you still use the old html comments based
+					aggregator syntax, you have to add this extension.
+				</p>
+				<p>
+					"fixResources" option has been removed. Urls inside pages are now rewritten by default.
+					To desactivate it, you have to remove org.esigate.extension.ResourceFixup extension.
+				</p>
+				<p>
+					org.esigate.extension.ConfigReloadOnChange is now activated by default. The configuration
+					file is checked every 5 seconds and automatically reloaded if the file has changed.
+					This can be useful in development.
+				</p>
+				<p>
+					WWW-Authenticate response header and Authorization request header are now forwarded (basic authentication).
+				</p>
+			</subsection>
+
+			<div id="disqus_thread"></div>
+			<script type="text/javascript">
+<![CDATA[  
+        var disqus_shortname = 'esigate';
+
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = 'http://' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+        
+      //  ]]>
+			</script>
+			<noscript>
+				Please enable JavaScript to view the
+				<a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a>
+			</noscript>
+			<a href="http://disqus.com" class="dsq-brlink">
+				comments powered by
+				<span class="logo-disqus">Disqus</span>
+			</a>
+
+		</section>
+	</body>
+</document>
