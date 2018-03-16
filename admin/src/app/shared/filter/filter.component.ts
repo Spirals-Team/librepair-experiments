@@ -1,0 +1,50 @@
+import { Component, Input, OnInit, Output, EventEmitter } from '@angular/core';
+import { IconTypeComponent, ICONTYPES } from '../type-icon/icon-type.component'
+
+export class FilterModel {
+  type:string;
+  name:string;
+  description:string;
+  owner:string;
+  key: string;
+  constructor(type:string = '', name:string = '', description:string = '', owner:string = '', key:string = ''){
+    this.type = type;
+    this.name = name;
+    this.description= description;
+    this.owner = owner;
+    this.key = key;
+  }
+}
+
+@Component({
+  selector: 'taskana-filter',
+  templateUrl: './filter.component.html',
+  styleUrls: ['./filter.component.scss']
+})
+export class FilterComponent{
+
+  constructor() { 
+    this.allTypes = IconTypeComponent.allTypes;
+  }
+  allTypes: Map<string, string>;
+  filter: FilterModel = new FilterModel();
+
+  @Input()
+  target:string;
+
+  @Output()
+  performFilter = new EventEmitter<FilterModel>();
+  
+  selectType(type: ICONTYPES){
+    this.filter.type = type;
+  }
+
+  clear(){
+    this.filter = new FilterModel();
+  }
+
+  search(){
+    this.performFilter.emit(this.filter);
+  }
+
+}

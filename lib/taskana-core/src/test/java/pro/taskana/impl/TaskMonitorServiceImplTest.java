@@ -1,0 +1,481 @@
+package pro.taskana.impl;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnitRunner;
+
+import pro.taskana.CustomField;
+import pro.taskana.TaskState;
+import pro.taskana.configuration.TaskanaEngineConfiguration;
+import pro.taskana.exceptions.InvalidArgumentException;
+import pro.taskana.mappings.TaskMonitorMapper;
+
+/**
+ * Unit Test for TaskMonitorServiceImpl.
+ */
+@RunWith(MockitoJUnitRunner.class)
+public class TaskMonitorServiceImplTest {
+
+    @InjectMocks
+    private TaskMonitorServiceImpl cut;
+
+    @Mock
+    private TaskanaEngineImpl taskanaEngineImplMock;
+
+    @Mock
+    private TaskanaEngineConfiguration taskanaEngineConfiguration;
+
+    @Mock
+    private TaskMonitorMapper taskMonitorMapperMock;
+
+    @Before
+    public void setup() {
+        MockitoAnnotations.initMocks(this);
+        Mockito.doNothing().when(taskanaEngineImplMock).openConnection();
+        Mockito.doNothing().when(taskanaEngineImplMock).returnConnection();
+        doReturn(taskanaEngineConfiguration).when(taskanaEngineImplMock).getConfiguration();
+        doReturn(true).when(taskanaEngineConfiguration).isGermanPublicHolidaysEnabled();
+        doReturn(null).when(taskanaEngineConfiguration).getCustomHolidays();
+    }
+
+    @Test
+    public void testGetTotalNumbersOfWorkbasketLevelReport() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+
+        List<MonitorQueryItem> expectedResult = new ArrayList<>();
+        MonitorQueryItem monitorQueryItem = new MonitorQueryItem();
+        monitorQueryItem.setKey("WBI:000000000000000000000000000000000001");
+        monitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(monitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock).getTaskCountOfWorkbaskets(workbasketIds, states,
+            categories, domains, customField, customFieldValues);
+
+        Report actualResult = cut.getWorkbasketLevelReport(workbasketIds, states, categories, domains, customField,
+            customFieldValues);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1)).getTaskCountOfWorkbaskets(any(), any(), any(),
+            any(), any(), any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        assertNotNull(actualResult);
+        assertEquals(
+            actualResult.getReportLines().get("WBI:000000000000000000000000000000000001").getTotalNumberOfTasks(), 1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetWorkbasketLevelReportWithReportLineItemDefinitions() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+        List<ReportLineItemDefinition> reportLineItemDefinitions = Arrays.asList(new ReportLineItemDefinition(),
+            new ReportLineItemDefinition());
+
+        List<MonitorQueryItem> expectedResult = new ArrayList<>();
+        MonitorQueryItem monitorQueryItem = new MonitorQueryItem();
+        monitorQueryItem.setKey("WBI:000000000000000000000000000000000001");
+        monitorQueryItem.setAgeInDays(0);
+        monitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(monitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock).getTaskCountOfWorkbaskets(workbasketIds, states,
+            categories, domains, customField, customFieldValues);
+
+        Report actualResult = cut.getWorkbasketLevelReport(workbasketIds, states, categories, domains, customField,
+            customFieldValues, reportLineItemDefinitions);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1)).getTaskCountOfWorkbaskets(any(), any(), any(), any(), any(), any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        assertNotNull(actualResult);
+        assertEquals(
+            actualResult.getReportLines().get("WBI:000000000000000000000000000000000001").getTotalNumberOfTasks(), 1);
+        assertEquals(
+            actualResult.getReportLines()
+                .get("WBI:000000000000000000000000000000000001")
+                .getLineItems()
+                .get(0)
+                .getNumberOfTasks(),
+            1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetTotalNumbersOfCatgoryReport() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+
+        List<MonitorQueryItem> expectedResult = new ArrayList<>();
+        MonitorQueryItem monitorQueryItem = new MonitorQueryItem();
+        monitorQueryItem.setKey("EXTERN");
+        monitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(monitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock).getTaskCountOfCategories(workbasketIds, states, categories,
+            domains, customField, customFieldValues);
+
+        Report actualResult = cut.getCategoryReport(workbasketIds, states, categories, domains, customField,
+            customFieldValues);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1)).getTaskCountOfCategories(any(), any(), any(), any(), any(), any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        assertNotNull(actualResult);
+        assertEquals(actualResult.getReportLines().get("EXTERN").getTotalNumberOfTasks(), 1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetCategoryReportWithReportLineItemDefinitions() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+        List<ReportLineItemDefinition> reportLineItemDefinitions = Arrays.asList(new ReportLineItemDefinition(),
+            new ReportLineItemDefinition());
+
+        List<MonitorQueryItem> expectedResult = new ArrayList<>();
+        MonitorQueryItem monitorQueryItem = new MonitorQueryItem();
+        monitorQueryItem.setKey("EXTERN");
+        monitorQueryItem.setAgeInDays(0);
+        monitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(monitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock).getTaskCountOfCategories(workbasketIds, states, categories,
+            domains, customField, customFieldValues);
+
+        Report actualResult = cut.getCategoryReport(workbasketIds, states, categories, domains, customField,
+            customFieldValues, reportLineItemDefinitions);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1)).getTaskCountOfCategories(any(), any(), any(), any(), any(), any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        assertNotNull(actualResult);
+        assertEquals(actualResult.getReportLines().get("EXTERN").getTotalNumberOfTasks(), 1);
+        assertEquals(actualResult.getReportLines().get("EXTERN").getLineItems().get(0).getNumberOfTasks(), 1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetTotalNumbersOfClassificationReport() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+
+        List<MonitorQueryItem> expectedResult = new ArrayList<>();
+        MonitorQueryItem monitorQueryItem = new MonitorQueryItem();
+        monitorQueryItem.setKey("CLI:000000000000000000000000000000000001");
+        monitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(monitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock).getTaskCountOfClassifications(workbasketIds, states,
+            categories, domains, customField, customFieldValues);
+
+        ClassificationReport actualResult = cut.getClassificationReport(workbasketIds, states, categories, domains,
+            customField, customFieldValues);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1)).getTaskCountOfClassifications(any(), any(), any(), any(), any(), any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        assertNotNull(actualResult);
+        assertEquals(
+            actualResult.getReportLines().get("CLI:000000000000000000000000000000000001").getTotalNumberOfTasks(), 1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetClassificationReportWithReportLineItemDefinitions() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+
+        List<ReportLineItemDefinition> reportLineItemDefinitions = Arrays.asList(new ReportLineItemDefinition(),
+            new ReportLineItemDefinition());
+
+        List<MonitorQueryItem> expectedResult = new ArrayList<>();
+        MonitorQueryItem monitorQueryItem = new MonitorQueryItem();
+        monitorQueryItem.setKey("CLI:000000000000000000000000000000000001");
+        monitorQueryItem.setAgeInDays(0);
+        monitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(monitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock).getTaskCountOfClassifications(workbasketIds, states,
+            categories, domains, customField, customFieldValues);
+
+        ClassificationReport actualResult = cut.getClassificationReport(workbasketIds, states, categories, domains,
+            customField, customFieldValues, reportLineItemDefinitions);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1)).getTaskCountOfClassifications(any(), any(), any(), any(), any(), any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        assertNotNull(actualResult);
+        assertEquals(
+            actualResult.getReportLines().get("CLI:000000000000000000000000000000000001").getTotalNumberOfTasks(), 1);
+        assertEquals(actualResult.getReportLines()
+            .get("CLI:000000000000000000000000000000000001")
+            .getLineItems()
+            .get(0)
+            .getNumberOfTasks(), 1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetTotalNumbersOfDetailedClassificationReport() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+
+        List<DetailedMonitorQueryItem> expectedResult = new ArrayList<>();
+        DetailedMonitorQueryItem detailedMonitorQueryItem = new DetailedMonitorQueryItem();
+        detailedMonitorQueryItem.setKey("CLI:000000000000000000000000000000000001");
+        detailedMonitorQueryItem.setAttachmentKey("CLI:000000000000000000000000000000000006");
+        detailedMonitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(detailedMonitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock).getTaskCountOfDetailedClassifications(workbasketIds,
+            states, categories, domains, customField, customFieldValues);
+
+        DetailedClassificationReport actualResult = cut.getDetailedClassificationReport(workbasketIds, states,
+            categories, domains, customField, customFieldValues);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1)).getTaskCountOfDetailedClassifications(any(), any(), any(), any(), any(),
+            any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        DetailedReportLine line = (DetailedReportLine) actualResult.getReportLines()
+            .get("CLI:000000000000000000000000000000000001");
+        assertNotNull(actualResult);
+        assertEquals(line.getTotalNumberOfTasks(), 1);
+        assertEquals(line.getDetailLines().get("CLI:000000000000000000000000000000000006").getTotalNumberOfTasks(), 1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetDetailedClassificationReportWithReportLineItemDefinitions() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+        List<ReportLineItemDefinition> reportLineItemDefinitions = Arrays.asList(new ReportLineItemDefinition(),
+            new ReportLineItemDefinition());
+
+        List<DetailedMonitorQueryItem> expectedResult = new ArrayList<>();
+        DetailedMonitorQueryItem detailedMonitorQueryItem = new DetailedMonitorQueryItem();
+        detailedMonitorQueryItem.setKey("CLI:000000000000000000000000000000000001");
+        detailedMonitorQueryItem.setAttachmentKey("CLI:000000000000000000000000000000000006");
+        detailedMonitorQueryItem.setAgeInDays(0);
+        detailedMonitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(detailedMonitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock).getTaskCountOfDetailedClassifications(workbasketIds,
+            states, categories, domains, customField, customFieldValues);
+
+        DetailedClassificationReport actualResult = cut.getDetailedClassificationReport(workbasketIds, states,
+            categories, domains, customField, customFieldValues, reportLineItemDefinitions);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1)).getTaskCountOfDetailedClassifications(any(), any(), any(), any(), any(),
+            any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        DetailedReportLine line = (DetailedReportLine) actualResult.getReportLines()
+            .get("CLI:000000000000000000000000000000000001");
+        assertNotNull(actualResult);
+        assertEquals(line.getTotalNumberOfTasks(), 1);
+        assertEquals(line.getDetailLines().get("CLI:000000000000000000000000000000000006").getTotalNumberOfTasks(), 1);
+        assertEquals(line.getLineItems().get(0).getNumberOfTasks(), 1);
+        assertEquals(line.getDetailLines()
+            .get("CLI:000000000000000000000000000000000006")
+            .getLineItems()
+            .get(0)
+            .getNumberOfTasks(), 1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+        assertEquals(actualResult.getSumLine().getLineItems().get(0).getNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetTotalNumbersOfCustomFieldValueReport() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+
+        List<MonitorQueryItem> expectedResult = new ArrayList<>();
+        MonitorQueryItem monitorQueryItem = new MonitorQueryItem();
+        monitorQueryItem.setKey("Geschaeftsstelle A");
+        monitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(monitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock)
+            .getTaskCountOfCustomFieldValues(workbasketIds, states, categories, domains, customField,
+                customFieldValues);
+
+        Report actualResult = cut.getCustomFieldValueReport(workbasketIds, states, categories, domains,
+            customField, customFieldValues);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1)).getTaskCountOfCustomFieldValues(any(), any(), any(), any(), any(),
+            any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        assertNotNull(actualResult);
+        assertEquals(actualResult.getReportLines().get("Geschaeftsstelle A").getTotalNumberOfTasks(), 1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetCustomFieldValueReportWithReportLineItemDefinitions() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+        List<ReportLineItemDefinition> reportLineItemDefinitions = Arrays.asList(new ReportLineItemDefinition(),
+            new ReportLineItemDefinition());
+
+        List<MonitorQueryItem> expectedResult = new ArrayList<>();
+        MonitorQueryItem monitorQueryItem = new MonitorQueryItem();
+        monitorQueryItem.setKey("Geschaeftsstelle A");
+        monitorQueryItem.setAgeInDays(0);
+        monitorQueryItem.setNumberOfTasks(1);
+        expectedResult.add(monitorQueryItem);
+        doReturn(expectedResult).when(taskMonitorMapperMock)
+            .getTaskCountOfCustomFieldValues(workbasketIds, states, categories, domains, customField,
+                customFieldValues);
+
+        Report actualResult = cut.getCustomFieldValueReport(workbasketIds, states, categories, domains,
+            customField, customFieldValues, reportLineItemDefinitions);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1))
+            .getTaskCountOfCustomFieldValues(any(), any(), any(), any(), any(), any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        assertNotNull(actualResult);
+        assertEquals(actualResult.getReportLines().get("Geschaeftsstelle A").getTotalNumberOfTasks(), 1);
+        assertEquals(actualResult.getReportLines().get("Geschaeftsstelle A").getLineItems().get(0).getNumberOfTasks(),
+            1);
+        assertEquals(actualResult.getSumLine().getTotalNumberOfTasks(), 1);
+    }
+
+    @Test
+    public void testGetTaskIdsOfCategoryReportLineItems() throws InvalidArgumentException {
+        List<String> workbasketIds = Arrays.asList("WBI:000000000000000000000000000000000001");
+        List<TaskState> states = Arrays.asList(TaskState.CLAIMED, TaskState.READY);
+        List<String> categories = Arrays.asList("EXTERN");
+        List<String> domains = Arrays.asList("DOMAIN_A");
+        CustomField customField = CustomField.CUSTOM_1;
+        List<String> customFieldValues = Arrays.asList("Geschaeftsstelle A");
+        List<ReportLineItemDefinition> reportLineItemDefinitions = Arrays.asList(new ReportLineItemDefinition(),
+            new ReportLineItemDefinition());
+
+        SelectedItem selectedItem = new SelectedItem();
+        selectedItem.setKey("EXTERN");
+        selectedItem.setLowerAgeLimit(1);
+        selectedItem.setUpperAgeLimit(5);
+        List<SelectedItem> selectedItems = Arrays.asList(selectedItem);
+
+        List<String> expectedResult = Arrays.asList("TKI:000000000000000000000000000000000001");
+        doReturn(expectedResult).when(taskMonitorMapperMock).getTaskIdsOfCategoriesBySelectedItems(workbasketIds,
+            states, categories, domains, customField, customFieldValues, selectedItems);
+
+        List<String> actualResult = cut.getTaskIdsOfCategoryReportLineItems(workbasketIds, states, categories, domains,
+            customField, customFieldValues, reportLineItemDefinitions, selectedItems);
+
+        verify(taskanaEngineImplMock, times(1)).openConnection();
+        verify(taskanaEngineImplMock, times(2)).getConfiguration();
+        verify(taskanaEngineConfiguration, times(1)).isGermanPublicHolidaysEnabled();
+        verify(taskanaEngineConfiguration, times(1)).getCustomHolidays();
+        verify(taskMonitorMapperMock, times(1))
+            .getTaskIdsOfCategoriesBySelectedItems(any(), any(), any(), any(), any(), any(), any());
+        verify(taskanaEngineImplMock, times(1)).returnConnection();
+        verifyNoMoreInteractions(taskanaEngineImplMock, taskMonitorMapperMock, taskanaEngineConfiguration);
+
+        assertNotNull(actualResult);
+        assertEquals(expectedResult, actualResult);
+    }
+}
