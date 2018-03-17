@@ -1,0 +1,2 @@
+
+mvn clean wildfly-swarm:run
