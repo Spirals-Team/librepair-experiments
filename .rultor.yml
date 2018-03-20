@@ -1,0 +1,72 @@
+docker:
+  image: yegor256/java8
+assets:
+  settings.xml: zerocracy/home#assets/takes/settings.xml
+  pubring.gpg: zerocracy/home#assets/pubring.gpg
+  secring.gpg: zerocracy/home#assets/secring.gpg
+  s3cfg: zerocracy/home#assets/s3cfg
+decrypt:
+  curl-appveyor.cfg: repo/curl-appveyor.cfg.asc
+env:
+  MAVEN_OPTS: -XX:MaxPermSize=256m -Xmx1g
+  JAVA_OPTS: -XX:MaxPermSize=256m -Xmx1g
+install: |
+  sudo locale-gen en_US en_US.UTF-8
+  sudo dpkg-reconfigure locales
+  export LC_ALL=en_US.UTF-8
+  export LANG=en_US.UTF-8
+  export LANGUAGE=en_US.UTF-8
+  sudo gem install --no-rdoc --no-ri pdd
+  sudo gem install --no-rdoc --no-ri est
+  sudo gem install --no-rdoc --no-ri xcop
+architect:
+- yegor256
+- davvd
+merge:
+  script: |
+    version=$(curl -K ../curl-appveyor.cfg --data "{accountName: 'yegor256', projectSlug: 'takes', pullRequestId: '${pull_id}'}" https://ci.appveyor.com/api/builds | jq -r '.version')
+    while true
+      do status=$(curl -K ../curl-appveyor.cfg https://ci.appveyor.com/api/projects/yegor256/takes/build/${version} | jq -r '.build.status')
+      if [ "${status}" == "null" ]; then exit 1; fi
+      if [ "${status}" == "success" ]; then break; fi
+      if [ "${status}" == "failed" ]; then echo "see https://ci.appveyor.com/project/yegor256/takes/build/${version}"; exit 1; fi
+      echo "waiting for AppVeyor build ${version}: ${status}"
+      sleep 5s
+    done
+    mvn clean install -Ptakes -Pqulice --errors --settings ../settings.xml
+    mvn clean site -Psite --errors --settings ../settings.xml
+    mvn clean
+    pdd --source=$(pwd) --verbose --file=/dev/null
+  commanders:
+  - carlosmiranda
+  - darkled
+  - dmzaytsev
+  - essobedo
+  - ggajos
+  - hdouss
+  - krzyk
+  - longtimeago
+  - mkordas
+  - pinaf
+deploy:
+  script: |
+    version=$(curl -K ../curl-appveyor.cfg --data "{accountName: 'yegor256', projectSlug: 'takes', branch: 'master'}" https://ci.appveyor.com/api/builds | jq -r '.version')
+    while true
+      do status=$(curl -K ../curl-appveyor.cfg https://ci.appveyor.com/api/projects/yegor256/takes/build/${version} | jq -r '.build.status')
+      if [ "${status}" == "null" ]; then exit 1; fi
+      if [ "${status}" == "success" ]; then break; fi
+      if [ "${status}" == "failed" ]; then echo "see https://ci.appveyor.com/project/yegor256/takes/build/${version}"; exit 1; fi
+      echo "waiting for AppVeyor build ${version}: ${status}"
+      sleep 5s
+    done
+    mvn clean deploy -Pqulice --errors --settings ../settings.xml
+    mvn clean
+    est --dir=./est --verbose --file=takes.xml --format=xml
+    s3cmd --no-progress put takes.xml --config=../s3cfg s3://est.teamed.io/takes.xml
+release:
+  script: |-
+    mvn versions:set "-DnewVersion=${tag}"
+    git commit -am "${tag}"
+    mvn clean deploy -Ptakes -Psonar -Psonatype -Pqulice -Dinvoker.skip --errors --settings ../settings.xml
+  commanders:
+  - yegor256
