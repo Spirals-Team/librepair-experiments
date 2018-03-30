@@ -1,0 +1,371 @@
+package org.opentosca.toscana.plugins.cloudfoundry;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.opentosca.toscana.core.BaseUnitTest;
+import org.opentosca.toscana.core.plugin.PluginFileAccess;
+import org.opentosca.toscana.core.plugin.lifecycle.AbstractLifecycle;
+import org.opentosca.toscana.core.testdata.TestCsars;
+import org.opentosca.toscana.core.transformation.TransformationContext;
+import org.opentosca.toscana.model.EffectiveModel;
+import org.opentosca.toscana.model.EffectiveModelFactory;
+import org.opentosca.toscana.model.node.MysqlDatabase;
+import org.opentosca.toscana.model.node.RootNode;
+import org.opentosca.toscana.model.node.WebApplication;
+import org.opentosca.toscana.plugins.cloudfoundry.application.Application;
+import org.opentosca.toscana.plugins.cloudfoundry.application.Provider;
+import org.opentosca.toscana.plugins.cloudfoundry.application.ServiceTypes;
+import org.opentosca.toscana.plugins.cloudfoundry.client.Connection;
+import org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator;
+
+import org.apache.commons.io.FileUtils;
+import org.json.JSONException;
+import org.junit.Before;
+import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeNotNull;
+import static org.opentosca.toscana.core.plugin.lifecycle.AbstractLifecycle.OUTPUT_DIR;
+import static org.opentosca.toscana.plugins.cloudfoundry.ServiceTest.CF_ENVIRONMENT_HOST;
+import static org.opentosca.toscana.plugins.cloudfoundry.ServiceTest.CF_ENVIRONMENT_ORGA;
+import static org.opentosca.toscana.plugins.cloudfoundry.ServiceTest.CF_ENVIRONMENT_PW;
+import static org.opentosca.toscana.plugins.cloudfoundry.ServiceTest.CF_ENVIRONMENT_SPACE;
+import static org.opentosca.toscana.plugins.cloudfoundry.ServiceTest.CF_ENVIRONMENT_USER;
+import static org.opentosca.toscana.plugins.cloudfoundry.application.ManifestAttributes.APPLICATIONS_SECTION;
+import static org.opentosca.toscana.plugins.cloudfoundry.application.ManifestAttributes.ENVIRONMENT;
+import static org.opentosca.toscana.plugins.cloudfoundry.application.ManifestAttributes.PATH;
+import static org.opentosca.toscana.plugins.cloudfoundry.application.ManifestAttributes.RANDOM_ROUTE;
+import static org.opentosca.toscana.plugins.cloudfoundry.application.ManifestAttributes.SERVICE;
+import static org.opentosca.toscana.plugins.cloudfoundry.application.buildpacks.BuildpackDetector.BUILDPACK_FILEPATH_PHP;
+import static org.opentosca.toscana.plugins.cloudfoundry.application.buildpacks.BuildpackDetector.BUILDPACK_OBJECT_PHP;
+import static org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator.APPLICATION_FOLDER;
+import static org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator.CLI_PATH_TO_MANIFEST;
+import static org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator.ENVIRONMENT_CONFIG_FILE;
+import static org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator.FILEPRAEFIX_DEPLOY;
+import static org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator.FILESUFFIX_DEPLOY;
+import static org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator.MANIFEST_NAME;
+import static org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator.MANIFEST_PATH;
+import static org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator.NAMEBLOCK;
+import static org.opentosca.toscana.plugins.cloudfoundry.filecreator.FileCreator.deploy_name;
+import static org.opentosca.toscana.plugins.scripts.BashScript.SHEBANG;
+import static org.opentosca.toscana.plugins.scripts.BashScript.SOURCE_UTIL_ALL;
+import static org.opentosca.toscana.plugins.scripts.BashScript.SUBCOMMAND_EXIT;
+import static org.opentosca.toscana.plugins.util.TestUtil.setUpMockTransformationContext;
+
+public class FileCreatorTest extends BaseUnitTest {
+    private FileCreator fileCreator;
+    private Application testApp;
+
+    private File targetDir;
+    private String appName;
+    private final String outputPath = AbstractLifecycle.SCRIPTS_DIR_PATH;
+    private final String buildPack1 = "mysql";
+    private final String buildPack2 = "mysqli";
+    private final String envVariable1 = "ENVTEST1";
+    private final String envVariable2 = "ENVTEST2";
+    private final String envValue = "TESTVALUE";
+    private final String service1 = "cleardb";
+    private final String service2 = "p-mysql";
+    private final String mainApplicationPath = "myapp/main/myphpapp.php";
+    private PluginFileAccess fileAccess;
+
+    private Connection connection;
+    private String envUser;
+    private String envPw;
+    private String envHost;
+    private String envOrga;
+    private String envSpace;
+
+    private TransformationContext context;
+
+    @Before
+    public void setUp() throws IOException {
+        EffectiveModel lamp = new EffectiveModelFactory().create(TestCsars.VALID_LAMP_NO_INPUT_TEMPLATE, logMock());
+        this.context = setUpMockTransformationContext(lamp);
+        appName = "testApp";
+        testApp = new Application("testApp", 1, context);
+        testApp.setName(appName);
+        File sourceDir = new File(tmpdir, "sourceDir");
+        targetDir = new File(tmpdir, "targetDir");
+        sourceDir.mkdir();
+        targetDir.mkdir();
+        fileAccess = new PluginFileAccess(sourceDir, targetDir, logMock());
+        List<Application> applications = new ArrayList<>();
+        applications.add(testApp);
+        fileCreator = new FileCreator(fileAccess, applications, context);
+    }
+
+    @Test
+    public void createFiles() throws Exception {
+        testApp.setPathToApplication(mainApplicationPath);
+        testApp.addService(service1, ServiceTypes.MYSQL);
+        testApp.setPathToApplication(mainApplicationPath);
+        fileCreator.createFiles();
+        File targetFile = new File(targetDir, MANIFEST_PATH);
+        File deployFile = new File(targetDir, outputPath + FILEPRAEFIX_DEPLOY + deploy_name + FILESUFFIX_DEPLOY);
+        File buildPackAdditions = new File(targetDir, "/" + APPLICATION_FOLDER + testApp.getApplicationNumber() + "/" + BUILDPACK_FILEPATH_PHP);
+        File environmentConfig = new File(targetDir, outputPath + appName + ENVIRONMENT_CONFIG_FILE);
+        File readme = new File(targetDir, OUTPUT_DIR + "README.txt");
+
+        assertTrue(targetFile.exists());
+        assertTrue(deployFile.exists());
+        assertTrue(buildPackAdditions.exists());
+        assertTrue(environmentConfig.exists());
+        assertTrue(readme.exists());
+    }
+
+    @Test
+    public void contentManifest() throws Exception {
+        testApp.setPathToApplication(mainApplicationPath);
+        String expectedPath = String.format("../%s%s", APPLICATION_FOLDER, testApp.getApplicationNumber());
+        fileCreator.createFiles();
+        File targetFile = new File(targetDir, MANIFEST_PATH);
+        String manifestContent = FileUtils.readFileToString(targetFile);
+        String expectedManifestContent = String.format("---\n%s:\n- %s: %s\n  %s: %s\n  %s: %s\n",
+            APPLICATIONS_SECTION.getName(), NAMEBLOCK, appName, PATH.getName(), expectedPath, RANDOM_ROUTE.getName(), "true");
+
+        assertEquals(expectedManifestContent, manifestContent);
+    }
+
+    @Test
+    public void environmentVariables() throws Exception {
+        testApp.addEnvironmentVariables(envVariable1);
+        testApp.addEnvironmentVariables(envVariable2, envValue);
+        fileCreator.createFiles();
+        File targetFile = new File(targetDir, MANIFEST_PATH);
+        String manifestContent = FileUtils.readFileToString(targetFile);
+        String expectedManifestContent = String.format("---\n%s:\n- %s: %s\n  %s: ../%s%s\n  %s: %s\n  %s:\n    %s: %s\n    %s: %s\n",
+            APPLICATIONS_SECTION.getName(), NAMEBLOCK, appName,
+            PATH.getName(), APPLICATION_FOLDER, testApp.getApplicationNumber(),
+            RANDOM_ROUTE.getName(), "true",
+            ENVIRONMENT.getName(),
+            envVariable1, "TODO",
+            envVariable2, envValue);
+
+        assertEquals(expectedManifestContent, manifestContent);
+    }
+
+    @Test
+    public void contentDeploy() throws Exception {
+        fileCreator.createFiles();
+        File targetFile = new File(targetDir, outputPath + FILEPRAEFIX_DEPLOY + deploy_name + FILESUFFIX_DEPLOY);
+        String manifestContent = FileUtils.readFileToString(targetFile);
+        String expectedDeployContent =
+            "check \"cf\"\n" +
+                "cf push " + appName + CLI_PATH_TO_MANIFEST + MANIFEST_NAME + " --no-start\n" +
+                "cf start testApp\n";
+        assertTrue(manifestContent.contains(expectedDeployContent));
+    }
+
+    @Test
+    public void buildpackAdditons() throws Exception {
+        String expectedPath = "/" + APPLICATION_FOLDER + testApp.getApplicationNumber() + "/" + BUILDPACK_FILEPATH_PHP;
+        testApp.setPathToApplication(mainApplicationPath);
+        testApp.addService(service1, ServiceTypes.MYSQL);
+        String expectedBuildpackcontent = "{\n" +
+            "    \"" + BUILDPACK_OBJECT_PHP + "\": [\n" +
+            "        \"" + buildPack1 + "\",\n" +
+            "        \"" + buildPack2 + "\",\n" +
+            "        \"" + "bz2" + "\",\n" +
+            "        \"" + "zlib" + "\",\n" +
+            "        \"" + "curl" + "\",\n" +
+            "        \"" + "mcrypt" + "\"\n" +
+            "    ]\n" +
+            "}";
+
+        fileCreator.createFiles();
+        File targetFile = new File(targetDir, expectedPath);
+        String buildpackContent = FileUtils.readFileToString(targetFile);
+        assertEquals(expectedBuildpackcontent, buildpackContent);
+    }
+
+    @Test
+    public void services() throws Exception {
+        testApp.addService(service1, ServiceTypes.MYSQL);
+        testApp.addService(service2, ServiceTypes.MYSQL);
+        fileCreator.createFiles();
+        File targetFile = new File(targetDir, MANIFEST_PATH);
+        String manifestContent = FileUtils.readFileToString(targetFile);
+        String expectedManifestContent = String.format("---\n%s:\n- %s: %s\n  %s: ../%s%s\n  %s: %s\n  %s:\n    - %s\n    - %s\n",
+            APPLICATIONS_SECTION.getName(), NAMEBLOCK, appName,
+            PATH.getName(), APPLICATION_FOLDER, testApp.getApplicationNumber(),
+            RANDOM_ROUTE.getName(), "true",
+            SERVICE.getName(),
+            service2,
+            service1);
+
+        assertEquals(expectedManifestContent, manifestContent);
+    }
+
+    @Test
+    public void checkMultipleApplicationsManifest() throws Exception {
+        Application app1 = new Application("app1", 1, context);
+        Application app2 = new Application("app2", 2, context);
+
+        app1.addService(service1, ServiceTypes.MYSQL);
+        app2.addService(service2, ServiceTypes.MYSQL);
+        app1.addAttribute("attr1", "value1");
+        app1.addAttribute("attr2", "value2");
+        app2.addAttribute("attr1", "value1");
+        app2.addAttribute("attr2", "value2");
+        app1.addEnvironmentVariables("EnvTest", "5");
+
+        List<Application> applications = new ArrayList<>();
+        applications.add(app1);
+        applications.add(app2);
+
+        FileCreator fileCreatorMult = new FileCreator(fileAccess, applications, context);
+        fileCreatorMult.createFiles();
+        File targetFile = new File(targetDir, MANIFEST_PATH);
+        String manifestContent = FileUtils.readFileToString(targetFile);
+        String expectedContent = "---\n" +
+            "applications:\n" +
+            "- name: app1\n" +
+            "  path: ../app1\n" +
+            "  attr2: value2\n" +
+            "  attr1: value1\n" +
+            "  random-route: true\n" +
+            "  env:\n" +
+            "    EnvTest: 5\n" +
+            "  services:\n" +
+            "    - cleardb\n" +
+            "- name: app2\n" +
+            "  path: ../app2\n" +
+            "  attr2: value2\n" +
+            "  attr1: value1\n" +
+            "  random-route: true\n" +
+            "  services:\n" +
+            "    - p-mysql\n";
+
+        assertEquals(expectedContent, manifestContent);
+    }
+
+    @Test
+    public void checkMultipleApplicationsDeployScript() throws Exception {
+        Application app1 = new Application("app1", 1, context);
+        Application app2 = new Application("app2", 2, context);
+
+        app1.addService(service1, ServiceTypes.MYSQL);
+        app2.addService(service2, ServiceTypes.MYSQL);
+
+        List<Application> applications = new ArrayList<>();
+        applications.add(app1);
+        applications.add(app2);
+
+        FileCreator fileCreatorMult = new FileCreator(fileAccess, applications, context);
+        fileCreatorMult.createFiles();
+        File targetFile = new File(targetDir, outputPath + FILEPRAEFIX_DEPLOY + deploy_name + FILESUFFIX_DEPLOY);
+        String deployscriptContent = FileUtils.readFileToString(targetFile);
+        String expectedContent = SHEBANG + "\n" +
+            SOURCE_UTIL_ALL + "\n" +
+            SUBCOMMAND_EXIT + "\n" +
+            "echo \"$(tput bold)--------TOSCAna Cloud Foundry deployment--------$(tput sgr0)\"\n" +
+            "echo \"This script will deploy your application to the Cloud Foundry instance\"\n" +
+            "echo \"We use the CloudFoundry CLI and show you the output as well\"\n" +
+            "echo \"Is there no CF CLI installed we have to stop, we will check it\"\n" +
+            "echo \"We will deploy the application to the connected provider\"\n" +
+            "echo \"If you use a Cloud Foundry service with your application, you are able to change the service or plan in this deploy script manually\"\n" +
+            "echo \"We tried to choose a suitable service with a free plan\"\n" +
+            "echo \"You could check all possible services in the file$(tput bold) output/all_services.txt $(tput sgr0)\"\n" +
+            "echo \"$(tput bold)--------TOSCAna Cloud Foundry deployment$(tput sgr0)--------\n" +
+            "\"\n" +
+            "check \"cf\"\n" +
+            "cf create-service {plan} {service} cleardb\n" +
+            "cf create-service {plan} {service} p-mysql\n" +
+            "cf push app1 -f ../manifest.yml --no-start\n" +
+            "cf push app2 -f ../manifest.yml --no-start\n" +
+            "cf start app1\n" +
+            "cf start app2\n" +
+            "echo \"\n" +
+            "\n" +
+            "$(tput bold)The deployment of your application is finished. You see the urls of your apps here:$(tput sgr0)\n" +
+            "\"\n" +
+            "cf routes\n";
+
+        assertEquals(expectedContent, deployscriptContent);
+    }
+
+    @Test
+    public void checkMultipleApplicationServices() throws IOException, JSONException {
+        String serviceName = "mydb";
+        envUser = System.getenv(CF_ENVIRONMENT_USER);
+        envPw = System.getenv(CF_ENVIRONMENT_PW);
+        envHost = System.getenv(CF_ENVIRONMENT_HOST);
+        envOrga = System.getenv(CF_ENVIRONMENT_ORGA);
+        envSpace = System.getenv(CF_ENVIRONMENT_SPACE);
+
+        connection = createConnection();
+        Application app = new Application("app", 1, context);
+        Application secondApp = new Application("appSec", 2, context);
+        app.setProvider(new Provider(Provider
+            .CloudFoundryProviderType.PIVOTAL));
+        app.setConnection(connection);
+
+        secondApp.setProvider(new Provider(Provider
+            .CloudFoundryProviderType.PIVOTAL));
+        secondApp.setConnection(connection);
+
+        app.addService(service1, ServiceTypes.MYSQL);
+        secondApp.addService(serviceName, ServiceTypes.MYSQL);
+
+        EffectiveModel lamp = new EffectiveModelFactory().create(TestCsars.VALID_LAMP_NO_INPUT_TEMPLATE, logMock());
+        RootNode webApplicationNode = null;
+        RootNode mysqlDatabaseNode = null;
+        for (RootNode node : lamp.getNodes()) {
+            if (node instanceof WebApplication) {
+                webApplicationNode = node;
+            }
+            if (node instanceof MysqlDatabase) {
+                mysqlDatabaseNode = node;
+            }
+        }
+
+        app.addConfigMysql(service1, "my_db/configSql.sql");
+        app.addExecuteFile("my_app/configure_myphpapp.sh", webApplicationNode);
+
+        secondApp.addConfigMysql(serviceName, "database/config.sql");
+        secondApp.addExecuteFile("database/dbinit.sh", mysqlDatabaseNode);
+
+        List<Application> applications = new ArrayList<>();
+        applications.add(app);
+        applications.add(secondApp);
+        FileCreator fileCreator = new FileCreator(fileAccess, applications, context);
+        fileCreator.createFiles();
+
+        File targetFile = new File(targetDir, outputPath + FILEPRAEFIX_DEPLOY + deploy_name + FILESUFFIX_DEPLOY);
+        String deployscriptContent = FileUtils.readFileToString(targetFile);
+        String expectedContent =
+            "check python\n" +
+                "python replace.py ../../app1/my_app/configure_myphpapp.sh /var/www/html/ /home/vcap/app/htdocs/\n" +
+                "python replace.py ../../app2/database/dbinit.sh /var/www/html/ /home/vcap/app/htdocs/\n" +
+                "cf push app -f ../manifest.yml --no-start\n" +
+                "cf push appSec -f ../manifest.yml --no-start\n" +
+                "python readCredentials.py app cleardb mysql cleardb\n" +
+                "python configureMysql.py ../../app1/my_db/configSql.sql\n" +
+                "cf start app\n" +
+                "python executeCommand.py app /home/vcap/app/htdocs/my_app/configure_myphpapp.sh\n" +
+                "python readCredentials.py appSec cleardb mysql mydb\n" +
+                "python configureMysql.py ../../app2/database/config.sql\n" +
+                "cf start appSec\n" +
+                "python executeCommand.py appSec /home/vcap/app/database/dbinit.sh\n";
+
+        assertTrue(deployscriptContent.contains(expectedContent));
+        //assertEquals(expectedContent, deployscriptContent);
+
+    }
+
+    private Connection createConnection() {
+        assumeNotNull(envUser, envHost, envOrga, envPw, envSpace);
+        connection = new Connection(envUser,
+            envPw,
+            envHost,
+            envOrga,
+            envSpace, context);
+
+        return connection;
+    }
+}
