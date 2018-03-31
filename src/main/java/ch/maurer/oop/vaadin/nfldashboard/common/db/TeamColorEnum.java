@@ -1,0 +1,82 @@
+package ch.maurer.oop.vaadin.nfldashboard.common.db;
+
+public enum TeamColorEnum {
+
+    ARI_PRIMARY("#AE0E3C"),
+    ATL_PRIMARY("#C72742"),
+    BAL_PRIMARY("#2D328A"),
+    BUF_PRIMARY("#0A5694"),
+    CAR_PRIMARY("#199BD8"),
+    CHI_PRIMARY("#171B3B"),
+    CIN_PRIMARY("#ED4F2F"),
+    CLE_PRIMARY("#3E230F"),
+    DAL_PRIMARY("#A0A6AB"),
+    DEN_PRIMARY("#043167"),
+    DET_PRIMARY("#898B8C"),
+    GB_PRIMARY("#2A433A"),
+    HOU_PRIMARY("#01143E"),
+    IND_PRIMARY("#063F77"),
+    JAX_PRIMARY("#D7A237"),
+    KC_PRIMARY("#E21E3C"),
+    LAC_PRIMARY("#137FC0"),
+    LA_PRIMARY("#022043"),
+    MIA_PRIMARY("#165877"),
+    MIN_PRIMARY("#4F3182"),
+    NE_PRIMARY("#022650"),
+    NO_PRIMARY("#000000"),
+    NYG_PRIMARY("#053E79"),
+    NYJ_PRIMARY("#2A433A"),
+    OAK_PRIMARY("#A5ABAF"),
+    PHI_PRIMARY("#064C53"),
+    PIT_PRIMARY("#202020"),
+    SF_PRIMARY("#C7A979"),
+    SEA_PRIMARY("#032A59"),
+    TB_PRIMARY("#636161"),
+    TEN_PRIMARY("#4596CF"),
+    WAS_PRIMARY("#591516"),
+
+    ARI_SECONDARY("#000000"),
+    ATL_SECONDARY("#000000"),
+    BAL_SECONDARY("#000000"),
+    BUF_SECONDARY("#C60C30"),
+    CAR_SECONDARY("#000000"),
+    CHI_SECONDARY("#C83803"),
+    CIN_SECONDARY("#000000"),
+    CLE_SECONDARY("#FB4F14"),
+    DAL_SECONDARY("#002244"),
+    DEN_SECONDARY("#FB4F14"),
+    DET_SECONDARY("#005A8B"),
+    GB_SECONDARY("#FFB612"),
+    HOU_SECONDARY("#A71930"),
+    IND_SECONDARY("#A5ACAF"),
+    JAX_SECONDARY("#006778"),
+    KC_SECONDARY("#E31837"),
+    LAC_SECONDARY("#FFB612"),
+    LA_SECONDARY("#B3995D"),
+    MIA_SECONDARY("#F58220"),
+    MIN_SECONDARY("#FFC62F"),
+    NE_SECONDARY("#C60C30"),
+    NO_SECONDARY("#9F8958"),
+    NYG_SECONDARY("#A71930"),
+    NYJ_SECONDARY("#FFFFFF"),
+    OAK_SECONDARY("#000000"),
+    PHI_SECONDARY("#A5ACAF"),
+    PIT_SECONDARY("#FFB612"),
+    SF_SECONDARY("#AA0000"),
+    SEA_SECONDARY("#69BE28"),
+    TB_SECONDARY("#D50A0A"),
+    TEN_SECONDARY("#002244"),
+    WAS_SECONDARY("#FFB612"),
+
+    DEFAULT_COLOR("#FFFFFF");
+
+    private final String colorValueHex;
+
+    TeamColorEnum(String colorValueHex) {
+        this.colorValueHex = colorValueHex;
+    }
+
+    public String getColorValueHex() {
+        return colorValueHex;
+    }
+}
