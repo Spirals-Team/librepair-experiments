@@ -1,0 +1,95 @@
+@startuml
+skinparam dpi 100
+skinparam shadowing false
+
+[*] --> init
+init --> lobby
+init --> handleLeave
+
+state "wait for players" as lobby {
+      state "wait for message" as waitForMsg
+      state "add player to lobby" as addPlayerToLobby :\
+      send **LobbyStateMessage** to joined player\nbroadcast **PlayerMovedToLobbyInfoMessage**
+      state "add player to table" as addPlayerToTable : broadcast **PlayerMovedToTableInfoMessage**
+      state "set players ready state" as setPlayerReadyState : broadcast **PlayerChangedStateMessage**
+
+      [*] --> waitForMsg
+      waitForMsg -left-> addPlayerToLobby : **JoinLobbyMessage**\nreceived
+      waitForMsg --> addPlayerToTable : **JoinTableMessage**\nreceived
+      waitForMsg --> setPlayerReadyState : **ChangeStateMessage**\nreceived
+      addPlayerToLobby --> waitForMsg
+      addPlayerToTable --> waitForMsg
+      setPlayerReadyState --> waitForMsg
+      setPlayerReadyState --> [*] : all players ready
+}
+
+lobby --> play
+
+state "play" as play {
+      state "start game" as startGame : broadcast **GameStartedInfoMessage**
+      state "hand out cards" as handOut : \
+      broadcast **NewRoundInfoMessage**\nsend **HandOutCardsMessage** to each player
+      state "wait for gamemode" as waitMode : send **ChooseGameModeMessage** to player
+      state "wait for card" as waitForCard
+      state "set gamemode" as setGameMode : broadcast **ChosenGameModeInfoMessage**
+      state "check gamemode" as checkGameMode
+      state "request card" as requestCard : broadcast **NewTurnInfoMessage**
+      state "check card" as checkCard
+      state "accept card" as acceptCard : broadcast **TurnInfoMessage**
+      state "discard card" as discardCard : send **WrongCardMessage** to player
+      state "handle wiis" as handleWiis : broadcast **WiisInfoMessage**
+      state "round over" as roundOver : broadcast **EndOfRoundInfoMessage**
+
+      [*] --> startGame
+      startGame --> handOut
+      handOut --> waitMode
+      waitMode --> checkGameMode : **ChosenGameModeMessage**\nreceived
+      checkGameMode --> waitMode : schieben
+      checkGameMode --> setGameMode
+      setGameMode --> requestCard
+      requestCard --> waitForCard
+      waitForCard --> checkCard : **PlaceCardMessage**\nreceived
+      waitForCard --> handleWiis : first round and\n**ChosenWiisMessage**\nreceived
+      handleWiis --> waitForCard
+      checkCard --> acceptCard : card valid
+      acceptCard --> requestCard
+      checkCard --> discardCard : card invalid
+      discardCard --> waitForCard
+      acceptCard --> roundOver : all cards played
+      roundOver --> handOut
+      roundOver --> [*] : score of one team >= 1000
+
+      state "wait for player to join" as waitForJoin2
+      state "add player to lobby" as addPlayerToLobby2 : \
+      send **GameStateMessage** to player\nbroadcast **PlayerMovedToLobbyInfoMessage**
+
+      [*] --> waitForJoin2
+      waitForJoin2 --> addPlayerToLobby2 : **JoinLobbyMessage**\nreceived
+      addPlayerToLobby2 --> waitForJoin2
+}
+
+state "game over" as gameOver : \
+broadcast **PlayerMovedToLobbyInfoMessage** x 4\n\
+set ready state of all players to false
+
+play --> gameOver
+gameOver -up-> init
+
+state "handle leaving players" as handleLeave {
+      state "remove player from lobby" as removePlayerFromLobby : broadcast **PlayerLeftLobbyInfoMessage**
+      state "remove player from table" as removePlayerFromTable : broadcast **PlayerMovedToLobbyInfoMessage**
+      state "wait for player to leave" as waitForLeave
+      state "round over" as roundOver2 : broadcast **EndOfRoundInfoMessage**
+
+      [*] --> waitForLeave
+      waitForLeave -right-> removePlayerFromLobby : **LeaveLobbyMessage**\nreceived
+      removePlayerFromLobby --> waitForLeave
+      waitForLeave --> removePlayerFromTable : **LeaveTableMessage**\nreceived
+      removePlayerFromTable --> waitForLeave
+      removePlayerFromTable --> roundOver2 : game ongoing
+      roundOver2 --> [*]
+}
+
+handleLeave --> gameOver
+
+@enduml
