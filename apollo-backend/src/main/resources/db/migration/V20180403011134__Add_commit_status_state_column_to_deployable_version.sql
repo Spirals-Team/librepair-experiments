@@ -1,0 +1,1 @@
+ALTER TABLE deployable_version ADD commit_status_state varchar(1000) NULL;
