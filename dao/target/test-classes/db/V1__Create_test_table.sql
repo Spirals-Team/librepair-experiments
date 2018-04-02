@@ -1,0 +1,7 @@
+CREATE TABLE user_test (
+  userId SERIAL PRIMARY KEY,
+  userName VARCHAR(64) NOT NULL UNIQUE,
+  userPassword VARCHAR(64) NOT NULL,
+  userEmail VARCHAR(128) NOT NULL UNIQUE,
+  userLevel SMALLINT DEFAULT 0
+)
