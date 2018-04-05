@@ -1,0 +1,32 @@
+insert into EMPLOYEE (ID, NAME, TYPE) values (1, 'Operator 1', 'OPERATOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (2, 'Operator 2', 'OPERATOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (3, 'Operator 3', 'OPERATOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (4, 'Operator 4', 'OPERATOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (5, 'Operator 5', 'OPERATOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (6, 'Operator 6', 'OPERATOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (7, 'Operator 7', 'OPERATOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (8, 'Operator 8', 'OPERATOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (9, 'Operator 9', 'OPERATOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (10, 'Operator 10', 'OPERATOR');
+
+insert into EMPLOYEE (ID, NAME, TYPE) values (11, 'Supervisor 1', 'SUPERVISOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (12, 'Supervisor 2', 'SUPERVISOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (13, 'Supervisor 3', 'SUPERVISOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (14, 'Supervisor 4', 'SUPERVISOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (15, 'Supervisor 5', 'SUPERVISOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (16, 'Supervisor 6', 'SUPERVISOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (17, 'Supervisor 7', 'SUPERVISOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (18, 'Supervisor 8', 'SUPERVISOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (19, 'Supervisor 9', 'SUPERVISOR');
+insert into EMPLOYEE (ID, NAME, TYPE) values (20, 'Supervisor 10', 'SUPERVISOR');
+
+insert into EMPLOYEE (ID, NAME, TYPE) values (21, 'Manager 1', 'MANAGER');
+insert into EMPLOYEE (ID, NAME, TYPE) values (22, 'Manager 2', 'MANAGER');
+insert into EMPLOYEE (ID, NAME, TYPE) values (23, 'Manager 3', 'MANAGER');
+insert into EMPLOYEE (ID, NAME, TYPE) values (24, 'Manager 4', 'MANAGER');
+insert into EMPLOYEE (ID, NAME, TYPE) values (25, 'Manager 5', 'MANAGER');
+insert into EMPLOYEE (ID, NAME, TYPE) values (26, 'Manager 6', 'MANAGER');
+insert into EMPLOYEE (ID, NAME, TYPE) values (27, 'Manager 7', 'MANAGER');
+insert into EMPLOYEE (ID, NAME, TYPE) values (28, 'Manager 8', 'MANAGER');
+insert into EMPLOYEE (ID, NAME, TYPE) values (29, 'Manager 9', 'MANAGER');
+insert into EMPLOYEE (ID, NAME, TYPE) values (30, 'Manager 10', 'MANAGER');
