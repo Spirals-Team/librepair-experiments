@@ -1,0 +1,30 @@
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(0, 'patrick.walsh@revature.com', 'Patrick', 'Walsh', 'Lead Trainer', 'ROLE_VP');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(1, 'pjw6193@hotmail.com', 'Dan', 'Pickles', 'Lead Trainer', 'ROLE_VP');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(2, 'ravi.singh@revature.com', 'Ravi', 'Singh', 'Vice President of Technology', 'ROLE_VP');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(3, 'karan.dhirar@revature.com', 'Karan', 'Dhirar', 'Technology Manager', 'ROLE_VP');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(4, 'brian.connolly@revature.com', 'Brian', 'Connolly', 'Senior Java Developer', 'ROLE_VP');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(5, 'genesis.bonds@revature.com', 'Genesis', 'Bonds', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(6, 'ankit.garg@revature.com', 'Ankit', 'Garg', 'Lead Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(7, 'ryan.lessley@revature.com', 'Ryan', 'Lessley', 'Senior Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(8, 'steven.kelsey@revature.com', 'Steven', 'Kelsey', 'Senior Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(9, 'emily.higgins@revature.com', 'Emily', 'Higgins', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(10, 'taylor.kemper@revature.com', 'Taylor', 'Kemper', 'Senior Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(11, 'richard.orr@revature.com', 'Richard', 'Orr', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(12, 'nickolas.jurczak@revature.com', 'Nickolas', 'Jurczak', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(13, 'august.duet@revature.com', 'August', 'Duet', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(14, 'yuvarajd@revature.com', 'Yuvaraj', 'Damodaran', 'Lead Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(15, 'fred.belotte@revature.com', 'Fred', 'Belotte', 'Senior Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(16, 'mehrab.rahman@revature.com', 'Mehrab', 'Rahman', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(17, 'peter.alagna@revature.com', 'Peter', 'Alagna', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(18, 'stanleym@revature.com', 'Stanley', 'Medikonda', 'Staging Manager', 'ROLE_STAGING');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(19, 'grawyne@gmail.com', 'Gray', 'Wynne', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(20, 'owallace@mailinator.com', 'Orson', 'Wallace', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(21, 'slevinson@mailinator.com', 'Shelby', 'Levinson', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(22, 'wpayne@mailinator.com', 'Walter', 'Payne', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(23, 'nchurch@mailinator.com', 'Natalie', 'Church', 'Trainer', 'ROLE_TRAINER');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(24, 'aradcliff@mailinator.com', 'Archer', 'Radcliff', 'Trainer', 'ROLE_TRAINER');
+--------------------------------------------------------------------------------------------------------------------MAKE PANEL ROLE
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(25, 'rajeshy@revature.com', 'Rajesh', 'Yamunachari', 'Senior Technical Manager', 'ROLE_PANEL');
+INSERT INTO TRAINER(TRAINER_ID, EMAIL, FIRST_NAME, LAST_NAME, TITLE, TIER) VALUES(26, 'raghavan@revature.com', 'Raghavan', 'Swaminathan', 'Senior Technical Manager', 'ROLE_PANEL');
+-------------TRAINER END-------------
+COMMIT;
