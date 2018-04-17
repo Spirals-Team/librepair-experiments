@@ -1,0 +1,9 @@
+INSERT INTO aero.users (usr_id, usr_name, usr_password, usr_email, usr_level) VALUES (1, 'Danil', 'danil@mail.com', 'danil', 0);
+INSERT INTO aero.users (usr_id, usr_name, usr_password, usr_email, usr_level) VALUES (2, 'Marat', 'marat@mail.com', 'marat', 0);
+INSERT INTO aero.users (usr_id, usr_name, usr_password, usr_email, usr_level) VALUES (3, 'Adel', 'adel@mail.com', 'adel', 0);
+INSERT INTO aero.users (usr_id, usr_name, usr_password, usr_email, usr_level) VALUES (4, 'Vadim', 'vadim@mail.com', 'vadim', 0);
+INSERT INTO aero.users (usr_id, usr_name, usr_password, usr_email, usr_level) VALUES (5, 'Egor', 'egor@mail.com', 'egor', 0);
+INSERT INTO aero.users (usr_id, usr_name, usr_password, usr_email, usr_level) VALUES (6, 'Kirill', 'kirill@mail.com', 'kirill', 0);
+INSERT INTO aero.users (usr_id, usr_name, usr_password, usr_email, usr_level) VALUES (7, 'Ilnaz', 'ilnaz@mail.com', 'ilnaz', 0);
+INSERT INTO aero.users (usr_id, usr_name, usr_password, usr_email, usr_level) VALUES (8, 'Alex', 'alex@mail.com', 'alex', 0);
+INSERT INTO aero.users (usr_id, usr_name, usr_password, usr_email, usr_level) VALUES (9, 'Gulnaz', 'gulnaz@mail.com', 'gulnaz', 0);
