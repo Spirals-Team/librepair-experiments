@@ -1,0 +1,49 @@
+language: java
+sudo: required
+install: true
+
+jdk:
+  - oraclejdk8
+
+dist: trusty
+
+notifications:
+  email: false
+
+services:
+- docker
+- postgresql
+
+before_install:
+- docker pull sath89/oracle-xe-11g
+- docker build -t sql2o-oracle ./extensions/oracle
+- docker run -d --rm -p 1521:1521 --name=sql2o-oracle-xe-11g sql2o-oracle
+
+before_script:
+- psql -c "CREATE USER test WITH PASSWORD 'testtest';" -U postgres
+- psql -c "CREATE DATABASE testdb WITH OWNER test;" -U postgres
+
+install:
+- mvn clean install -DskipTests=true -Dmaven.javadoc.skip=true
+- mvn compile -DskipTests=true -Dmaven.javadoc.skip=true -B -V -pl core,extensions,extensions/db2,extensions/postgres
+
+script:
+- mvn test -B -V -pl core,extensions,extensions/postgres,extensions/db2
+- mvn clean cobertura:cobertura -Dcobertura.report.format=xml
+- mvn sonar:sonar \
+  -Dsonar.organization=ivyxjc-github \
+  -Dsonar.host.url=http://sonarcloud.io \
+  -Dsonar.login=d6f1b8ce29420baed75ec878dd78ecb047b2cf2e
+
+#cache:
+#  directories:
+#    - '$HOME/.m2/repository'
+#    - '$HOME/.sonar/cache'
+
+after_script:
+- docker kill sql2o-oracle-xe-11g
+
+after_success:
+- bash <(curl -s https://codecov.io/bash)
+
+
