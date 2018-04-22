@@ -6,5 +6,5 @@ CREATE TABLE IF NOT EXISTS dummy(
 );
 
 INSERT INTO dummy (socialGroup, num, name) VALUES
-('100', 0, 'CURTIS'),
-('100', 1, 'BOBBY');
+('100', 0, 'AGNES'),
+('100', 1, 'ARTHUR');
