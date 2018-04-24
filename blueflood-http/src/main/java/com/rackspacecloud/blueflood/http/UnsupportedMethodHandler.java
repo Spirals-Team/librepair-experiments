@@ -1,0 +1,53 @@
+/*
+ * Copyright 2013 Rackspace
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+package com.rackspacecloud.blueflood.http;
+
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.http.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Set;
+
+public class UnsupportedMethodHandler implements HttpRequestHandler {
+
+    private final RouteMatcher routeMatcher;
+    private final FullHttpResponse response;
+
+    private static final Logger log = LoggerFactory.getLogger(UnsupportedMethodHandler.class);
+
+    public UnsupportedMethodHandler(RouteMatcher router) {
+        this.routeMatcher = router;
+        this.response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.METHOD_NOT_ALLOWED);
+    }
+
+    @Override
+    public void handle(ChannelHandlerContext context, FullHttpRequest request) {
+        final Set<String> supportedMethods = routeMatcher.getSupportedMethodsForURL(request.getUri());
+
+        StringBuilder result = new StringBuilder();
+        for(String string : supportedMethods) {
+            result.append(string);
+            result.append(",");
+        }
+        final String methodsAllowed =  result.length() > 0 ? result.substring(0, result.length() - 1): "";
+        response.headers().add("Allow", methodsAllowed);
+        log.error(String.format("UnsupportedMethodHandler: URL is [%s]", request.getUri()));
+        log.error(String.format("UnsupportedMethodHandler: method is [%s]", request.getMethod()));
+        HttpResponder.getInstance().respond(context, request, response);
+    }
+}
