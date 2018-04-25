@@ -1,0 +1,7 @@
+CREATE TABLE aula (
+  id INTEGER NOT NULL AUTO_INCREMENT,
+  unidade_id INTEGER,
+  nome VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id),
+  FOREIGN KEY(unidade_id) REFERENCES unidade(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
