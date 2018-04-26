@@ -1,0 +1,211 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.facebook.presto.operator;
+
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.TypeUtils;
+import com.facebook.presto.sql.planner.plan.PlanNodeId;
+import com.google.common.collect.ImmutableList;
+
+import java.util.List;
+
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.util.Objects.requireNonNull;
+
+public class DynamicFilterSourceOperator
+        implements Operator
+{
+    public static class DynamicFilterSourceOperatorFactory
+            implements OperatorFactory
+    {
+        private final int operatorId;
+        private final PlanNodeId planNodeId;
+        private final List<Type> types;
+        private final List<Integer> filterChannels;
+        private final List<String> filterDynamicFilterNames;
+        private final String sourceId;
+        private final int expectedDrivers;
+
+        private boolean closed;
+        private int driverId;
+
+        public DynamicFilterSourceOperatorFactory(
+                int operatorId,
+                PlanNodeId planNodeId,
+                List<Type> types,
+                List<Integer> filterChannels,
+                List<String> filterDynamicFilterNames,
+                String sourceId,
+                int expectedDrivers)
+        {
+            this.operatorId = operatorId;
+            this.planNodeId = requireNonNull(planNodeId, "planNodeId is null");
+            this.types = ImmutableList.copyOf(types);
+            this.filterChannels = ImmutableList.copyOf(filterChannels);
+            this.filterDynamicFilterNames = ImmutableList.copyOf(filterDynamicFilterNames);
+            this.sourceId = requireNonNull(sourceId, "sourceId is null");
+            this.expectedDrivers = expectedDrivers;
+        }
+
+        @Override
+        public List<Type> getTypes()
+        {
+            return types;
+        }
+
+        @Override
+        public Operator createOperator(DriverContext driverContext)
+        {
+            checkState(!closed, "Factory is already closed");
+            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, planNodeId, DynamicFilterSourceOperator.class.getSimpleName());
+
+            return new DynamicFilterSourceOperator(operatorContext,
+                    types,
+                    filterChannels,
+                    filterDynamicFilterNames);
+        }
+
+        @Override
+        public void noMoreOperators()
+        {
+            checkState(!closed);
+            closed = true;
+        }
+
+        @Override
+        public OperatorFactory duplicate()
+        {
+            throw new UnsupportedOperationException("Parallel dynamic filter build can not be duplicated");
+        }
+    }
+
+    private static final int DEFAULT_POSITIONS_LIMIT = 1000;
+    private static final long DEFAULT_SIZE_LIMIT = 100000L;
+
+    private final OperatorContext operatorContext;
+    private final List<Type> types;
+    private final List<Integer> filterChannels;
+    private final List<String> filterDynamicFilterNames;
+    private final int positionsLimit;
+
+    private Page page;
+    private boolean finishing;
+    private long positionCount;
+    private long valueSize;
+    private List<ImmutableList.Builder<Object>> valuesBuilder;
+    private boolean[] nullsAllowed;
+
+    public DynamicFilterSourceOperator(
+            OperatorContext operatorContext,
+            List<Type> types,
+            List<Integer> filterChannels,
+            List<String> filterDynamicFilterNames)
+    {
+        this(operatorContext, types, filterChannels, filterDynamicFilterNames, DEFAULT_POSITIONS_LIMIT);
+    }
+
+    public DynamicFilterSourceOperator(
+            OperatorContext operatorContext,
+            List<Type> types,
+            List<Integer> filterChannels,
+            List<String> filterDynamicFilterNames,
+            int positionsLimit)
+    {
+        this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
+        this.types = ImmutableList.copyOf(types);
+        this.filterChannels = ImmutableList.copyOf(filterChannels);
+        this.filterDynamicFilterNames = ImmutableList.copyOf(filterDynamicFilterNames);
+        this.valuesBuilder = filterChannels.stream().map(channel -> ImmutableList.builder()).collect(toImmutableList());
+        this.nullsAllowed = new boolean[filterChannels.size()];
+
+        checkArgument(positionsLimit > 0, "positionsLimit must be greater than zero");
+        this.positionsLimit = positionsLimit;
+    }
+
+    @Override
+    public OperatorContext getOperatorContext()
+    {
+        return operatorContext;
+    }
+
+    @Override
+    public List<Type> getTypes()
+    {
+        return types;
+    }
+
+    @Override
+    public void finish()
+    {
+        if (finishing) {
+            return;
+        }
+        finishing = true;
+        //TODO: Add sendTupleDomain() to send tuple domain to coordinator
+    }
+
+    @Override
+    public boolean isFinished()
+    {
+        return finishing && page == null;
+    }
+
+    @Override
+    public boolean needsInput()
+    {
+        return !finishing;
+    }
+
+    @Override
+    public void addInput(Page page)
+    {
+        this.page = page;
+        processPage();
+    }
+
+    @Override
+    public Page getOutput()
+    {
+        Page page = this.page;
+        this.page = null;
+        return page;
+    }
+
+    private void processPage()
+    {
+        positionCount += page.getPositionCount();
+
+        // we don't want to filter if there're too many values
+        if (positionCount > positionsLimit || valueSize > DEFAULT_SIZE_LIMIT) {
+            return;
+        }
+
+        for (int channelIndex = 0; channelIndex < filterChannels.size(); channelIndex++) {
+            Integer channel = filterChannels.get(channelIndex);
+            for (int position = 0; position < page.getBlock(channel).getPositionCount(); position++) {
+                Object value = TypeUtils.readNativeValue(types.get(channel), page.getBlock(channel), position);
+                if (value == null) {
+                    nullsAllowed[channelIndex] = true;
+                }
+                else {
+                    valuesBuilder.get(channelIndex).add(value);
+                    valueSize += value.toString().getBytes().length;
+                }
+            }
+        }
+    }
+}
