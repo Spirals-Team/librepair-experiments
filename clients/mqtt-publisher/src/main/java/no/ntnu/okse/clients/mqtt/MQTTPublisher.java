@@ -1,0 +1,31 @@
+package no.ntnu.okse.clients.mqtt;
+
+import com.beust.jcommander.Parameter;
+import no.ntnu.okse.clients.PublishClient;
+import no.ntnu.okse.clients.TestClient;
+
+public class MQTTPublisher extends PublishClient {
+
+  @Parameter(names = {"--port", "-p"}, description = "Port")
+  public final int port = 1883;
+  @Parameter(names = {"--qos", "-q"}, description = "Quality of Service")
+  public final int qos = 0;
+
+  private MQTTClient client;
+
+  public static void main(String[] args) {
+    launch(new MQTTPublisher(), args);
+  }
+
+  protected void createClient() {
+    client = new MQTTClient(host, port, "MQTTPublisher");
+  }
+
+  public void publish(String topic, String message) {
+    client.publish(topic, message, qos);
+  }
+
+  protected TestClient getClient() {
+    return client;
+  }
+}
