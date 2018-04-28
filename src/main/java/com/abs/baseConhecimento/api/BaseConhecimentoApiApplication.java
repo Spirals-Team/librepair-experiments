@@ -1,0 +1,12 @@
+package com.abs.baseConhecimento.api;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class BaseConhecimentoApiApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(BaseConhecimentoApiApplication.class, args);
+	}
+}
