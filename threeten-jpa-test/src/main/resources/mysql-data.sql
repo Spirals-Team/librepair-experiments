@@ -1,0 +1,26 @@
+DELETE FROM JAVA_TIME_42;
+INSERT INTO JAVA_TIME_42 (
+    ID,
+    DATE_COLUMN,
+    TIME_COLUMN,
+    TIMESTAMP_COLUMN)
+VALUES(
+    1,
+    DATE '1988-12-25',
+    TIME '15:09:02.123456',
+    '1980-01-01 23:03:20.123456');
+INSERT INTO JAVA_TIME_42 (
+    ID,
+    DATE_COLUMN,
+    TIME_COLUMN,
+    TIMESTAMP_COLUMN)
+VALUES(
+    2,
+    DATE '2016-03-27',
+    TIME '02:55:00.123456',
+--    CONVERT_TZ('2016-03-27 02:55:00.123456', @@session.time_zone, @@global.time_zone)
+--    CONVERT_TZ('2016-03-27 02:55:00.123456', @@global.time_zone, @@session.time_zone)
+--    CONCAT('2016-03-27, ' ', 02:55:00.123456')
+    '2016-03-27 02:55:00.123456'
+    );
+
