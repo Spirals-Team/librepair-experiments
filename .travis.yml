@@ -1,0 +1,138 @@
+dist: trusty
+sudo: required
+language: java
+
+env:
+  global:
+    - secure: "mmLyX+VjQpLA7LQ79iIrBPjw/vnJC4Loda7BOyIy+H2seQJAwqDczG09aToTOkM/mmENAb08xv6JJ2PbsZqSZ3tTMXNxTOh4dGtR9DnTjtDzD4O6IHEDVOSbFndIsSEsQw4LXJWbbJwRJwF5Q+UPl+VLV+HyXbYOAmPAD96hXTA="
+    - secure: "NynQI56H74dDi6sK4wxPawnLoLsrzADKmD8Jl7w3yQnYTfVU7zP07KeJKoIWhFaYB3GCKyG2qdeM1I5DOeim183c0h51WcQTVvHX3o1D3DyrdfuhqKTBXmAUXJObp/jUoABD2KKejSKZj+mkzqutITMUUbHDiMu5PD6WXEuCYT8="
+    - PG_VERSION="9.6"
+
+services:
+    - postgresql
+
+addons:
+   # postgresql: "9.5"
+   # fix voor OpenJDK bufferoverflow, zie:
+   #  - https://docs.travis-ci.com/user/hostname
+   #  - https://github.com/travis-ci/travis-ci/issues/5227
+   #  - https://github.com/travis-ci/travis-ci/issues/5669
+   # hostname: travis-brmo
+   # hosts: travis-brmo
+
+jdk:
+  - oraclejdk8
+  - openjdk8
+  - oraclejdk9
+
+matrix:
+  fast_finish: true
+  allow_failures:
+    - jdk: oraclejdk9
+  include:
+  - jdk: oraclejdk8
+    # EOL September 2018
+    env: PG_VERSION="9.3"
+
+cache:
+  directories:
+  - $HOME/.m2
+
+# before_cache:
+
+before_install:
+  # installeer een up-2-date Maven versie
+  # NB          sinds 2017-12-12 is maven 3.5.2 de default op trusty
+  # - wget https://www-eu.apache.org/dist/maven/maven-3/3.5.2/binaries/apache-maven-3.5.2-bin.zip
+  # - unzip -qq apache-maven-3.5.2-bin.zip
+  # - export M2_HOME=$PWD/apache-maven-3.5.2
+  # - export PATH=$M2_HOME/bin:$PATH
+  - mvn -v
+  # zie ook: https://docs.travis-ci.com/user/database-setup/
+  - sudo service postgresql stop
+  - sudo -E apt-get -qq update &>> ~/apt-get-update.log
+  - sudo apt-get -qq install postgis-2.3 gdal-bin graphviz
+  - sudo service postgresql stop
+  - sudo service postgresql start $PG_VERSION
+  - export PAGER=cat
+  - psql --version
+  - psql -U postgres -d postgres -c 'SELECT Version();'
+  - psql -U postgres -a -c "CREATE ROLE staging LOGIN PASSWORD 'staging' SUPERUSER CREATEDB;"
+  - psql -U postgres -a -c "CREATE ROLE rsgb LOGIN PASSWORD 'rsgb' SUPERUSER CREATEDB;"
+  - psql -U postgres -a -c "CREATE ROLE rsgbbgt LOGIN PASSWORD 'rsgbbgt' SUPERUSER CREATEDB;"
+  - psql -U postgres -a -c "CREATE ROLE topnl LOGIN PASSWORD 'topnl' SUPERUSER CREATEDB;"
+  - psql -U postgres -c 'create database staging;'
+  - psql -U postgres -c 'create database rsgb;'
+  - psql -U postgres -d rsgb -c 'create extension postgis;'
+  - psql -U postgres -d rsgb -c 'SELECT PostGIS_full_version();'
+  - psql -U postgres -c 'create database rsgbbgt;'
+  - psql -U postgres -d rsgbbgt -c 'create extension postgis;'
+  - psql -U postgres -d rsgbbgt -c 'SELECT PostGIS_full_version();'
+  - psql -U postgres -c 'create database topnl;'
+  - psql -U postgres -d topnl -c 'create extension postgis;'
+  - psql -U postgres -d topnl -c 'SELECT PostGIS_full_version();'
+  - unset _JAVA_OPTIONS
+  - ulimit -a
+  - free -h
+
+install:
+  # install all dependencies + artifacts and create any DB scripts without any testing
+  - travis_wait 20 mvn install -Dmaven.test.skip=true -Dtest.onlyITs= -B -V -fae -Ppostgresql
+
+before_script:
+  # dit dient na afloop van de 'install' gedaan te worden omdat (een deel van) de sql gegenereerd wordt
+  # set up staging db
+  - ls -l ./brmo-persistence/db/
+  - psql -U postgres -d staging -f ./brmo-persistence/db/create-brmo-persistence-postgresql.sql
+  - psql -U postgres -d staging -f ./brmo-persistence/db/01_create_indexes.sql
+  - psql -U postgres -d staging -f ./brmo-persistence/db/02_insert_default_user.sql
+  - projectversion=$(grep "<version>.*<.version>" -m1 pom.xml | sed -e "s/^.*<version/<version/" | cut -f2 -d">"| cut -f1 -d"<")
+  - sed -i s/\${project.version}/$projectversion/g ./brmo-persistence/db/05_create_brmo_metadata_postgresql.sql
+  - psql -U postgres -d staging -f ./brmo-persistence/db/05_create_brmo_metadata_postgresql.sql
+  # set up rsgb tabellen
+  - ls -l ./datamodel/generated_scripts/
+  - travis_wait psql -U postgres -w -q -d rsgb -f ./datamodel/generated_scripts/datamodel_postgresql.sql
+  # geom van gemeente en wijk hebben we niet echt nodig, mogen evt. uit
+  - travis_wait psql -U postgres -w -d rsgb -f ./datamodel/utility_scripts/postgresql/111a_update_gemeente_geom.sql
+  - travis_wait psql -U postgres -w -d rsgb -f ./datamodel/utility_scripts/postgresql/113a_update_wijk_geom.sql
+  # set up rsgbbgt tabellen
+  - psql -U postgres -w -q -d rsgbbgt -f ./bgt-gml-loader/target/generated-resources/ddl/postgresql/create_rsgb_bgt.sql
+  # set up topnl tabellen
+  - ls -l ./topparser/src/main/resources/nl/b3p/topnl/database
+  - psql -U postgres -w -q -d topnl -f ./topparser/src/main/resources/nl/b3p/topnl/database/postgres.sql
+  # ophalen topnl test data
+  - sh ".jenkins/data-prepare-topnl.sh"
+
+script:
+  # run unit tests voor alle modules
+  - travis_wait 20 mvn --settings .travis/settings.xml -T4.2C -e test -B -Ppostgresql,standard-with-extra-repos -pl '!brmo-dist' -Dtest.onlyITs=false 
+  # run integratie tests voor veschillende modules, per module
+  # run integratie tests voor bgt-gml-loader module
+  - mvn -e verify -B -Ppostgresql -Dtest.onlyITs=true -pl 'bgt-gml-loader'
+  # run integratie tests voor brmo-loader module
+  - travis_wait 30 mvn -e verify -B -Ppostgresql -Dtest.onlyITs=true -pl 'brmo-loader'
+  # run integratie tests voor brmo-service module
+  - mvn -e verify -B -Ppostgresql -Dtest.onlyITs=true -pl 'brmo-service'
+  # run integratie tests voor brmo-soap module
+  - mvn -e verify -B -Ppostgresql -Dtest.onlyITs=true -pl 'brmo-soap'
+  # run integratie tests voor brmo-stufbg204 module
+  - mvn -e verify -B -Ppostgresql -Dtest.onlyITs=true -pl 'brmo-stufbg204'
+  # run integratie tests voor brmo-commandline module
+  - mvn -e verify -B -Ppostgresql -Dtest.onlyITs=true -pl 'brmo-commandline'
+
+after_failure:
+  - echo "Hmm... dat is vervelend!"
+
+after_success:
+  # test of de javadoc compliant is met java-8 strict checks
+  - if [ "$TRAVIS_JDK_VERSION" == oraclejdk8 ] && [ "$PG_VERSION" == "9.6" ]; then
+         travis_wait 30 mvn javadoc:javadoc;
+         travis_wait 30 mvn javadoc:test-javadoc;
+    fi
+
+after_script:
+  # deploy maven site van master branch als test succes
+  - if [ "$TRAVIS_JDK_VERSION" == oraclejdk8 ] && [ "$TRAVIS_PULL_REQUEST" == "false" ] && [ "$TRAVIS_BRANCH" == "master" ] && [ "$TRAVIS_TEST_RESULT" == 0 ]; then
+         travis_wait 50 mvn -B -e -T1 site site:stage --settings .travis/settings.xml;
+         mvn scm-publish:publish-scm --settings .travis/settings.xml;
+    fi
