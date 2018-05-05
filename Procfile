@@ -1,0 +1,1 @@
+web: java -DhttpServer.listenPort=$PORT -jar irunninglog-main/target/irunninglog.jar
