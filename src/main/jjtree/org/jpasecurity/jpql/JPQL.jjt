@@ -1,0 +1,1314 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *  
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *  
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.   
+ */
+/**
+ *  An JP QL grammar parser.
+ *  It is based on the parser of OpenJPA by Patrick Linskey and Marc Prud"hommeaux
+ *  @author Arne Limburg
+ */
+options {
+    JDK_VERSION = "1.7";
+    NODE_PREFIX = "Jpql";
+    NODE_PACKAGE = "org.jpasecurity.jpql.parser";
+    VISITOR = true;
+    MULTI = true;
+    NODE_DEFAULT_VOID = true;
+    JAVA_UNICODE_ESCAPE = true;
+    JAVA_TEMPLATE_TYPE = "modern";
+    UNICODE_INPUT = true;
+    STATIC = false;
+    NODE_USES_PARSER = true;
+    LOOKAHEAD = 1;
+
+    // debugging variables
+    //DEBUG_PARSER = true;             // simple parser debug
+    //DEBUG_TOKEN_MANAGER = true;      // more verbose token manager debug
+    //DEBUG_LOOKAHEAD = true;          // more verbose lookahead debug
+    SANITY_CHECK = true;                // check for left-recursion, etc (must always be true)
+
+    FORCE_LA_CHECK = true;
+}
+
+PARSER_BEGIN(JpqlParser)
+package org.jpasecurity.jpql.parser;
+
+import java.io.*;
+
+public class JpqlParser {
+
+    public JpqlParser() throws ParseException {
+        this("");
+    }
+
+    public JpqlStatement parseQuery(String query) throws ParseException {
+        ReInit(query);
+        return jpqlStatement();
+    }
+
+    public JpqlAccessRule parseRule(String accessRule) throws ParseException {
+        ReInit(accessRule);
+        return jpqlAccessRule();
+    }
+
+    public JpqlWhere parseWhereClause(String whereClause) throws ParseException {
+        ReInit(whereClause);
+        return whereClause();
+    }
+}
+PARSER_END(JpqlParser)
+
+SKIP: {
+    " "
+    | "\n"
+    | "\r"
+    | "\t"
+}
+
+TOKEN[IGNORE_CASE]: {
+    <COMMA: ",">
+
+    | <DOT: ".">
+
+    | <EQ: "=">
+    | <NE: "<>">
+    | <NEQ: "!=">
+    | <GT: ">">
+    | <GE: ">=">
+    | <LT: "<">
+    | <LE: "<=">
+
+    | <PLUS: "+">
+    | <MINUS: "-">
+
+    | <TIMES: "*">
+    | <DIV: "/">
+
+    | <NEW: "NEW">
+
+    | <ALL: "ALL">
+    | <ANY: "ANY">
+    | <EXISTS: "EXISTS">
+    | <SOME: "SOME">
+    | <EMPTY: "EMPTY">
+
+    | <ASC: "ASC">
+    | <DESC: "DESC">
+    | <ORDER: "ORDER">
+    | <BY: "BY">
+
+    | <IS: "IS">
+    | <MEMBER: "MEMBER">
+    | <OF: "OF">
+    | <LIKE: "LIKE">
+    | <ESCAPE: "ESCAPE">
+    | <BETWEEN: "BETWEEN">
+
+    | <NULL: "NULL">
+    | <KEY: "KEY">
+    | <VALUE: "VALUE">
+    | <TYPE: "TYPE">
+    | <ENTRY: "ENTRY">
+}
+
+TOKEN[IGNORE_CASE]: { /* aggregates */
+    <AVG: "AVG">
+    | <MIN: "MIN">
+    | <MAX: "MAX">
+    | <SUM: "SUM">
+    | <COUNT: "COUNT">
+}
+
+TOKEN[IGNORE_CASE]: { /* boolean arithmetic */
+    <OR: "OR">
+    | <AND: "AND">
+    | <NOT: "NOT">
+}
+
+TOKEN: { /* query hints */
+    <QUERY_OPTIMIZE_NOCACHE: "QUERY_OPTIMIZE_NOCACHE">
+    | <IS_ACCESSIBLE_NOCACHE: "IS_ACCESSIBLE_NOCACHE">
+    | <IS_ACCESSIBLE_NODB: "IS_ACCESSIBLE_NODB">
+}
+
+TOKEN[IGNORE_CASE]: { /* functions returning strings */
+    <CONCAT: "CONCAT">
+    | <SUBSTRING: "SUBSTRING">
+    | <TRIM: "TRIM">
+    | <LOWER: "LOWER">
+    | <UPPER: "UPPER">
+}
+
+TOKEN[IGNORE_CASE]: { /* trim specification */
+    <LEADING: "LEADING">
+    | <TRAILING: "TRAILING">
+    | <BOTH: "BOTH">
+}
+
+TOKEN[IGNORE_CASE]: { /* functions returning numerics */
+    <LENGTH: "LENGTH">
+    | <LOCATE: "LOCATE">
+    | <ABS: "ABS">
+    | <SQRT: "SQRT">
+    | <MOD: "MOD">
+    | <SIZE: "SIZE">
+    | <INDEX: "INDEX">
+}
+
+TOKEN[IGNORE_CASE]: { /* functions returning datetime */
+    <CURRENT_DATE: "CURRENT_DATE">
+    | <CURRENT_TIME: "CURRENT_TIME">
+    | <CURRENT_TIMESTAMP: "CURRENT_TIMESTAMP">
+}
+
+TOKEN[IGNORE_CASE]: { /* type of query */
+    <SELECT: "SELECT">
+    | <DISTINCT: "DISTINCT">
+    | <FROM: "FROM">
+
+    | <UPDATE: "UPDATE">
+    | <DELETE: "DELETE">
+
+    | <WHERE: "WHERE">
+    | <GROUP: "GROUP">
+    | <HAVING: "HAVING">
+    | <TREAT: "TREAT">
+
+    | <AS: "AS">
+    | <LEFT: "LEFT">
+    | <OUTER: "OUTER">
+    | <INNER: "INNER">
+    | <JOIN: "JOIN">
+    | <FETCH: "FETCH">
+    | <IN: "IN">
+    | <SET: "SET">
+
+    | <OBJECT: "OBJECT">
+
+    | <CASE: "CASE">
+    | <WHEN: "WHEN">
+    | <ELSE: "ELSE">
+    | <THEN: "THEN">
+    | <END: "END">
+    | <NULLIF: "NULLIF">
+    | <COALESCE: "COALESCE">
+    | <CLASS: "CLASS">
+
+    | <GRANT: "GRANT">
+    | <CREATE: "CREATE">
+    | <READ: "READ">
+    | <ACCESS: "ACCESS">
+    | <TO: "TO">
+
+    | <ON: "ON">
+    | <WITH: "WITH">
+}
+
+/* inspired by the Java 1.0.2 specification */
+/* ### should we limit this to the length that is valid in java? */
+TOKEN: /* literals */
+{
+    <LEFT_PAREN: "(">
+    | <RIGHT_PAREN: ")">
+    | <LEFT_BRACKET: "[">
+    | <RIGHT_BRACKET: "]">
+    | <LEFT_BRACE: "{">
+    | <RIGHT_BRACE: "}">
+
+    | < #LONG_SUFFIX: ("l"|"L") >
+    | < #FLOAT_SUFFIX: ("f"|"F") >
+    | < #DOUBLE_SUFFIX: ("d"|"d") >
+    | < #BIG_DECIMAL_SUFFIX: ("bd"|"BD") >
+    | < #SINGLE_DIGIT: ["0"-"9"] >
+    | < #SINGLE_NON_ZERO_DIGIT: ["1"-"9"] >
+    | < #OCTAL_DIGIT: ["0"-"7"] >
+    | < #SPECIAL_CHARS: ("\\" ("b" | "t" | "n" | "f" | "r" | "\\" | "\"" |"\\" )) >
+    | < #UNICODE_ESCAPE: ("\\" "u" <HEX_DIGIT> <HEX_DIGIT> <HEX_DIGIT> <HEX_DIGIT>) >
+    | < #OCTAL_ESCAPE:
+        "\\" (
+            ["0"-"3"] <OCTAL_DIGIT> <OCTAL_DIGIT>
+            | <OCTAL_DIGIT> <OCTAL_DIGIT>
+            | <OCTAL_DIGIT>
+        )
+      >
+    | < #ESCAPE_SEQUENCE: (<SPECIAL_CHARS> | <UNICODE_ESCAPE> | <OCTAL_ESCAPE>) >
+    | < #INTEGER_NUMBER: ("0" | ["1"-"9"] (<SINGLE_DIGIT>)*) >
+    | < #HEX_DIGIT: "0" ("x"|"X") (["a"-"f"] | ["A"-"F"]) >
+    | < #EXPONENT: ["e","E"] (["+","-"])? (<SINGLE_DIGIT>)+ >
+    | < INTEGER_LITERAL: <INTEGER_NUMBER> >
+    | < LONG_LITERAL: <INTEGER_NUMBER> <LONG_SUFFIX> >
+    | < BIG_INTEGER_LITERAL: <INTEGER_NUMBER> ("bi"|"BI") >
+    | < HEX_LITERAL: "0" ("x"|"X") (<HEX_DIGIT>)+ (<LONG_SUFFIX>)? >
+    | < OCTAL_LITERAL: "0" (<OCTAL_DIGIT>)+  >
+    | < FLOATING_POINT_NUMBER:
+        (<SINGLE_DIGIT>)+ <DOT> (<SINGLE_DIGIT>)* (<EXPONENT>)?
+        | <DOT> (<SINGLE_DIGIT>)+ (<EXPONENT>)?
+        | (<SINGLE_DIGIT>)+ (<EXPONENT>)?
+        | (<SINGLE_DIGIT>)+ (<EXPONENT>)
+        | (<SINGLE_DIGIT>)+
+      >
+    | < FLOAT_LITERAL: <FLOATING_POINT_NUMBER> (<FLOAT_SUFFIX>)? >
+    | < DOUBLE_LITERAL: <FLOATING_POINT_NUMBER> <DOUBLE_SUFFIX> >
+    | < BIG_DECIMAL_LITERAL: <FLOATING_POINT_NUMBER> <BIG_DECIMAL_SUFFIX> >
+    | < CHARACTER_LITERAL: "'" ( <ESCAPE_SEQUENCE> | (~["'","\\","\n","\r"]) ) "'" >
+    | < STRING_LITERAL: (
+        "\"" (<ESCAPE_SEQUENCE> | ("\"\"" | ~["\""]))* "\""
+        | "'" (<ESCAPE_SEQUENCE> | (~["'"]) )* "'"
+        )
+      >
+    | < DATE_LITERAL: "{d \"" (["0"-"9", "-"])* "\"}" >
+    | < TIME_LITERAL: "{t \"" (["0"-"9", ":"])* "\"}" >
+    | < TIMESTAMP_LITERAL: "{ts \"" (["0"-"9", "-", ":", " ", "."])* "\"}" >
+}
+
+TOKEN[IGNORE_CASE]: { /* boolean literals can be case-insensitive */
+    < BOOLEAN_LITERAL: "TRUE" | "FALSE" >
+}
+
+/* From the Java 1.0.2 specification */
+TOKEN : /* IDENTIFIERS */
+{
+    < IDENTIFIER: <LETTER> (<LETTER>|<DIGIT>)* >
+    | < #LETTER: [
+        "\u0024",             // $
+        "\u0041"-"\u005a",     // A-Z
+        "\u005f",             // _
+        "\u0061"-"\u007a",     // a-z
+        "\u00c0"-"\u00d6",
+        "\u00d8"-"\u00f6",
+        "\u00f8"-"\u00ff",
+        "\u0100"-"\u1fff",
+        "\u3040"-"\u318f",
+        "\u3300"-"\u337f",
+        "\u3400"-"\u3d2d",
+        "\u4e00"-"\u9fff",
+        "\uf900"-"\ufaff"
+            ] >
+    | < #DIGIT: [
+       "\u0030"-"\u0039",     // 0-9
+       "\u0660"-"\u0669",
+       "\u06f0"-"\u06f9",
+       "\u0966"-"\u096f",
+       "\u09e6"-"\u09ef",
+       "\u0a66"-"\u0a6f",
+       "\u0ae6"-"\u0aef",
+       "\u0b66"-"\u0b6f",
+       "\u0be7"-"\u0bef",
+       "\u0c66"-"\u0c6f",
+       "\u0ce6"-"\u0cef",
+       "\u0d66"-"\u0d6f",
+       "\u0e50"-"\u0e59",
+       "\u0ed0"-"\u0ed9",
+       "\u1040"-"\u1049"
+            ] >
+}
+
+JpqlStatement jpqlStatement() #Statement: {} {
+    (selectStatement() | updateStatement() | deleteStatement()) <EOF>
+    {
+        return jjtThis;
+    }
+}
+
+JpqlAccessRule jpqlAccessRule() #AccessRule: {} {
+    <GRANT> [<CREATE> #Create][<READ> #Read][<UPDATE> #Update][<DELETE> #Delete] <ACCESS> toClause() [whereClause()]
+    {
+        return jjtThis;
+    }
+}
+
+void selectStatement() #Select: {} {
+    selectClause() fromClause() [whereClause()] [groupByClause()] [havingClause()] [orderByClause()]
+}
+
+void updateStatement() #Update: {} {
+    updateClause() [whereClause()]
+}
+
+void deleteStatement() #Delete: {} {
+    deleteClause() [whereClause()]
+}
+
+void deleteClause() #From: {} {
+    <DELETE> <FROM> rangeVariableDeclaration()
+}
+
+void fromClause() #From: {} {
+    <FROM> identificationVariableDeclaration() (
+        <COMMA> (
+            LOOKAHEAD(identificationVariableDeclaration()) identificationVariableDeclaration()
+            | LOOKAHEAD(collectionMemberDeclaration()) collectionMemberDeclaration()
+        )
+    )*
+}
+
+void toClause() #From: {} {
+    <TO> rangeVariableDeclaration() #IdentificationVariableDeclaration
+}
+
+void identificationVariableDeclaration() #IdentificationVariableDeclaration: {} {
+    rangeVariableDeclaration() (LOOKAHEAD(fetchJoin()) fetchJoin() | LOOKAHEAD(join()) join())*
+}
+
+void rangeVariableDeclaration() #FromItem: {} {
+    entityName() [LOOKAHEAD(1) <AS>] [LOOKAHEAD(identificationVariable()) identificationVariable()]
+}
+
+void fetchJoin() #FetchJoin: {} {
+    joinSpec() <FETCH> joinAssociationPathExpression()
+}
+
+void join() #Join: {} {
+    joinSpec() joinAssociationPathExpression() [LOOKAHEAD(1) <AS>] [LOOKAHEAD(1) identificationVariable()] [LOOKAHEAD(1) with()]
+}
+
+void joinSpec() #JoinSpec: { Token t = null; } {
+    { jjtThis.setValue(""); }
+    (t=<LEFT> { jjtThis.setValue(jjtThis.getValue() + t.image); } (t=<OUTER> { jjtThis.setValue(jjtThis.getValue() + t.image); })? | t=<INNER> { jjtThis.setValue(jjtThis.getValue() + t.image); })? t=<JOIN> { jjtThis.setValue(jjtThis.getValue() + t.image); }
+}
+
+void with() #With: {} {
+    (<ON> | <WITH>) conditionalExpression()
+}
+
+void joinAssociationPathExpression() #CollectionValuedPath: {} {
+    // a join path is any dot-separated path expression starting with a
+    // non-reserved word containing at minimum two path components
+    identificationVariable() (<DOT> objectField())+
+    | LOOKAHEAD(treatJoin()) treatJoin() [LOOKAHEAD(1) <AS>] identificationVariable() #TreatJoin
+    //
+    // join_collection_valued_path_expression
+    // | joinCollectionValuedPathExpression
+    // | TREAT(join_collection_valued_path_expression AS subtype)
+    // | TREAT(join_single_valued_path_expression AS subtype)
+}
+
+void collectionMemberDeclaration() #InCollection: {} {
+    // synonymous with "INNER JOIN path AS identifier" (InnerJoin)
+    <IN> <LEFT_PAREN> joinAssociationPathExpression() <RIGHT_PAREN>
+    [LOOKAHEAD(1) <AS>] identificationVariable() [LOOKAHEAD(1) with()]
+}
+
+void qualifiedPathExpression() #Path: {} {
+    ( key() | value() ) (LOOKAHEAD(2) <DOT> objectField())+
+}
+
+void qualifiedIdentificationVariable(): {} {
+   ( key() | value() | entry() )
+}
+
+void generalIdentificationVariable(): {} {
+    key() | value()
+}
+
+void key() #Key: {} {
+    <KEY> <LEFT_PAREN> identificationVariable() <RIGHT_PAREN>
+}
+
+void value() #Value: {} {
+    <VALUE> <LEFT_PAREN> identificationVariable() <RIGHT_PAREN>
+}
+
+void entry() #Entry: {} {
+    <ENTRY> <LEFT_PAREN> identificationVariable() <RIGHT_PAREN>
+}
+
+void singleValuedPathExpression() #Path: {} {
+    ( identificationVariable() (<DOT> objectField())* )
+    | LOOKAHEAD(qualifiedPathExpression()) ((key() | value()) (<DOT> objectField())+)
+    | LOOKAHEAD(qualifiedIdentificationVariable()) qualifiedIdentificationVariable()
+    | treatJoin()
+}
+
+void collectionValuedPath() #CollectionValuedPath: {} {
+    identificationVariable() (<DOT> objectField())*
+}
+
+void updateClause(): {} {
+    <UPDATE> rangeVariableDeclaration() setClause()
+}
+
+void setClause() #SetClause: {} {
+    <SET> updateItem() (<COMMA> updateItem())*
+}
+
+void updateItem() #UpdateItem: {} {
+    updateExpression()
+}
+
+void updateExpression() #Equals: {} {
+    singleValuedPathExpression() <EQ> newValue()
+}
+
+void subqueryFromClause() #From: {} {
+    <FROM> subqueryFromItem() (LOOKAHEAD(1) <COMMA> subqueryFromItem())*
+}
+
+void subqueryFromItem(): {} {
+    LOOKAHEAD(collectionMemberDeclaration()) collectionMemberDeclaration()
+    | LOOKAHEAD(identificationVariableDeclaration()) identificationVariableDeclaration()
+}
+
+void newValue() #UpdateValue: {} {
+    LOOKAHEAD(scalarExpression()) scalarExpression()
+    | LOOKAHEAD(arithmeticExpression()) arithmeticExpression()
+    | LOOKAHEAD(stringPrimary()) stringPrimary()
+    | LOOKAHEAD(datetimePrimary()) datetimePrimary()
+    | LOOKAHEAD(booleanPrimary()) booleanPrimary()
+    | LOOKAHEAD(enumPrimary()) enumPrimary()
+    | LOOKAHEAD(simpleEntityExpression()) simpleEntityExpression()
+    | LOOKAHEAD(entityTypeExpression()) entityTypeExpression()
+    | LOOKAHEAD(1) <NULL>
+}
+
+void simpleEntityExpression(): {} {
+    identificationVariable() | inputParameter()
+}
+
+void entityTypeExpression(): {} {
+    typeDiscriminator() | entityName() | inputParameter()
+}
+
+void typeDiscriminator() #Type: {} {
+    <TYPE> <LEFT_PAREN> (LOOKAHEAD(identificationVariable()) identificationVariable() | singleValuedPathExpression() | inputParameter()) <RIGHT_PAREN>
+}
+
+void hintValues(): {} {
+    (<IS_ACCESSIBLE_NODB>#NoDbIsAccessible|<QUERY_OPTIMIZE_NOCACHE>#NoCacheQueryOptimize|<IS_ACCESSIBLE_NOCACHE>#NoCacheIsAccessible)+
+}
+
+void hint() #Hint: {} {
+    "/*" hintValues() "*/"
+}
+
+void selectClause() #SelectClause: {} {
+    <SELECT> [hint()] [distinct()] selectExpressions()
+}
+
+void simpleSelectClause() #SelectClause: {} {
+    <SELECT> [hint()] [distinct()] subselectExpressions()
+}
+
+void selectExpressions() #SelectExpressions: {} {
+    selectExpression() (<COMMA> selectExpression())*
+}
+
+void selectExpression() #SelectExpression: {} {
+    LOOKAHEAD(aggregateExpression()) aggregateExpression() [[<AS>] identificationVariable()]
+    | LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression() [[<AS>] identificationVariable()]
+    | LOOKAHEAD(scalarExpression()) scalarExpression() [[<AS>] identificationVariable()]
+    | identificationVariable() [[<AS>] identificationVariable()]
+    | LOOKAHEAD(objectFunction()) objectFunction()
+    | constructorExpression() [[<AS>] identificationVariable()]
+}
+
+void subselectExpressions() #SelectExpressions: {} {
+    subselectExpression() (<COMMA> subselectExpression())*
+}
+
+void subselectExpression() #SelectExpression: {} {
+    LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression() 
+        | LOOKAHEAD(scalarExpression()) scalarExpression()
+        | aggregateExpression()
+        | LOOKAHEAD(1) identificationVariable()
+}
+
+void constructorExpression() #Constructor: {} {
+    <NEW> classname() constructorParameters()
+}
+
+void classname() #ClassName: {}
+{
+    identificationVariable() (<DOT> objectField())*
+}
+
+void constructorParameters(): {} {
+    <LEFT_PAREN> (constructorParameter()) (<COMMA> (constructorParameter()))* <RIGHT_PAREN>
+}
+
+void constructorParameter() #ConstructorParameter: {} {
+    LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression()
+    | LOOKAHEAD(scalarExpression()) scalarExpression()
+    | LOOKAHEAD(aggregateExpression()) aggregateExpression()
+    | inputParameter()
+}
+
+void aggregateExpression(): {} {
+    ([<PLUS>] positiveAggregateExpression()) | negativeAggregateExpression()
+}
+
+void positiveAggregateExpression(): {} {
+    avg() | max() | min() | sum() | count()
+}
+
+void negativeAggregateExpression() #Negative: {} {
+    <MINUS> positiveAggregateExpression()
+}
+
+void distinct() #Distinct: {} {
+    <DISTINCT>
+}
+
+void aggregatePath() #AggregatePath: {} {
+    <LEFT_PAREN> (
+        LOOKAHEAD(arithmeticExpression()) arithmeticExpression() |
+        LOOKAHEAD(distinctPath()) distinctPath() |
+        LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression() |
+        LOOKAHEAD(identificationVariable()) identificationVariable()
+    ) <RIGHT_PAREN>
+}
+
+void distinctPath() #DistinctPath: {} {
+    <DISTINCT> (LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression() | identificationVariable())
+}
+
+void count() #Count: {} {
+    <COUNT> aggregatePath()
+}
+
+void avg() #Average: {} {
+    <AVG> aggregatePath()
+}
+
+void max() #Maximum: {} {
+    <MAX> aggregatePath()
+}
+
+void min() #Minimum: {} {
+    <MIN> aggregatePath()
+}
+
+void sum() #Sum: {} {
+    <SUM> aggregatePath()
+}
+
+void objectFunction() #ObjectFunction: {} {
+    (<OBJECT> <LEFT_PAREN> identificationVariable() <RIGHT_PAREN>) [[<AS>] identificationVariable()]
+}
+
+JpqlWhere whereClause() #Where: {} {
+    <WHERE> conditionalExpression() { return jjtThis; }
+}
+
+void groupByClause() #GroupBy: {} {
+    <GROUP> <BY> groupByItem() (LOOKAHEAD(2) <COMMA> (groupByItem()))* 
+}
+
+void groupByItem(): {} {
+    LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression() | identificationVariable()
+}
+
+void havingClause() #Having: {} {
+    <HAVING> conditionalExpression() 
+}
+
+void subqueryInBrackets() #Brackets: {} {
+    <LEFT_PAREN> subquery() <RIGHT_PAREN>
+}
+
+void subquery() #Subselect: {} {
+    simpleSelectClause()
+        subqueryFromClause() 
+        [LOOKAHEAD(whereClause()) whereClause()] 
+        [LOOKAHEAD(groupByClause()) groupByClause()] 
+        [LOOKAHEAD(havingClause()) havingClause()] 
+}
+
+void scalarExpression(): {} {
+    LOOKAHEAD(arithmeticExpression()) arithmeticExpression()
+  | LOOKAHEAD(stringPrimary()) stringPrimary()
+  | LOOKAHEAD(enumPrimary()) enumPrimary()
+  | LOOKAHEAD(datetimePrimary()) datetimePrimary()
+  | LOOKAHEAD(booleanPrimary()) booleanPrimary()
+  | LOOKAHEAD(caseExpression()) caseExpression()
+  | LOOKAHEAD(simpleEntityExpression()) simpleEntityExpression()
+  | LOOKAHEAD(entityTypeExpression()) entityTypeExpression()
+  | <NULL>
+}
+
+void conditionalExpression(): {} {
+    conditionalTerm() (LOOKAHEAD(2) <OR> (conditionalExpression() #Or(2)))*
+}
+
+void conditionalTerm(): {} {
+    conditionalFactor() (LOOKAHEAD(2) <AND> (conditionalTerm() #And(2)))*
+}
+
+void conditionalFactor(): {} {
+    LOOKAHEAD(<NOT> conditionalPrimary())
+    (<NOT> conditionalPrimary() #Not) | conditionalPrimary()
+}
+
+void conditionalPrimary(): {} {
+    LOOKAHEAD(simpleConditionalExpression())
+    simpleConditionalExpression() | <LEFT_PAREN> (conditionalExpression() #Brackets) <RIGHT_PAREN>
+}
+
+void simpleConditionalExpression(): {} {
+    LOOKAHEAD(existsExpression()) existsExpression()
+    | LOOKAHEAD(comparisonExpression()) comparisonExpression()
+    | LOOKAHEAD(betweenExpression()) betweenExpression()
+    | LOOKAHEAD(likeExpression()) likeExpression()
+    | LOOKAHEAD(inExpression()) inExpression()
+    | LOOKAHEAD(nullComparisonExpression()) nullComparisonExpression()
+    | LOOKAHEAD(emptyCollectionComparisonExpression()) emptyCollectionComparisonExpression()
+    | LOOKAHEAD(collectionMemberExpression()) collectionMemberExpression()
+    | LOOKAHEAD(treatExpression()) treatExpression()
+}
+
+void betweenExpression(): {} {
+    LOOKAHEAD(positiveBetweenExpression()) positiveBetweenExpression()
+    | LOOKAHEAD(negativeBetweenExpression()) negativeBetweenExpression() #Not
+}
+
+void positiveBetweenExpression() #Between: {} {
+    LOOKAHEAD(arithmeticExpression()) arithmeticExpression() <BETWEEN> arithmeticExpression() <AND> arithmeticExpression()
+    | LOOKAHEAD(stringExpression()) stringExpression() <BETWEEN> stringExpression() <AND> stringExpression()
+    | LOOKAHEAD(datetimeExpression()) datetimeExpression() <BETWEEN> datetimeExpression() <AND> datetimeExpression()
+}
+
+void negativeBetweenExpression() #Between: {} {
+    LOOKAHEAD(arithmeticExpression()) arithmeticExpression() <NOT> <BETWEEN> arithmeticExpression() <AND> arithmeticExpression()
+    | LOOKAHEAD(stringExpression()) stringExpression() <NOT> <BETWEEN> stringExpression() <AND> stringExpression()
+    | LOOKAHEAD(datetimeExpression()) datetimeExpression() <NOT> <BETWEEN> datetimeExpression() <AND> datetimeExpression()
+}
+
+void inExpression(): {} {
+    LOOKAHEAD(positiveInExpression()) positiveInExpression()
+    | LOOKAHEAD(negativeInExpression()) negativeInExpression() #Not
+}
+
+void positiveInExpression() #In: {} {
+    (
+        LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression()
+        | LOOKAHEAD(inItem()) inItem()
+        | LOOKAHEAD(scalarExpression()) scalarExpression()
+    )
+    <IN>
+    (
+        (
+            <LEFT_PAREN>
+                (
+                    inItem() (<COMMA> inItem())*
+                    | subquery()
+                    | collectionValuedPath()
+                )
+            <RIGHT_PAREN>
+        )
+        | LOOKAHEAD(1) inputParameter()
+        | collectionValuedPath()
+    )
+}
+
+void negativeInExpression() #In: {} {
+    (
+        LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression()
+        | LOOKAHEAD(inItem()) inItem()
+        | LOOKAHEAD(scalarExpression()) scalarExpression()
+    )
+    <NOT> <IN>
+    (
+        (
+            <LEFT_PAREN>
+                (
+                    inItem() (<COMMA> inItem())*
+                    | subquery()
+                    | collectionValuedPath()
+                )
+            <RIGHT_PAREN>
+        )
+        | LOOKAHEAD(1) inputParameter()
+        | collectionValuedPath()
+    )
+}
+
+void inItem(): {} {
+    numericLiteral()
+    | stringLiteral()
+    | booleanLiteral()
+    | inputParameter()
+    | typeDiscriminator()
+}
+
+void likeExpression(): {} {
+    LOOKAHEAD(positiveLikeExpression()) positiveLikeExpression()
+    | LOOKAHEAD(negativeLikeExpression()) negativeLikeExpression() #Not
+}
+
+void positiveLikeExpression() #Like: {} {
+    stringExpression() <LIKE> patternValue()
+}
+
+void negativeLikeExpression() #Like: {} {
+    stringExpression() <NOT> <LIKE> patternValue()
+}
+
+void nullComparisonExpression(): {} {
+    LOOKAHEAD(positiveNullComparisionExpression()) positiveNullComparisionExpression()
+    | LOOKAHEAD(negativeNullComparisionExpression()) negativeNullComparisionExpression() #Not
+}
+
+void positiveNullComparisionExpression() #IsNull: {} {
+    (inputParameter() | singleValuedPathExpression()) <IS> <NULL>
+}
+
+void negativeNullComparisionExpression() #IsNull: {} {
+    (inputParameter() | singleValuedPathExpression()) <IS> <NOT> <NULL>
+}
+
+void emptyCollectionComparisonExpression(): {} {
+    LOOKAHEAD(positiveEmptyCollectionComparisonExpression()) positiveEmptyCollectionComparisonExpression()
+    | LOOKAHEAD(negativeEmptyCollectionComparisonExpression()) negativeEmptyCollectionComparisonExpression() #Not
+}
+
+void positiveEmptyCollectionComparisonExpression() #IsEmpty: {} {
+    collectionValuedPath() <IS> <EMPTY>
+}
+
+void negativeEmptyCollectionComparisonExpression() #IsEmpty: {} {
+    collectionValuedPath() <IS> <NOT> <EMPTY>
+}
+
+void collectionMemberExpression(): {} {
+    LOOKAHEAD(positiveCollectionMemberExpression()) positiveCollectionMemberExpression()
+    | LOOKAHEAD(negativeCollectionMemberExpression()) negativeCollectionMemberExpression() #Not
+}
+
+void treatJoin() #TreatJoin: {} {
+    treat()
+}
+
+void treatExpression() #TreatExpression: {} {
+    treat() <DOT> objectField()
+    (
+        LOOKAHEAD(betweenExpression()) betweenExpression()
+        | LOOKAHEAD(likeExpression()) likeExpression()
+        | LOOKAHEAD(inExpression()) inExpression()
+        | LOOKAHEAD(nullComparisonExpression()) nullComparisonExpression()
+        | LOOKAHEAD(emptyCollectionComparisonExpression()) emptyCollectionComparisonExpression()
+        | LOOKAHEAD(collectionMemberExpression()) collectionMemberExpression()
+    )
+}
+
+void positiveCollectionMemberExpression() #MemberOf: {} {
+    (LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression() | inputParameter() | objectField()) <MEMBER> [<OF>] collectionValuedPath()
+}
+
+void negativeCollectionMemberExpression() #MemberOf: {} {
+    (LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression() | inputParameter() | objectField()) <NOT> <MEMBER> [<OF>] collectionValuedPath()
+}
+
+void existsExpression(): {} {
+    positiveExistsExpression()
+    | negativeExistsExpression() #Not
+}
+
+void positiveExistsExpression() #Exists: {} {
+    <EXISTS> <LEFT_PAREN> subquery() <RIGHT_PAREN>
+}
+
+void negativeExistsExpression() #Exists: {} {
+    <NOT> <EXISTS> <LEFT_PAREN> subquery() <RIGHT_PAREN>
+}
+
+void allOrAnyExpression(): {} {
+    allExpression() | anyExpression() | someExpression()
+}
+
+void anyExpression() #Any: {} {
+    <ANY> <LEFT_PAREN> subquery() <RIGHT_PAREN>
+}
+
+void someExpression() #Any: {} {
+    // SOME and ANY are synonymous
+    <SOME> <LEFT_PAREN> subquery() <RIGHT_PAREN>
+}
+
+void allExpression() #All: {} {
+    <ALL> <LEFT_PAREN> subquery() <RIGHT_PAREN>
+}
+
+void comparisonExpression(): {} {
+    LOOKAHEAD(arithmeticComp()) arithmeticComp() |
+    LOOKAHEAD(stringComp()) stringComp() |
+    LOOKAHEAD(booleanComp()) booleanComp() | 
+    LOOKAHEAD(enumComp()) enumComp() | 
+    LOOKAHEAD(datetimeComp()) datetimeComp() |
+    LOOKAHEAD(entityComp()) entityComp() |
+    LOOKAHEAD(entityTypeComp()) entityTypeComp()
+}
+
+void stringComp(): {} {
+    stringExpression() (
+        (<EQ> (stringExpression()|allOrAnyExpression()) #Equals(2))
+        | (<NE> (stringExpression()|allOrAnyExpression()) #NotEquals(2))
+        | (<NEQ> (stringExpression()|allOrAnyExpression()) #NotEquals(2))
+        | (<GT> (stringExpression() | allOrAnyExpression()) #GreaterThan(2))
+        | (<GE> (stringExpression() | allOrAnyExpression()) #GreaterOrEquals(2))
+        | (<LT> (stringExpression() | allOrAnyExpression()) #LessThan(2))
+        | (<LE> (stringExpression() | allOrAnyExpression()) #LessOrEquals(2))
+        )
+}
+
+void booleanComp(): {} {
+    booleanExpression() (
+    (<EQ> (booleanExpression() | allOrAnyExpression()) #Equals(2))
+    | (<NE> (booleanExpression() | allOrAnyExpression()) #NotEquals(2))
+    | (<NEQ> (booleanExpression() | allOrAnyExpression()) #NotEquals(2))
+    )
+}
+
+void enumComp(): {} {
+    enumExpression() (
+    (<EQ> (enumExpression() | allOrAnyExpression()) #Equals(2))
+    | (<NE> (enumExpression() | allOrAnyExpression()) #NotEquals(2))
+    | (<NEQ> (enumExpression() | allOrAnyExpression()) #NotEquals(2))
+    )
+}
+
+void entityComp(): {} {
+    entityBeanExpression() (
+    (<EQ> ((LOOKAHEAD(allOrAnyExpression()) allOrAnyExpression() | entityBeanExpression()) #Equals(2)))
+    | (<NE> ((LOOKAHEAD(allOrAnyExpression()) allOrAnyExpression() | entityBeanExpression()) #NotEquals(2)))
+    | (<NEQ> ((LOOKAHEAD(allOrAnyExpression()) allOrAnyExpression() | entityBeanExpression()) #NotEquals(2)))
+    )
+}
+
+void entityTypeComp(): {} {
+    LOOKAHEAD(typeDiscriminator()) (typeDiscriminator()
+        ((<EQ> entityTypeExpression() #Equals(2))
+        | (<NE> entityTypeExpression() #NotEquals(2))
+        | (<NEQ> entityTypeExpression() #NotEquals(2)))
+    )
+    | (entityTypeExpression()
+        ((<EQ> typeDiscriminator() #Equals(2))
+        | (<NE> typeDiscriminator() #NotEquals(2))
+        | (<NEQ> typeDiscriminator() #NotEquals(2)))
+    )
+}
+
+void arithmeticComp(): {} {
+    // arithmeticValue() (
+    arithmeticExpression() (
+    (<EQ> (arithmeticExpression() | allOrAnyExpression()) #Equals(2))
+    | (<GT> (arithmeticExpression() | allOrAnyExpression()) #GreaterThan(2))
+    | (<GE> (arithmeticExpression() | allOrAnyExpression()) #GreaterOrEquals(2))
+    | (<LT> (arithmeticExpression() | allOrAnyExpression()) #LessThan(2))
+    | (<LE> (arithmeticExpression() | allOrAnyExpression()) #LessOrEquals(2))
+    | (<NE> (arithmeticExpression() | allOrAnyExpression()) #NotEquals(2))
+    | (<NEQ> (arithmeticExpression() | allOrAnyExpression()) #NotEquals(2))
+    )
+}
+
+void datetimeComp(): {} {
+    datetimeExpression() (
+    (<EQ> (datetimeExpression() | allOrAnyExpression()) #Equals(2))
+    | (<GT> (datetimeExpression() | allOrAnyExpression()) #GreaterThan(2))
+    | (<GE> (datetimeExpression() | allOrAnyExpression()) #GreaterOrEquals(2))
+    | (<LT> (datetimeExpression() | allOrAnyExpression()) #LessThan(2))
+    | (<LE> (datetimeExpression() | allOrAnyExpression()) #LessOrEquals(2))
+    | (<NE> (datetimeExpression() | allOrAnyExpression()) #NotEquals(2))
+    | (<NEQ> (datetimeExpression() | allOrAnyExpression()) #NotEquals(2))
+    )
+}
+
+void arithmeticExpressionInBrackets(): {} {
+    positiveArithmeticExpressionInBrackets() | negativeArithmeticExpressionInBrackets()
+}
+
+void positiveArithmeticExpressionInBrackets(): {} {
+    [<PLUS>] simpleArithmeticExpressionInBrackets()
+}
+
+void negativeArithmeticExpressionInBrackets() #Negative: {} {
+    <MINUS> simpleArithmeticExpressionInBrackets()
+}
+
+void simpleArithmeticExpressionInBrackets() #Brackets: {} {
+    <LEFT_PAREN> arithmeticExpression() <RIGHT_PAREN>
+}
+
+void arithmeticExpression(): {} {
+    arithmeticTerm() (LOOKAHEAD(2) ((<PLUS> arithmeticExpression() #Add(2)) | (<MINUS> arithmeticExpression() #Subtract(2))))*
+}
+
+/* changed to eliminate left recursion */
+void arithmeticTerm(): {} {
+    arithmeticFactor() (LOOKAHEAD(2) ((<TIMES> arithmeticTerm() #Multiply(2)) | (<DIV> arithmeticTerm() #Divide(2))))*
+}
+
+void arithmeticFactor(): {} {
+    LOOKAHEAD(1) numericLiteral()
+  | LOOKAHEAD(1) inputParameter()
+  | LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression()
+  | LOOKAHEAD(2) qualifiedPathExpression()
+  | LOOKAHEAD(generalIdentificationVariable()) generalIdentificationVariable()
+  | LOOKAHEAD(identificationVariable()) identificationVariable()
+  | LOOKAHEAD(<LEFT_PAREN> arithmeticExpression()) <LEFT_PAREN> arithmeticExpression() <RIGHT_PAREN> #Brackets(1)
+  | LOOKAHEAD(2) functionsReturningNumerics()
+  | LOOKAHEAD(aggregateExpression()) aggregateExpression()
+  | LOOKAHEAD(caseExpression()) caseExpression()
+  | LOOKAHEAD(subqueryInBrackets()) subqueryInBrackets()
+}
+
+void numericPath(): {} {
+    ([<PLUS>] singleValuedPathExpression()) | negatedPath() 
+}
+
+void negatedPath() #Negative: {} {
+    <MINUS> singleValuedPathExpression()
+}
+
+void numericInputParameter(): {} {
+    ([<PLUS>] inputParameter()) | negatedInputParameter()
+}
+
+void negatedInputParameter() #Negative: {} {
+    <MINUS> inputParameter()
+}
+
+void numericSubqueryInBrackets(): {} {
+    ([<PLUS>] subqueryInBrackets()) | negatedSubqueryInBrackets() 
+}
+
+void negatedSubqueryInBrackets() #Negative: {} {
+    <MINUS> subqueryInBrackets()
+} 
+
+void stringValue(): {} {
+    singleValuedPathExpression() | functionsReturningStrings() | subqueryInBrackets()
+}
+
+void stringExpressionInBrackets() #Brackets: {} {
+    <LEFT_PAREN> stringExpression() <RIGHT_PAREN>
+}
+
+void stringExpression(): {} {
+    inputParameter() | stringPrimary()
+}
+
+void stringPrimary(): {} {
+    stringLiteral()
+    | singleValuedPathExpression()
+    | LOOKAHEAD(2) stringExpressionInBrackets()
+    | LOOKAHEAD(<LEFT_PAREN> stringExpression()) <LEFT_PAREN> stringExpression() <RIGHT_PAREN>
+    | functionsReturningStrings()
+    | LOOKAHEAD(2) subqueryInBrackets()
+}
+
+void datetimeExpression(): {} {
+    datetimePrimary() | subqueryInBrackets()
+}
+
+void datetimePrimary(): {} {
+    singleValuedPathExpression() | functionsReturningDatetime() | inputParameter()
+}
+
+void booleanValue(): {} {
+    singleValuedPathExpression() | subqueryInBrackets()
+}
+
+void booleanExpression(): {} {
+    booleanPrimary() | subqueryInBrackets()
+}
+
+void booleanPrimary(): {} {
+    LOOKAHEAD(2) singleValuedPathExpression() | booleanLiteral() | inputParameter()
+}
+
+void enumExpression(): {} {
+    enumPrimary() | subqueryInBrackets()
+}
+
+void enumPrimary(): {} {
+    LOOKAHEAD(2) singleValuedPathExpression()
+    | LOOKAHEAD(enumLiteral()) enumLiteral()
+    | LOOKAHEAD(inputParameter()) inputParameter()
+}
+
+void enumLiteral(): {} {
+    singleValuedPathExpression()
+}
+
+void entityBeanValue(): {} {
+    LOOKAHEAD(singleValuedPathExpression()) singleValuedPathExpression() | objectField()
+}
+
+void entityBeanExpression(): {} {
+    inputParameter() | entityBeanValue()
+}
+
+void functionsReturningStrings(): {} {
+    concat() | substring() | trim() | lower() | upper()
+}
+
+void concat() #Concat: {} {
+    <CONCAT> <LEFT_PAREN> stringExpression() (<COMMA> stringExpression())+<RIGHT_PAREN>
+}
+
+void substring() #Substring: {} {
+    <SUBSTRING> <LEFT_PAREN> stringExpression() <COMMA> arithmeticExpression() <COMMA> arithmeticExpression() <RIGHT_PAREN>
+}
+
+void trim() #Trim: {} {
+    <TRIM> <LEFT_PAREN> [LOOKAHEAD(2)[trimSpecification()] [trimCharacter()] <FROM>] stringExpression() <RIGHT_PAREN>
+}
+
+void lower() #Lower: {} {
+    <LOWER> <LEFT_PAREN> stringExpression() <RIGHT_PAREN>
+}
+
+void upper() #Upper: {} {
+    <UPPER> <LEFT_PAREN> stringExpression() <RIGHT_PAREN>
+}
+
+void trimSpecification(): {} {
+    LOOKAHEAD(2) (<LEADING> #TrimLeading) | (<TRAILING> #TrimTrailing) | (<BOTH> #TrimBoth)
+}
+
+void caseExpression(): {} {
+    caseWhenExpression() | coalesceExpression() | nullifExpression()
+}
+
+void caseWhenExpression() #Case: {} {
+    <CASE> ((whenClause())+ | caseOperand() (simpleWhenClause())+) <ELSE> scalarExpression() <END>
+}
+
+void whenClause() #When: {} {
+    <WHEN> conditionalExpression() <THEN> scalarExpression()
+}
+
+void caseOperand(): {} {
+    singleValuedPathExpression() | typeDiscriminator()
+}
+
+void simpleWhenClause() #When: {} {
+    <WHEN> scalarExpression() <THEN> scalarExpression()
+}
+
+void coalesceExpression() #Coalesce: {} {
+    <COALESCE> <LEFT_PAREN> scalarExpression() (<COMMA> scalarExpression())+ <RIGHT_PAREN>
+}
+
+void nullifExpression() #Nullif: {} {
+    <NULLIF> <LEFT_PAREN> scalarExpression() <COMMA> scalarExpression() <RIGHT_PAREN>
+}
+
+void functionsReturningNumerics(): {} {
+    ([<PLUS>] positiveFunctionsReturningNumerics()) | negativeFunctionsReturningNumerics()
+}
+
+void positiveFunctionsReturningNumerics(): {} {
+    length() | locate() | abs() | sqrt() | mod() | size() | index()
+}
+
+void negativeFunctionsReturningNumerics() #Negative: {} {
+    <MINUS> positiveFunctionsReturningNumerics()
+} 
+
+void length() #Length: {} {
+    <LENGTH> <LEFT_PAREN> stringExpression() <RIGHT_PAREN>
+}
+
+void locate() #Locate: {} {
+    <LOCATE> <LEFT_PAREN> stringExpression() <COMMA> stringExpression()
+        [<COMMA> arithmeticExpression()] <RIGHT_PAREN>
+}
+
+void abs() #Abs: {} {
+    <ABS> <LEFT_PAREN> arithmeticExpression() <RIGHT_PAREN>
+}
+
+void sqrt() #Sqrt: {} {
+    <SQRT> <LEFT_PAREN> arithmeticExpression() <RIGHT_PAREN>
+}
+
+void mod() #Mod: {} {
+    <MOD> <LEFT_PAREN> arithmeticExpression() <COMMA> arithmeticExpression() <RIGHT_PAREN>
+}
+
+void size() #Size: {} {
+    <SIZE> <LEFT_PAREN> singleValuedPathExpression() <RIGHT_PAREN>
+}
+
+void index() #Index: {} {
+    <INDEX> <LEFT_PAREN> singleValuedPathExpression() <RIGHT_PAREN>
+}
+
+void functionsReturningDatetime(): {} {
+    (<CURRENT_DATE> #CurrentDate)
+    | (<CURRENT_TIME> #CurrentTime)
+    | (<CURRENT_TIMESTAMP> #CurrentTimestamp)
+}
+
+void orderByClause() #OrderBy: {} {
+    <ORDER> <BY> orderByItem() (<COMMA> orderByItem())* 
+}
+
+void orderByItem() #OrderByItem: {} {
+    singleValuedPathExpression() [ <ASC> #Ascending | <DESC> #Descending ]
+}
+
+void entityName() #AbstractSchemaName: {} {
+    identificationVariable() (<DOT> objectField())*
+}
+
+void identificationVariable() #IdentificationVariable: { Token token; } {
+    token = <IDENTIFIER> { jjtThis.setValue(token.image); }
+}
+
+void objectField() #IdentificationVariable: { Token token; } {
+    // unlike the identificationVariable(), the objectField() *can* be a reserved word.
+    // E.g., Order.group.length is a perfectly valid path expression.
+    (
+    token = <IDENTIFIER>
+    | token = <NEW>
+    | token = <ALL>
+    | token = <ANY>
+    | token = <EXISTS>
+    | token = <SOME>
+    | token = <EMPTY>
+    | token = <ASC>
+    | token = <DESC>
+    | token = <ORDER>
+    | token = <IS>
+    | token = <MEMBER>
+    | token = <OF>
+    | token = <LIKE>
+    | token = <ESCAPE>
+    | token = <BETWEEN>
+    | token = <NULL>
+    | token = <AVG>
+    | token = <MIN>
+    | token = <MAX>
+    | token = <SUM>
+    | token = <COUNT>
+    | token = <OR>
+    | token = <AND>
+    | token = <NOT>
+    | token = <CONCAT>
+    | token = <SUBSTRING>
+    | token = <TRIM>
+    | token = <LOWER>
+    | token = <UPPER>
+    | token = <LEADING>
+    | token = <TRAILING>
+    | token = <BOTH>
+    | token = <LENGTH>
+    | token = <LOCATE>
+    | token = <ABS>
+    | token = <SQRT>
+    | token = <MOD>
+    | token = <SIZE>
+    | token = <CURRENT_DATE>
+    | token = <CURRENT_TIME>
+    | token = <CURRENT_TIMESTAMP>
+    | token = <CASE>
+    | token = <WHEN>
+    | token = <THEN>
+    | token = <ELSE>
+    | token = <END>
+    | token = <SELECT>
+    | token = <DISTINCT>
+    | token = <FROM>
+    | token = <UPDATE>
+    | token = <DELETE>
+    | token = <WHERE>
+    | token = <GROUP>
+    | token = <BY>
+    | token = <HAVING>
+    | token = <AS>
+    | token = <LEFT>
+    | token = <OUTER>
+    | token = <INNER>
+    | token = <JOIN>
+    | token = <FETCH>
+    | token = <IN>
+    | token = <SET>
+    | token = <OBJECT>
+    | token = <GRANT>
+    | token = <CREATE>
+    | token = <READ>
+    | token = <ACCESS>
+    | token = <TYPE>
+    | token = <VALUE>
+    | token = <KEY>
+    | token = <ENTRY>
+    ) { jjtThis.setValue(token.image); }
+}
+
+void booleanLiteral() #BooleanLiteral: { Token token; } {
+    token = <BOOLEAN_LITERAL> { jjtThis.setValue(token.image); }
+}
+
+void stringLiteral() #StringLiteral: { Token token; } {
+    token = <STRING_LITERAL> { jjtThis.setValue(token.image); }
+}
+
+void inputParameter(): {} {
+    namedInputParameter() | positionalInputParameter()
+}
+
+void namedInputParameter() #NamedInputParameter: { Token token; } {
+    ":" objectField()
+}
+
+void positionalInputParameter() #PositionalInputParameter: { Token token; } {
+    "?" token = <INTEGER_LITERAL> { jjtThis.setValue(token.image); }
+}
+
+void patternValue() #PatternValue: {} {
+    inputParameter()
+    | stringLiteral() [<ESCAPE> (escapeCharacter() | inputParameter())]
+}
+
+void escapeCharacter() #EscapeCharacter: { Token token; } {
+    token = <STRING_LITERAL> { jjtThis.setValue(token.image); }
+}
+
+void trimCharacter() #TrimCharacter: { Token token; } {
+    token = <STRING_LITERAL> { jjtThis.setValue(token.image); }
+}
+
+void treat() #Treat: {} {
+    <TREAT> <LEFT_PAREN> joinAssociationPathExpression() [<AS>] identificationVariable() <RIGHT_PAREN>
+}
+
+void literal() #Literal: {} {
+    <STRING_LITERAL>
+    | <CHARACTER_LITERAL>
+    | numericLiteral()
+    | <HEX_LITERAL>
+    | <OCTAL_LITERAL>
+    | <NULL>
+    | <BOOLEAN_LITERAL>
+    | <DATE_LITERAL>
+    | <TIME_LITERAL>
+    | <TIMESTAMP_LITERAL>
+}
+
+void numericLiteral() #NumericLiteral: { Token token; boolean negative = false; } {
+    ( <MINUS> { negative = this.jj_kind == MINUS; } | <PLUS> )?
+    (
+        token = <INTEGER_LITERAL>                                       #IntegerLiteral
+        | token = <LONG_LITERAL>                                        #LongLiteral
+        | token = <BIG_INTEGER_LITERAL>                                 #BigIntegerLiteral
+        | token = <FLOAT_LITERAL>                                       #FloatLiteral
+        | token = <DOUBLE_LITERAL>                                      #DoubleLiteral
+        | token = <BIG_DECIMAL_LITERAL>                                 #BigDecimalLiteral
+    ) { jjtThis.setValue(negative ? "-" : "" + token.image); }
+}

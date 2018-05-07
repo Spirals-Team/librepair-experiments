@@ -1,0 +1,379 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE article PUBLIC "-//OASIS//DTD Simplified DocBook XML V1.1//EN" "http://www.oasis-open.org/docbook/xml/simple/1.1/sdocbook.dtd">
+<article id="authorization">
+  <title>Authorization</title>
+  <para>
+    Currently only Jean has added visits for the pets. When you log in as another user,
+    create a visit at James Carter and then click on the vet of the just created visit (which is James Carter),
+    you see a problem with our current authorization model: You can see every visit of James Carter
+    (especially you can see the visits of Jean). And not enough: You can click on the pets of Jean
+    and get (read-)access to Jean and you can see every visit of Jean. 
+  </para>
+  <para>
+    Surely this is a security problem. But fortunately JPA Security comes into play here.
+  </para>
+  <section>
+    <title>Integrating JPA Security</title>
+    <para>
+      To use JPA Security, we configure the usage in <filename>business-config.xml</filename>
+      in <filename>src/main/resources/spring/</filename>.
+    </para>
+    <para>
+      Change
+    </para>
+    <programlisting>
+      <![CDATA[
+<!-- JPA EntityManagerFactory -->
+<bean id="entityManagerFactory" class="org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean"
+      p:dataSource-ref="dataSource">
+    <property name="jpaVendorAdapter">
+        <bean class="org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter"
+              p:database="${jpa.database}" p:showSql="${jpa.showSql}"/>
+    </property>
+    <!-- gDickens: BOTH Persistence Unit and Packages to Scan are NOT compatible, persistenceUnit will win -->
+    <property name="persistenceUnitName" value="petclinic"/>
+    <property name="packagesToScan" value="org.springframework.samples.petclinic"/>
+</bean>
+      ]]>
+    </programlisting>
+    <para>
+      into
+    </para>
+    <programlisting>
+      <![CDATA[
+<!-- JPA EntityManagerFactory -->
+<bean id="entityManagerFactory" class="org.jpasecurity.spring.persistence.SecureContainerEntityManagerFactoryBean"
+      p:dataSource-ref="dataSource">
+    <property name="jpaVendorAdapter">
+        <bean class="org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter"
+              p:database="${jpa.database}" p:showSql="${jpa.showSql}"/>
+    </property>
+    <!-- gDickens: BOTH Persistence Unit and Packages to Scan are NOT compatible, persistenceUnit will win -->
+    <property name="persistenceUnitName" value="petclinic"/>
+    <property name="packagesToScan" value="org.springframework.samples.petclinic"/>
+</bean>
+	  ]]>
+    </programlisting>
+    <para>
+      Additionally we have to configure the access rules. We need the following rules.
+    </para>
+    <orderedlist>
+      <listitem>
+        <para>Every vet is allowed to create, read, update and delete his own data</para>
+      </listitem>
+      <listitem>
+        <para>Everyone is allowed to see data of vets</para>
+      </listitem>
+      <listitem>
+        <para>Everyone is allowed to create an owner (to register itself)</para>
+      </listitem>
+      <listitem>
+        <para>Every owner is allowed to create, read, update and delete his own data</para>
+      </listitem>
+      <listitem>
+        <para>Every vet is allowed to see owner data of owners, that have a pet that was for a visit at the vet</para>
+      </listitem>
+      <listitem>
+        <para>Every owner is allowed to create, read, update and delete his own pets</para>
+      </listitem>
+      <listitem>
+        <para>Every vet is allowed to see pet data of pets that were for a visit at the vet</para>
+      </listitem>
+      <listitem>
+        <para>Every owner is allowed to create and see visits of his own pets</para>
+      </listitem>
+      <listitem>
+        <para>Every vet is allowed to see and update visits of pets that were for a visit a the vet</para>
+      </listitem>
+    </orderedlist>
+    <para>
+      We configure these rules by creating a file named
+      <filename>security.xml</filename> in <filename>src/main/resources/META-INF/</filename>
+      with the following content.
+    </para>
+    <programlisting>
+      <![CDATA[
+<security xmlns="http://jpasecurity.sf.net/xml/ns/security"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://jpasecurity.sf.net/xml/ns/security
+                              http://jpasecurity.sf.net/xml/ns/security/security_1_0.xsd"
+          schemaVersion="1.0">
+
+    <persistence-unit name="petclinic">
+        <access-rule>GRANT CREATE READ        ACCESS TO Credential credential</access-rule>
+        <access-rule>GRANT             UPDATE ACCESS TO Credential credential WHERE EXISTS (SELECT owner FROM Owner owner, Credential c WHERE owner.credential.id = credential.id AND owner.credential.id = c.id AND c = CURRENT_PRINCIPAL)</access-rule>
+        <access-rule>GRANT                    ACCESS TO Vet vet WHERE vet.credential = CURRENT_PRINCIPAL</access-rule>    
+        <access-rule>GRANT        READ        ACCESS TO Vet vet</access-rule>    
+        <access-rule>GRANT CREATE             ACCESS TO Owner owner</access-rule>
+        <access-rule>GRANT                    ACCESS TO Owner owner WHERE owner.credential = CURRENT_PRINCIPAL</access-rule>
+        <access-rule>GRANT        READ        ACCESS TO Owner owner WHERE owner.id IN (SELECT visit.pet.owner.id FROM Visit visit WHERE visit.vet.credential = CURRENT_PRINCIPAL)</access-rule>
+        <access-rule>GRANT CREATE READ UPDATE ACCESS TO Pet pet WHERE pet.owner.credential = CURRENT_PRINCIPAL</access-rule>    
+        <access-rule>GRANT        READ        ACCESS TO Pet pet WHERE EXISTS (SELECT visit FROM Visit visit WHERE visit.pet = pet AND visit.vet.credential = CURRENT_PRINCIPAL)</access-rule>
+        <access-rule>GRANT CREATE READ        ACCESS TO Visit visit WHERE visit.pet.owner.credential = CURRENT_PRINCIPAL</access-rule>
+        <access-rule>GRANT        READ UPDATE ACCESS TO Visit visit WHERE visit.vet.credential = CURRENT_PRINCIPAL</access-rule>
+    </persistence-unit>
+
+</security>
+      ]]>
+    </programlisting>
+    <para>Now we have to change the save-Method of <filename>JpaPetRepositoryImpl.java</filename> (in <filename>src/main/java/org/springframework/samples/petclinic/repository/jpa/</filename>).
+    Change </para>
+    <programlisting>
+      <![CDATA[
+@Override
+public void save(Pet pet) {
+    if (pet.getId() == null) {
+        this.em.persist(pet);
+    }
+    else {
+        this.em.merge(pet);
+    }
+}
+      ]]>
+    </programlisting>
+    <para>into</para>
+    <programlisting>
+      <![CDATA[
+@Override
+public void save(Pet pet) {
+    if(pet.getId() != null) {
+        Pet p = findById(pet.getId());
+        p.setName(pet.getName());
+        p.setBirthDate(pet.getBirthDate());
+        p.setType(pet.getType());
+    } else {
+        this.em.persist(pet);
+    }
+    this.em.flush();
+}
+      ]]>
+    </programlisting>
+    <para>To active accessing for creating a pet or a visit, we need a accessmanager. Therefore change in<filename>OwnerController.java</filename> 
+      (in <filename>src/main/java/org/springframework/samples/petclinic/web/</filename>)</para>
+    <programlisting>
+      <![CDATA[
+private final ClinicService clinicService;
+private final UserDetailsService userDetailsService;
+
+@Autowired
+public OwnerController(ClinicService clinicService, UserDetailsService userDetailsService) {
+    this.clinicService = clinicService;
+    this.userDetailsService = userDetailsService;
+}
+
+[...]
+
+@RequestMapping("/owners/{ownerId}")
+public ModelAndView showOwner(@PathVariable("ownerId") int ownerId) {
+    ModelAndView mav = new ModelAndView("owners/ownerDetails");
+    mav.addObject(this.clinicService.findOwnerById(ownerId));
+    return mav;
+}
+      ]]>
+    </programlisting>
+    <para>into</para>
+    <programlisting>
+      <![CDATA[
+private final ClinicService clinicService;
+private final UserDetailsService userDetailsService;
+private final AccessManager accessManager;
+
+@Autowired
+public OwnerController(ClinicService clinicService, UserDetailsService userDetailsService, AccessManager accessManager) {
+    this.clinicService = clinicService;
+    this.userDetailsService = userDetailsService;
+    this.accessManager = accessManager;
+}
+
+[...]
+
+@RequestMapping("/owners/{ownerId}")
+public ModelAndView showOwner(@PathVariable("ownerId") int ownerId) {
+    ModelAndView mav = new ModelAndView("owners/ownerDetails");
+    mav.addObject(this.clinicService.findOwnerById(ownerId));
+    mav.getModelMap().addAttribute(accessManager);
+    return mav;
+}
+      ]]>
+    </programlisting>
+    <para>Moreover we have to define explicitly a default constructor and a constructor with <systemitem>Owner</systemitem> as parameter for a pet. Therefore add the following code
+    in <filename>Pet.java</filename> (in <filename>src/main/java/org/springframework/samples/petclinic/model/</filename>)</para>
+    <programlisting>
+      <![CDATA[
+public Pet() {
+}
+
+public Pet(Owner owner) {
+    this();
+    setOwner(owner);
+}
+      ]]>
+    </programlisting>
+    <para>The last thing we do for authorization is to change <filename>Owner.java</filename> (in <filename>src/main/java/org/springframework/samples/petclinic/model/</filename>). Change</para>
+    <programlisting>
+      <![CDATA[
+@OneToMany(cascade = CascadeType.ALL, mappedBy = "owner")
+private Set<Pet> pets;
+    ]]>
+    </programlisting>
+    <para>into</para>
+    <programlisting>
+      <![CDATA[
+@OneToMany(cascade = CascadeType.ALL, mappedBy = "owner", fetch = FetchType.EAGER)
+private Set<Pet> pets;
+    ]]>
+    </programlisting>
+    <para>
+      When you now click around in the application, you will see that our authorization problems
+      are gone and you recognize how easy it is to integrate JPA Security.
+    </para>
+  </section>
+  <section>
+    <title>Improving the View</title>
+    <para>
+      When you log in as <systemitem>james</systemitem> (who is a vet) and click on a visit of Jean
+      to display Jean's pets, you see a button to create a pet and update the owner information.
+      This should not be allowed for vets since only owners may do this.
+      Well, with JPA Security it isn't: When you click on one of the links for adding a pet or a visit,
+      you get a security exception. When you click on a link to edit the owner or a pet,
+      you get the form to edit it, but the security exception arises when you try to save your changes.
+      On a security point of view this is OK, but from the users perspective this is not very nice.
+      We would expect not to see the buttons, when we are not allowed to use them - and JPA Security can do this.
+      We have to change <filename>ownerDetails.jsp</filename> in <filename>src/main/webapp/WEB-INF/jsp/owners/</filename>.
+    </para>
+    <para>
+      Change
+    </para>
+    <programlisting>
+      <![CDATA[
+<%@ taglib prefix="spring" uri="http://www.springframework.org/tags" %>
+<%@ taglib prefix="fmt" uri="http://java.sun.com/jsp/jstl/fmt" %>
+<%@ taglib prefix="fn" uri="http://java.sun.com/jsp/jstl/functions" %>
+<%@ taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core" %>
+<%@ taglib prefix="joda" uri="http://www.joda.org/joda/time/tags" %>
+
+[...]
+
+<tr>
+    <td> 
+        <spring:url value="{ownerId}/edit.html" var="editUrl">
+            <spring:param name="ownerId" value="${owner.id}"/>
+        </spring:url>
+        <a href="${fn:escapeXml(editUrl)}" class="btn btn-info">Edit Owner</a>
+    </td>
+    <td>
+        <spring:url value="{ownerId}/pets/new.html" var="addUrl">
+            <spring:param name="ownerId" value="${owner.id}"/>
+        </spring:url>
+        <a href="${fn:escapeXml(addUrl)}"  class="btn btn-success">Add New Pet</a>
+    </td>
+</tr>
+      ]]>
+    </programlisting>
+    <para>
+      into
+    </para>
+    <programlisting>
+      <![CDATA[
+<%@ taglib prefix="access" uri="http://jpasecurity.sf.net/access" %>
+<%@ taglib prefix="spring" uri="http://www.springframework.org/tags" %>
+<%@ taglib prefix="fmt" uri="http://java.sun.com/jsp/jstl/fmt" %>
+<%@ taglib prefix="fn" uri="http://java.sun.com/jsp/jstl/functions" %>
+<%@ taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core" %>
+<%@ taglib prefix="joda" uri="http://www.joda.org/joda/time/tags" %>
+
+[...]
+
+<tr>
+    <access:updating entity="owner">
+        <td> 
+            <spring:url value="{ownerId}/edit.html" var="editUrl">
+                <spring:param name="ownerId" value="${owner.id}"/>
+            </spring:url>
+            <a href="${fn:escapeXml(editUrl)}" class="btn btn-info">Edit Owner</a>
+        </td>
+    </access:updating>
+    <access:creation type="Pet" parameters="owner">
+        <td>
+            <spring:url value="{ownerId}/pets/new.html" var="addUrl">
+                <spring:param name="ownerId" value="${owner.id}"/>
+            </spring:url>
+            <a href="${fn:escapeXml(addUrl)}"  class="btn btn-success">Add New Pet</a>
+        </td>
+    </acess:creation>
+</tr>
+      ]]>
+    </programlisting>
+    <para>
+      Then change
+    </para>
+    <programlisting>
+      <![CDATA[
+<tr>
+    <td> 
+        <spring:url value="/owners/{ownerId}/pets/{petId}/edit" var="petUrl">
+            <spring:param name="ownerId" value="${owner.id}"/>
+            <spring:param name="petId" value="${pet.id}"/>
+        </spring:url>
+        <a href="${fn:escapeXml(petUrl)}">Edit Pet</a>
+    </td>
+    <td>
+        <spring:url value="/owners/{ownerId}/pets/{petId}/visits/new" var="visitUrl">
+            <spring:param name="ownerId" value="${owner.id}"/>
+            <spring:param name="petId" value="${pet.id}"/>
+        </spring:url>
+        <a href="${fn:escapeXml(visitUrl)}">Add Visit</a>
+    </td>
+</tr>
+      ]]>
+    </programlisting>
+    <para>
+      into
+    </para>
+    <programlisting>
+      <![CDATA[
+<tr>
+    <access:updating entity="owner">
+        <td> 
+            <spring:url value="/owners/{ownerId}/pets/{petId}/edit" var="petUrl">
+                <spring:param name="ownerId" value="${owner.id}"/>
+                <spring:param name="petId" value="${pet.id}"/>
+            </spring:url>
+            <a href="${fn:escapeXml(petUrl)}">Edit Pet</a>
+        </td>
+    </access:updating>
+    <access:creation type="Visit" parameters="pet">
+        <td>
+            <spring:url value="/owners/{ownerId}/pets/{petId}/visits/new" var="visitUrl">
+                <spring:param name="ownerId" value="${owner.id}"/>
+                <spring:param name="petId" value="${pet.id}"/>
+            </spring:url>
+            <a href="${fn:escapeXml(visitUrl)}">Add Visit</a>
+        </td>
+    </access:creation>
+</tr>
+      ]]>
+    </programlisting>
+    <para>
+      and you will see, the buttons only appear when you are allowed to click on it
+      (that is, when you are logged in as an owner).
+      Configuring the <filename>vet.jsp</filename> the same way remains as an exercise to you. Don't forget to insert the tablib for <systemitem>access</systemitem>.
+      And so we are at the end of this tutorial. Our application fulfills the requirements from the first page.
+    </para>
+  </section>
+  <section>
+    <title>Conclusion</title>
+    <para>
+      You are now able to integrate JPA Security in your spring-managed application
+      and know to customize your JSPs to reflect the current security context.
+    </para>
+    <para> 
+      As you could see, when walking through the tutorial, we focused on business-logic and authentication.
+      Due to the integration of JPA Security we needed not to implement much authorization-logic within our domain-model.
+      That code was just a very little part at the end of the tutorial.
+    </para>
+    <para>
+      For further questions and suggestions please e-mail me at <email>arnelim@users.sourceforge.net</email>.
+    </para>
+  </section>
+</article>
