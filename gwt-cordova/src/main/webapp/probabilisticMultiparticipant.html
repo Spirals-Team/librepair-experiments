@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<!--
+Copyright (C) 2016 Max Planck Institute for Psycholinguistics
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-->
+<!--
+ * @since Oct 26, 2016 2:08:45 PM (creation date)
+ * @author Peter Withers <peter.withers@mpi.nl>
+-->
+<html style="width: 100%; height: 100%;">
+    <head>
+        <title>Probabilistic Yes/No group management tester</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-Frame-Options" content="SAMEORIGIN">
+        <script src="webjars/jquery/jquery.min.js"></script>
+        <script language="javascript" type="text/javascript">
+            var memberCodes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+            var probabilities = {'A': 0.0, 'B': 0.7, 'C': 0.75, 'D': 0.8, 'E': 0.85, 'F': 0.9, 'G': 0.95, 'H': 1.0};
+            var group; // is null when all groups are run simultanepusly
+            function robot() {
+                var robotMessagesDiv = document.getElementById("robot_messages");
+                robotMessagesDiv.innerHTML = "robot started";
+                var sizeSelectElement = document.getElementById("sizeSelect");
+                var sizeSelectValue = sizeSelectElement.options[sizeSelectElement.selectedIndex].text;
+                var iframes = document.getElementsByTagName("iframe");
+//                if (document.getElementById('groupName').value === "") {
+                document.getElementById('groupName').value = "robot group at " + new Date().toLocaleTimeString();
+//                }
+                for (frameIndex = 0; frameIndex < iframes.length; ++frameIndex) {
+                    var iframeTimer = setTimeout(function (frameIndex) {
+                        iframes[frameIndex].style.width = '1920px';
+                        iframes[frameIndex].style.height = '1080px';
+                        iframes[frameIndex].src = "/advocas?" + sizeSelectValue + "&testuser=" + Math.floor((Math.random() * 1000000000) + 1) + "&group=" + document.getElementById('groupName').value + "&member=" + memberCodes[frameIndex];
+                    }, 1000 * frameIndex, frameIndex);
+                }
+                group=null;
+                findAndClick();
+            }
+            function reloadIframes() {
+                var iframes = document.getElementsByTagName("iframe");
+                for (frameIndex = 0; frameIndex < iframes.length; ++frameIndex) {
+                    iframes[frameIndex].contentDocument.location.reload(true);
+                }
+            }
+            function singleFrame(memberCode) {
+                var sizeSelectElement = document.getElementById("sizeSelect");
+                var sizeSelectValue = sizeSelectElement.options[sizeSelectElement.selectedIndex].text;
+                $(".startRobotButton").prop('disabled', true);
+                document.getElementsByTagName("table")[0].remove();
+                var iframe = document.createElement('iframe');
+                iframe.setAttribute('width', '100%');
+                iframe.setAttribute('height', '100%');
+                var userid = "testuser_" + Math.floor((Math.random() * 1000000000) + 1);
+                iframe.src = "/advocas?" + sizeSelectValue + "&testuser=" + userid + "&group=" + document.getElementById('groupName').value + "&member=" + memberCode;
+                document.getElementsByTagName("body")[0].append(iframe);
+                var robotMessagesDiv = document.getElementById("robot_messages");
+                robotMessagesDiv.innerHTML = "robot started " + memberCode;
+                group = memberCode;
+                findAndClick();
+            }
+            function findAndClick() {
+                if (document.getElementById("pauseRobot").checked) {
+                    document.getElementById("robot_messages").innerHTML = "robot paused";
+                } else {
+                    document.getElementById("robot_messages").innerHTML = "robot activated at " + new Date().toLocaleTimeString();
+                    var tagArray = ['input', 'textarea'];
+                    var iframes = document.getElementsByTagName("iframe");
+                    for (frameIndex = 0; frameIndex < iframes.length; ++frameIndex) {
+                        for (tagInxex in tagArray) {
+                            var textinput = iframes[frameIndex].contentWindow.document.getElementsByTagName(tagArray[tagInxex]);
+                            //console.log(textinput.length);
+                            // for advocas inputIndex < textinput.length >0 (==1) only on the name introduction screen
+                            for (var inputIndex = 0; inputIndex < textinput.length; inputIndex++) {
+                                if (textinput[inputIndex].className.indexOf("metadataError") !== -1) {
+                                    if (textinput[inputIndex].value === "0") {
+                                        textinput[inputIndex].value = "awasasfwa";
+                                    } else {
+                                        textinput[inputIndex].value = "0";
+                                    }
+                                } else {
+                                    textinput[inputIndex].value = "robot run " + new Date().toLocaleTimeString();
+                                }
+                                //console.log(textinput[inputIndex].value);
+                            }
+                        }
+                        // do not have any select in advocas
+//                        var selectinput = iframes[frameIndex].contentWindow.document.getElementsByTagName('select');
+//                        for (var inputIndex = 0; inputIndex < selectinput.length; inputIndex++) {
+//                            if (selectinput[inputIndex].className.indexOf("metadataError") !== -1) {
+//                                selectinput[inputIndex].selectedIndex = (Math.floor((Math.random() * selectinput[inputIndex].options.length)));
+//                            }
+//                        }
+                        var buttons = iframes[frameIndex].contentWindow.document.getElementsByTagName('button');
+                        //console.log(buttons);
+                        if (buttons.length > 0) {
+                            if (buttons.length > 1) {
+                                // probabilistic click
+                                // the button on the left is with index 0;
+                                // the button(s) on the left is with index 1;
+                                var prob = - 1.0;
+                                if (group === null) { // we are in "all" mode
+                                    prob = probabilities[memberCodes[frameIndex]];
+                                } else { // we are in the single frame mode
+                                    prob = probabilities[group];
+                                }
+                                
+                                var reaction = answeringMachine(iframes[frameIndex], prob);
+                                var randomIndex = reaction ? 1 : 0;
+                                if (buttons[randomIndex] !== 'undefined' && buttons[randomIndex] !== null) {
+                                    buttons[randomIndex].click();
+                                }
+                            } else { // 1 button (always "volgende"/"next" -> always click
+                                buttons[0].click();
+                            }
+
+                        }
+                    }
+                }
+                var robotTimer = setTimeout(function () {
+                    findAndClick();
+                }, document.getElementById('robotSpeed').value);
+            }
+
+            function answeringMachine(frame, prob) {
+                var nonwords = ['reugen', 'pondoes', 'lagadilistisch', 'maberet', 'uitgempen', 'criturg', 'inbricetie', 'stumolen', 'godderijn', 'iriel', 'flosperen', 'pretebentie', 'afflist', 'betijring', 'invensiptie', 'teramikratie', 'kwarzend', 'demaans', 'pulstueel', 'verroppend', 'ralm', 'enturmen', 'teleniaan', 'megelijk', 'intallinaal', 'temifrase', 'puvide', 'relabijn', 'glippant', 'pijtelen', 'vaatstonzel', 'afwilsen', 'berkaaien', 'asteraards', 'karpes', 'bermuiden', 'schieluin', 'ronnotutie', 'pating', 'immagaal', 'oordiet', 'ralding', 'storf', 'ankentement', 'liprema', 'gavimaal', 'mandon', 'mienerlijk', 'tendetorgie', 'mardij', 'lokkel', 'schubes', 'killamolatie', 'ijfling', 'padot', 'megels', 'kortalon', 'lopimicaan', 'infost', 'pongeloos', 'umotoren', 'keumen', 'begolen', 'terutator', 'amusazist', 'anderfermeren', 'refronleren', 'hamp', 'killenhoos', 'gezerpen', 'inspuimig', 'bemokend', 'theoraak', 'mialaltisch', 'presiel', 'figuis', 'stessig', 'konbagieren', 'sopimetief', 'conbonsaal', 'adartuur', 'bamitoseren', 'schroetster', 'deibel', 'sekortiek', 'viarageren', 'rallibule', 'archietnist', 'hijmalaar', 'strissen', 'buntesk', 'estrevroleur', 'kasisist', 'asdilaal', 'bekleigen', 'plapisitie', 'broeg', 'conlipent', 'blankelen', 'helvertoling', 'waspografie', 'dommeratuur', 'verdasting', 'koluctie', 'schroezer', 'mererist', 'pensiet', 'fragteur', 'contokistaal', 'precuguur', 'dinst', 'akeer', 'lategatuur', 'pamend', 'aanschagenen', 'grink', 'geloorderaad', 'dimestolieel', 'prenilaren', 'orvassantie', 'wetterijn', 'kardidieus', 'halluitend', 'himpig', 'domibel', 'kluinteloos', 'plaricaat', 'mabikaal', 'natalping', 'enilitaan', 'akkoevelijk', 'lorma', 'onciarettisch', 'idarliteit', 'kamiliaal', 'beschreeg', 'opdronentie', 'gescheuste', 'besleek', 'risanente', 'aktheminaren', 'dattelen', 'debivet', 'tandeteel', 'getwijnel', 'asubukatie', 'coddactie', 'humaluur', 'espoter', 'gespenken', 'smeumeren', 'constrimtie', 'dierdig', 'vervarding', 'gekraad', 'riodist', 'hoemen', 'kadelziek', 'schos', 'stezen', 'horicijn', 'tront', 'embabron', 'trarrofoon', 'sormies', 'beslaren', 'agumotie', 'nijtel', 'struifnever', 'twikkig', 'jomisch', 'amunt', 'overgeels', 'patabeleren', 'stroon', 'tijvinigheid', 'primpel', 'prerartief', 'kobudant', 'erotaad', 'kruffen', 'eggrotie', 'gebecht', 'bergeinen', 'schossig', 'beneliaan', 'degisch', 'statienast', 'preriment', 'bemuzaarde', 'reuperd', 'uitwok', 'beziefd', 'ekaldiek', 'kwijger', 'protridenade', 'ekkrosief', 'tups', 'pelm', 'gelamersine', 'valdrongen', 'vonoom', 'gertogelijk', 'fudurense', 'gebantie', 'snengen', 'drant', 'callepaneel', 'hekatie', 'bermieken', 'geslook', 'stadderaar', 'sastiem', 'zwidde', 'dimor', 'doorwijns', 'corrublindent', 'nidasteren', 'corlesitie', 'sprans', 'beklig', 'trandellien', 'zotenilisme', 'lirultief', 'vetactisch', 'aderrief', 'pimestarie', 'nachteraan', 'boegtaam', 'doeperij', 'slapioloog', 'maarmarstig', 'medormap', 'atteen', 'schobbalen', 'steik', 'gulpontig', 'bijbarting', 'wingstondig', 'vestraaiing', 'halnomen', 'rolk', 'gerdel', 'kwetelijk', 'drozing', 'uithoktend', 'verbrelen', 'narzesiteit', 'intundie', 'tralaan', 'ompuchtbaar', 'korket', 'manijn', 'mokelijk', 'snink', 'algeziet', 'berrillelijk', 'wilheur', 'slabiaan', 'alapilitie', 'krijterschap', 'pizeur', 'vervarden', 'grazist', 'eggenent', 'blanstig', 'cemepisch', 'maloen', 'stakrast', 'bekelijk', 'teper', 'nartelijk', 'cordinu', 'studiediet', 'taslon', 'detig', 'aandrapt', 'invoekelijk', 'wanomeren', 'zuitend', 'dobitoseren', 'besprering', 'kalzelen', 'kleimig', 'ziekelen', 'berkluitig', 'geeslook', 'kinterogie', 'reddine', 'brog', 'invisting', 'restuinenswaardig', 'tecastentie', 'astienen', 'zetidisch', 'aangringen', 'elbotomenteel', 'ostemarkt', 'begildig', 'horps', 'splimpen', 'versellen', 'noromares', 'huistvrij', 'ganriteur', 'trekkaat', 'heunel', 'opongelen', 'pinterlaarlijk', 'schroerverei', 'veriede', 'koermink', 'stiellijs', 'vertijstheid', 'kavinentose', 'grageloog', 'joming', 'vehoenlijk', 'flepen', 'kieneling', 'lagelen', 'schiettikt', 'koselaat', 'blijns', 'grankig', 'altantiventie', 'bermeerd', 'krachteteel', 'verwolper', 'benebbel', 'taben', 'niekeling', 'vonlastisch', 'miakinaal', 'aketolief', 'mialaltiek', 'topelig', 'orjetier', 'fibrattaren', 'vikoor', 'verscheeg', 'hetetiekorps', 'fortorij', 'vlum', 'soddet', 'tegissant', 'halboeglijk', 'verdaspen', 'schurding', 'vejarist', 'kiksel', 'zergulatie', 'gussiraal', 'voseraar', 'statsen', 'apennatig', 'terasonaren', 'creromaren', 'frieperd', 'grateusel', 'lepij', 'surisie', 'doning', 'locaan', 'messtaad', 'schokeldijn', 'erkeur', 'tinpeloos', 'bedijgbaar', 'berstaling', 'dymkactisch', 'echterijn', 'rumrokking', 'ibbens', 'werium', 'hapueel', 'geldel', 'clormisch', 'caflonsis', 'grarieel', 'kleffier', 'prikezie', 'pakpaustine', 'otlikisme', 'jagradieel', 'wedigrafisch', 'letmiek', 'afrepent', 'honcretie', 'tistorie', 'prokomoren', 'waanderijks', 'oppumetie', 'asdanonaal', 'aanstildelijk', 'ablociltuur', 'deharstructie', 'mekontaan', 'inschubelijk', 'atendueen', 'vesolcineerd', 'valetig', 'plisterig', 'geschiend', 'pabroos', 'hapiek', 'larton', 'ligittie', 'keumige', 'safetantie', 'drapolen', 'venterm', 'vereberend', 'sonspering', 'ontzuppen', 'vlox', 'meeuwelin', 'cagstentieel', 'ematintatie', 'krepadetie', 'pluwelaan', 'afbas', 'pronvettist', 'veding', 'marwetisch', 'ellepitie', 'rerdaturaat', 'calalect', 'gepoping', 'trirvioen', 'volstutig', 'slimmelen', 'belleemheid', 'conjentralen', 'tretting', 'pideletuur', 'konnelig', 'gesiel', 'kroden', 'feis', 'pleuts', 'dierin', 'ballelliek', 'hutaar', 'jarloficaat', 'glappelig', 'boppelen', 'vollundig', 'zijketig', 'judrulant', 'bedoerderen', 'siltoberen', 'omrundend', 'sekker', 'gattiaal', 'waspisitie', 'gorm', 'kondreiten', 'klampigaal', 'mipel', 'lozeraal', 'fupieus', 'ladramage', 'verzieving', 'krussig', 'progeceteur', 'berkoer', 'nogen', 'vildaren', 'puintenij', 'venijnten', 'inonfie', 'ennilie', 'annevirie', 'hundes', 'mempen', 'corbemitie', 'wistiek', 'gersnokkend', 'scholotisch', 'veraand', 'recronaren', 'slaam', 'berennelen', 'dederaar', 'nokaar', 'kovetie', 'wilmgroei', 'warderlijk', 'kotaal', 'lioleit', 'awanteur', 'kienelig', 'tederie', 'stiefloen', 'gesigaraseerd', 'warralist', 'filfiet', 'artilef', 'rangrictie', 'erferaan', 'soskerij', 'lurdig', 'mardon', 'tradidee', 'aruindig', 'vorris', 'geloordelijk', 'kedeling', 'odpesie', 'zwaldel', 'vrietist', 'mabaat', 'ekmisch', 'warmunetie', 'rilomode', 'kovioen', 'bedeuriging', 'vezerting', 'ramarij', 'propikkeron', 'zoorn', 'revost', 'boltpomier', 'atser', 'uigenoord', 'kaspeligisch', 'gruleristisch', 'faliliedeen', 'lafus', 'vetadiel', 'flonstelend', 'vebruchten', 'doleton', 'begerving', 'zwemalaar', 'admedaren', 'bolsode', 'zem', 'bajoktrant', 'pindermaad', 'holinge', 'bemieger', 'krosiaal', 'beknisseerd', 'smeven', 'belongelaar', 'amenlaar', 'pigiek', 'berspreuking', 'machteteel', 'sturden', 'venedegen', 'papijl', 'berklarren', 'berduitelijk', 'brongen', 'lulstbandig', 'iltrentaat', 'inustogen', 'pewarante', 'verisserig', 'knimmelig', 'vereberen', 'vrunteling', 'benild', 'priomme', 'troekens', 'allervans', 'mupline', 'roportiek', 'mosimaal', 'angraar', 'feiker', 'flonstelen', 'snulten', 'wenalia', 'nemenraal', 'corstorte', 'vehegen', 'dasken', 'opgakerij', 'vezaren', 'legroperiseren', 'braar', 'guitak', 'kienstbaal', 'glistelijk', 'verspreigen', 'tivartie', 'karzien', 'smakteel', 'kalbelade', 'raterliet', 'dolstueel', 'virmieel', 'uitklesting', 'plurarinaan', 'wrijmeraar', 'kiddermaad', 'duskaal', 'onterweven', 'mazein', 'alsprengen', 'kavree', 'renodregen', 'doornarstoken', 'roebiel', 'arfoezelen', 'vecindeerd', 'kapogerie', 'simperechtend', 'veschosting', 'moetel', 'congildie', 'brerine', 'kojoluut', 'momp', 'opprinee', 'omvaan', 'kwiecht', 'haltoen', 'sorkeel', 'buraak', 'okdrimaat', 'prip', 'atsel', 'gestensen', 'vepekenen', 'ebelij', 'flibbel', 'prootsing', 'gebruursheerd', 'infilrie', 'beharmes', 'emedeel', 'dadegantie', 'veleet', 'gevina', 'dipiadier', 'olletude', 'dertigeloog', 'chovibijn', 'blomie', 'rakwan', 'jalmis', 'namerijn', 'speesing', 'soorteraan', 'brijpen', 'appirtalief', 'kettident', 'comgemetie', 'faredrafie', 'bervloezing', 'traten', 'kantimaak', 'vemekken', 'pihengiaat', 'ogernabaring', 'aanjonterlijk', 'pomite', 'sietsel', 'dargel', 'dofikotief', 'schobeting', 'benipofaant', 'vespoetening', 'nastrijls', 'onslardelijk', 'brorkelen', 'marsens', 'spropend', 'ongertief', 'wanmecutie', 'dekeel', 'aaldijding', 'pronippe', 'waarbijn', 'opana', 'kwantonelief', 'obkatief', 'michten', 'sturarte', 'derebas', 'remiketie', 'ruimkreging', 'pammerd', 'jagogdictie', 'arachteleem', 'lommon', 'traar', 'wacromeren', 'ijseraan', 'idditent', 'vioron', 'kosdeeld', 'slatetie', 'stougelin', 'fitgeraal', 'twaads', 'naromender', 'resenloren', 'howeliteit', 'toedekaat', 'hepeloos', 'aprennief', 'heltelijk', 'geballelijk', 'truma', 'fluwaag', 'vivoel', 'drootsing', 'adpront', 'dochtkrij', 'peject', 'iddimeren', 'otij', 'berklemen', 'strokon', 'insloeding', 'bekattupeerd', 'flazapeut', 'instennaren', 'miaak', 'erkarts', 'contallaren', 'derultor', 'jamier', 'berkeuvelijlen', 'umpstig', 'vescheming', 'pokenin', 'berknelpen', 'onrolen', 'frarsen', 'indokstatetie', 'fiteek', 'fluleuse', 'doolwist', 'entineuk', 'groeking', 'lekredie', 'vedalen', 'spruichen', 'merraguur', 'miomenten', 'rolpstarrig', 'afkotelijk', 'tekenitie', 'voeriek', 'kirgedier', 'bespreizing', 'bastarheid', 'maving', 'banstelijk', 'radalver', 'oppebeuglijk', 'muzegen', 'tijmant', 'versuppen', 'beoorlaats', 'oranfafeet', 'onveschremen', 'desakentie', 'staliam', 'korculien', 'fivortripie', 'gerstieding', 'berhakkening', 'flepelijk', 'rebrijk', 'wahaliter', 'berstraaid', 'mosmonol', 'norgading', 'ponenlijk', 'lelomakatie', 'bergastenis', 'sutting', 'aarberheid', 'tergendioneel', 'rordoyant', 'toegons', 'bladetig', 'prurt', 'keima', 'eiltede', 'smemalig', 'broffeteur', 'inteldaag', 'starm', 'noger', 'wimming', 'slaarmekker', 'poventig', 'omluiring', 'berobaren', 'bodervlaad', 'weenschoppelijk', 'rehotoren', 'paknodraal', 'berkerden', 'sinuragen', 'bonspiljet', 'vetichten', 'berdussen', 'welsilaat', 'inkichtig', 'haledak', 'ramenin', 'lomguasief', 'ongebels', 'wanmentine', 'zwoost', 'efject', 'verpijding', 'riepoedig', 'kuchtaan', 'onsmallen', 'lepenuit', 'pijtens', 'bermurmen', 'pattedrag', 'veteggelijk', 'kofersief', 'waflex', 'castroek', 'smelieus', 'belelden', 'geuist', 'sefamziet', 'crimodirateit', 'berkleiten', 'astenuldig', 'dralk', 'aatslijving', 'telbioen', 'cougeise', 'linkotioneel', 'welprolen', 'omraarts', 'onstronen', 'berveugd', 'veoorlinaar', 'hogment', 'fagteur', 'akitet', 'belonzelijk', 'bepeudigen', 'verieen', 'trimalek', 'nakenstitie', 'breep', 'meunel', 'ouwacieten', 'cordinegen', 'largelings', 'juweraren', 'uitklorsel', 'soscaal', 'enstubonen', 'kegemant', 'meponteel', 'betrallel', 'posstaan', 'grammooien', 'zieuwerheid', 'bleubel', 'olwafolisch', 'klergte', 'wenuratie', 'spropen', 'onlongellijk', 'sanoei', 'ontplurben', 'vefrarkeerd', 'ronbioneel', 'joddegrok', 'dehomueel', 'maarvaloos', 'berspag', 'darmakent', 'berkikken', 'schesser', 'berstessen', 'zeben', 'ontjazen', 'astemeeslijk', 'vrebaal', 'tozinees', 'tederieden', 'rerditie', 'frimekel', 'agsinent', 'ameping', 'curgeef', 'ijmgarig', 'contrellaren', 'menlariteit', 'onterziemen', 'gersovelaar', 'inwartief', 'gloken', 'onjamming', 'oppumaren', 'warspelatie', 'akkerief', 'gersoveling', 'versaander', 'kuvor', 'verponpenen', 'ligeggisch', 'oorpoop', 'porkon', 'kenselein', 'gemaaf', 'gerstordig', 'gigkruchtig', 'kilselen', 'osmeling', 'vestesseling', 'egknotisch', 'pogendaart', 'suppijkt', 'inspate', 'norpens', 'bemettalijk', 'ospassedeur', 'darfortant', 'roefdra', 'tidrolen', 'vuiding', 'wijranig', 'trewen', 'wemiak', 'bameen', 'veleniteerd', 'hentin', 'zuimnatuatie', 'podenschap', 'numelnetiek', 'vereuben', 'berlongen', 'berschippend', 'smapmatisch', 'glarkier', 'onvepeilerd', 'fabroet', 'bokenlien', 'brelder', 'zopel', 'glarsuis', 'vescheligd', 'vebierding', 'holalen', 'fririlen', 'pinikent', 'attikt', 'onnerwande', 'navanning', 'imbing', 'mobbijn', 'bebriepig', 'ligeggie', 'bermoring', 'datsim', 'walarminant', 'evijs', 'menetens', 'prijper', 'sches', 'tagisor', 'okstobutie', 'vedraand', 'rerk', 'bepegdeld', 'vemechten', 'lestrundie', 'sneem', 'flusegen', 'grapisie', 'bieuw', 'tromsiets', 'wanositie', 'fomiheer', 'intuileinend', 'fafial', 'neuroek', 'infalbaren', 'berzieging', 'meetdelijk', 'mavil', 'wedrokoom', 'brirkeling', 'slanspalent', 'rolebram', 'ebiblom', 'lurlerig', 'fatijd', 'schijgswerf', 'blacht', 'miklenatisch', 'kanvelijkheid', 'roetorre', 'viriowaald', 'allizelaar', 'bevloetedis', 'senigen', 'inslaletie', 'traspontij', 'gerpierzel', 'gerulbel', 'lolict', 'koefmobberij', 'roortrig', 'berdomelen', 'scruputoel', 'strarokie', 'eukereed', 'tibbegen', 'frideurlet', 'ofslijkbaar', 'anwaad', 'bevrielten', 'smoebaan', 'ekpillantie', 'bermegen', 'blort', 'inophaarbaar', 'bekeutoging', 'beutstigen', 'bechts', 'achteteel', 'pamiefel', 'darfect', 'atalsmaal', 'zondalsbond', 'spipper', 'omelvlieden', 'spendetig', 'asterscheid', 'vewoeg', 'amhaalding', 'aartieken', 'pappief', 'varterel', 'duiketing', 'grarenisch', 'brapering', 'abbeschaagt', 'herklefel', 'velaalkelijk', 'adukreker', 'wrijmegen', 'tronsttijn', 'vebeerder', 'larzieking', 'ratmelaar', 'halgepollig', 'intotovitie', 'aterboren', 'ozoef', 'ontreensmaar', 'veschogbaar', 'snom', 'aatspoving', 'diowelisch', 'gepromen', 'jempet', 'blusto', 'isenkatie', 'veslammen', 'fagawel', 'omvoelaan', 'vinneljaart', 'krocuraas', 'maafsheid', 'pribuur', 'rijterzaals', 'bebrijler', 'oehamen', 'vegachtspunt', 'kroren', 'tezoper', 'anschorp', 'berschieven', 'koddenhoor', 'ogin', 'steupem', 'angeideling', 'injutome', 'loerna', 'zonserheid', 'spikiek', 'asseldig', 'arelvlasie', 'ompegeten', 'spucot', 'maddibar', 'andrijnlijk', 'amektel', 'schepting', 'kosenteur', 'gerbongen', 'torlate', 'snemmer', 'hokelal', 'brap', 'nettiler', 'zummer', 'berschiegen', 'kedelijks', 'tigdering', 'adwanderen', 'aanvatinen', 'nekeven', 'apmuselief', 'bedrannik', 'onvoger', 'drookperrie', 'torgegraads', 'slaarpol', 'bijtole', 'muikdelijk', 'veheitend', 'insiraren', 'toeptelig', 'jontast', 'bemonner', 'ampetwinsbaar', 'inlolaan', 'invenstordig', 'vegorgd', 'prodoet', 'knam', 'valtewas', 'egenweist', 'onsolig', 'rorio', 'warenator', 'tadeboe', 'schevem', 'berdeeft', 'fitken', 'deskelijk', 'voeping', 'nakelieur', 'intabavueel', 'vlallen', 'bendasta', 'drorzeloos', 'dunileins', 'berdoep', 'aarkien', 'mukiek', 'afmoeving', 'stobsato', 'lilikent', 'krurzig', 'aplordigen', 'voorkleller', 'vadenwinselijk', 'tyspude', 'klellig', 'onsonbalijk', 'gertiesterers', 'vernoldaren', 'akkebruikt', 'ootpeed', 'klechts', 'berdemd', 'bergegen', 'obbeschegt', 'intilm', 'olbangs', 'bemille', 'floluirijk', 'bervichten', 'wadeborker', 'gerdrulding', 'krurf', 'berschieking', 'schijgste', 'tokedoni', 'gadatast', 'padelstiten', 'weelslaad', 'odstuik', 'rummij', 'basrikton', 'vekeeuwen', 'griktaat', 'lacerdelijk', 'taukelle', 'venunding', 'wagerderisch', 'enzap', 'bleetbaar', 'zervens', 'prijnenceld', 'vrijvopig', 'nostenkie', 'pizing', 'klondslad', 'cunze', 'vrallen', 'zimouver', 'krogherti', 'coptact', 'nojoost', 'mandvarrijd', 'toteateur', 'alortstoding', 'lekinklijk', 'mopcurn', 'odenhuiten', 'geweintedis', 'liepenpasier', 'natcoom', 'wadiwer', 'gerplaaien', 'veschosten', 'dookels', 'delinkpandel', 'omvarvorsen', 'uitsechost', 'nacef', 'zieuwsbroef', 'klal', 'beanggeelden', 'tweelerkjus', 'ijkmilly', 'lunstemoles', 'schesks', 'adartlijk', 'lorfararen', 'igirabrie', 'ochterep', 'devensbiel', 'ezaktel', 'efgactief', 'ekwarzeren', 'tetaltive', 'vekedia', 'iklap', 'buidendonten', 'groegoding', 'lepeven', 'adaandes', 'vewiren', 'mentekid', 'stritzent', 'eereverniper', 'zossue', 'daargemmenin', 'vonve', 'broorroos', 'geelkebigen', 'rokeking', 'vezeid', 'poenbouber', 'neekrag', 'aantritilijk', 'berantweerdeteit', 'vukpel', 'momelons', 'beronming', 'andstopt', 'kangegen', 'pegaadade', 'wijpeloegen', 'pespenbaren', 'zwockbar', 'inkouken', 'gemoeitoedig', 'tesignegen', 'kenvelopen', 'geneetgemdel', 'wutlen', 'vepikkig', 'kigneneris', 'antowechie', 'vory', 'zismiak', 'bloefpe', 'berzweffen', 'barrawemaren', 'otwate', 'zorditaseren', 'sefpor', 'hermeerleter', 'kondlerstig', 'vehoutelt', 'tienenis', 'pigulder', 'leglaant', 'brapla', 'bermaring', 'onspepen', 'vewilleloos', 'gerschuikele', 'levading', 'vemouw', 'etdentrowateit', 'neezat', 'pechtizing', 'ukeef', 'batveeto', 'haispisse', 'vejaarlenhaad', 'aperuild', 'gewuksvijn', 'vrijslerieus', 'tegerpijds', 'jangerenkift', 'verneertezen', 'veduksfurmer', 'abkupt', 'ampekestigd', 'aarmaring', 'gejorarte', 'afgerstrezen', 'wuldauto', 'wamegreren', 'paud', 'odenwuitang', 'plambing', 'lislekening', 'toevaping', 'mekjen', 'zujucal', 'ramfe', 'neharber', 'nenje', 'otfectief', 'konbijleut', 'rortrormig', 'vontjat', 'jorstifuge', 'achtelkeurt', 'ontlertenen', 'opbino', 'mamiergrem', 'ramaxed', 'neemteperlof', 'overmifis', 'aatsloging', 'nenteking', 'eitelbaafde', 'maneetdoen', 'uitmepoend'];
+                var spellingBuffer = frame.contentWindow.document.getElementsByClassName('gwt-HTML groupMessageLabel');
+                var spelling = spellingBuffer[0].firstChild.data;
+                var isWord = (nonwords.indexOf(spelling) === -1);
+                var rnd = Math.random();
+                if (rnd <= prob) { // the randon number is within the correctness interval
+                    return isWord;
+                } else { // the randon number is beyond the correctness interval
+                    return !isWord; // spoil the answer
+                }
+            }
+
+        </script>
+    </head>
+    <body style="width: 100%; height: 100%;">
+        <div id="robot_messages"></div>
+        <select id="sizeSelect">
+            <option value="1" selected="selected">R0_4</option>
+            <option value="2">R0_8</option>
+        </select>
+        <button type="button" class="startRobotButton" onclick="robot();">All</button>
+        <button type="button" class="startRobotButton" onclick="singleFrame('A');">A, corr.prob=<script type='text/javascript'>document.write(probabilities['A'])</script></button>
+        <button type="button" class="startRobotButton" onclick="singleFrame('B');">B, p=<script type='text/javascript'>document.write(probabilities['B'])</script></button>
+        <button type="button" class="startRobotButton" onclick="singleFrame('C');">C, p=<script type='text/javascript'>document.write(probabilities['C'])</script></button>
+        <button type="button" class="startRobotButton" onclick="singleFrame('D');">D, p=<script type='text/javascript'>document.write(probabilities['C'])</script></button>
+        <button type="button" class="startRobotButton" onclick="singleFrame('E');">E, p=<script type='text/javascript'>document.write(probabilities['E'])</script></button>
+        <button type="button" class="startRobotButton" onclick="singleFrame('F');">F, p=<script type='text/javascript'>document.write(probabilities['F'])</script></button>
+        <button type="button" class="startRobotButton" onclick="singleFrame('G');">G, p=<script type='text/javascript'>document.write(probabilities['G'])</script></button>
+        <button type="button" class="startRobotButton" onclick="singleFrame('H');">H, p=<script type='text/javascript'>document.write(probabilities['H'])</script></button>
+        <input type="text" id="groupName" placeholder="Type a group name...">  
+        <input type="number" id="robotSpeed" value="1000" max="10000" min="100">  
+        Pause Robot: <input type="checkbox" id="pauseRobot" />
+        <button type="button" onclick="reloadIframes();">reload frames</button>
+        <table style="width: 100%; height: 90%;">
+            <tr><td><iframe style="width: 100%; height: 100%;"></iframe></td><td> <iframe style="width: 100%; height: 100%;"></iframe></td><td> <iframe style="width: 100%; height: 100%;"></iframe></td><td> <iframe style="width: 100%; height: 100%;"></iframe></td></tr>
+            <tr><td><iframe style="width: 100%; height: 100%;"></iframe></td><td> <iframe style="width: 100%; height: 100%;"></iframe></td><td> <iframe style="width: 100%; height: 100%;"></iframe></td><td> <iframe style="width: 100%; height: 100%;"></iframe></td></tr>
+        </table>
+    </body>
+</html>
