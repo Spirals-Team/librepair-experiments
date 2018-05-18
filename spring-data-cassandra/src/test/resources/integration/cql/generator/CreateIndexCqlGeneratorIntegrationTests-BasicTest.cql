@@ -1,0 +1,1 @@
+create table if not exists mytable (id uuid primary key, column1 text);
