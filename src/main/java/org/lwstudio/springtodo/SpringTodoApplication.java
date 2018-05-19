@@ -1,0 +1,15 @@
+package org.lwstudio.springtodo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.stereotype.Controller;
+
+@Controller
+@SpringBootApplication
+public class SpringTodoApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(SpringTodoApplication.class, args);
+    }
+
+}
