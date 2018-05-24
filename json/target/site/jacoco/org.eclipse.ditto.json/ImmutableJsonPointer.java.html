@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ImmutableJsonPointer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: JSON</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.json</a> &gt; <span class="el_source">ImmutableJsonPointer.java</span></div><h1>ImmutableJsonPointer.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.json;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import javax.annotation.concurrent.Immutable;
+
+/**
+ * This class represents a JSON pointer consisting of at least one {@link JsonKey}.
+ */
+@Immutable
+final class ImmutableJsonPointer implements JsonPointer {
+
+    private static final String SLASH = &quot;/&quot;;
+    private static final String SLASH_REGEX = &quot;/(?!/)&quot;; // a SLASH which is not followed by another slash
+<span class="fc" id="L38">    private static final Pattern SINGLE_SLASH_REGEX_PATTERN = Pattern.compile(SLASH_REGEX);</span>
+<span class="fc" id="L39">    private static final Pattern ESCAPED_SLASH_PATTERN = Pattern.compile(&quot;~1&quot;);</span>
+<span class="fc" id="L40">    private static final Pattern DECODED_SLASH_PATTERN = Pattern.compile(SLASH);</span>
+<span class="fc" id="L41">    private static final Pattern ESCAPED_TILDE_PATTERN = Pattern.compile(&quot;~0&quot;);</span>
+<span class="fc" id="L42">    private static final Pattern DECODED_TILDE_PATTERN = Pattern.compile(&quot;~&quot;);</span>
+
+<span class="fc" id="L44">    private static final ImmutableJsonPointer EMPTY = new ImmutableJsonPointer(Collections.emptyList());</span>
+
+    private final List&lt;JsonKey&gt; jsonKeyHierarchy;
+
+<span class="fc" id="L48">    private ImmutableJsonPointer(final List&lt;JsonKey&gt; theJsonKeys) {</span>
+<span class="fc" id="L49">        jsonKeyHierarchy = Collections.unmodifiableList(new ArrayList&lt;&gt;(theJsonKeys));</span>
+<span class="fc" id="L50">    }</span>
+
+    /**
+     * Returns an empty instance of {@code ImmutableJsonPointer}.
+     *
+     * @return an empty JSON pointer.
+     */
+    public static ImmutableJsonPointer empty() {
+<span class="fc" id="L58">        return EMPTY;</span>
+    }
+
+    /**
+     * Parses the given character sequence to obtain a new JSON pointer instance. This method is the inverse of
+     * {@link ImmutableJsonPointer#toString()}.
+     *
+     * @param slashDelimitedCharSequence a character sequence representing a JSON pointer. The leading slash may be
+     * omitted.
+     * @return a new JSON pointer consisting of the JSON keys which were extracted from {@code
+     * slashDelimitedCharSequence}.
+     * @throws NullPointerException if {@code slashDelimitedCharSequence} is {@code null}.
+     */
+    public static JsonPointer ofParsed(final CharSequence slashDelimitedCharSequence) {
+<span class="fc" id="L72">        requireNonNull(slashDelimitedCharSequence, &quot;The JSON pointer character sequence must not be null!&quot;);</span>
+
+        final JsonPointer result;
+
+<span class="fc bfc" id="L76" title="All 2 branches covered.">        if (JsonPointer.class.isAssignableFrom(slashDelimitedCharSequence.getClass())) {</span>
+<span class="fc" id="L77">            result = (JsonPointer) slashDelimitedCharSequence;</span>
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        } else if (JsonKey.class.isAssignableFrom(slashDelimitedCharSequence.getClass())) {</span>
+<span class="fc" id="L79">            result = newInstance(Collections.singletonList(((JsonKey) slashDelimitedCharSequence)));</span>
+<span class="fc bfc" id="L80" title="All 2 branches covered.">        } else if (0 == slashDelimitedCharSequence.length()) {</span>
+<span class="fc" id="L81">            result = empty();</span>
+        } else {
+<span class="fc" id="L83">            final List&lt;JsonKey&gt; jsonKeys = Stream.of(SINGLE_SLASH_REGEX_PATTERN.split(slashDelimitedCharSequence))</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">                    .filter(keyName -&gt; !keyName.isEmpty()) // ignore empty segments</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">                    .filter(keyName -&gt; !keyName.equals(SLASH)) // ignore &quot;/&quot; segments</span>
+<span class="fc" id="L86">                    .map(ImmutableJsonPointer::decodeSlash)</span>
+<span class="fc" id="L87">                    .map(ImmutableJsonPointer::decodeTilde)</span>
+<span class="fc" id="L88">                    .map(JsonFactory::newKey)</span>
+<span class="fc" id="L89">                    .collect(toList());</span>
+
+<span class="fc" id="L91">            result = newInstance(jsonKeys);</span>
+        }
+
+<span class="fc" id="L94">        return result;</span>
+    }
+
+    private static String decodeSlash(final CharSequence keyString) {
+<span class="fc" id="L98">        final Matcher matcher = ESCAPED_SLASH_PATTERN.matcher(keyString);</span>
+<span class="fc" id="L99">        return matcher.replaceAll(SLASH);</span>
+    }
+
+    private static String decodeTilde(final CharSequence keyString) {
+<span class="fc" id="L103">        final Matcher matcher = ESCAPED_TILDE_PATTERN.matcher(keyString);</span>
+<span class="fc" id="L104">        return matcher.replaceAll(DECODED_TILDE_PATTERN.toString());</span>
+    }
+
+    private static ImmutableJsonPointer newInstance(final List&lt;JsonKey&gt; jsonKeyHierarchy) {
+<span class="fc" id="L108">        return new ImmutableJsonPointer(jsonKeyHierarchy);</span>
+    }
+
+    /**
+     * Returns a new JSON pointer instance.
+     *
+     * @param rootLevel the JSON key which is the root level of the JSON pointer to create.
+     * @param subLevels the JSON keys which form sub levels to the root level as well as to each other.
+     * @return a new JSON pointer consisting of hierarchical JSON keys.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public static ImmutableJsonPointer of(final JsonKey rootLevel, final JsonKey... subLevels) {
+<span class="fc" id="L120">        checkRootLevel(rootLevel);</span>
+<span class="fc" id="L121">        requireNonNull(subLevels, &quot;The sub levels must not be null!&quot;</span>
+                + &quot; If the JSON pointer does not require sub levels, just omit this argument.&quot;);
+
+        final ImmutableJsonPointer result;
+
+<span class="fc" id="L126">        final List&lt;JsonKey&gt; keyHierarchy = new ArrayList&lt;&gt;(1 + subLevels.length);</span>
+<span class="fc" id="L127">        keyHierarchy.add(rootLevel);</span>
+<span class="fc" id="L128">        Collections.addAll(keyHierarchy, subLevels);</span>
+
+<span class="fc" id="L130">        result = newInstance(keyHierarchy);</span>
+
+<span class="fc" id="L132">        return result;</span>
+    }
+
+    private static void checkRootLevel(final JsonKey rootLevel) {
+<span class="fc" id="L136">        requireNonNull(rootLevel, &quot;The root level of the JSON pointer must not be null!&quot;);</span>
+<span class="fc" id="L137">    }</span>
+
+    /**
+     * Returns a new JSON pointer instance.
+     *
+     * @param rootLevel the JSON key which is the root level of the JSON pointer to create.
+     * @param subPointer the JSON keys which form sub levels to the root level as well as to each other.
+     * @return a new JSON pointer consisting of hierarchical JSON keys.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    static ImmutableJsonPointer of(final JsonKey rootLevel, final JsonPointer subPointer) {
+<span class="nc" id="L148">        checkRootLevel(rootLevel);</span>
+<span class="nc" id="L149">        checkSubPointer(subPointer);</span>
+
+        final ImmutableJsonPointer result;
+
+<span class="nc" id="L153">        final List&lt;JsonKey&gt; keyHierarchy = new ArrayList&lt;&gt;(1 + subPointer.getLevelCount());</span>
+<span class="nc" id="L154">        keyHierarchy.add(rootLevel);</span>
+<span class="nc" id="L155">        subPointer.forEach(keyHierarchy::add);</span>
+
+<span class="nc" id="L157">        result = newInstance(keyHierarchy);</span>
+
+<span class="nc" id="L159">        return result;</span>
+    }
+
+    private static void checkSubPointer(final Object subPointer) {
+<span class="fc" id="L163">        requireNonNull(subPointer, &quot;The sub sub pointer to be appended must not be null!&quot;);</span>
+<span class="fc" id="L164">    }</span>
+
+    /**
+     * Adds a level to this JSON pointer. For example, if this pointer is {@code &quot;foo/bar&quot;} and {@code addLevel()} is
+     * called with a JSON field {@code &quot;baz&quot;} then the JSON pointer is {@code &quot;foo/bar/baz&quot;}.
+     *
+     * @param key the new level JSON field.
+     * @return a &lt;em&gt;new&lt;/em&gt; JSON pointer consisting of the old pointer extended by {@code jsonField}.
+     * @throws NullPointerException if {@code jsonField} is {@code null}.
+     */
+    @Override
+    public ImmutableJsonPointer addLeaf(final JsonKey key) {
+<span class="fc" id="L176">        requireNonNull(key, &quot;The level to be added must not be null!&quot;);</span>
+
+<span class="fc" id="L178">        final List&lt;JsonKey&gt; newJsonKeys = new ArrayList&lt;&gt;(jsonKeyHierarchy);</span>
+<span class="fc" id="L179">        newJsonKeys.add(key);</span>
+
+<span class="fc" id="L181">        return newInstance(newJsonKeys);</span>
+    }
+
+    @Override
+    public ImmutableJsonPointer append(final JsonPointer subPointer) {
+<span class="fc" id="L186">        checkSubPointer(subPointer);</span>
+
+        final ImmutableJsonPointer result;
+
+<span class="fc bfc" id="L190" title="All 2 branches covered.">        if (subPointer.isEmpty()) {</span>
+<span class="fc" id="L191">            result = this;</span>
+        } else {
+<span class="fc" id="L193">            final List&lt;JsonKey&gt; newJsonKeys = new ArrayList&lt;&gt;(jsonKeyHierarchy);</span>
+<span class="fc" id="L194">            subPointer.forEach(newJsonKeys::add);</span>
+<span class="fc" id="L195">            result = newInstance(newJsonKeys);</span>
+        }
+
+<span class="fc" id="L198">        return result;</span>
+    }
+
+    /**
+     * Returns the number of levels of this JSON pointer. For example if the pointer is {@code &quot;foo/bar/baz&quot;} this
+     * method will return the value {@literal 3}.
+     *
+     * @return the number of levels of this pointer.
+     */
+    @Override
+    public int getLevelCount() {
+<span class="fc" id="L209">        return jsonKeyHierarchy.size();</span>
+    }
+
+    @Override
+    public boolean isEmpty() {
+<span class="fc" id="L214">        return jsonKeyHierarchy.isEmpty();</span>
+    }
+
+    @Override
+    public Optional&lt;JsonKey&gt; get(final int level) {
+        try {
+<span class="fc" id="L220">            return Optional.of(jsonKeyHierarchy.get(level));</span>
+<span class="fc" id="L221">        } catch (final IndexOutOfBoundsException e) {</span>
+<span class="fc" id="L222">            return Optional.empty();</span>
+        }
+    }
+
+    @Override
+    public Optional&lt;JsonKey&gt; getRoot() {
+<span class="fc" id="L228">        return get(0);</span>
+    }
+
+    @Override
+    public Optional&lt;JsonKey&gt; getLeaf() {
+<span class="fc" id="L233">        return get(getLevelCount() - 1);</span>
+    }
+
+    @SuppressWarnings(&quot;squid:S1166&quot;)
+    @Override
+    public Optional&lt;JsonPointer&gt; getSubPointer(final int level) {
+<span class="fc" id="L239">        final List&lt;JsonKey&gt; jsonKeysCopy = new ArrayList&lt;&gt;(jsonKeyHierarchy);</span>
+        try {
+<span class="fc" id="L241">            final List&lt;JsonKey&gt; subList = jsonKeysCopy.subList(level, jsonKeysCopy.size());</span>
+<span class="fc" id="L242">            return Optional.of(newInstance(subList));</span>
+<span class="fc" id="L243">        } catch (final IllegalArgumentException | IndexOutOfBoundsException e) {</span>
+<span class="fc" id="L244">            return Optional.empty();</span>
+        }
+    }
+
+    @Override
+    public Optional&lt;JsonPointer&gt; getPrefixPointer(final int level) {
+<span class="nc" id="L250">        final List&lt;JsonKey&gt; jsonKeysCopy = new ArrayList&lt;&gt;(jsonKeyHierarchy);</span>
+
+        try {
+<span class="nc" id="L253">            final List&lt;JsonKey&gt; subList = jsonKeysCopy.subList(0, level);</span>
+<span class="nc" id="L254">            return Optional.of(newInstance(subList));</span>
+<span class="nc" id="L255">        } catch (final IllegalArgumentException | IndexOutOfBoundsException e) {</span>
+<span class="nc" id="L256">            return Optional.empty();</span>
+        }
+    }
+
+    @Override
+    public ImmutableJsonPointer cutLeaf() {
+<span class="fc" id="L262">        ImmutableJsonPointer result = this;</span>
+<span class="pc bpc" id="L263" title="1 of 2 branches missed.">        if (!isEmpty()) {</span>
+<span class="fc" id="L264">            final List&lt;JsonKey&gt; subList = jsonKeyHierarchy.subList(0, getLevelCount() - 1);</span>
+<span class="fc" id="L265">            result = newInstance(subList);</span>
+        }
+<span class="fc" id="L267">        return result;</span>
+    }
+
+    @Override
+    public JsonPointer nextLevel() {
+<span class="fc" id="L272">        return getSubPointer(1).orElse(this);</span>
+    }
+
+    @Override
+    public JsonFieldSelector toFieldSelector() {
+<span class="nc" id="L277">        return JsonFactory.newFieldSelector(this);</span>
+    }
+
+    @Override
+    public Iterator&lt;JsonKey&gt; iterator() {
+<span class="fc" id="L282">        return new ArrayList&lt;&gt;(jsonKeyHierarchy).iterator();</span>
+    }
+
+    @Override
+    public boolean equals(final Object o) {
+<span class="fc bfc" id="L287" title="All 2 branches covered.">        if (this == o) {</span>
+<span class="fc" id="L288">            return true;</span>
+        }
+<span class="fc bfc" id="L290" title="All 4 branches covered.">        if (o == null || getClass() != o.getClass()) {</span>
+<span class="fc" id="L291">            return false;</span>
+        }
+<span class="fc" id="L293">        final ImmutableJsonPointer jsonKeys = (ImmutableJsonPointer) o;</span>
+<span class="fc" id="L294">        return Objects.equals(jsonKeyHierarchy, jsonKeys.jsonKeyHierarchy);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L299">        return Objects.hash(jsonKeyHierarchy);</span>
+    }
+
+    @Override
+    public int length() {
+<span class="fc" id="L304">        final String s = toString();</span>
+<span class="fc" id="L305">        return s.length();</span>
+    }
+
+    @Override
+    public char charAt(final int index) {
+<span class="nc" id="L310">        final String s = toString();</span>
+<span class="nc" id="L311">        return s.charAt(index);</span>
+    }
+
+    @Override
+    public CharSequence subSequence(final int start, final int end) {
+<span class="nc" id="L316">        final String s = toString();</span>
+<span class="nc" id="L317">        return s.subSequence(start, end);</span>
+    }
+
+    /**
+     * The string representation of this JSON pointer, i. e. all of its levels concatenated by {@literal &quot;/&quot;}. For
+     * example if this pointer consists of the three levels {@code &quot;foo&quot;}, {@code &quot;bar&quot;} and {@code &quot;baz&quot;}, this method
+     * will return the string {@code &quot;/foo/bar/baz&quot;}. If this pointer #isEmpty(), this method will return the empty
+     * string {@code &quot;&quot;}.
+     *
+     * @return the string representation of this JSON pointer.
+     */
+    @Override
+    public String toString() {
+        final String stringRepresentation;
+<span class="fc bfc" id="L331" title="All 2 branches covered.">        if (jsonKeyHierarchy.isEmpty()) {</span>
+<span class="fc" id="L332">            stringRepresentation = SLASH;</span>
+        } else {
+<span class="fc" id="L334">            stringRepresentation = SLASH + jsonKeyHierarchy.stream()</span>
+<span class="fc" id="L335">                    .map(ImmutableJsonPointer::escapeTilde)</span>
+<span class="fc" id="L336">                    .map(ImmutableJsonPointer::escapeSlash)</span>
+<span class="fc" id="L337">                    .collect(Collectors.joining(SLASH));</span>
+        }
+<span class="fc" id="L339">        return stringRepresentation;</span>
+    }
+
+    private static String escapeTilde(final JsonKey jsonKey) {
+<span class="fc" id="L343">        final String keyString = jsonKey.toString();</span>
+<span class="fc" id="L344">        final Matcher matcher = DECODED_TILDE_PATTERN.matcher(keyString);</span>
+<span class="fc" id="L345">        return matcher.replaceAll(ESCAPED_TILDE_PATTERN.toString());</span>
+    }
+
+    private static String escapeSlash(final CharSequence jsonKeyString) {
+<span class="fc" id="L349">        final Matcher matcher = DECODED_SLASH_PATTERN.matcher(jsonKeyString);</span>
+<span class="fc" id="L350">        return matcher.replaceAll(ESCAPED_SLASH_PATTERN.toString());</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

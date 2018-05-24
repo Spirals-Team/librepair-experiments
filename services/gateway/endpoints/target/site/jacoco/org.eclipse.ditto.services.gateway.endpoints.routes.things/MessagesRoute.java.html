@@ -1,0 +1,393 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MessagesRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes.things</a> &gt; <span class="el_source">MessagesRoute.java</span></div><h1>MessagesRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes.things;
+
+import static akka.http.javadsl.server.Directives.completeWithFuture;
+import static akka.http.javadsl.server.Directives.extractDataBytes;
+import static akka.http.javadsl.server.Directives.extractUnmatchedPath;
+import static akka.http.javadsl.server.Directives.parameterOptional;
+import static akka.http.javadsl.server.Directives.pathEndOrSingleSlash;
+import static akka.http.javadsl.server.Directives.post;
+import static akka.http.javadsl.server.Directives.rawPathPrefix;
+import static akka.http.javadsl.server.Directives.route;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.CustomPathMatchers.mergeDoubleSlashes;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.regex.Pattern;
+
+import javax.annotation.Nonnull;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.messages.MessageBuilder;
+import org.eclipse.ditto.model.messages.MessageDirection;
+import org.eclipse.ditto.model.messages.MessageHeaders;
+import org.eclipse.ditto.model.messages.MessagesModelFactory;
+import org.eclipse.ditto.model.messages.SubjectInvalidException;
+import org.eclipse.ditto.model.messages.TimeoutInvalidException;
+import org.eclipse.ditto.protocoladapter.TopicPath;
+import org.eclipse.ditto.services.gateway.endpoints.HttpRequestActor;
+import org.eclipse.ditto.services.gateway.endpoints.routes.AbstractRoute;
+import org.eclipse.ditto.services.gateway.starter.service.util.ConfigKeys;
+import org.eclipse.ditto.signals.commands.messages.MessageCommand;
+import org.eclipse.ditto.signals.commands.messages.SendClaimMessage;
+import org.eclipse.ditto.signals.commands.messages.SendFeatureMessage;
+import org.eclipse.ditto.signals.commands.messages.SendThingMessage;
+
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.http.javadsl.model.ContentType;
+import akka.http.javadsl.model.ContentTypes;
+import akka.http.javadsl.model.HttpCharset;
+import akka.http.javadsl.model.HttpHeader;
+import akka.http.javadsl.model.HttpMessage;
+import akka.http.javadsl.model.HttpRequest;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.server.PathMatchers;
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+import akka.http.javadsl.unmarshalling.Unmarshaller;
+import akka.japi.function.Function;
+import akka.stream.javadsl.Sink;
+import akka.stream.javadsl.Source;
+import akka.util.ByteString;
+
+/**
+ * Builder for creating Akka HTTP routes for MessagesService.
+ */
+final class MessagesRoute extends AbstractRoute {
+
+    static final String PATH_INBOX = &quot;inbox&quot;;
+    static final String PATH_OUTBOX = &quot;outbox&quot;;
+    static final String PATH_MESSAGES = &quot;messages&quot;;
+    static final String PATH_CLAIM = &quot;claim&quot;;
+
+<span class="fc" id="L83">    private static final Pattern INBOX_OUTBOX_PATTERN = Pattern.compile(PATH_INBOX + &quot;|&quot; + PATH_OUTBOX);</span>
+
+    static final String TIMEOUT_PARAMETER = &quot;timeout&quot;;
+    private static final String X_DITTO_VALIDATION_URL = &quot;x-ditto-validation-url&quot;;
+
+    private final Duration defaultMessageTimeout;
+    private final Duration maxMessageTimeout;
+    private final Duration defaultClaimTimeout;
+    private final Duration maxClaimTimeout;
+    private final List&lt;String&gt; headerBlacklist;
+
+    /**
+     * Constructs the MessagesService route builder.
+     *
+     * @param proxyActor an actor selection of the command delegating actor.
+     * @param actorSystem the ActorSystem.
+     * @param defaultMessageTimeout the duration of the default message timeout.
+     * @param maxMessageTimeout the max duration of the message timeout.
+     * @param defaultClaimTimeout the duration of the default claim timeout.
+     * @param maxClaimTimeout the max duration of the claim timeout.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    MessagesRoute(final ActorRef proxyActor,
+            final ActorSystem actorSystem,
+            final Duration defaultMessageTimeout,
+            final Duration maxMessageTimeout,
+            final Duration defaultClaimTimeout,
+            final Duration maxClaimTimeout) {
+
+<span class="fc" id="L112">        super(proxyActor, actorSystem);</span>
+
+<span class="fc" id="L114">        this.defaultMessageTimeout = defaultMessageTimeout;</span>
+<span class="fc" id="L115">        this.maxMessageTimeout = maxMessageTimeout;</span>
+<span class="fc" id="L116">        this.defaultClaimTimeout = defaultClaimTimeout;</span>
+<span class="fc" id="L117">        this.maxClaimTimeout = maxClaimTimeout;</span>
+
+<span class="fc" id="L119">        headerBlacklist = actorSystem.settings().config().getStringList(ConfigKeys.MESSAGE_HEADER_BLACKLIST);</span>
+<span class="fc" id="L120">    }</span>
+
+    /**
+     * Builds the {@code /{inbox|outbox}} sub route for the things route.
+     *
+     * @return the {@code /{inbox|outbox}} route.
+     */
+    public Route buildThingsInboxOutboxRoute(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L129">        return route(</span>
+<span class="fc" id="L130">                claimMessages(ctx, dittoHeaders, thingId), // /inbox/claim</span>
+<span class="fc" id="L131">                rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment(INBOX_OUTBOX_PATTERN)),</span>
+                        inboxOutbox -&gt; // /&lt;inbox|outbox&gt;
+<span class="fc" id="L133">                                post(() -&gt; thingMessages(ctx, dittoHeaders, thingId, inboxOutbox))</span>
+                )
+        );
+    }
+
+    /**
+     * Builds the {@code /{inbox|outbox}} sub route for the features route.
+     *
+     * @return the {@code /{inbox|outbox}} route.
+     */
+    public Route buildFeaturesInboxOutboxRoute(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId, final String featureId) {
+<span class="fc" id="L145">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment(INBOX_OUTBOX_PATTERN)),</span>
+                inboxOutbox -&gt; // /&lt;inbox|outbox&gt;
+<span class="fc" id="L147">                        post(() -&gt; featureMessages(ctx, dittoHeaders, thingId, featureId, inboxOutbox))</span>
+        );
+    }
+
+    /*
+    * Describes {@code /inbox/claim} route.
+    *
+    * @return route for claim messages resource.
+    */
+    private Route claimMessages(final RequestContext ctx, final DittoHeaders dittoHeaders, final String thingId) {
+<span class="fc" id="L157">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_INBOX), () -&gt; // /inbox</span>
+<span class="fc" id="L158">                rawPathPrefix(mergeDoubleSlashes().concat(PATH_CLAIM), () -&gt; // /inbox/claim</span>
+<span class="fc" id="L159">                        post(() -&gt; pathEndOrSingleSlash(() -&gt;</span>
+<span class="fc" id="L160">                                parameterOptional(Unmarshaller.sync(Long::parseLong), TIMEOUT_PARAMETER,</span>
+                                        optionalTimeout -&gt;
+<span class="fc" id="L162">                                                extractDataBytes(payloadSource -&gt;</span>
+<span class="fc" id="L163">                                                        handleMessage(ctx, payloadSource,</span>
+<span class="fc" id="L164">                                                                buildSendClaimMessage(ctx, dittoHeaders, thingId,</span>
+                                                                        optionalTimeout))
+                                                )
+                                )
+                        ))
+                )
+        );
+    }
+
+    /*
+    * Describes {@code /messages/&lt;messageSubject&gt;} sub route of the things route: {@code
+    * ../things/&lt;thingId&gt;/{inbox|outbox}}.
+    *
+    * @return the sub route for things messages resource.
+    */
+    private Route thingMessages(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId, final String inboxOutbox) {
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        final MessageDirection direction = PATH_INBOX.equalsIgnoreCase(inboxOutbox) ? MessageDirection.TO :</span>
+                MessageDirection.FROM;
+<span class="fc" id="L183">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment(PATH_MESSAGES).slash()),</span>
+                () -&gt; // /messages
+<span class="fc" id="L185">                        extractUnmatchedPath(msgSubject -&gt; // &lt;msgSubject/with/slashes&gt;</span>
+<span class="fc" id="L186">                                parameterOptional(Unmarshaller.sync(Long::parseLong), TIMEOUT_PARAMETER,</span>
+                                        optionalTimeout -&gt;
+<span class="fc" id="L188">                                                extractDataBytes(payloadSource -&gt;</span>
+<span class="fc" id="L189">                                                        handleMessage(ctx, payloadSource, buildSendThingMessage(</span>
+                                                                direction,
+                                                                ctx,
+                                                                dittoHeaders,
+                                                                thingId,
+                                                                msgSubject,
+                                                                optionalTimeout)
+                                                        )
+                                                )
+                                )
+                        )
+
+        );
+    }
+
+    /*
+    * Describes {@code /messages/&lt;messageSubject&gt;} sub route of the features route: {@code
+    * ../features/&lt;featureId&gt;/{inbox|outbox}}.
+    *
+    * @return the sub route for feature messages resource.
+    */
+    private Route featureMessages(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId, final String featureId, final String inboxOutbox) {
+<span class="fc bfc" id="L212" title="All 2 branches covered.">        final MessageDirection direction = PATH_INBOX.equalsIgnoreCase(inboxOutbox) ? MessageDirection.TO :</span>
+                MessageDirection.FROM;
+<span class="fc" id="L214">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment(PATH_MESSAGES).slash()),</span>
+                () -&gt; // /messages
+<span class="fc" id="L216">                        extractUnmatchedPath(msgSubject -&gt; // /messages/&lt;msgSubject/with/slashes&gt;</span>
+<span class="fc" id="L217">                                parameterOptional(Unmarshaller.sync(Long::parseLong), TIMEOUT_PARAMETER,</span>
+                                        optionalTimeout -&gt;
+<span class="fc" id="L219">                                                extractDataBytes(payloadSource -&gt;</span>
+<span class="fc" id="L220">                                                        handleMessage(ctx, payloadSource, buildSendFeatureMessage(</span>
+                                                                direction,
+                                                                ctx,
+                                                                dittoHeaders,
+                                                                thingId,
+                                                                featureId,
+                                                                msgSubject,
+                                                                optionalTimeout)
+                                                        )
+                                                )
+                                )
+                        )
+        );
+    }
+
+    private Function&lt;ByteBuffer, MessageCommand&lt;?, ?&gt;&gt; buildSendThingMessage(final MessageDirection direction,
+            final RequestContext ctx,
+            final DittoHeaders dittoHeaders,
+            final String thingId,
+            final String msgSubject,
+            final Optional&lt;Long&gt; optionalTimeout) {
+
+<span class="fc" id="L242">        return payload -&gt; {</span>
+<span class="fc" id="L243">            final HttpRequest httpRequest = ctx.getRequest();</span>
+<span class="fc" id="L244">            final ContentType contentType = httpRequest.entity().getContentType();</span>
+
+<span class="fc" id="L246">            final MessageHeaders headers = MessageHeaders.newBuilder(direction, thingId, normalizeSubject(msgSubject))</span>
+<span class="fc" id="L247">                    .correlationId(dittoHeaders.getCorrelationId().orElse(null))</span>
+<span class="fc" id="L248">                    .contentType(contentType.toString())</span>
+<span class="fc" id="L249">                    .timeout(optionalTimeout.map(this::checkMessageTimeout).orElse(defaultMessageTimeout))</span>
+<span class="fc" id="L250">                    .timestamp(OffsetDateTime.now())</span>
+<span class="fc" id="L251">                    .putHeaders(getHeadersAsMap(httpRequest))</span>
+<span class="fc" id="L252">                    .build();</span>
+
+<span class="fc" id="L254">            final MessageBuilder&lt;Object&gt; messageBuilder = initMessageBuilder(payload, contentType, headers);</span>
+<span class="fc" id="L255">            return SendThingMessage.of(thingId, messageBuilder.build(), enhanceHeaders(dittoHeaders));</span>
+        };
+    }
+
+    @Nonnull
+    private Map&lt;String, String&gt; getHeadersAsMap(final HttpMessage httpRequest) {
+<span class="fc" id="L261">        final Map&lt;String, String&gt; result = new HashMap&lt;&gt;();</span>
+<span class="pc bpc" id="L262" title="1 of 2 branches missed.">        for (final HttpHeader httpHeader : httpRequest.getHeaders()) {</span>
+<span class="nc" id="L263">            final String lowerCaseHeaderName = httpHeader.name().toLowerCase();</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">            if (!headerBlacklist.contains(lowerCaseHeaderName)) {</span>
+<span class="nc" id="L265">                result.put(lowerCaseHeaderName, httpHeader.value());</span>
+            }
+<span class="nc" id="L267">        }</span>
+<span class="fc" id="L268">        return result;</span>
+    }
+
+    private Function&lt;ByteBuffer, MessageCommand&lt;?, ?&gt;&gt; buildSendFeatureMessage(final MessageDirection direction,
+            final RequestContext ctx,
+            final DittoHeaders dittoHeaders,
+            final String thingId,
+            final String featureId,
+            final String msgSubject,
+            final Optional&lt;Long&gt; optionalTimeout) {
+
+<span class="fc" id="L279">        final HttpRequest httpRequest = ctx.getRequest();</span>
+
+<span class="fc" id="L281">        return payload -&gt; {</span>
+<span class="fc" id="L282">            final ContentType contentType = httpRequest.entity()</span>
+<span class="fc" id="L283">                    .getContentType();</span>
+
+<span class="fc" id="L285">            final MessageHeaders headers = MessageHeaders.newBuilder(direction, thingId, normalizeSubject(msgSubject))</span>
+<span class="fc" id="L286">                    .featureId(featureId)</span>
+<span class="fc" id="L287">                    .correlationId(dittoHeaders.getCorrelationId().orElse(null))</span>
+<span class="fc" id="L288">                    .contentType(contentType</span>
+<span class="fc" id="L289">                            .toString())</span>
+<span class="fc" id="L290">                    .timeout(optionalTimeout.map(this::checkMessageTimeout).orElse(defaultMessageTimeout))</span>
+<span class="fc" id="L291">                    .timestamp(OffsetDateTime.now())</span>
+<span class="fc" id="L292">                    .validationUrl(httpRequest.getHeader(X_DITTO_VALIDATION_URL)</span>
+<span class="fc" id="L293">                            .map(HttpHeader::value)</span>
+<span class="fc" id="L294">                            .orElse(null))</span>
+<span class="fc" id="L295">                    .putHeaders(getHeadersAsMap(httpRequest))</span>
+<span class="fc" id="L296">                    .build();</span>
+
+<span class="fc" id="L298">            final MessageBuilder&lt;Object&gt; messageBuilder = initMessageBuilder(payload, contentType, headers);</span>
+<span class="fc" id="L299">            return SendFeatureMessage.of(thingId, featureId, messageBuilder.build(), enhanceHeaders(dittoHeaders));</span>
+        };
+    }
+
+    private static String normalizeSubject(final String msgSubject) {
+<span class="pc bpc" id="L304" title="2 of 4 branches missed.">        if (msgSubject.isEmpty() || &quot;/&quot;.equals(msgSubject)) {</span>
+<span class="nc" id="L305">            throw SubjectInvalidException.newBuilder(msgSubject).build();</span>
+        }
+<span class="pc bpc" id="L307" title="1 of 2 branches missed.">        return msgSubject.charAt(0) == '/' ? msgSubject.substring(1) : msgSubject;</span>
+    }
+
+    private Function&lt;ByteBuffer, MessageCommand&lt;?, ?&gt;&gt; buildSendClaimMessage(final RequestContext ctx,
+            final DittoHeaders dittoHeaders,
+            final String thingId,
+            final Optional&lt;Long&gt; optionalTimeout) {
+
+<span class="fc" id="L315">        return payload -&gt; {</span>
+<span class="fc" id="L316">            final ContentType contentType = ctx.getRequest()</span>
+<span class="fc" id="L317">                    .entity()</span>
+<span class="fc" id="L318">                    .getContentType();</span>
+
+<span class="fc" id="L320">            final MessageHeaders headers = MessageHeaders.newBuilderForClaiming(thingId)</span>
+<span class="fc" id="L321">                    .correlationId(dittoHeaders.getCorrelationId().orElse(null))</span>
+<span class="fc" id="L322">                    .contentType(contentType.toString())</span>
+<span class="fc" id="L323">                    .timeout(optionalTimeout.map(this::checkClaimTimeout).orElse(defaultClaimTimeout))</span>
+<span class="fc" id="L324">                    .timestamp(OffsetDateTime.now())</span>
+<span class="fc" id="L325">                    .putHeaders(getHeadersAsMap(ctx.getRequest()))</span>
+<span class="fc" id="L326">                    .build();</span>
+
+<span class="fc" id="L328">            final MessageBuilder&lt;Object&gt; messageBuilder = initMessageBuilder(payload, contentType, headers);</span>
+<span class="fc" id="L329">            return SendClaimMessage.of(thingId, messageBuilder.build(), enhanceHeaders(dittoHeaders));</span>
+        };
+    }
+
+    private DittoHeaders enhanceHeaders(final DittoHeaders dittoHeaders) {
+<span class="fc" id="L334">        return dittoHeaders.toBuilder().channel(TopicPath.Channel.LIVE.getName()).build();</span>
+    }
+
+    private static MessageBuilder&lt;Object&gt; initMessageBuilder(final ByteBuffer payload, final ContentType contentType,
+            final MessageHeaders headers) {
+
+        // reset bytebuffer offset, otherwise payload will not be appended
+<span class="fc" id="L341">        final ByteBuffer payloadWithoutOffset = ByteBuffer.wrap(payload.array());</span>
+
+<span class="fc" id="L343">        final MessageBuilder&lt;Object&gt; messageBuilder = MessagesModelFactory.newMessageBuilder(headers)</span>
+<span class="fc" id="L344">                .rawPayload(payloadWithoutOffset);</span>
+
+<span class="fc" id="L346">        final Charset charset = contentType.getCharsetOption()</span>
+<span class="fc" id="L347">                .map(HttpCharset::nioCharset)</span>
+<span class="fc" id="L348">                .orElse(StandardCharsets.UTF_8);</span>
+
+<span class="fc" id="L350">        final String payloadString = charset.decode(payload).toString();</span>
+<span class="fc bfc" id="L351" title="All 2 branches covered.">        if (contentType.mediaType().isText()) {</span>
+<span class="fc" id="L352">            messageBuilder.payload(payloadString);</span>
+<span class="pc bpc" id="L353" title="1 of 2 branches missed.">        } else if (ContentTypes.APPLICATION_JSON.equals(contentType)) {</span>
+<span class="nc" id="L354">            messageBuilder.payload(JsonFactory.readFrom(payloadString));</span>
+        }
+<span class="fc" id="L356">        return messageBuilder;</span>
+    }
+
+    private Route handleMessage(final RequestContext ctx, final Source&lt;ByteString, Object&gt; payloadSource,
+            final Function&lt;ByteBuffer, MessageCommand&lt;?, ?&gt;&gt; requestPayloadToCommandFunction) {
+
+<span class="fc" id="L362">        final CompletableFuture&lt;HttpResponse&gt; httpResponseFuture = new CompletableFuture&lt;&gt;();</span>
+<span class="fc" id="L363">        payloadSource.fold(ByteString.empty(), ByteString::concat)</span>
+<span class="fc" id="L364">                .map(ByteString::toArray)</span>
+<span class="fc" id="L365">                .map(ByteBuffer::wrap)</span>
+<span class="fc" id="L366">                .map(requestPayloadToCommandFunction)</span>
+<span class="fc" id="L367">                .to(Sink.actorRef(createHttpPerRequestActor(ctx, httpResponseFuture),</span>
+                        HttpRequestActor.COMPLETE_MESSAGE))
+<span class="fc" id="L369">                .run(materializer);</span>
+
+<span class="fc" id="L371">        return completeWithFuture(httpResponseFuture);</span>
+    }
+
+    private Duration checkMessageTimeout(final long timeoutInSeconds) {
+        // check if the timeout is smaller than the maximum possible message-timeout and &gt; 0:
+<span class="nc bnc" id="L376" title="All 4 branches missed.">        if ((timeoutInSeconds &lt; 0) || (timeoutInSeconds &gt; maxMessageTimeout.getSeconds())) {</span>
+<span class="nc" id="L377">            throw new TimeoutInvalidException(timeoutInSeconds, maxMessageTimeout.getSeconds());</span>
+        } else {
+<span class="nc" id="L379">            return Duration.ofSeconds(timeoutInSeconds);</span>
+        }
+    }
+
+    private Duration checkClaimTimeout(final long timeoutInSeconds) {
+        // check if the timeout is smaller than the maximum possible claim-timeout and &gt; 0:
+<span class="pc bpc" id="L385" title="2 of 4 branches missed.">        if ((timeoutInSeconds &lt; 0) || (timeoutInSeconds &gt; maxClaimTimeout.getSeconds())) {</span>
+<span class="nc" id="L386">            throw new TimeoutInvalidException(timeoutInSeconds, maxClaimTimeout.getSeconds());</span>
+        } else {
+<span class="fc" id="L388">            return Duration.ofSeconds(timeoutInSeconds);</span>
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

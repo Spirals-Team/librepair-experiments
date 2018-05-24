@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClusterMemberAwareActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Cluster Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.cluster</a> &gt; <span class="el_source">ClusterMemberAwareActor.java</span></div><h1>ClusterMemberAwareActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.cluster;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+
+import akka.actor.AbstractActor;
+import akka.actor.Address;
+import akka.actor.Cancellable;
+import akka.actor.Props;
+import akka.cluster.Cluster;
+import akka.cluster.ClusterEvent;
+import akka.cluster.Member;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.ReceiveBuilder;
+import scala.collection.JavaConversions;
+import scala.concurrent.duration.FiniteDuration;
+
+/**
+ * Actor aware of cluster members coming + leaving + becoming unreachable.
+ */
+public final class ClusterMemberAwareActor extends AbstractActor {
+
+    /**
+     * The name of this Actor in the ActorSystem.
+     */
+    public static final String ACTOR_NAME = &quot;clusterMemberAwareActor&quot;;
+
+<span class="nc" id="L50">    private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+<span class="nc" id="L52">    private final Cluster cluster = Cluster.get(getContext().system());</span>
+    private final String serviceName;
+    private final boolean majorityCheckEnabled;
+    private final Duration majorityCheckDelay;
+<span class="nc" id="L56">    private final Map&lt;String, Address&gt; knownAddresses = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L57">    private Cancellable majorityCheck = null;</span>
+
+    private ClusterMemberAwareActor(final String serviceName, final boolean majorityCheckEnabled,
+<span class="nc" id="L60">            final Duration majorityCheckDelay) {</span>
+<span class="nc" id="L61">        this.serviceName = serviceName;</span>
+<span class="nc" id="L62">        this.majorityCheckEnabled = majorityCheckEnabled;</span>
+<span class="nc" id="L63">        this.majorityCheckDelay = checkNotNull(majorityCheckDelay, &quot;majority check delay&quot;);</span>
+<span class="nc" id="L64">    }</span>
+
+    /**
+     * Creates Akka configuration object Props for this ClusterMemberAwareActor.
+     *
+     * @param serviceName the name of the service
+     * @param majorityCheckEnabled true to enable the majority check, false otherwise.
+     * @param majorityCheckDelay the delay after which the majority will be checked.
+     * @return the Akka configuration Props object.
+     */
+    public static Props props(final String serviceName, final boolean majorityCheckEnabled,
+            final Duration majorityCheckDelay) {
+<span class="nc" id="L76">        return Props.create(ClusterMemberAwareActor.class, new Creator&lt;ClusterMemberAwareActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public ClusterMemberAwareActor create() throws Exception {
+<span class="nc" id="L81">                return new ClusterMemberAwareActor(serviceName, majorityCheckEnabled, majorityCheckDelay);</span>
+            }
+        });
+    }
+
+    @Override
+    public void preStart() {
+        //subscribe to cluster changes
+<span class="nc" id="L89">        cluster.subscribe(getSelf(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberEvent.class,</span>
+                ClusterEvent.UnreachableMember.class);
+<span class="nc" id="L91">    }</span>
+
+    @Override
+    public void postStop() {
+        //re-subscribe when restart
+<span class="nc" id="L96">        cluster.unsubscribe(getSelf());</span>
+<span class="nc" id="L97">    }</span>
+
+    @Override
+    public Receive createReceive() {
+<span class="nc" id="L101">        return ReceiveBuilder.create()</span>
+<span class="nc" id="L102">                .match(ClusterEvent.CurrentClusterState.class, this::handleCurrentClusterState)</span>
+<span class="nc" id="L103">                .match(ClusterEvent.MemberJoined.class, this::handleMemberJoined)</span>
+<span class="nc" id="L104">                .match(ClusterEvent.MemberWeaklyUp.class, this::handleMemberWeaklyUp)</span>
+<span class="nc" id="L105">                .match(ClusterEvent.MemberUp.class, this::handleMemberUp)</span>
+<span class="nc" id="L106">                .match(ClusterEvent.UnreachableMember.class, this::handleUnreachableMember)</span>
+<span class="nc" id="L107">                .match(ClusterEvent.MemberRemoved.class, this::handleMemberRemoved)</span>
+<span class="nc" id="L108">                .match(ClusterEvent.MemberLeft.class, this::handleMemberLeft)</span>
+<span class="nc" id="L109">                .match(ClusterEvent.MemberExited.class, this::handleMemberExited)</span>
+<span class="nc" id="L110">                .match(ClusterEvent.MemberEvent.class, this::handleMemberEvent)</span>
+<span class="nc" id="L111">                .match(CheckForMajority.class, checkForMajority -&gt; handleCheckForMajority())</span>
+<span class="nc" id="L112">                .matchAny(m -&gt; {</span>
+<span class="nc" id="L113">                    log.warning(&quot;Unknown message: {}&quot;, m);</span>
+<span class="nc" id="L114">                    unhandled(m);</span>
+<span class="nc" id="L115">                }).build();</span>
+    }
+
+    private void handleCurrentClusterState(final ClusterEvent.CurrentClusterState clusterState) {
+<span class="nc" id="L119">        log.debug(&quot;Current cluster state: members = {}, unreachable = {}, seenBy = {}, leader = {}&quot;,</span>
+<span class="nc" id="L120">                clusterState.members(), clusterState.unreachable(), clusterState.seenBy(),</span>
+<span class="nc" id="L121">                clusterState.leader());</span>
+<span class="nc" id="L122">    }</span>
+
+    private void handleMemberJoined(final ClusterEvent.MemberJoined memberJoined) {
+<span class="nc" id="L125">        log.info(&quot;Member JOINED: {}&quot;, memberJoined.member());</span>
+<span class="nc" id="L126">    }</span>
+
+    private void handleMemberWeaklyUp(final ClusterEvent.MemberWeaklyUp memberWeaklyUp) {
+<span class="nc" id="L129">        final Member weaklyUpMember = memberWeaklyUp.member();</span>
+<span class="nc" id="L130">        log.debug(&quot;Member is WEAKLY UP: {}&quot;, weaklyUpMember);</span>
+
+<span class="nc" id="L132">        final Address address = weaklyUpMember.address();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (address.host().isDefined()) {</span>
+            try {
+<span class="nc" id="L135">                final InetAddress inetAddress = InetAddress.getByName(address.host().get());</span>
+<span class="nc" id="L136">                log.debug(&quot;Found DNS entry '{}' for WEAKLY UP member: '{}'&quot;, inetAddress, weaklyUpMember);</span>
+
+<span class="nc bnc" id="L138" title="All 2 branches missed.">                if (knownAddresses.containsKey(inetAddress.getHostName())) {</span>
+<span class="nc" id="L139">                    final Address knownAddress = knownAddresses.get(inetAddress.getHostName());</span>
+<span class="nc" id="L140">                    log.debug(&quot;New WEAKLY UP member '{}' is already known with address '{}'&quot;,</span>
+                            weaklyUpMember,
+                            knownAddress);
+
+<span class="nc" id="L144">                    final Set&lt;Member&gt; unreachableMembers = JavaConversions.setAsJavaSet(cluster.state().unreachable());</span>
+<span class="nc" id="L145">                    unreachableMembers.stream().map(Member::address).filter(a -&gt; a.equals(knownAddress))</span>
+<span class="nc" id="L146">                            .findFirst().ifPresent(a -&gt;</span>
+                    {
+<span class="nc" id="L148">                        log.info(&quot;Old known address '{}' for WEAKLY UP member '{}' is unreachable, &quot;</span>
+                                + &quot;manually DOWN old node.&quot;, a, weaklyUpMember);
+<span class="nc" id="L150">                        cluster.down(a);</span>
+<span class="nc" id="L151">                    });</span>
+<span class="nc" id="L152">                } else {</span>
+<span class="nc" id="L153">                    log.warning(&quot;New WEAKLY UP member is not known yet: '{}'&quot;, weaklyUpMember);</span>
+                }
+<span class="nc" id="L155">            } catch (final UnknownHostException ex) {</span>
+<span class="nc" id="L156">                log.error(ex, &quot;No DNS entry found for WEAKLY UP member: '{}'&quot;, weaklyUpMember);</span>
+<span class="nc" id="L157">            }</span>
+        } else {
+<span class="nc" id="L159">            log.warning(&quot;No host defined in address '{}' for WEAKLY UP member: '{}'&quot;, address,</span>
+                    weaklyUpMember);
+        }
+<span class="nc" id="L162">    }</span>
+
+    private void handleMemberUp(final ClusterEvent.MemberUp memberUp) {
+<span class="nc" id="L165">        final Member upMember = memberUp.member();</span>
+<span class="nc" id="L166">        log.debug(&quot;Member is UP: {}&quot;, upMember);</span>
+
+<span class="nc" id="L168">        final Address address = upMember.address();</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (address.host().isDefined()) {</span>
+            try {
+<span class="nc" id="L171">                final InetAddress inetAddress = InetAddress.getByName(address.host().get());</span>
+<span class="nc" id="L172">                log.debug(&quot;Found DNS entry '{}' for UP member: '{}'&quot;, inetAddress, upMember);</span>
+
+<span class="nc" id="L174">                knownAddresses.put(inetAddress.getHostName(), address);</span>
+<span class="nc" id="L175">            } catch (final UnknownHostException ex) {</span>
+<span class="nc" id="L176">                log.error(ex, &quot;No DNS entry found for UP member: '{}'&quot;, upMember);</span>
+<span class="nc" id="L177">            }</span>
+        } else {
+<span class="nc" id="L179">            log.warning(&quot;No host defined in address '{}' for UP member: '{}'&quot;, address, upMember);</span>
+        }
+
+<span class="nc" id="L182">        scheduleMajorityCheck();</span>
+<span class="nc" id="L183">        cluster.sendCurrentClusterState(getSelf());</span>
+<span class="nc" id="L184">    }</span>
+
+    private void handleUnreachableMember(final ClusterEvent.UnreachableMember unreachableMemberEvent) {
+<span class="nc" id="L187">        log.info(&quot;Member detected as UNREACHABLE: {}&quot;, unreachableMemberEvent.member());</span>
+<span class="nc" id="L188">        scheduleMajorityCheck();</span>
+<span class="nc" id="L189">        cluster.sendCurrentClusterState(getSelf());</span>
+<span class="nc" id="L190">    }</span>
+
+    private void handleMemberRemoved(final ClusterEvent.MemberRemoved memberRemoved) {
+<span class="nc" id="L193">        log.info(&quot;Member was REMOVED: {}&quot;, memberRemoved.member());</span>
+<span class="nc" id="L194">        knownAddresses.keySet()</span>
+<span class="nc" id="L195">                .stream()</span>
+<span class="nc" id="L196">                .filter(hostname -&gt; knownAddresses.get(hostname).equals(memberRemoved.member().address()))</span>
+<span class="nc" id="L197">                .findFirst()</span>
+<span class="nc" id="L198">                .ifPresent(knownAddresses::remove);</span>
+<span class="nc" id="L199">        scheduleMajorityCheck();</span>
+<span class="nc" id="L200">        cluster.sendCurrentClusterState(getSelf());</span>
+<span class="nc" id="L201">    }</span>
+
+    private void handleMemberLeft(final ClusterEvent.MemberLeft memberLeft) {
+<span class="nc" id="L204">        log.info(&quot;Member LEFT: {}&quot;, memberLeft.member());</span>
+<span class="nc" id="L205">        knownAddresses.keySet()</span>
+<span class="nc" id="L206">                .stream()</span>
+<span class="nc" id="L207">                .filter(hostname -&gt; knownAddresses.get(hostname).equals(memberLeft.member().address()))</span>
+<span class="nc" id="L208">                .findFirst()</span>
+<span class="nc" id="L209">                .ifPresent(knownAddresses::remove);</span>
+<span class="nc" id="L210">        scheduleMajorityCheck();</span>
+<span class="nc" id="L211">        cluster.sendCurrentClusterState(getSelf());</span>
+<span class="nc" id="L212">    }</span>
+
+    private void handleMemberExited(final ClusterEvent.MemberExited memberExited) {
+<span class="nc" id="L215">        log.info(&quot;Member EXITED: {}&quot;, memberExited.member());</span>
+<span class="nc" id="L216">        knownAddresses.keySet()</span>
+<span class="nc" id="L217">                .stream()</span>
+<span class="nc" id="L218">                .filter(hostname -&gt; knownAddresses.get(hostname).equals(memberExited.member().address()))</span>
+<span class="nc" id="L219">                .findFirst()</span>
+<span class="nc" id="L220">                .ifPresent(knownAddresses::remove);</span>
+<span class="nc" id="L221">        scheduleMajorityCheck();</span>
+<span class="nc" id="L222">        cluster.sendCurrentClusterState(getSelf());</span>
+<span class="nc" id="L223">    }</span>
+
+    private void handleMemberEvent(final ClusterEvent.MemberEvent memberEvent) {
+<span class="nc" id="L226">        log.info(&quot;Unhandled Member event: {}&quot;, memberEvent);</span>
+<span class="nc" id="L227">    }</span>
+
+    private void handleCheckForMajority() {
+<span class="nc" id="L230">        majorityCheck = null;</span>
+
+<span class="nc" id="L232">        final Set&lt;Member&gt; unreachableMembers = JavaConversions.setAsJavaSet(cluster.state().unreachable());</span>
+<span class="nc" id="L233">        final Set&lt;Member&gt; currentMembers = JavaConversions.setAsJavaSet(cluster.state().members());</span>
+<span class="nc" id="L234">        final Set&lt;Member&gt; reachableMembers =</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">                currentMembers.stream().filter(member -&gt; !unreachableMembers.contains(member))</span>
+<span class="nc" id="L236">                        .collect(Collectors.toSet());</span>
+
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        if (!unreachableMembers.isEmpty()) {</span>
+<span class="nc" id="L239">            log.info(&quot;{} unreachable member(s) '{}' cause a check for majority against the remaining&quot;</span>
+<span class="nc" id="L240">                            + &quot; {} reachable member(s) '{}'&quot;, unreachableMembers.size(), unreachableMembers,</span>
+<span class="nc" id="L241">                    reachableMembers.size(), reachableMembers);</span>
+
+<span class="nc bnc" id="L243" title="All 2 branches missed.">            if (unreachableMembers.size() &gt; reachableMembers.size()) {</span>
+                // there is a network partition and we are in the minority part of the cluster --&gt; DOWN us
+<span class="nc" id="L245">                log.warning(&quot;Minority for service '{}' detected, manually DOWN myself ({})&quot;, serviceName,</span>
+<span class="nc" id="L246">                        cluster.selfAddress());</span>
+<span class="nc" id="L247">                cluster.down(cluster.selfAddress());</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">            } else if (unreachableMembers.size() &lt; reachableMembers.size()) {</span>
+                // there is a network partition and we are in the majority part of the cluster --&gt; DOWN others
+<span class="nc" id="L250">                log.info(&quot;Majority for service '{}' detected, manually DOWN the minority: {}&quot;, serviceName,</span>
+                        unreachableMembers);
+<span class="nc" id="L252">                unreachableMembers.stream().map(Member::address).forEach(cluster::down);</span>
+            } else {
+                // there is a network partition and both sides are equal in size --&gt; wait
+<span class="nc" id="L255">                log.warning(&quot;Ongoing network partition for service '{}'.&quot;, serviceName);</span>
+<span class="nc" id="L256">                scheduleMajorityCheck();</span>
+            }
+        } else {
+<span class="nc" id="L259">            log.info(&quot;No unreachable members, cluster is working properly.&quot;);</span>
+        }
+<span class="nc" id="L261">    }</span>
+
+    private void scheduleMajorityCheck() {
+<span class="nc" id="L264">        scheduleMajorityCheck(CheckForMajority.newInstance());</span>
+<span class="nc" id="L265">    }</span>
+
+    private void scheduleMajorityCheck(final CheckForMajority message) {
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        if (majorityCheckEnabled) {</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">            if (majorityCheck != null) {</span>
+<span class="nc" id="L270">                log.debug(&quot;Cancel previously scheduled Majority check.&quot;);</span>
+<span class="nc" id="L271">                majorityCheck.cancel();</span>
+            }
+
+<span class="nc" id="L274">            log.debug(&quot;Majority check is scheduled with a delay of {} ms.&quot;, majorityCheckDelay.toMillis());</span>
+<span class="nc" id="L275">            majorityCheck = getContext().system().scheduler()</span>
+<span class="nc" id="L276">                    .scheduleOnce(new FiniteDuration(majorityCheckDelay.toNanos(), TimeUnit.NANOSECONDS), getSelf(),</span>
+                            message,
+<span class="nc" id="L278">                            getContext().dispatcher(), getSelf());</span>
+        }
+<span class="nc" id="L280">    }</span>
+
+    private static class CheckForMajority {
+
+        private CheckForMajority() {
+            // no-op
+        }
+
+        static CheckForMajority newInstance() {
+<span class="nc" id="L289">            return new CheckForMajority();</span>
+        }
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

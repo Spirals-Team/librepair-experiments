@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PreEnforcer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Concierge :: Enforcement</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.concierge.enforcement</a> &gt; <span class="el_source">PreEnforcer.java</span></div><h1>PreEnforcer.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.concierge.enforcement;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.WithDittoHeaders;
+import org.eclipse.ditto.services.utils.akka.controlflow.Consume;
+import org.eclipse.ditto.services.utils.akka.controlflow.Filter;
+import org.eclipse.ditto.services.utils.akka.controlflow.Pipe;
+import org.eclipse.ditto.services.utils.akka.controlflow.WithSender;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayInternalErrorException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import akka.NotUsed;
+import akka.actor.ActorRef;
+import akka.event.Logging;
+import akka.stream.Attributes;
+import akka.stream.FlowShape;
+import akka.stream.Graph;
+import akka.stream.SinkShape;
+import akka.stream.SourceShape;
+import akka.stream.javadsl.Flow;
+import akka.stream.javadsl.Source;
+import akka.stream.stage.GraphStage;
+
+/**
+ * Create processing units of Akka stream graph before enforcement from an asynchronous function that may abort
+ * enforcement by throwing exceptions.
+ */
+public final class PreEnforcer {
+
+    private static final Attributes INFO_LEVEL =
+<span class="fc" id="L52">            Attributes.createLogLevels(Logging.InfoLevel(), Logging.DebugLevel(), Logging.ErrorLevel());</span>
+
+    private static final Attributes ERROR_LEVEL =
+<span class="fc" id="L55">            Attributes.createLogLevels(Logging.ErrorLevel(), Logging.DebugLevel(), Logging.ErrorLevel());</span>
+
+<span class="fc" id="L57">    private static final Logger FALLBACK_LOGGER = LoggerFactory.getLogger(PreEnforcer.class);</span>
+
+    private PreEnforcer() {}
+
+    /**
+     * Create a processing unit from a function without reply address for errors.
+     *
+     * @param processor function to call.
+     * @return Akka stream graph.
+     */
+    public static Graph&lt;FlowShape&lt;WithSender, WithSender&gt;, NotUsed&gt; fromFunction(
+            final Function&lt;WithDittoHeaders, CompletionStage&lt;WithDittoHeaders&gt;&gt; processor) {
+
+<span class="nc" id="L70">        return PreEnforcer.fromFunction(ActorRef.noSender(), processor);</span>
+    }
+
+    /**
+     * Create a processing unit from a function.
+     *
+     * @param self reference to the actor carrying the pre-enforcement.
+     * @param processor function to call.
+     * @return Akka stream graph.
+     */
+    static Graph&lt;FlowShape&lt;WithSender, WithSender&gt;, NotUsed&gt; fromFunction(
+            @Nullable final ActorRef self,
+            final Function&lt;WithDittoHeaders, CompletionStage&lt;WithDittoHeaders&gt;&gt; processor) {
+
+        final Attributes logLevels =
+<span class="fc" id="L85">                Attributes.createLogLevels(Logging.DebugLevel(), Logging.DebugLevel(), Logging.ErrorLevel());</span>
+
+        final Flow&lt;WithSender&lt;WithDittoHeaders&gt;, WithSender, NotUsed&gt; flow =
+<span class="fc" id="L88">                Flow.&lt;WithSender&lt;WithDittoHeaders&gt;&gt;create()</span>
+<span class="fc" id="L89">                        .mapAsync(1, wrapped -&gt; {</span>
+<span class="fc" id="L90">                            final Supplier&lt;CompletionStage&lt;Object&gt;&gt; futureSupplier = () -&gt;</span>
+<span class="fc" id="L91">                                    processor.apply(wrapped.getMessage())</span>
+<span class="fc" id="L92">                                            .&lt;Object&gt;thenApply(result -&gt; WithSender.of(result, wrapped.getSender()));</span>
+
+<span class="fc" id="L94">                            return handleErrorNowOrLater(futureSupplier, wrapped, self);</span>
+                        })
+<span class="fc" id="L96">                        .log(&quot;PreEnforcer&quot;)</span>
+<span class="fc" id="L97">                        .withAttributes(logLevels)</span>
+<span class="fc" id="L98">                        .flatMapConcat(PreEnforcer::keepResultAndLogErrors);</span>
+
+<span class="fc" id="L100">        return Pipe.joinUnhandledSink(</span>
+<span class="fc" id="L101">                Pipe.joinFilteredFlow(Filter.of(WithDittoHeaders.class), flow), unhandled());</span>
+    }
+
+    private static CompletionStage&lt;Object&gt; handleErrorNowOrLater(
+            final Supplier&lt;CompletionStage&lt;Object&gt;&gt; futureSupplier,
+            final WithSender&lt;WithDittoHeaders&gt; wrapped,
+            final ActorRef self) {
+
+        try {
+<span class="fc" id="L110">            return futureSupplier.get()</span>
+<span class="fc" id="L111">                    .exceptionally(error -&gt; handleError(error, wrapped, self));</span>
+<span class="nc" id="L112">        } catch (final RuntimeException ex) {</span>
+<span class="nc" id="L113">            return CompletableFuture.completedFuture(handleError(ex, wrapped, self));</span>
+        }
+    }
+
+    private static Graph&lt;SourceShape&lt;WithSender&gt;, NotUsed&gt; keepResultAndLogErrors(final Object result) {
+<span class="fc bfc" id="L118" title="All 2 branches covered.">        if (result instanceof WithSender) {</span>
+<span class="fc" id="L119">            return Source.single((WithSender) result);</span>
+<span class="fc bfc" id="L120" title="All 2 branches covered.">        } else if (result instanceof DittoRuntimeException) {</span>
+<span class="fc" id="L121">            return Source.single(result)</span>
+<span class="fc" id="L122">                    .log(&quot;PreEnforcer replied DittoRuntimeException&quot;)</span>
+<span class="fc" id="L123">                    .withAttributes(INFO_LEVEL)</span>
+<span class="fc" id="L124">                    .flatMapConcat(x -&gt; Source.empty());</span>
+        } else {
+<span class="fc" id="L126">            return Source.single(result)</span>
+<span class="fc" id="L127">                    .log(&quot;PreEnforcer encountered unexpected exception&quot;)</span>
+<span class="fc" id="L128">                    .withAttributes(ERROR_LEVEL)</span>
+<span class="fc" id="L129">                    .flatMapConcat(x -&gt; Source.empty());</span>
+        }
+    }
+
+    private static Object handleError(final Throwable error,
+            final WithSender&lt;WithDittoHeaders&gt; wrapped,
+            @Nullable final ActorRef self) {
+
+<span class="fc" id="L137">        final Throwable rootCause = extractRootCause(error);</span>
+<span class="fc" id="L138">        final ActorRef sender = wrapped.getSender();</span>
+<span class="fc" id="L139">        final DittoHeaders dittoHeaders = wrapped.getMessage().getDittoHeaders();</span>
+
+<span class="fc bfc" id="L141" title="All 2 branches covered.">        if (rootCause instanceof DittoRuntimeException) {</span>
+<span class="fc" id="L142">            sender.tell(rootCause, self);</span>
+        } else {
+<span class="fc" id="L144">            FALLBACK_LOGGER.error(&quot;Unexpected non-DittoRuntimeException error - responding with &quot; +</span>
+<span class="fc" id="L145">                    &quot;GatewayInternalErrorException: {} {}&quot;, error.getClass().getSimpleName(), error.getMessage(),</span>
+                    error);
+            final GatewayInternalErrorException responseEx =
+<span class="fc" id="L148">                    GatewayInternalErrorException.newBuilder()</span>
+<span class="fc" id="L149">                            .dittoHeaders(dittoHeaders)</span>
+<span class="fc" id="L150">                            .cause(rootCause)</span>
+<span class="fc" id="L151">                            .build();</span>
+<span class="fc" id="L152">            sender.tell(responseEx, self);</span>
+        }
+
+<span class="fc" id="L155">        return rootCause;</span>
+    }
+
+    private static Throwable extractRootCause(final Throwable t) {
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        if (t instanceof CompletionException) {</span>
+<span class="fc" id="L160">            return extractRootCause(t.getCause());</span>
+        }
+<span class="fc" id="L162">        return t;</span>
+    }
+
+    private static GraphStage&lt;SinkShape&lt;WithSender&gt;&gt; unhandled() {
+<span class="fc" id="L166">        return Consume.untyped(wrapped -&gt;</span>
+<span class="nc" id="L167">                FALLBACK_LOGGER.warn(&quot;Unexpected message &lt;{}&gt; from &lt;{}&gt;&quot;, wrapped.getMessage(), wrapped.getSender()));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

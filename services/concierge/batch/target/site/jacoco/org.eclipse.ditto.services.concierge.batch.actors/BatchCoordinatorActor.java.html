@@ -1,0 +1,361 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BatchCoordinatorActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Concierge :: Batch</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.concierge.batch.actors</a> &gt; <span class="el_source">BatchCoordinatorActor.java</span></div><h1>BatchCoordinatorActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.concierge.batch.actors;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.signals.commands.base.Command;
+import org.eclipse.ditto.signals.commands.base.CommandResponse;
+import org.eclipse.ditto.signals.commands.batch.ExecuteBatch;
+import org.eclipse.ditto.signals.commands.batch.ExecuteBatchResponse;
+import org.eclipse.ditto.signals.commands.batch.exceptions.BatchAlreadyExecutingException;
+import org.eclipse.ditto.signals.commands.things.ThingErrorResponse;
+import org.eclipse.ditto.signals.events.base.Event;
+import org.eclipse.ditto.signals.events.batch.BatchCommandExecuted;
+import org.eclipse.ditto.signals.events.batch.BatchExecutionFinished;
+import org.eclipse.ditto.signals.events.batch.BatchExecutionStarted;
+
+import akka.actor.ActorRef;
+import akka.actor.Cancellable;
+import akka.actor.Props;
+import akka.cluster.pubsub.DistributedPubSubMediator;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.ReceiveBuilder;
+import akka.persistence.AbstractPersistentActor;
+import akka.persistence.RecoveryCompleted;
+import scala.concurrent.duration.Duration;
+
+/**
+ * Actor which handles batch execution of commands.
+ */
+final class BatchCoordinatorActor extends AbstractPersistentActor {
+
+    /**
+     * The name prefix of this Actor.
+     */
+    static final String ACTOR_NAME_PREFIX = &quot;batch-coordinator-&quot;;
+
+    private static final String PERSISTENCE_ID_PREFIX = &quot;batch:&quot;;
+
+    private static final String JOURNAL_PLUGIN_ID = &quot;akka-contrib-mongodb-persistence-batch-journal&quot;;
+    private static final String SNAPSHOT_PLUGIN_ID = &quot;akka-contrib-mongodb-persistence-batch-snapshots&quot;;
+
+    private static final int SHUTDOWN_TIMEOUT_SECONDS = 60;
+
+    private static final String BATCH_ID_FIELD = &quot;batchId&quot;;
+    private static final String RANDOM_FIELD = &quot;random&quot;;
+    private static final String ORIGINAL_CORRELATION_ID = &quot;originalCorrelationId&quot;;
+
+<span class="fc" id="L74">    private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+    private final ActorRef pubSubMediator;
+    private final ActorRef conciergeForwarder;
+    private final Set&lt;String&gt; pendingCommands;
+    private final Map&lt;String, Command&gt; commands;
+    private final List&lt;CommandResponse&gt; commandResponses;
+
+    private String batchId;
+    private ActorRef originalSender;
+    private Cancellable shutdown;
+
+<span class="fc" id="L86">    private BatchCoordinatorActor(final String batchId, final ActorRef pubSubMediator, final ActorRef conciergeForwarder) {</span>
+<span class="fc" id="L87">        this.batchId = batchId;</span>
+<span class="fc" id="L88">        this.conciergeForwarder = conciergeForwarder;</span>
+<span class="fc" id="L89">        this.pubSubMediator = pubSubMediator;</span>
+
+<span class="fc" id="L91">        pendingCommands = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L92">        commands = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L93">        commandResponses = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L94">    }</span>
+
+    /**
+     * Creates Akka configuration object Props for this BatchCoordinatorActor.
+     *
+     * @param batchId the identifier of the batch which this actor handles.
+     * @param conciergeForwarder the ref of the conciergeForwarder.
+     * @param pubSubMediator the mediator to use for distributed pubsub.
+     * @return the Akka configuration Props object.
+     */
+    static Props props(final String batchId, final ActorRef pubSubMediator, final ActorRef conciergeForwarder) {
+<span class="fc" id="L105">        return Props.create(BatchCoordinatorActor.class, new Creator&lt;BatchCoordinatorActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public BatchCoordinatorActor create() {
+<span class="fc" id="L110">                return new BatchCoordinatorActor(batchId, pubSubMediator, conciergeForwarder);</span>
+            }
+        });
+    }
+
+    @Override
+    public String persistenceId() {
+<span class="fc" id="L117">        return PERSISTENCE_ID_PREFIX + batchId;</span>
+    }
+
+    @Override
+    public String journalPluginId() {
+<span class="fc" id="L122">        return JOURNAL_PLUGIN_ID;</span>
+    }
+
+    @Override
+    public String snapshotPluginId() {
+<span class="fc" id="L127">        return SNAPSHOT_PLUGIN_ID;</span>
+    }
+
+    @Override
+    public Receive createReceiveRecover() {
+<span class="fc" id="L132">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L133">                .match(BatchExecutionStarted.class, event -&gt; {</span>
+<span class="fc" id="L134">                    batchId = event.getBatchId();</span>
+<span class="fc" id="L135">                    event.getCommands()</span>
+<span class="fc" id="L136">                            .forEach(command -&gt; {</span>
+<span class="fc" id="L137">                                final String correlationId = command.getDittoHeaders().getCorrelationId().get();</span>
+<span class="fc" id="L138">                                commands.put(correlationId, command);</span>
+<span class="fc" id="L139">                                pendingCommands.add(correlationId);</span>
+<span class="fc" id="L140">                            });</span>
+<span class="fc" id="L141">                })</span>
+<span class="fc" id="L142">                .match(BatchCommandExecuted.class, event -&gt; {</span>
+<span class="nc" id="L143">                    final CommandResponse response = event.getResponse();</span>
+<span class="nc" id="L144">                    final String correlationId = response.getDittoHeaders()</span>
+<span class="nc" id="L145">                            .getCorrelationId()</span>
+<span class="nc" id="L146">                            .orElseThrow(() -&gt; new IllegalStateException(&quot;Received a CommandResponse without &quot; +</span>
+                                    &quot;Correlation ID!&quot;));
+<span class="nc" id="L148">                    pendingCommands.remove(correlationId);</span>
+<span class="nc" id="L149">                    commandResponses.add(response);</span>
+<span class="nc" id="L150">                })</span>
+<span class="fc" id="L151">                .match(BatchExecutionFinished.class,</span>
+<span class="nc" id="L152">                        event -&gt; log.debug(&quot;Recovered finished batch '{}'.&quot;, batchId))</span>
+<span class="fc" id="L153">                .match(RecoveryCompleted.class, rc -&gt; {</span>
+<span class="fc" id="L154">                    log.debug(&quot;Recovery completed&quot;);</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">                    if (!pendingCommands.isEmpty()) {</span>
+<span class="fc" id="L156">                        log.debug(&quot;Resuming execution of batch '{}'.&quot;, batchId);</span>
+<span class="fc" id="L157">                        pendingCommands.forEach(</span>
+<span class="fc" id="L158">                                correlationId -&gt; conciergeForwarder.tell(commands.get(correlationId), getSelf()));</span>
+<span class="fc" id="L159">                        becomeCommandResponseAwaiting();</span>
+                    } else {
+<span class="fc" id="L161">                        log.debug(&quot;No pending commands - shutting down in {} seconds.&quot;,</span>
+<span class="fc" id="L162">                                SHUTDOWN_TIMEOUT_SECONDS);</span>
+<span class="fc" id="L163">                        scheduleShutdown();</span>
+                    }
+<span class="fc" id="L165">                })</span>
+<span class="pc" id="L166">                .matchAny(m -&gt; log.warning(&quot;Unknown recover message: {}&quot;, m))</span>
+<span class="fc" id="L167">                .build();</span>
+    }
+
+    @Override
+    public Receive createReceive() {
+<span class="fc" id="L172">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L173">                .match(ExecuteBatch.class, this::executeDryRun)</span>
+<span class="pc" id="L174">                .matchAny(m -&gt; log.warning(&quot;Got unknown message, expected an 'ExecuteBatch' command: {}&quot;, m))</span>
+<span class="fc" id="L175">                .build();</span>
+    }
+
+    private void executeDryRun(final ExecuteBatch command) {
+<span class="fc" id="L179">        cancelShutdown();</span>
+
+<span class="fc" id="L181">        originalSender = getSender();</span>
+
+<span class="fc" id="L183">        command.getCommands().forEach(this::tellCommandAsDryRun);</span>
+
+<span class="fc" id="L185">        becomeDryRunCommandResponseAwaiting();</span>
+<span class="fc" id="L186">    }</span>
+
+    private void tellCommandAsDryRun(final Command command) {
+<span class="fc" id="L189">        final String correlationId = encodeCorrelationId(command.getDittoHeaders());</span>
+<span class="fc" id="L190">        final DittoHeadersBuilder dittoHeadersBuilder = command.getDittoHeaders()</span>
+<span class="fc" id="L191">                .toBuilder()</span>
+<span class="fc" id="L192">                .correlationId(correlationId);</span>
+
+<span class="fc" id="L194">        commands.put(correlationId, command.setDittoHeaders(dittoHeadersBuilder.build()));</span>
+<span class="fc" id="L195">        pendingCommands.add(correlationId);</span>
+
+<span class="fc" id="L197">        final Command commandAsDryRun = command.setDittoHeaders(dittoHeadersBuilder.dryRun(true).build());</span>
+<span class="fc" id="L198">        conciergeForwarder.tell(commandAsDryRun, getSelf());</span>
+<span class="fc" id="L199">    }</span>
+
+    private void becomeDryRunCommandResponseAwaiting() {
+<span class="fc" id="L202">        getContext().become(ReceiveBuilder.create()</span>
+<span class="fc" id="L203">                .match(ExecuteBatch.class, this::batchAlreadyExecuting)</span>
+<span class="fc" id="L204">                .match(CommandResponse.class, response -&gt; {</span>
+<span class="fc" id="L205">                    pendingCommands.remove(response.getDittoHeaders()</span>
+<span class="fc" id="L206">                            .getCorrelationId()</span>
+<span class="pc" id="L207">                            .orElseThrow(() -&gt; new IllegalStateException(&quot;Received a CommandResponse without &quot; +</span>
+                                    &quot;Correlation ID!&quot;)));
+
+<span class="fc bfc" id="L210" title="All 2 branches covered.">                    if (pendingCommands.isEmpty()) {</span>
+<span class="fc" id="L211">                        final BatchExecutionStarted batchExecutionStarted =</span>
+<span class="fc" id="L212">                                BatchExecutionStarted.of(batchId, Instant.now(),</span>
+<span class="fc" id="L213">                                        new ArrayList&lt;&gt;(commands.values()),</span>
+<span class="fc" id="L214">                                        buildDittoHeaders());</span>
+
+<span class="fc" id="L216">                        persist(batchExecutionStarted, event -&gt; {</span>
+<span class="fc" id="L217">                            log.info(&quot;Batch with ID '{}' started.&quot;, batchId);</span>
+
+<span class="fc" id="L219">                            originalSender.tell(ExecuteBatchResponse.of(batchId, buildDittoHeaders()), getSelf());</span>
+<span class="fc" id="L220">                            commands.forEach((correlationId, command) -&gt; {</span>
+<span class="fc" id="L221">                                conciergeForwarder.tell(command, getSelf());</span>
+<span class="fc" id="L222">                                pendingCommands.add(correlationId);</span>
+<span class="fc" id="L223">                            });</span>
+
+<span class="fc" id="L225">                            notifySubscribers(batchExecutionStarted);</span>
+<span class="fc" id="L226">                            becomeCommandResponseAwaiting();</span>
+<span class="fc" id="L227">                        });</span>
+                    }
+<span class="fc" id="L229">                })</span>
+<span class="fc" id="L230">                .match(DittoRuntimeException.class, exception -&gt; {</span>
+<span class="fc" id="L231">                    final String correlationId = exception.getDittoHeaders()</span>
+<span class="fc" id="L232">                            .getCorrelationId()</span>
+<span class="pc" id="L233">                            .orElseThrow(() -&gt; new IllegalStateException(&quot;Received a DittoRuntimeException without &quot; +</span>
+                                    &quot;Correlation ID!&quot;));
+
+<span class="fc" id="L236">                    final ThingErrorResponse errorResponse =</span>
+<span class="fc" id="L237">                            ThingErrorResponse.of(exception,</span>
+<span class="fc" id="L238">                                    buildDittoHeaders());</span>
+
+<span class="fc" id="L240">                    pendingCommands.remove(correlationId);</span>
+<span class="fc" id="L241">                    originalSender.tell(errorResponse, getSelf());</span>
+<span class="fc" id="L242">                    scheduleShutdown();</span>
+<span class="fc" id="L243">                    becomeShutdownAwaiting();</span>
+<span class="fc" id="L244">                })</span>
+<span class="pc" id="L245">                .matchAny(m -&gt; log.warning(&quot;Got unknown message: {}&quot;, m))</span>
+<span class="fc" id="L246">                .build());</span>
+<span class="fc" id="L247">    }</span>
+
+    private void becomeCommandResponseAwaiting() {
+<span class="fc" id="L250">        getContext().become(ReceiveBuilder.create()</span>
+<span class="fc" id="L251">                .match(ExecuteBatch.class, this::batchAlreadyExecuting)</span>
+<span class="fc" id="L252">                .match(CommandResponse.class, this::handleCommandResponse)</span>
+<span class="fc" id="L253">                .match(DittoRuntimeException.class, this::handleDittoRuntimeException)</span>
+<span class="pc" id="L254">                .matchAny(m -&gt; log.warning(&quot;Got unknown message: {}&quot;, m))</span>
+<span class="fc" id="L255">                .build());</span>
+<span class="fc" id="L256">    }</span>
+
+    private void batchAlreadyExecuting(final ExecuteBatch command) {
+<span class="fc" id="L259">        final ThingErrorResponse response = ThingErrorResponse.of(BatchAlreadyExecutingException.newBuilder(batchId)</span>
+<span class="fc" id="L260">                .dittoHeaders(command.getDittoHeaders())</span>
+<span class="fc" id="L261">                .build());</span>
+<span class="fc" id="L262">        originalSender.tell(response, getSelf());</span>
+<span class="fc" id="L263">    }</span>
+
+    private void handleDittoRuntimeException(final DittoRuntimeException exception) {
+<span class="fc" id="L266">        handleCommandResponse(ThingErrorResponse.of(exception));</span>
+<span class="fc" id="L267">    }</span>
+
+    private void handleCommandResponse(final CommandResponse response) {
+<span class="fc" id="L270">        final String correlationId = response.getDittoHeaders()</span>
+<span class="fc" id="L271">                .getCorrelationId()</span>
+<span class="pc" id="L272">                .orElseThrow(() -&gt; new IllegalStateException(&quot;Received a CommandResponse without &quot; +</span>
+                        &quot;Correlation ID!&quot;));
+<span class="fc" id="L274">        final BatchCommandExecuted commandExecuted =</span>
+<span class="fc" id="L275">                BatchCommandExecuted.of(response.getDittoHeaders().getCorrelationId()</span>
+<span class="pc" id="L276">                        .orElseThrow(() -&gt; new IllegalStateException(&quot;encountered CommandResponse without correlationId&quot;)),</span>
+<span class="fc" id="L277">                response, Instant.now());</span>
+<span class="fc" id="L278">        persist(commandExecuted, event -&gt; {</span>
+<span class="fc" id="L279">            log.info(&quot;Received '{}' for Batch with ID '{}'.&quot;, response.getName(), batchId);</span>
+
+<span class="fc" id="L281">            pendingCommands.remove(correlationId);</span>
+<span class="fc" id="L282">            commandResponses.add(unfixCorrelationId(response));</span>
+
+<span class="fc bfc" id="L284" title="All 2 branches covered.">            if (pendingCommands.isEmpty()) {</span>
+<span class="fc" id="L285">                final BatchExecutionFinished batchExecutionFinished = BatchExecutionFinished.of(batchId,</span>
+<span class="fc" id="L286">                        Instant.now(), commandResponses,</span>
+<span class="fc" id="L287">                        buildDittoHeaders());</span>
+<span class="fc" id="L288">                persist(batchExecutionFinished, batchExecutionFinishedPersisted -&gt; {</span>
+<span class="fc" id="L289">                    log.info(&quot;Batch with ID '{}' finished.&quot;, batchId);</span>
+<span class="fc" id="L290">                    notifySubscribers(batchExecutionFinishedPersisted);</span>
+<span class="fc" id="L291">                    scheduleShutdown();</span>
+<span class="fc" id="L292">                    becomeShutdownAwaiting();</span>
+<span class="fc" id="L293">                });</span>
+            }
+<span class="fc" id="L295">        });</span>
+<span class="fc" id="L296">    }</span>
+
+    private void notifySubscribers(final Event event) {
+<span class="fc" id="L299">        pubSubMediator.tell(new DistributedPubSubMediator.Publish(event.getType(),</span>
+<span class="fc" id="L300">                event, true), getSelf());</span>
+<span class="fc" id="L301">    }</span>
+
+    private DittoHeaders buildDittoHeaders() {
+<span class="fc" id="L304">        return DittoHeaders.newBuilder()</span>
+<span class="fc" id="L305">                .correlationId(batchId)</span>
+<span class="fc" id="L306">                .build();</span>
+    }
+
+    private String encodeCorrelationId(final DittoHeaders dittoHeaders) {
+<span class="fc" id="L310">        return JsonObject.newBuilder()</span>
+<span class="fc" id="L311">                .set(BATCH_ID_FIELD, batchId)</span>
+<span class="fc" id="L312">                .set(RANDOM_FIELD, UUID.randomUUID().toString())</span>
+<span class="fc" id="L313">                .set(ORIGINAL_CORRELATION_ID, dittoHeaders.getCorrelationId().orElse(UUID.randomUUID().toString()))</span>
+<span class="fc" id="L314">                .build()</span>
+<span class="fc" id="L315">                .toString();</span>
+    }
+
+    private JsonObject decodeCommandCorrelationId(final String commandCorrelationId) {
+<span class="fc" id="L319">        return JsonFactory.newObject(commandCorrelationId);</span>
+    }
+
+    private CommandResponse unfixCorrelationId(final CommandResponse response) {
+<span class="fc" id="L323">        final String correlationId = response.getDittoHeaders()</span>
+<span class="fc" id="L324">                .getCorrelationId()</span>
+<span class="fc" id="L325">                .flatMap(s -&gt; decodeCommandCorrelationId(s).getValue(ORIGINAL_CORRELATION_ID))</span>
+<span class="fc" id="L326">                .map(JsonValue::asString)</span>
+<span class="fc" id="L327">                .orElse(null);</span>
+<span class="fc" id="L328">        final DittoHeaders dittoHeaders = response.getDittoHeaders().toBuilder()</span>
+<span class="fc" id="L329">                .correlationId(correlationId)</span>
+<span class="fc" id="L330">                .build();</span>
+<span class="fc" id="L331">        return response.setDittoHeaders(dittoHeaders);</span>
+    }
+
+    private void scheduleShutdown() {
+<span class="fc" id="L335">        shutdown =</span>
+<span class="fc" id="L336">                getContext().system()</span>
+<span class="fc" id="L337">                        .scheduler()</span>
+<span class="fc" id="L338">                        .scheduleOnce(Duration.create(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS),</span>
+                                () -&gt; {
+<span class="pc bpc" id="L340" title="1 of 2 branches missed.">                                    if (null != getContext()) {</span>
+<span class="nc" id="L341">                                        getContext().stop(getSelf());</span>
+                                    }
+<span class="fc" id="L343">                                },</span>
+<span class="fc" id="L344">                                getContext().system().dispatcher());</span>
+<span class="fc" id="L345">    }</span>
+
+    private void becomeShutdownAwaiting() {
+<span class="fc" id="L348">        getContext().become(ReceiveBuilder.create()</span>
+<span class="fc" id="L349">                .matchAny(m -&gt; log.debug(&quot;Got message while waiting for shutdown: {}&quot;, m))</span>
+<span class="fc" id="L350">                .build());</span>
+<span class="fc" id="L351">    }</span>
+
+    private void cancelShutdown() {
+<span class="pc bpc" id="L354" title="1 of 2 branches missed.">        if (null != shutdown) {</span>
+<span class="fc" id="L355">            shutdown.cancel();</span>
+<span class="fc" id="L356">            getContext().unbecome();</span>
+        }
+<span class="fc" id="L358">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

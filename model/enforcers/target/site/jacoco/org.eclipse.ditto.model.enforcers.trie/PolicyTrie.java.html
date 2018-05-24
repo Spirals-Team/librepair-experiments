@@ -1,0 +1,362 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PolicyTrie.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Model :: Enforcers</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.model.enforcers.trie</a> &gt; <span class="el_source">PolicyTrie.java</span></div><h1>PolicyTrie.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.model.enforcers.trie;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
+
+import org.eclipse.ditto.json.JsonArray;
+import org.eclipse.ditto.json.JsonCollectors;
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonField;
+import org.eclipse.ditto.json.JsonFieldDefinition;
+import org.eclipse.ditto.json.JsonKey;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonObjectBuilder;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.json.JsonValueContainer;
+import org.eclipse.ditto.model.policies.EffectedPermissions;
+import org.eclipse.ditto.model.policies.Permissions;
+import org.eclipse.ditto.model.policies.PolicyEntry;
+import org.eclipse.ditto.model.policies.ResourceKey;
+import org.eclipse.ditto.model.policies.Subject;
+import org.eclipse.ditto.model.policies.SubjectId;
+import org.eclipse.ditto.model.policies.Subjects;
+
+/**
+ * Trie data structure for a policy optimized for policy enforcement.
+ * &lt;p&gt;
+ * A &lt;em&gt;trie&lt;/em&gt; (en.wikipedia/wiki/Trie) is a map data structure. A {@code PolicyTrie} maps each {@link ResourceKey}
+ * into a {@link GrantRevokeIndex}. Each trie node corresponds to a unique resource, say for example {@code
+ * thing:/attributes/A/B}. Its parent is the immediate super-resource {@code thing:/attributes/A}, and its children are
+ * immediate sub-resources, say {@code thing:/attributes/A/B/C} and {@code thing:/attributes/A/B/D}.
+ */
+@NotThreadSafe
+final class PolicyTrie {
+
+    private final GrantRevokeIndex grantRevokeIndex;
+    private final Map&lt;JsonKey, PolicyTrie&gt; children;
+
+    private PolicyTrie() {
+<span class="fc" id="L63">        this(new GrantRevokeIndex(), new HashMap&lt;&gt;());</span>
+<span class="fc" id="L64">    }</span>
+
+<span class="fc" id="L66">    private PolicyTrie(final GrantRevokeIndex grantRevokeIndex, final Map&lt;JsonKey, PolicyTrie&gt; children) {</span>
+<span class="fc" id="L67">        this.grantRevokeIndex = grantRevokeIndex;</span>
+<span class="fc" id="L68">        this.children = children;</span>
+<span class="fc" id="L69">    }</span>
+
+    /**
+     * Interprets a {@link org.eclipse.ditto.model.policies.Policy} as trie. For each policy entry, a map from
+     * granted/revoked permissions to their corresponding subjects is added to a trie node at the exact location of the
+     * resource of the policy entry.
+     *
+     * @param policy The policy data structure to interpret.
+     * @return A trie optimized for enforcer operations.
+     * @throws NullPointerException if {@code policy} is {@code null}.
+     */
+    static PolicyTrie fromPolicy(final Iterable&lt;PolicyEntry&gt; policy) {
+<span class="fc" id="L81">        checkNotNull(policy, &quot;policy to interpret&quot;);</span>
+<span class="fc" id="L82">        final PolicyTrie prototype = new PolicyTrie();</span>
+<span class="fc" id="L83">        policy.forEach(prototype::addPolicyEntry);</span>
+<span class="fc" id="L84">        return prototype;</span>
+    }
+
+    private void addPolicyEntry(final PolicyEntry policyEntry) {
+<span class="fc" id="L88">        final Collection&lt;String&gt; subjectIds = getSubjectIds(policyEntry.getSubjects());</span>
+<span class="fc" id="L89">        policyEntry.getResources().forEach(resource -&gt; {</span>
+<span class="fc" id="L90">            final PolicyTrie target = seekOrCreate(getJsonKeyIterator(resource.getResourceKey()));</span>
+<span class="fc" id="L91">            final EffectedPermissions effectedPermissions = resource.getEffectedPermissions();</span>
+<span class="fc" id="L92">            target.grant(subjectIds, effectedPermissions.getGrantedPermissions());</span>
+<span class="fc" id="L93">            target.revoke(subjectIds, effectedPermissions.getRevokedPermissions());</span>
+<span class="fc" id="L94">        });</span>
+<span class="fc" id="L95">    }</span>
+
+    private static Collection&lt;String&gt; getSubjectIds(final Subjects subjects) {
+<span class="fc" id="L98">        return subjects.stream()</span>
+<span class="fc" id="L99">                .map(Subject::getId)</span>
+<span class="fc" id="L100">                .map(SubjectId::toString)</span>
+<span class="fc" id="L101">                .collect(Collectors.toSet());</span>
+    }
+
+    /**
+     * Converts a {@link ResourceKey} to an iterator of JSON keys by prepending the resource type to the resource path.
+     *
+     * @param resourceKey The resource key to convert.
+     * @return The converted JSON key iterator.
+     * @throws NullPointerException if {@code resourceKey} is {@code null}.
+     */
+    static Iterator&lt;JsonKey&gt; getJsonKeyIterator(final ResourceKey resourceKey) {
+<span class="fc" id="L112">        checkNotNull(resourceKey, &quot;resource key to convert&quot;);</span>
+<span class="fc" id="L113">        return JsonFactory.newPointer(resourceKey.getResourceType()).append(resourceKey.getResourcePath()).iterator();</span>
+    }
+
+    /**
+     * Seek to a trie node matching the given path exactly, or create it and all needed if they did not exist. Analogous
+     * to {@code mkdir -p}.
+     *
+     * @param path The resource path to seek/create a node for.
+     * @return The node whose path from root matches {@code path} exactly.
+     */
+    private PolicyTrie seekOrCreate(final Iterator&lt;JsonKey&gt; path) {
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        return path.hasNext() ? computeForChild(path) : this;</span>
+    }
+
+    private PolicyTrie computeForChild(final Iterator&lt;JsonKey&gt; path) {
+<span class="fc" id="L128">        final PolicyTrie childNode = compute(path.next(), Function.identity());</span>
+<span class="fc" id="L129">        return childNode.seekOrCreate(path);</span>
+    }
+
+    // wrapper of Map.compute
+    private PolicyTrie compute(final JsonKey childKey, final Function&lt;PolicyTrie, PolicyTrie&gt; childUpdate) {
+<span class="fc" id="L134">        return children.compute(childKey,</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">                (key, childTrie) -&gt; childTrie == null ? new PolicyTrie() : childUpdate.apply(childTrie));</span>
+    }
+
+    private void grant(final Collection&lt;String&gt; subjectIds, final Iterable&lt;String&gt; permissions) {
+<span class="fc" id="L139">        grantRevokeIndex.getGranted().addTotalRelationOfWeightZero(permissions, subjectIds);</span>
+<span class="fc" id="L140">    }</span>
+
+    private void revoke(final Collection&lt;String&gt; subjectIds, final Iterable&lt;String&gt; permissions) {
+<span class="fc" id="L143">        grantRevokeIndex.getRevoked().addTotalRelationOfWeightZero(permissions, subjectIds);</span>
+<span class="fc" id="L144">    }</span>
+
+    /**
+     * Returns the {@link GrantRevokeIndex} at this node.
+     *
+     * @return The grant-revoke-index at this node.
+     */
+    GrantRevokeIndex getGrantRevokeIndex() {
+<span class="fc" id="L152">        return grantRevokeIndex;</span>
+    }
+
+    /**
+     * Returns a copy of this trie such that each trie node inherits all grants and revokes from its ancestors except
+     * those that are overridden by more specific policy entries.
+     *
+     * @return A copy of this trie with grants and revokes pushed down from ancestors to descendants.
+     */
+    PolicyTrie getTransitiveClosure() {
+<span class="fc" id="L162">        return computeTransitiveClosure(this, new GrantRevokeIndex());</span>
+    }
+
+    private static PolicyTrie computeTransitiveClosure(final PolicyTrie thisTrie, final GrantRevokeIndex inherited) {
+<span class="fc" id="L166">        final GrantRevokeIndex thisMap = inherited.copyWithDecrementedWeight().overrideBy(thisTrie.grantRevokeIndex);</span>
+<span class="fc" id="L167">        final Map&lt;JsonKey, PolicyTrie&gt; newChildren = new HashMap&lt;&gt;(thisTrie.children.size());</span>
+<span class="fc" id="L168">        thisTrie.children.forEach((key, oldChild) -&gt; newChildren.put(key, computeTransitiveClosure(oldChild, thisMap)));</span>
+
+<span class="fc" id="L170">        return new PolicyTrie(thisMap, newChildren);</span>
+    }
+
+    /**
+     * Returns a copy of this trie such that each trie node contains grants from all its descendants.
+     *
+     * @return A copy of this trie with grants pushed up from descendants to ancestors.
+     */
+    PolicyTrie getBottomUpGrantTrie() {
+<span class="fc" id="L179">        final Map&lt;JsonKey, PolicyTrie&gt; newChildren = new HashMap&lt;&gt;(children.size());</span>
+<span class="fc" id="L180">        final PermissionSubjectsMap newGrantMap = grantRevokeIndex.getGranted().copy();</span>
+
+<span class="fc" id="L182">        children.forEach((key, oldChild) -&gt; {</span>
+<span class="fc" id="L183">            final PolicyTrie newChild = oldChild.getBottomUpGrantTrie();</span>
+<span class="fc" id="L184">            newChildren.put(key, newChild);</span>
+
+<span class="fc" id="L186">            final GrantRevokeIndex newChildGrantRevokeIndex = newChild.getGrantRevokeIndex();</span>
+<span class="fc" id="L187">            final PermissionSubjectsMap granted = newChildGrantRevokeIndex.getGranted();</span>
+<span class="fc" id="L188">            newGrantMap.addAllEntriesFrom(granted.copyWithIncrementedWeight());</span>
+<span class="fc" id="L189">        });</span>
+
+<span class="fc" id="L191">        final PermissionSubjectsMap newRevokeMap = grantRevokeIndex.getRevoked().copy();</span>
+<span class="fc" id="L192">        newRevokeMap.removeAllEntriesFrom(newGrantMap);</span>
+<span class="fc" id="L193">        final GrantRevokeIndex newGrantRevokeMap = new GrantRevokeIndex(newGrantMap, newRevokeMap);</span>
+
+<span class="fc" id="L195">        return new PolicyTrie(newGrantRevokeMap, newChildren);</span>
+    }
+
+    /**
+     * Returns a copy of this trie such that each trie node contains revokes from all its descendants.
+     *
+     * @return A copy of this trie with revokes pushed up from descendants to ancestors.
+     */
+    PolicyTrie getBottomUpRevokeTrie() {
+<span class="fc" id="L204">        final Map&lt;JsonKey, PolicyTrie&gt; newChildren = new HashMap&lt;&gt;(children.size());</span>
+<span class="fc" id="L205">        final PermissionSubjectsMap newRevokeMap = grantRevokeIndex.getRevoked().copy();</span>
+
+<span class="fc" id="L207">        children.forEach((key, oldChild) -&gt; {</span>
+<span class="fc" id="L208">            final PolicyTrie newChild = oldChild.getBottomUpRevokeTrie();</span>
+<span class="fc" id="L209">            newChildren.put(key, newChild);</span>
+
+<span class="fc" id="L211">            final GrantRevokeIndex newChildGrantRevokeIndex = newChild.getGrantRevokeIndex();</span>
+<span class="fc" id="L212">            final PermissionSubjectsMap revoked = newChildGrantRevokeIndex.getRevoked();</span>
+<span class="fc" id="L213">            newRevokeMap.addAllEntriesFrom(revoked.copyWithIncrementedWeight());</span>
+<span class="fc" id="L214">        });</span>
+
+<span class="fc" id="L216">        final PermissionSubjectsMap newGrantMap = grantRevokeIndex.getGranted().copy();</span>
+<span class="fc" id="L217">        final GrantRevokeIndex newGrantRevokeMap = new GrantRevokeIndex(newGrantMap, newRevokeMap);</span>
+
+<span class="fc" id="L219">        return new PolicyTrie(newGrantRevokeMap, newChildren);</span>
+    }
+
+    /**
+     * Returns whether a child exists for the given key.
+     *
+     * @param childKey Key of the child to check.
+     * @return {@code true} if a child with the given key exists, {@code false} otherwise.
+     */
+    boolean hasChild(final JsonKey childKey) {
+<span class="fc" id="L229">        return children.containsKey(childKey);</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    JsonObject buildJsonView(final Iterable&lt;JsonField&gt; jsonFields, final Set&lt;String&gt; subjectIds,
+            final Permissions permissions) {
+
+<span class="fc" id="L236">        final PolicyTrie defaultPolicyTrie = new PolicyTrie(grantRevokeIndex, Collections.emptyMap());</span>
+
+<span class="fc" id="L238">        final JsonObjectBuilder outputObjectBuilder = JsonFactory.newObjectBuilder();</span>
+<span class="fc bfc" id="L239" title="All 2 branches covered.">        for (final JsonField field : jsonFields) {</span>
+<span class="fc" id="L240">            final JsonValue jsonView = getViewForJsonFieldOrNull(field, defaultPolicyTrie, subjectIds, permissions);</span>
+<span class="fc bfc" id="L241" title="All 2 branches covered.">            if (null != jsonView) {</span>
+<span class="fc" id="L242">                final Optional&lt;JsonFieldDefinition&gt; definitionOptional = field.getDefinition();</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">                if (definitionOptional.isPresent()) {</span>
+<span class="fc" id="L244">                    outputObjectBuilder.set(definitionOptional.get(), jsonView);</span>
+                } else {
+<span class="fc" id="L246">                    outputObjectBuilder.set(field.getKey(), jsonView);</span>
+                }
+            }
+<span class="fc" id="L249">        }</span>
+
+<span class="fc" id="L251">        return outputObjectBuilder.build();</span>
+    }
+
+    @Nullable
+    private JsonValue getViewForJsonFieldOrNull(final JsonField jsonField,
+            final PolicyTrie defaultPolicyTrie,
+            final Set&lt;String&gt; subjectIds,
+            final Permissions permissions) {
+
+<span class="fc" id="L260">        final PolicyTrie relevantTrie = children.getOrDefault(jsonField.getKey(), defaultPolicyTrie);</span>
+<span class="fc" id="L261">        return relevantTrie.getViewForJsonValueOrNull(jsonField.getValue(), subjectIds, permissions);</span>
+    }
+
+    @Nullable
+    private JsonValue getViewForJsonValueOrNull(final JsonValue jsonValue, final Set&lt;String&gt; subjectIds,
+            final Permissions permissions) {
+
+        final JsonValue result;
+<span class="fc bfc" id="L269" title="All 2 branches covered.">        if (jsonValue.isObject()) {</span>
+<span class="fc" id="L270">            result = getViewForJsonObjectOrNull(jsonValue.asObject(), subjectIds, permissions);</span>
+<span class="pc bpc" id="L271" title="1 of 2 branches missed.">        } else if (jsonValue.isArray()) {</span>
+<span class="nc" id="L272">            result = getViewForJsonArrayOrNull(jsonValue.asArray(), subjectIds, permissions);</span>
+<span class="fc bfc" id="L273" title="All 2 branches covered.">        } else if (grantRevokeIndex.hasPermissions(subjectIds, permissions)) {</span>
+<span class="fc" id="L274">            result = jsonValue;</span>
+        } else {
+<span class="fc" id="L276">            result = null;</span>
+        }
+
+<span class="fc" id="L279">        return result;</span>
+    }
+
+    @Nullable
+    private JsonValue getViewForJsonObjectOrNull(final Iterable&lt;JsonField&gt; jsonObject, final Set&lt;String&gt; subjectIds,
+            final Permissions permissions) {
+
+<span class="fc" id="L286">        return filterCandidate(buildJsonView(jsonObject, subjectIds, permissions), subjectIds, permissions);</span>
+    }
+
+    @Nullable
+    private &lt;T extends JsonValue &amp; JsonValueContainer&gt; T filterCandidate(final T candidate,
+            final Set&lt;String&gt; subjectIds, final Collection&lt;String&gt; permissions) {
+
+<span class="pc bpc" id="L293" title="1 of 4 branches missed.">        if (!candidate.isEmpty() || grantRevokeIndex.hasPermissions(subjectIds, permissions)) {</span>
+<span class="fc" id="L294">            return candidate;</span>
+        }
+<span class="fc" id="L296">        return null;</span>
+    }
+
+    @Nullable
+    private JsonValue getViewForJsonArrayOrNull(final JsonValueContainer&lt;JsonValue&gt; jsonArray,
+            final Set&lt;String&gt; subjectIds, final Permissions permissions) {
+
+<span class="nc" id="L303">        final JsonArray candidate = jsonArray.stream()</span>
+<span class="nc" id="L304">                .map(value -&gt; getViewForJsonValueOrNull(value, subjectIds, permissions))</span>
+<span class="nc" id="L305">                .filter(Objects::nonNull)</span>
+<span class="nc" id="L306">                .collect(JsonCollectors.valuesToArray());</span>
+
+<span class="nc" id="L308">        return filterCandidate(candidate, subjectIds, permissions);</span>
+    }
+
+    /**
+     * Seek to a trie node whose path from root matches {@code path} as much as possible.
+     *
+     * @param path The path key to match.
+     * @return The best matched node.
+     */
+    PolicyTrie seekToLeastAncestor(final Iterator&lt;JsonKey&gt; path) {
+<span class="fc" id="L318">        return seek(path, Function.identity(), Function.identity());</span>
+    }
+
+    /**
+     * Seek to the trie node whose path from root matches {@code path} exactly.
+     *
+     * @param path The resource path to match.
+     * @return The exactly matched trie node, or {@code Optional.empty()} if no trie node matches {@code path} exactly.
+     */
+    Optional&lt;PolicyTrie&gt; seekToExactNode(final Iterator&lt;JsonKey&gt; path) {
+<span class="fc" id="L328">        return seek(path, Optional::of, ancestor -&gt; Optional.empty());</span>
+    }
+
+    /**
+     * Traverse along a resource path as far as possible, then call 1 of the 2 given functions according to whether the
+     * resource path is fully traversed (i. e., exact match found) or whether a leaf of the trie is reached without
+     * exhausting the resource path.
+     *
+     * @param path The resource path to traverse.
+     * @param endOfPath What to do when the path ends (i. e., exact match found).
+     * @param endOfTrie What to do when a leaf is reached without exhausting the path.
+     * @param &lt;T&gt; Type of the result.
+     * @return Result of {@code endOfPath} or {@code endOfTrie}.
+     */
+    private &lt;T&gt; T seek(final Iterator&lt;JsonKey&gt; path, final Function&lt;PolicyTrie, T&gt; endOfPath,
+            final Function&lt;PolicyTrie, T&gt; endOfTrie) {
+
+        final T result;
+<span class="fc bfc" id="L346" title="All 2 branches covered.">        if (path.hasNext()) {</span>
+<span class="fc" id="L347">            final JsonKey key = path.next();</span>
+<span class="fc" id="L348">            final PolicyTrie policyTrie = children.get(key);</span>
+<span class="fc bfc" id="L349" title="All 2 branches covered.">            if (null != policyTrie) {</span>
+<span class="fc" id="L350">                result = policyTrie.seek(path, endOfPath, endOfTrie);</span>
+            } else {
+<span class="fc" id="L352">                result = endOfTrie.apply(this);</span>
+            }
+<span class="fc" id="L354">        } else {</span>
+<span class="fc" id="L355">            result = endOfPath.apply(this);</span>
+        }
+
+<span class="fc" id="L358">        return result;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Filter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Akka Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.akka.controlflow</a> &gt; <span class="el_source">Filter.java</span></div><h1>Filter.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.akka.controlflow;
+
+import java.util.function.Predicate;
+
+import akka.stream.Attributes;
+import akka.stream.FanOutShape2;
+import akka.stream.Inlet;
+import akka.stream.Outlet;
+import akka.stream.stage.GraphStage;
+import akka.stream.stage.GraphStageLogic;
+
+/**
+ * A stream processor filtering messages by type and by a predicate.
+ * &lt;pre&gt;
+ * {@code
+ *                         +-----------------+
+ *                         |                 |  is instance of T and
+ *                         | Filter&lt;T&gt;       |  passes predicate check
+ *  input +---------------&gt;+ with predicate  +--------------------------&gt; output
+ *                         |                 |
+ *                         +-------+---------+
+ *                                 |
+ *                                 |
+ *                                 | is no instance of T or
+ *                                 | fails predicate check
+ *                                 |
+ *                                 v
+ *                              unhandled
+ * }
+ * &lt;/pre&gt;
+ *
+ * @param &lt;T&gt; type of messages to filter for.
+ */
+public final class Filter&lt;T&gt; extends GraphStage&lt;FanOutShape2&lt;WithSender, WithSender&lt;T&gt;, WithSender&gt;&gt; {
+
+<span class="fc" id="L47">    private final FanOutShape2&lt;WithSender, WithSender&lt;T&gt;, WithSender&gt; shape =</span>
+<span class="fc" id="L48">            new FanOutShape2&lt;&gt;(Inlet.create(&quot;input&quot;), Outlet.create(&quot;output&quot;), Outlet.create(&quot;unhandled&quot;));</span>
+
+    private final Class&lt;T&gt; clazz;
+    private final Predicate&lt;T&gt; predicate;
+
+<span class="fc" id="L53">    private Filter(final Class&lt;T&gt; clazz, final Predicate&lt;T&gt; predicate) {</span>
+<span class="fc" id="L54">        this.clazz = clazz;</span>
+<span class="fc" id="L55">        this.predicate = predicate;</span>
+<span class="fc" id="L56">    }</span>
+
+    /**
+     * Create a filter stage from a class and a predicate.
+     *
+     * @param &lt;T&gt; type of messages to filter for.
+     * @param clazz class of {@code T}.
+     * @param predicate predicate to test instances of {@code T} with.
+     * @return {@code GraphStage} that performs the filtering.
+     */
+    public static &lt;T&gt; Filter&lt;T&gt; of(final Class&lt;T&gt; clazz, final Predicate&lt;T&gt; predicate) {
+<span class="fc" id="L67">        return new Filter&lt;&gt;(clazz, predicate);</span>
+    }
+
+
+    /**
+     * Create a filter stage from a class.
+     *
+     * @param &lt;T&gt; type of messages to filter for.
+     * @param clazz class of {@code T}.
+     * @return {@code GraphStage} that performs the filtering.
+     */
+    public static &lt;T&gt; Filter&lt;T&gt; of(final Class&lt;T&gt; clazz) {
+<span class="fc" id="L79">        return of(clazz, x -&gt; true);</span>
+    }
+
+    @Override
+    public FanOutShape2&lt;WithSender, WithSender&lt;T&gt;, WithSender&gt; shape() {
+<span class="fc" id="L84">        return shape;</span>
+    }
+
+    @Override
+    public GraphStageLogic createLogic(final Attributes inheritedAttributes) {
+<span class="fc" id="L89">        return new AbstractControlFlowLogic(shape) {</span>
+            {
+<span class="fc" id="L91">                initOutlets(shape);</span>
+
+<span class="fc" id="L93">                when(shape.in(), wrapped -&gt; {</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">                    if (clazz.isInstance(wrapped.getMessage())) {</span>
+<span class="fc" id="L95">                        final T message = clazz.cast(wrapped.getMessage());</span>
+<span class="pc bpc" id="L96" title="1 of 2 branches missed.">                        if (predicate.test(message)) {</span>
+<span class="fc" id="L97">                            emit(shape.out0(), WithSender.of(message, wrapped.getSender()));</span>
+                        } else {
+<span class="nc" id="L99">                            emit(shape.out1(), wrapped);</span>
+                        }
+<span class="fc" id="L101">                    } else {</span>
+<span class="fc" id="L102">                        emit(shape.out1(), wrapped);</span>
+                    }
+<span class="fc" id="L104">                });</span>
+<span class="fc" id="L105">            }</span>
+        };
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

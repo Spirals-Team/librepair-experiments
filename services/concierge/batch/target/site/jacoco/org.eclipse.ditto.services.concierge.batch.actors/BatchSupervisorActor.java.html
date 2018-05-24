@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BatchSupervisorActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Concierge :: Batch</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.concierge.batch.actors</a> &gt; <span class="el_source">BatchSupervisorActor.java</span></div><h1>BatchSupervisorActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.concierge.batch.actors;
+
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.json.JsonArray;
+import org.eclipse.ditto.json.JsonCollectors;
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.services.utils.persistence.SnapshotAdapter;
+import org.eclipse.ditto.services.utils.persistence.mongo.DittoBsonJson;
+import org.eclipse.ditto.signals.commands.batch.ExecuteBatch;
+import org.eclipse.ditto.signals.events.base.Event;
+import org.eclipse.ditto.signals.events.batch.BatchExecutionFinished;
+import org.eclipse.ditto.signals.events.batch.BatchExecutionStarted;
+
+import com.mongodb.DBObject;
+
+import akka.actor.ActorKilledException;
+import akka.actor.ActorRef;
+import akka.actor.OneForOneStrategy;
+import akka.actor.Props;
+import akka.actor.SupervisorStrategy;
+import akka.cluster.pubsub.DistributedPubSubMediator;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.DeciderBuilder;
+import akka.japi.pf.ReceiveBuilder;
+import akka.persistence.AbstractPersistentActor;
+import akka.persistence.RecoveryCompleted;
+import akka.persistence.SaveSnapshotFailure;
+import akka.persistence.SaveSnapshotSuccess;
+import akka.persistence.SelectedSnapshot;
+import akka.persistence.SnapshotOffer;
+import scala.Option;
+
+/**
+ * Actor which supervises {@link BatchCoordinatorActor}.
+ */
+public final class BatchSupervisorActor extends AbstractPersistentActor {
+
+    /**
+     * The name of this Actor.
+     */
+    public static final String ACTOR_NAME = &quot;batchSupervisor&quot;;
+
+    private static final String JOURNAL_PLUGIN_ID = &quot;akka-contrib-mongodb-persistence-batch-supervisor-journal&quot;;
+    private static final String SNAPSHOT_PLUGIN_ID = &quot;akka-contrib-mongodb-persistence-batch-supervisor-snapshots&quot;;
+    private static final int SNAPSHOT_THRESHOLD = 1000;
+
+<span class="fc" id="L68">    private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+    private final ActorRef pubSubMediator;
+    private final ActorRef conciergeForwarder;
+    private final SnapshotAdapter&lt;Set&lt;String&gt;&gt; snapshotAdapter;
+<span class="fc" id="L73">    private long snapshotSequenceNr = -1;</span>
+
+    private Set&lt;String&gt; batchIds;
+
+<span class="fc" id="L77">    private BatchSupervisorActor( final ActorRef pubSubMediator, final ActorRef conciergeForwarder) {</span>
+<span class="fc" id="L78">        this.pubSubMediator = pubSubMediator;</span>
+<span class="fc" id="L79">        this.conciergeForwarder = conciergeForwarder;</span>
+
+<span class="fc" id="L81">        snapshotAdapter = new BatchIdsSnapshotAdapter();</span>
+<span class="fc" id="L82">        batchIds = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L83">    }</span>
+
+    /**
+     * Creates Akka configuration object Props for this BatchSupervisorActor.
+     *
+     * @param pubSubMediator the mediator to use for distributed pubsub.
+     * @param conciergeForwarder the ref of the conciergeForwarder.
+     * @return the Akka configuration Props object.
+     */
+    public static Props props(final ActorRef pubSubMediator, final ActorRef conciergeForwarder) {
+<span class="fc" id="L93">        return Props.create(BatchSupervisorActor.class, new Creator&lt;BatchSupervisorActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public BatchSupervisorActor create() {
+<span class="fc" id="L98">                return new BatchSupervisorActor(pubSubMediator, conciergeForwarder);</span>
+            }
+        });
+    }
+
+    @Override
+    public String persistenceId() {
+<span class="fc" id="L105">        return ACTOR_NAME;</span>
+    }
+
+    @Override
+    public String journalPluginId() {
+<span class="fc" id="L110">        return JOURNAL_PLUGIN_ID;</span>
+    }
+
+    @Override
+    public String snapshotPluginId() {
+<span class="fc" id="L115">        return SNAPSHOT_PLUGIN_ID;</span>
+    }
+
+    @Override
+    public Receive createReceiveRecover() {
+<span class="fc" id="L120">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L121">                .match(SnapshotOffer.class, ss -&gt; {</span>
+<span class="nc" id="L122">                    batchIds = snapshotAdapter.fromSnapshotStore(ss);</span>
+<span class="nc" id="L123">                    snapshotSequenceNr = ss.metadata().sequenceNr();</span>
+<span class="nc" id="L124">                })</span>
+<span class="fc" id="L125">                .match(BatchExecutionStarted.class, event -&gt; batchIds.add(event.getBatchId()))</span>
+<span class="fc" id="L126">                .match(BatchExecutionFinished.class, event -&gt; batchIds.remove(event.getBatchId()))</span>
+<span class="fc" id="L127">                .match(RecoveryCompleted.class, rc -&gt; {</span>
+<span class="fc" id="L128">                    log.debug(&quot;Recovery completed&quot;);</span>
+<span class="fc" id="L129">                    batchIds.forEach(this::lookupBatchCoordinatorActor);</span>
+<span class="fc" id="L130">                })</span>
+<span class="pc" id="L131">                .matchAny(m -&gt; log.warning(&quot;Unknown recover message: {}&quot;, m))</span>
+<span class="fc" id="L132">                .build();</span>
+    }
+
+    @Override
+    public Receive createReceive() {
+<span class="fc" id="L137">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L138">                .match(ExecuteBatch.class, this::forwardCommand)</span>
+<span class="fc" id="L139">                .match(BatchExecutionStarted.class, event -&gt; persistEvent(event, e -&gt; batchIds.add(e.getBatchId())))</span>
+<span class="fc" id="L140">                .match(BatchExecutionFinished.class, event -&gt; persistEvent(event, e -&gt; batchIds.remove(e.getBatchId())))</span>
+<span class="fc" id="L141">                .match(DistributedPubSubMediator.SubscribeAck.class, subscribeAck -&gt;</span>
+<span class="fc" id="L142">                        log.debug(&quot;Successfully subscribed to distributed pub/sub on topic '{}'&quot;,</span>
+<span class="fc" id="L143">                                subscribeAck.subscribe().topic())</span>
+                )
+<span class="fc" id="L145">                .match(SaveSnapshotSuccess.class, ss -&gt; {</span>
+<span class="nc" id="L146">                    snapshotSequenceNr = ss.metadata().sequenceNr();</span>
+<span class="nc" id="L147">                    deleteMessages(snapshotSequenceNr - 1);</span>
+<span class="nc" id="L148">                })</span>
+<span class="fc" id="L149">                .match(SaveSnapshotFailure.class,</span>
+<span class="nc" id="L150">                        sf -&gt; log.error(sf.cause(), &quot;Failed to save Snapshot. Cause: {}.&quot;, sf.cause().getMessage()))</span>
+<span class="pc" id="L151">                .matchAny(m -&gt; log.warning(&quot;Got unknown message, expected an 'ExecuteBatch' command: {}&quot;, m))</span>
+<span class="fc" id="L152">                .build();</span>
+    }
+
+    @Override
+    public void preStart() {
+<span class="fc" id="L157">        pubSubMediator.tell(new DistributedPubSubMediator.Put(getSelf()), getSelf());</span>
+<span class="fc" id="L158">        pubSubMediator.tell(new DistributedPubSubMediator.Subscribe(BatchExecutionStarted.TYPE, ACTOR_NAME, getSelf()),</span>
+<span class="fc" id="L159">                getSelf());</span>
+<span class="fc" id="L160">        pubSubMediator.tell(new DistributedPubSubMediator.Subscribe(BatchExecutionFinished.TYPE, ACTOR_NAME, getSelf()),</span>
+<span class="fc" id="L161">                getSelf());</span>
+<span class="fc" id="L162">    }</span>
+
+    @Override
+    public SupervisorStrategy supervisorStrategy() {
+<span class="fc" id="L166">        return new OneForOneStrategy(true, DeciderBuilder</span>
+<span class="pc" id="L167">                .match(NullPointerException.class, e -&gt; SupervisorStrategy.restart())</span>
+<span class="pc" id="L168">                .match(ActorKilledException.class, e -&gt; SupervisorStrategy.stop())</span>
+<span class="pc" id="L169">                .matchAny(e -&gt; SupervisorStrategy.escalate())</span>
+<span class="fc" id="L170">                .build());</span>
+    }
+
+    private void forwardCommand(final ExecuteBatch command) {
+<span class="fc" id="L174">        final String batchId = command.getDittoHeaders()</span>
+<span class="fc" id="L175">                .getCorrelationId()</span>
+<span class="fc" id="L176">                .orElse(UUID.randomUUID().toString());</span>
+
+<span class="fc" id="L178">        final ActorRef batchCoordinatorActor = lookupBatchCoordinatorActor(batchId);</span>
+<span class="fc" id="L179">        batchCoordinatorActor.forward(command, getContext());</span>
+<span class="fc" id="L180">    }</span>
+
+    private ActorRef lookupBatchCoordinatorActor(final String batchId) {
+<span class="fc" id="L183">        final Option&lt;ActorRef&gt; batchCoordinatorActor =</span>
+<span class="fc" id="L184">                getContext().child(BatchCoordinatorActor.ACTOR_NAME_PREFIX + batchId);</span>
+<span class="pc bpc" id="L185" title="1 of 2 branches missed.">        if (batchCoordinatorActor.isDefined()) {</span>
+<span class="nc" id="L186">            return batchCoordinatorActor.get();</span>
+        } else {
+<span class="fc" id="L188">            final Props props = BatchCoordinatorActor.props(batchId, pubSubMediator, conciergeForwarder);</span>
+<span class="fc" id="L189">            return getContext().actorOf(props, BatchCoordinatorActor.ACTOR_NAME_PREFIX + batchId);</span>
+        }
+    }
+
+    private &lt;E extends Event&gt; void persistEvent(final E event, final Consumer&lt;E&gt; consumer) {
+<span class="fc" id="L194">        log.debug(&quot;Persisting Event '{}'&quot;, event.getType());</span>
+
+<span class="fc" id="L196">        persist(event, persistedEvent -&gt; {</span>
+<span class="fc" id="L197">            log.debug(&quot;Successfully persisted Event '{}'&quot;, event.getType());</span>
+
+            // save a snapshot if there were too many changes since the last snapshot
+<span class="pc bpc" id="L200" title="1 of 2 branches missed.">            if ((lastSequenceNr() - snapshotSequenceNr) &gt; SNAPSHOT_THRESHOLD) {</span>
+<span class="nc" id="L201">                final Object snapshotToStore = snapshotAdapter.toSnapshotStore(batchIds);</span>
+<span class="nc" id="L202">                saveSnapshot(snapshotToStore);</span>
+            }
+
+<span class="fc" id="L205">            consumer.accept(persistedEvent);</span>
+<span class="fc" id="L206">        });</span>
+<span class="fc" id="L207">    }</span>
+
+<span class="fc" id="L209">    static final class BatchIdsSnapshotAdapter implements SnapshotAdapter&lt;Set&lt;String&gt;&gt; {</span>
+
+        @Override
+        public Object toSnapshotStore(final Set&lt;String&gt; snapshot) {
+<span class="nc" id="L213">            final JsonArray jsonValues = snapshot.stream()</span>
+<span class="nc" id="L214">                    .map(JsonValue::of)</span>
+<span class="nc" id="L215">                    .collect(JsonCollectors.valuesToArray());</span>
+<span class="nc" id="L216">            return DittoBsonJson.getInstance().parse(jsonValues);</span>
+        }
+
+        @Override
+        public Set&lt;String&gt; fromSnapshotStore(final SnapshotOffer snapshotOffer) {
+<span class="nc" id="L221">            final Object snapshotEntityFromDb = snapshotOffer.snapshot();</span>
+
+<span class="nc bnc" id="L223" title="All 2 branches missed.">            if (snapshotEntityFromDb instanceof DBObject) {</span>
+<span class="nc" id="L224">                final DBObject dbObject = (DBObject) snapshotEntityFromDb;</span>
+<span class="nc" id="L225">                final JsonArray jsonValues = JsonFactory.newArray(DittoBsonJson.getInstance().serialize(dbObject).toString());</span>
+<span class="nc" id="L226">                return jsonValues.stream()</span>
+<span class="nc" id="L227">                        .map(JsonValue::asString)</span>
+<span class="nc" id="L228">                        .collect(Collectors.toSet());</span>
+            } else {
+<span class="nc" id="L230">                throw new IllegalArgumentException(&quot;Unable to fromSnapshotStore a non-'DBObject' object! Was: &quot; +</span>
+<span class="nc" id="L231">                        snapshotEntityFromDb.getClass());</span>
+            }
+        }
+
+        @Nullable
+        @Override
+        public Set&lt;String&gt; fromSnapshotStore(final SelectedSnapshot selectedSnapshot) {
+<span class="nc" id="L238">            return null;</span>
+        }
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

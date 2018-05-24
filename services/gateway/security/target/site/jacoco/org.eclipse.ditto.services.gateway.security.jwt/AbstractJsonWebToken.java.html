@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractJsonWebToken.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Security</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.security.jwt</a> &gt; <span class="el_source">AbstractJsonWebToken.java</span></div><h1>AbstractJsonWebToken.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.security.jwt;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotEmpty;
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Objects;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonParseException;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayAuthenticationFailedException;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayJwtInvalidException;
+
+/**
+ * Abstract implementation of {@link JsonWebToken}.
+ */
+public abstract class AbstractJsonWebToken implements JsonWebToken {
+
+    /**
+     * Delimiter of the authorization string.
+     */
+    private static final String AUTHORIZATION_DELIMITER = &quot; &quot;;
+
+    /**
+     * Delimiter of the JSON Web Token.
+     */
+    private static final String JWT_DELIMITER = &quot;\\.&quot;;
+
+    private final String token;
+    private final JsonObject header;
+    private final JsonObject body;
+    private final String signature;
+
+<span class="fc" id="L47">    protected AbstractJsonWebToken(final String authorizationString) {</span>
+<span class="fc" id="L48">        checkNotNull(authorizationString, &quot;Authorization String&quot;);</span>
+<span class="fc" id="L49">        checkNotEmpty(authorizationString, &quot;Authorization String&quot;);</span>
+
+<span class="fc" id="L51">        final String[] authorizationStringSplit = authorizationString.split(AUTHORIZATION_DELIMITER);</span>
+
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        if (authorizationStringSplit.length != 2) {</span>
+<span class="fc" id="L54">            throw GatewayAuthenticationFailedException.newBuilder(&quot;The UNKNOWN Authorization Header is invalid!&quot;)</span>
+<span class="fc" id="L55">                    .build();</span>
+        }
+
+<span class="fc" id="L58">        final String jwtBase64Encoded = authorizationStringSplit[1];</span>
+<span class="fc" id="L59">        final String[] split = jwtBase64Encoded.split(JWT_DELIMITER);</span>
+
+        try {
+<span class="fc" id="L62">            final Base64.Decoder decoder = Base64.getDecoder();</span>
+<span class="fc" id="L63">            final byte[] headerBytes = decoder.decode(split[0]);</span>
+<span class="fc" id="L64">            header = JsonFactory.newObject(new String(headerBytes, StandardCharsets.UTF_8));</span>
+
+<span class="fc" id="L66">            final byte[] bodyBytes = decoder.decode(split[1]);</span>
+<span class="fc" id="L67">            body = JsonFactory.newObject(new String(bodyBytes, StandardCharsets.UTF_8));</span>
+<span class="fc" id="L68">        } catch (final IllegalArgumentException | JsonParseException e) {</span>
+<span class="fc" id="L69">            throw GatewayJwtInvalidException.newBuilder()</span>
+<span class="fc" id="L70">                    .description(&quot;Check if your UNKNOWN has the correct format and is Base64 URL encoded.&quot;)</span>
+<span class="fc" id="L71">                    .cause(e)</span>
+<span class="fc" id="L72">                    .build();</span>
+<span class="fc" id="L73">        }</span>
+
+<span class="fc" id="L75">        token = jwtBase64Encoded;</span>
+<span class="fc" id="L76">        signature = split[2];</span>
+<span class="fc" id="L77">    }</span>
+
+<span class="nc" id="L79">    protected AbstractJsonWebToken(final JsonWebToken jsonWebToken) {</span>
+<span class="nc" id="L80">        checkNotNull(jsonWebToken, &quot;JSON Web Token&quot;);</span>
+
+<span class="nc" id="L82">        token = jsonWebToken.getToken();</span>
+<span class="nc" id="L83">        header = jsonWebToken.getHeader();</span>
+<span class="nc" id="L84">        body = jsonWebToken.getBody();</span>
+<span class="nc" id="L85">        signature = jsonWebToken.getSignature();</span>
+<span class="nc" id="L86">    }</span>
+
+    @Override
+    public JsonObject getHeader() {
+<span class="nc" id="L90">        return header;</span>
+    }
+
+    @Override
+    public JsonObject getBody() {
+<span class="fc" id="L95">        return body;</span>
+    }
+
+    @Override
+    public String getToken() {
+<span class="nc" id="L100">        return token;</span>
+    }
+
+    @Override
+    public String getKeyId() {
+<span class="nc" id="L105">        return header.getValueOrThrow(JsonFields.KEY_ID);</span>
+    }
+
+    @Override
+    public String getIssuer() {
+<span class="fc" id="L110">        return body.getValueOrThrow(JsonFields.ISSUER);</span>
+    }
+
+    @Override
+    public String getSignature() {
+<span class="nc" id="L115">        return signature;</span>
+    }
+
+    @Override
+    public boolean equals(final Object o) {
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">        if (this == o) {</span>
+<span class="nc" id="L121">            return true;</span>
+        }
+<span class="pc bpc" id="L123" title="1 of 4 branches missed.">        if (o == null || getClass() != o.getClass()) {</span>
+<span class="fc" id="L124">            return false;</span>
+        }
+<span class="fc" id="L126">        final AbstractJsonWebToken that = (AbstractJsonWebToken) o;</span>
+<span class="fc bfc" id="L127" title="All 4 branches covered.">        return Objects.equals(token, that.token) &amp;&amp; Objects.equals(header, that.header) &amp;&amp;</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">                Objects.equals(body, that.body)</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">                &amp;&amp; Objects.equals(signature, that.signature);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L134">        return Objects.hash(token, header, body, signature);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L139">        return &quot;token=&quot; + token + &quot;, header=&quot; + header + &quot;, body=&quot; + body + &quot;, signature=&quot; + signature;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

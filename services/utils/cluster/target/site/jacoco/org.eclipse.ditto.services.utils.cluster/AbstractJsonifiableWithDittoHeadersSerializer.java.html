@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractJsonifiableWithDittoHeadersSerializer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Cluster Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.cluster</a> &gt; <span class="el_source">AbstractJsonifiableWithDittoHeadersSerializer.java</span></div><h1>AbstractJsonifiableWithDittoHeadersSerializer.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.cluster;
+
+import static java.util.Objects.requireNonNull;
+
+import java.io.NotSerializableException;
+import java.nio.charset.Charset;
+import java.text.MessageFormat;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.BiFunction;
+import java.util.function.Function;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonFieldDefinition;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonObjectBuilder;
+import org.eclipse.ditto.json.JsonRuntimeException;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.exceptions.DittoJsonException;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.model.base.headers.WithDittoHeaders;
+import org.eclipse.ditto.model.base.json.FieldType;
+import org.eclipse.ditto.model.base.json.JsonSchemaVersion;
+import org.eclipse.ditto.model.base.json.Jsonifiable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import akka.actor.ExtendedActorSystem;
+import akka.serialization.SerializerWithStringManifest;
+
+/**
+ * Abstract {@link SerializerWithStringManifest} which handles serializing and deserializing {@link Jsonifiable}s
+ * {@link WithDittoHeaders}.
+ */
+public abstract class AbstractJsonifiableWithDittoHeadersSerializer extends SerializerWithStringManifest {
+
+<span class="fc" id="L51">    private static final Logger LOG = LoggerFactory.getLogger(AbstractJsonifiableWithDittoHeadersSerializer.class);</span>
+
+<span class="fc" id="L53">    private static final Charset UTF8_CHARSET = Charset.forName(&quot;UTF-8&quot;);</span>
+
+<span class="fc" id="L55">    private static final JsonFieldDefinition&lt;JsonObject&gt; JSON_DITTO_HEADERS =</span>
+<span class="fc" id="L56">            JsonFactory.newJsonObjectFieldDefinition(&quot;dittoHeaders&quot;);</span>
+
+<span class="fc" id="L58">    private static final JsonFieldDefinition&lt;JsonValue&gt; JSON_PAYLOAD =</span>
+<span class="fc" id="L59">            JsonFactory.newJsonValueFieldDefinition(&quot;payload&quot;);</span>
+
+    private final int identifier;
+    private final Map&lt;String, BiFunction&lt;JsonObject, DittoHeaders, Jsonifiable&gt;&gt; mappingStrategies;
+    private final Function&lt;Object, String&gt; manifestProvider;
+
+    /**
+     * Constructs a new {@code AbstractJsonifiableWithDittoHeadersSerializer} object.
+     */
+    protected AbstractJsonifiableWithDittoHeadersSerializer(final int identifier, final ExtendedActorSystem actorSystem,
+<span class="fc" id="L69">            final Function&lt;Object, String&gt; manifestProvider) {</span>
+
+<span class="fc" id="L71">        this.identifier = identifier;</span>
+
+<span class="fc" id="L73">        final MappingStrategy mappingStrategy = MappingStrategy.loadMappingStrategy(actorSystem);</span>
+
+<span class="fc" id="L75">        mappingStrategies = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L76">        mappingStrategies.putAll(requireNonNull(mappingStrategy.determineStrategy(), &quot;mapping strategy&quot;));</span>
+<span class="fc" id="L77">        this.manifestProvider = requireNonNull(manifestProvider, &quot;manifest provider&quot;);</span>
+<span class="fc" id="L78">    }</span>
+
+    @Override
+    public int identifier() {
+<span class="nc" id="L82">        return identifier;</span>
+    }
+
+    @Override
+    public String manifest(final Object o) {
+<span class="fc" id="L87">        return manifestProvider.apply(o);</span>
+    }
+
+    @Override
+    public byte[] toBinary(final Object object) {
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">        if (object instanceof Jsonifiable) {</span>
+            final DittoHeaders dittoHeaders;
+<span class="fc bfc" id="L94" title="All 2 branches covered.">            if (object instanceof WithDittoHeaders) {</span>
+<span class="fc" id="L95">                dittoHeaders = ((WithDittoHeaders) object).getDittoHeaders();</span>
+            } else {
+<span class="fc" id="L97">                dittoHeaders = DittoHeaders.empty();</span>
+            }
+
+<span class="fc" id="L100">            final JsonObjectBuilder jsonObjectBuilder = JsonObject.newBuilder();</span>
+
+<span class="fc" id="L102">            jsonObjectBuilder.set(JSON_DITTO_HEADERS, dittoHeaders.toJson());</span>
+
+            final JsonValue jsonValue;
+
+<span class="fc bfc" id="L106" title="All 2 branches covered.">            if (object instanceof Jsonifiable.WithPredicate) {</span>
+<span class="fc" id="L107">                final JsonSchemaVersion schemaVersion =</span>
+<span class="fc" id="L108">                        dittoHeaders.getSchemaVersion().orElse(JsonSchemaVersion.LATEST);</span>
+
+<span class="fc" id="L110">                jsonValue = ((Jsonifiable.WithPredicate) object).toJson(schemaVersion, FieldType.regularOrSpecial());</span>
+<span class="fc" id="L111">            } else {</span>
+<span class="fc" id="L112">                jsonValue = ((Jsonifiable) object).toJson();</span>
+            }
+
+<span class="fc" id="L115">            jsonObjectBuilder.set(JSON_PAYLOAD, jsonValue);</span>
+
+<span class="fc" id="L117">            return jsonObjectBuilder.build()</span>
+<span class="fc" id="L118">                    .toString()</span>
+<span class="fc" id="L119">                    .getBytes(UTF8_CHARSET);</span>
+        } else {
+<span class="nc" id="L121">            LOG.error(&quot;Could not serialize class '{}' as it does not implement '{}'&quot;, object.getClass(),</span>
+                    Jsonifiable.WithPredicate.class);
+<span class="nc" id="L123">            final String error = new NotSerializableException(object.getClass().getName()).getMessage();</span>
+<span class="nc" id="L124">            return error.getBytes(UTF8_CHARSET);</span>
+        }
+    }
+
+    @Override
+    public Object fromBinary(final byte[] bytes, final String manifest) {
+<span class="fc" id="L130">        final String json = new String(bytes, UTF8_CHARSET);</span>
+        try {
+<span class="fc" id="L132">            return tryToCreateKnownJsonifiableFrom(manifest, json);</span>
+<span class="nc" id="L133">        } catch (final NotSerializableException e) {</span>
+<span class="nc" id="L134">            return e;</span>
+        }
+    }
+
+    private Jsonifiable tryToCreateKnownJsonifiableFrom(final String manifest, final String json)
+            throws NotSerializableException {
+        try {
+<span class="fc" id="L141">            return createJsonifiableFrom(manifest, json);</span>
+<span class="nc" id="L142">        } catch (final DittoRuntimeException | JsonRuntimeException e) {</span>
+<span class="nc" id="L143">            LOG.error(&quot;Got {} during fromBinary(byte[],String) deserialization for manifest '{}' and JSON: '{}'&quot;,</span>
+<span class="nc" id="L144">                    e.getClass().getSimpleName(), manifest, json, e);</span>
+<span class="nc" id="L145">            throw new NotSerializableException(manifest);</span>
+        }
+    }
+
+    private Jsonifiable createJsonifiableFrom(final String manifest, final String json)
+            throws NotSerializableException {
+
+<span class="fc" id="L152">        final BiFunction&lt;JsonObject, DittoHeaders, Jsonifiable&gt; mappingFunction = mappingStrategies.get(manifest);</span>
+<span class="pc bpc" id="L153" title="1 of 2 branches missed.">        if (null == mappingFunction) {</span>
+<span class="nc" id="L154">            LOG.warn(&quot;No strategy found to map manifest '{}' to a Jsonifiable.WithPredicate!&quot;, manifest);</span>
+<span class="nc" id="L155">            throw new NotSerializableException(manifest);</span>
+        }
+
+<span class="fc" id="L158">        final JsonObject jsonObject = JsonFactory.newObject(json);</span>
+
+<span class="fc" id="L160">        final JsonObject payload = getPayload(jsonObject);</span>
+
+<span class="fc" id="L162">        final DittoHeadersBuilder dittoHeadersBuilder = jsonObject.getValue(JSON_DITTO_HEADERS)</span>
+<span class="fc" id="L163">                .map(DittoHeaders::newBuilder)</span>
+<span class="fc" id="L164">                .orElseGet(DittoHeaders::newBuilder);</span>
+
+<span class="fc" id="L166">        return mappingFunction.apply(payload, dittoHeadersBuilder.build());</span>
+    }
+
+    private static JsonObject getPayload(final JsonObject sourceJsonObject) {
+        final JsonObject result;
+
+<span class="fc" id="L172">        final Optional&lt;JsonValue&gt; payloadJsonOptional = sourceJsonObject.getValue(JSON_PAYLOAD);</span>
+<span class="pc bpc" id="L173" title="1 of 2 branches missed.">        if (payloadJsonOptional.isPresent()) {</span>
+<span class="fc" id="L174">            final JsonValue payloadJson = payloadJsonOptional.get();</span>
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">            if (!payloadJson.isObject()) {</span>
+<span class="nc" id="L176">                final String msgPattern = &quot;Value &lt;{0}&gt; for &lt;{1}&gt; was not of type &lt;{2}&gt;!&quot;;</span>
+<span class="nc" id="L177">                final String simpleName = JSON_PAYLOAD.getValueType().getSimpleName();</span>
+<span class="nc" id="L178">                final String msg = MessageFormat.format(msgPattern, payloadJson, JSON_PAYLOAD.getPointer(), simpleName);</span>
+<span class="nc" id="L179">                throw new DittoJsonException(new IllegalArgumentException(msg));</span>
+            } else {
+<span class="fc" id="L181">                result = payloadJson.asObject();</span>
+            }
+<span class="fc" id="L183">        } else {</span>
+<span class="nc" id="L184">            result = JsonFactory.newObject();</span>
+        }
+
+<span class="fc" id="L187">        return result;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

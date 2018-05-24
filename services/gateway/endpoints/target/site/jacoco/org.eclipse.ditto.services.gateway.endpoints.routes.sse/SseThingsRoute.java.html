@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SseThingsRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes.sse</a> &gt; <span class="el_source">SseThingsRoute.java</span></div><h1>SseThingsRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes.sse;
+
+import static akka.http.javadsl.server.Directives.completeOK;
+import static akka.http.javadsl.server.Directives.get;
+import static akka.http.javadsl.server.Directives.headerValuePF;
+import static akka.http.javadsl.server.Directives.parameterOptional;
+import static akka.http.javadsl.server.Directives.pathEndOrSingleSlash;
+import static akka.http.javadsl.server.Directives.rawPathPrefix;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.CustomPathMatchers.mergeDoubleSlashes;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
+import java.util.stream.StreamSupport;
+
+import org.eclipse.ditto.json.JsonField;
+import org.eclipse.ditto.json.JsonFieldSelector;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.json.JsonSchemaVersion;
+import org.eclipse.ditto.model.base.json.Jsonifiable;
+import org.eclipse.ditto.model.things.Feature;
+import org.eclipse.ditto.model.things.Thing;
+import org.eclipse.ditto.model.things.ThingBuilder;
+import org.eclipse.ditto.services.gateway.endpoints.routes.AbstractRoute;
+import org.eclipse.ditto.services.gateway.endpoints.routes.things.ThingsParameter;
+import org.eclipse.ditto.services.gateway.streaming.Connect;
+import org.eclipse.ditto.services.gateway.streaming.StartStreaming;
+import org.eclipse.ditto.services.models.concierge.streaming.StreamingType;
+import org.eclipse.ditto.services.gateway.streaming.actors.EventAndResponsePublisher;
+import org.eclipse.ditto.signals.events.things.AclEntryCreated;
+import org.eclipse.ditto.signals.events.things.AclEntryDeleted;
+import org.eclipse.ditto.signals.events.things.AclEntryModified;
+import org.eclipse.ditto.signals.events.things.AclModified;
+import org.eclipse.ditto.signals.events.things.AttributeCreated;
+import org.eclipse.ditto.signals.events.things.AttributeDeleted;
+import org.eclipse.ditto.signals.events.things.AttributeModified;
+import org.eclipse.ditto.signals.events.things.AttributesCreated;
+import org.eclipse.ditto.signals.events.things.AttributesDeleted;
+import org.eclipse.ditto.signals.events.things.AttributesModified;
+import org.eclipse.ditto.signals.events.things.FeatureCreated;
+import org.eclipse.ditto.signals.events.things.FeatureDeleted;
+import org.eclipse.ditto.signals.events.things.FeatureModified;
+import org.eclipse.ditto.signals.events.things.FeaturePropertiesCreated;
+import org.eclipse.ditto.signals.events.things.FeaturePropertiesDeleted;
+import org.eclipse.ditto.signals.events.things.FeaturePropertiesModified;
+import org.eclipse.ditto.signals.events.things.FeaturePropertyCreated;
+import org.eclipse.ditto.signals.events.things.FeaturePropertyDeleted;
+import org.eclipse.ditto.signals.events.things.FeaturePropertyModified;
+import org.eclipse.ditto.signals.events.things.FeaturesCreated;
+import org.eclipse.ditto.signals.events.things.FeaturesDeleted;
+import org.eclipse.ditto.signals.events.things.FeaturesModified;
+import org.eclipse.ditto.signals.events.things.PolicyIdCreated;
+import org.eclipse.ditto.signals.events.things.PolicyIdModified;
+import org.eclipse.ditto.signals.events.things.ThingCreated;
+import org.eclipse.ditto.signals.events.things.ThingDeleted;
+import org.eclipse.ditto.signals.events.things.ThingEvent;
+import org.eclipse.ditto.signals.events.things.ThingModified;
+
+import akka.NotUsed;
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.http.javadsl.marshalling.sse.EventStreamMarshalling;
+import akka.http.javadsl.model.HttpHeader;
+import akka.http.javadsl.model.MediaTypes;
+import akka.http.javadsl.model.headers.Accept;
+import akka.http.javadsl.model.sse.ServerSentEvent;
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+import akka.http.scaladsl.model.sse.ServerSentEvent$;
+import akka.japi.JavaPartialFunction;
+import akka.stream.javadsl.Source;
+import scala.concurrent.duration.FiniteDuration;
+
+/**
+ * Builder for creating Akka HTTP routes for SSE (Server Sent Events) {@code /things} routes.
+ */
+public class SseThingsRoute extends AbstractRoute {
+
+    private static final String PATH_THINGS = &quot;things&quot;;
+
+    private static final String STREAMING_TYPE_SSE = &quot;SSE&quot;;
+
+    private ActorRef streamingActor;
+
+<span class="fc" id="L103">    private static final Map&lt;Class&lt;?&gt;, BiFunction&lt;ThingEvent, ThingBuilder.FromScratch, Thing&gt;&gt; EVENT_TO_THING_MAPPERS =</span>
+<span class="fc" id="L104">            createEventToThingMappers();</span>
+
+    /**
+     * Constructs the SSE - ServerSentEvents supporting {@code /things} route builder.
+     *
+     * @param proxyActor an actor selection of the command delegating actor.
+     * @param actorSystem the ActorSystem to use.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public SseThingsRoute(final ActorRef proxyActor, final ActorSystem actorSystem, final ActorRef streamingActor) {
+<span class="fc" id="L114">        super(proxyActor, actorSystem);</span>
+<span class="fc" id="L115">        this.streamingActor = streamingActor;</span>
+<span class="fc" id="L116">    }</span>
+
+    /**
+     * Describes {@code /things} SSE route.
+     *
+     * @return {@code /things} SSE route.
+     */
+    @SuppressWarnings(&quot;squid:S1172&quot;) // allow unused ctx-Param in order to have a consistent route-&quot;interface&quot;
+    public Route buildThingsSseRoute(final RequestContext ctx, final DittoHeaders dittoHeaders) {
+<span class="fc" id="L125">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_THINGS), () -&gt;</span>
+<span class="fc" id="L126">                pathEndOrSingleSlash(() -&gt;</span>
+<span class="fc" id="L127">                        get(() -&gt;</span>
+<span class="fc" id="L128">                                headerValuePF(AcceptHeaderExtractor.INSTANCE, accept -&gt;</span>
+<span class="nc" id="L129">                                        parameterOptional(ThingsParameter.FIELDS.toString(), fieldsString -&gt;</span>
+<span class="nc" id="L130">                                                parameterOptional(ThingsParameter.IDS.toString(),</span>
+                                                        idsString -&gt; // &quot;ids&quot; is optional for SSE
+<span class="nc" id="L132">                                                                createSseRoute(dittoHeaders,</span>
+<span class="nc" id="L133">                                                                        calculateSelectedFields(fieldsString).orElse(</span>
+                                                                                null),
+<span class="nc" id="L135">                                                                        idsString.map(ids -&gt; ids.split(&quot;,&quot;)))</span>
+                                                )
+                                        )
+                                )
+                        )
+                )
+        );
+    }
+
+    @SuppressWarnings(&quot;squid:CommentedOutCodeLine&quot;)
+    // Javascript example e.g. in Chrome console:
+      /*
+         var source = new EventSource('http://localhost:8080/api/1/things?ids=org.eclipse.ditto:foo2000&amp;fields=attributes');
+         source.addEventListener('message', function (e) {
+             console.log(e.data);
+         }, false);
+       */
+    private Route createSseRoute(final DittoHeaders dittoHeaders, final JsonFieldSelector fieldSelector,
+            final Optional&lt;String[]&gt; thingIds) {
+<span class="nc" id="L154">        final Optional&lt;List&lt;String&gt;&gt; targetThingIds = thingIds.map(Arrays::asList);</span>
+
+<span class="nc" id="L156">        final String connectionCorrelationId = dittoHeaders.getCorrelationId()</span>
+<span class="nc" id="L157">                .orElseGet(() -&gt; UUID.randomUUID().toString());</span>
+<span class="nc" id="L158">        final JsonSchemaVersion jsonSchemaVersion =</span>
+<span class="nc" id="L159">                dittoHeaders.getSchemaVersion().orElse(dittoHeaders.getImplementedSchemaVersion());</span>
+
+<span class="nc" id="L161">        final Source&lt;ServerSentEvent, NotUsed&gt; sseSource =</span>
+<span class="nc" id="L162">                Source.&lt;Jsonifiable.WithPredicate&lt;JsonObject, JsonField&gt;&gt;actorPublisher(</span>
+<span class="nc" id="L163">                        EventAndResponsePublisher.props(10))</span>
+<span class="nc" id="L164">                        .mapMaterializedValue(actorRef -&gt; {</span>
+<span class="nc" id="L165">                            streamingActor.tell(new Connect(actorRef, connectionCorrelationId, STREAMING_TYPE_SSE),</span>
+                                    null);
+<span class="nc" id="L167">                            streamingActor.tell(</span>
+                                    new StartStreaming(StreamingType.EVENTS, connectionCorrelationId,
+<span class="nc" id="L169">                                            dittoHeaders.getAuthorizationContext()),</span>
+                                    null);
+<span class="nc" id="L171">                            return NotUsed.getInstance();</span>
+                        })
+<span class="nc" id="L173">                        .filter(jsonifiable -&gt; jsonifiable instanceof ThingEvent)</span>
+<span class="nc" id="L174">                        .map(jsonifiable -&gt; ((ThingEvent) jsonifiable))</span>
+<span class="nc bnc" id="L175" title="All 4 branches missed.">                        .filter(thingEvent -&gt; !targetThingIds.isPresent() || targetThingIds.get().contains(</span>
+<span class="nc" id="L176">                                thingEvent.getThingId())) // only Events of the target thingIds</span>
+<span class="nc" id="L177">                        .map(this::thingEventToThing)</span>
+<span class="nc" id="L178">                        .filter(Objects::nonNull)</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">                        .map(thing -&gt; fieldSelector != null ? thing.toJson(jsonSchemaVersion, fieldSelector) :</span>
+<span class="nc" id="L180">                                thing.toJson(jsonSchemaVersion))</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">                        .filter(thingJson -&gt; fieldSelector == null || fieldSelector.getPointers().stream()</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">                                .filter(p -&gt; !p.equals(Thing.JsonFields.ID.getPointer())) // ignore &quot;thingId&quot;</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">                                .anyMatch(</span>
+                                        thingJson::contains)) // check if the resulting JSON did contain ANY of the requested fields
+<span class="nc bnc" id="L185" title="All 2 branches missed.">                        .filter(thingJson -&gt; !thingJson.isEmpty()) // avoid sending back empty jsonValues</span>
+<span class="nc" id="L186">                        .map(jsonValue -&gt; ServerSentEvent.create(jsonValue.toString()))</span>
+<span class="nc" id="L187">                        .keepAlive(FiniteDuration.apply(1, TimeUnit.SECONDS),</span>
+                                ServerSentEvent$.MODULE$::heartbeat);
+
+<span class="nc" id="L190">        return completeOK(sseSource, EventStreamMarshalling.toEventStream());</span>
+    }
+
+    /**
+     * Creates a Thing from the passed ThingEvent
+     */
+    private Thing thingEventToThing(final ThingEvent te) {
+<span class="nc" id="L197">        final BiFunction&lt;ThingEvent, ThingBuilder.FromScratch, Thing&gt; eventToThingMapper =</span>
+<span class="nc" id="L198">                EVENT_TO_THING_MAPPERS.get(te.getClass());</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        if (eventToThingMapper == null) {</span>
+<span class="nc" id="L200">            return null;</span>
+        }
+
+<span class="nc" id="L203">        final ThingBuilder.FromScratch tb = Thing.newBuilder().setId(te.getThingId()).setRevision(te.getRevision());</span>
+<span class="nc" id="L204">        return eventToThingMapper.apply(te, tb);</span>
+    }
+
+    private static Map&lt;Class&lt;?&gt;, BiFunction&lt;ThingEvent, ThingBuilder.FromScratch, Thing&gt;&gt; createEventToThingMappers() {
+<span class="fc" id="L208">        final Map&lt;Class&lt;?&gt;, BiFunction&lt;ThingEvent, ThingBuilder.FromScratch, Thing&gt;&gt; mappers = new HashMap&lt;&gt;();</span>
+
+<span class="fc" id="L210">        mappers.put(ThingCreated.class,</span>
+<span class="nc" id="L211">                (te, tb) -&gt; ((ThingCreated) te).getThing().toBuilder().setRevision(te.getRevision()).build());</span>
+<span class="fc" id="L212">        mappers.put(ThingModified.class,</span>
+<span class="nc" id="L213">                (te, tb) -&gt; ((ThingModified) te).getThing().toBuilder().setRevision(te.getRevision()).build());</span>
+<span class="fc" id="L214">        mappers.put(ThingDeleted.class,</span>
+<span class="nc" id="L215">                (te, tb) -&gt; tb.build());</span>
+
+<span class="fc" id="L217">        mappers.put(AclModified.class,</span>
+<span class="nc" id="L218">                (te, tb) -&gt; tb.setPermissions(((AclModified) te).getAccessControlList()).build());</span>
+<span class="fc" id="L219">        mappers.put(AclEntryCreated.class,</span>
+<span class="nc" id="L220">                (te, tb) -&gt; tb.setPermissions(((AclEntryCreated) te).getAclEntry()).build());</span>
+<span class="fc" id="L221">        mappers.put(AclEntryModified.class,</span>
+<span class="nc" id="L222">                (te, tb) -&gt; tb.setPermissions(((AclEntryModified) te).getAclEntry()).build());</span>
+<span class="fc" id="L223">        mappers.put(AclEntryDeleted.class,</span>
+<span class="nc" id="L224">                (te, tb) -&gt; tb.build());</span>
+
+<span class="fc" id="L226">        mappers.put(PolicyIdCreated.class,</span>
+<span class="nc" id="L227">                (te, tb) -&gt; tb.setPolicyId(((PolicyIdCreated) te).getPolicyId()).build());</span>
+<span class="fc" id="L228">        mappers.put(PolicyIdModified.class,</span>
+<span class="nc" id="L229">                (te, tb) -&gt; tb.setPolicyId(((PolicyIdModified) te).getPolicyId()).build());</span>
+
+<span class="fc" id="L231">        mappers.put(AttributesCreated.class,</span>
+<span class="nc" id="L232">                (te, tb) -&gt; tb.setAttributes(((AttributesCreated) te).getCreatedAttributes()).build());</span>
+<span class="fc" id="L233">        mappers.put(AttributesModified.class,</span>
+<span class="nc" id="L234">                (te, tb) -&gt; tb.setAttributes(((AttributesModified) te).getModifiedAttributes()).build());</span>
+<span class="pc" id="L235">        mappers.put(AttributesDeleted.class, (te, tb) -&gt; tb.build());</span>
+<span class="pc" id="L236">        mappers.put(AttributeCreated.class, (te, tb) -&gt; tb.setAttribute(((AttributeCreated) te).getAttributePointer(),</span>
+<span class="nc" id="L237">                ((AttributeCreated) te).getAttributeValue()).build());</span>
+<span class="pc" id="L238">        mappers.put(AttributeModified.class, (te, tb) -&gt; tb.setAttribute(((AttributeModified) te).getAttributePointer(),</span>
+<span class="nc" id="L239">                ((AttributeModified) te).getAttributeValue()).build());</span>
+<span class="pc" id="L240">        mappers.put(AttributeDeleted.class, (te, tb) -&gt; tb.build());</span>
+
+<span class="pc" id="L242">        mappers.put(FeaturesCreated.class, (te, tb) -&gt; tb.setFeatures(((FeaturesCreated) te).getFeatures()).build());</span>
+<span class="pc" id="L243">        mappers.put(FeaturesModified.class, (te, tb) -&gt; tb.setFeatures(((FeaturesModified) te).getFeatures()).build());</span>
+<span class="pc" id="L244">        mappers.put(FeaturesDeleted.class, (te, tb) -&gt; tb.build());</span>
+<span class="pc" id="L245">        mappers.put(FeatureCreated.class, (te, tb) -&gt; tb.setFeature(((FeatureCreated) te).getFeature()).build());</span>
+<span class="pc" id="L246">        mappers.put(FeatureModified.class, (te, tb) -&gt; tb.setFeature(((FeatureModified) te).getFeature()).build());</span>
+<span class="pc" id="L247">        mappers.put(FeatureDeleted.class, (te, tb) -&gt; tb.build());</span>
+
+<span class="pc" id="L249">        mappers.put(FeaturePropertiesCreated.class, (te, tb) -&gt; tb.setFeature(Feature.newBuilder()</span>
+<span class="nc" id="L250">                .properties(((FeaturePropertiesCreated) te).getProperties())</span>
+<span class="nc" id="L251">                .withId(((FeaturePropertiesCreated) te).getFeatureId())</span>
+<span class="nc" id="L252">                .build()).build());</span>
+<span class="pc" id="L253">        mappers.put(FeaturePropertiesModified.class, (te, tb) -&gt; tb.setFeature(Feature.newBuilder()</span>
+<span class="nc" id="L254">                .properties(((FeaturePropertiesModified) te).getProperties())</span>
+<span class="nc" id="L255">                .withId(((FeaturePropertiesModified) te).getFeatureId())</span>
+<span class="nc" id="L256">                .build()).build());</span>
+<span class="pc" id="L257">        mappers.put(FeaturePropertiesDeleted.class, (te, tb) -&gt; tb.build());</span>
+<span class="fc" id="L258">        mappers.put(FeaturePropertyCreated.class, (te, tb) -&gt;</span>
+<span class="nc" id="L259">                tb.setFeatureProperty(((FeaturePropertyCreated) te).getFeatureId(),</span>
+<span class="nc" id="L260">                        ((FeaturePropertyCreated) te).getPropertyPointer(),</span>
+<span class="nc" id="L261">                        ((FeaturePropertyCreated) te).getPropertyValue()).build());</span>
+<span class="fc" id="L262">        mappers.put(FeaturePropertyModified.class, (te, tb) -&gt;</span>
+<span class="nc" id="L263">                tb.setFeatureProperty(((FeaturePropertyModified) te).getFeatureId(),</span>
+<span class="nc" id="L264">                        ((FeaturePropertyModified) te).getPropertyPointer(),</span>
+<span class="nc" id="L265">                        ((FeaturePropertyModified) te).getPropertyValue()).build());</span>
+<span class="pc" id="L266">        mappers.put(FeaturePropertyDeleted.class, (te, tb) -&gt; tb.build());</span>
+
+<span class="fc" id="L268">        return mappers;</span>
+    }
+
+    private static final class AcceptHeaderExtractor extends JavaPartialFunction&lt;HttpHeader, Accept&gt; {
+
+<span class="fc" id="L273">        private static final AcceptHeaderExtractor INSTANCE = new AcceptHeaderExtractor();</span>
+
+        private AcceptHeaderExtractor() {
+        }
+
+        @Override
+        public Accept apply(final HttpHeader x, final boolean isCheck) {
+<span class="pc bpc" id="L280" title="1 of 2 branches missed.">            if (x instanceof Accept) {</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                if (isCheck) {</span>
+<span class="nc" id="L282">                    return null;</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">                } else if (matchesTextEventStream((Accept) x)) {</span>
+<span class="nc" id="L284">                    return ((Accept) x);</span>
+                }
+            }
+<span class="fc" id="L287">            throw noMatch();</span>
+        }
+
+        private static boolean matchesTextEventStream(final Accept accept) {
+<span class="nc" id="L291">            return StreamSupport.stream(accept.getMediaRanges().spliterator(), false)</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">                    .filter(mr -&gt; !&quot;*&quot;.equals(mr.mainType()))</span>
+<span class="nc" id="L293">                    .anyMatch(mr -&gt; mr.matches(MediaTypes.TEXT_EVENT_STREAM));</span>
+        }
+
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

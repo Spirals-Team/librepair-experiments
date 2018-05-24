@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MessageMappingProcessorActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Messaging</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.messaging</a> &gt; <span class="el_source">MessageMappingProcessorActor.java</span></div><h1>MessageMappingProcessorActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.messaging;
+
+
+import java.util.Collections;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.json.JsonCollectors;
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.model.base.auth.AuthorizationContext;
+import org.eclipse.ditto.model.base.auth.AuthorizationSubject;
+import org.eclipse.ditto.model.base.common.ConditionChecker;
+import org.eclipse.ditto.model.base.common.HttpStatusCode;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaderDefinition;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.model.base.headers.WithDittoHeaders;
+import org.eclipse.ditto.model.connectivity.ExternalMessage;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.services.utils.cache.Cache;
+import org.eclipse.ditto.services.utils.cache.CaffeineCache;
+import org.eclipse.ditto.signals.base.Signal;
+import org.eclipse.ditto.signals.commands.base.CommandResponse;
+import org.eclipse.ditto.signals.commands.things.ThingErrorResponse;
+
+import com.github.benmanes.caffeine.cache.Caffeine;
+
+import akka.actor.AbstractActor;
+import akka.actor.ActorRef;
+import akka.actor.Props;
+import akka.actor.Status;
+import akka.cluster.pubsub.DistributedPubSubMediator;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.ReceiveBuilder;
+import kamon.Kamon;
+import kamon.trace.TraceContext;
+import scala.Option;
+
+/**
+ * This Actor processes incoming {@link Signal}s and dispatches them via {@link DistributedPubSubMediator} to a
+ * consumer actor.
+ */
+public final class MessageMappingProcessorActor extends AbstractActor {
+
+    /**
+     * The name of this Actor in the ActorSystem.
+     */
+    public static final String ACTOR_NAME = &quot;messageMappingProcessor&quot;;
+
+<span class="fc" id="L66">    private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+    private final ActorRef publisherActor;
+    private final AuthorizationContext authorizationContext;
+    private final Cache&lt;String, TraceContext&gt; traces;
+
+    private final DittoHeadersFilter headerFilter;
+    private final MessageMappingProcessor processor;
+    private final String connectionId;
+    private final ActorRef conciergeForwarder;
+
+    private MessageMappingProcessorActor(final ActorRef publisherActor,
+            final ActorRef conciergeForwarder, final AuthorizationContext authorizationContext,
+            final DittoHeadersFilter headerFilter,
+            final MessageMappingProcessor processor,
+<span class="fc" id="L81">            final String connectionId) {</span>
+<span class="fc" id="L82">        this.publisherActor = publisherActor;</span>
+<span class="fc" id="L83">        this.conciergeForwarder = conciergeForwarder;</span>
+<span class="fc" id="L84">        this.authorizationContext = authorizationContext;</span>
+<span class="fc" id="L85">        this.processor = processor;</span>
+<span class="fc" id="L86">        this.headerFilter = headerFilter;</span>
+<span class="fc" id="L87">        this.connectionId = connectionId;</span>
+<span class="fc" id="L88">        final Caffeine caffeine = Caffeine.newBuilder()</span>
+<span class="fc" id="L89">                .expireAfterWrite(5, TimeUnit.MINUTES);</span>
+<span class="fc" id="L90">        traces = CaffeineCache.of(caffeine);</span>
+<span class="fc" id="L91">    }</span>
+
+    /**
+     * Creates Akka configuration object for this actor.
+     *
+     * @param publisherActor actor that handles/publishes outgoing messages.
+     * @param conciergeForwarder the actor used to send signals to the concierge service.
+     * @param authorizationContext the authorization context (authorized subjects) that are set in command headers.
+     * @param headerFilter the header filter used to apply on responses.
+     * @param processor the MessageMappingProcessor to use.
+     * @param connectionId the connection id.
+     * @return the Akka configuration Props object.
+     */
+    public static Props props(final ActorRef publisherActor,
+            final ActorRef conciergeForwarder, final AuthorizationContext authorizationContext,
+            final DittoHeadersFilter headerFilter,
+            final MessageMappingProcessor processor,
+            final String connectionId) {
+
+<span class="fc" id="L110">        return Props.create(MessageMappingProcessorActor.class, new Creator&lt;MessageMappingProcessorActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public MessageMappingProcessorActor create() {
+<span class="fc" id="L115">                return new MessageMappingProcessorActor(publisherActor, conciergeForwarder, authorizationContext,</span>
+                        headerFilter, processor, connectionId);
+            }
+        });
+    }
+
+    /**
+     * Creates Akka configuration object for this actor.
+     *
+     * @param publisherActor actor that handles outgoing messages.
+     * @param conciergeForwarder the actor used to send signals to the concierge service.
+     * @param authorizationContext the authorization context (authorized subjects) that are set in command headers.
+     * @param processor the MessageMappingProcessor to use.
+     * @param connectionId the connection id.
+     * @return the Akka configuration Props object.
+     */
+    public static Props props(final ActorRef publisherActor,
+            final ActorRef conciergeForwarder,
+            final AuthorizationContext authorizationContext,
+            final MessageMappingProcessor processor,
+            final String connectionId) {
+
+<span class="fc" id="L137">        return props(publisherActor,</span>
+                conciergeForwarder,
+                authorizationContext,
+<span class="fc" id="L140">                new DittoHeadersFilter(DittoHeadersFilter.Mode.EXCLUDE, Collections.emptyList()),</span>
+                processor, connectionId);
+    }
+
+
+    @Override
+    public Receive createReceive() {
+<span class="fc" id="L147">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L148">                .match(ExternalMessage.class, this::handle)</span>
+<span class="fc" id="L149">                .match(CommandResponse.class, this::handleCommandResponse)</span>
+<span class="fc" id="L150">                .match(Signal.class, this::handleSignal)</span>
+<span class="fc" id="L151">                .match(DittoRuntimeException.class, this::handleDittoRuntimeException)</span>
+<span class="pc" id="L152">                .match(Status.Failure.class, f -&gt; log.warning(&quot;Got failure with cause {}: {}&quot;,</span>
+<span class="nc" id="L153">                        f.cause().getClass().getSimpleName(), f.cause().getMessage()))</span>
+<span class="fc" id="L154">                .matchAny(m -&gt; {</span>
+<span class="nc" id="L155">                    log.warning(&quot;Unknown message: {}&quot;, m);</span>
+<span class="nc" id="L156">                    unhandled(m);</span>
+<span class="pc" id="L157">                }).build();</span>
+    }
+
+    private void handle(final ExternalMessage externalMessage) {
+<span class="fc" id="L161">        ConditionChecker.checkNotNull(externalMessage);</span>
+<span class="fc" id="L162">        final String correlationId = externalMessage.getHeaders().get(DittoHeaderDefinition.CORRELATION_ID.getKey());</span>
+<span class="fc" id="L163">        LogUtil.enhanceLogWithCorrelationId(log, correlationId);</span>
+<span class="fc" id="L164">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId);</span>
+<span class="fc" id="L165">        log.debug(&quot;Handling ExternalMessage: {}&quot;, externalMessage);</span>
+
+<span class="fc" id="L167">        final String authSubjectsArray = authorizationContext.stream()</span>
+<span class="fc" id="L168">                .map(AuthorizationSubject::getId)</span>
+<span class="fc" id="L169">                .map(JsonFactory::newValue)</span>
+<span class="fc" id="L170">                .collect(JsonCollectors.valuesToArray())</span>
+<span class="fc" id="L171">                .toString();</span>
+<span class="fc" id="L172">        final ExternalMessage messageWithAuthSubject =</span>
+<span class="fc" id="L173">                externalMessage.withHeader(DittoHeaderDefinition.AUTHORIZATION_SUBJECTS.getKey(), authSubjectsArray);</span>
+
+        try {
+<span class="fc" id="L176">            final Optional&lt;Signal&lt;?&gt;&gt; signalOpt = processor.process(messageWithAuthSubject);</span>
+<span class="fc" id="L177">            signalOpt.ifPresent(signal -&gt; {</span>
+<span class="fc" id="L178">                enhanceLogUtil(signal);</span>
+<span class="fc" id="L179">                final DittoHeadersBuilder adjustedHeadersBuilder = signal.getDittoHeaders().toBuilder()</span>
+<span class="fc" id="L180">                        .authorizationContext(authorizationContext);</span>
+
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">                if (!signal.getDittoHeaders().getOrigin().isPresent()) {</span>
+<span class="fc" id="L183">                    adjustedHeadersBuilder.origin(connectionId);</span>
+                }
+<span class="fc" id="L185">                final DittoHeaders adjustedHeaders = adjustedHeadersBuilder.build();</span>
+                // overwrite the auth-subjects to the configured ones after mapping in order to be sure that the mapping
+                // does not choose/change the auth-subjects itself:
+<span class="fc" id="L188">                final Signal&lt;?&gt; adjustedSignal = signal.setDittoHeaders(adjustedHeaders);</span>
+<span class="fc" id="L189">                startTrace(adjustedSignal);</span>
+<span class="fc" id="L190">                log.info(&quot;Sending '{}' using conciergeForwarder&quot;, adjustedSignal.getType());</span>
+<span class="fc" id="L191">                conciergeForwarder.tell(adjustedSignal, getSelf());</span>
+<span class="fc" id="L192">            });</span>
+<span class="fc" id="L193">        } catch (final DittoRuntimeException e) {</span>
+<span class="fc" id="L194">            handleDittoRuntimeException(e, DittoHeaders.of(externalMessage.getHeaders()));</span>
+<span class="nc" id="L195">        } catch (final Exception e) {</span>
+<span class="nc" id="L196">            log.warning(&quot;Got &lt;{}&gt; when message was processed: &lt;{}&gt;&quot;, e.getClass().getSimpleName(), e.getMessage());</span>
+<span class="fc" id="L197">        }</span>
+<span class="fc" id="L198">    }</span>
+
+    private void enhanceLogUtil(final WithDittoHeaders&lt;?&gt; signal) {
+<span class="fc" id="L201">        LogUtil.enhanceLogWithCorrelationId(log, signal);</span>
+<span class="fc" id="L202">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId);</span>
+<span class="fc" id="L203">    }</span>
+
+    private void handleDittoRuntimeException(final DittoRuntimeException exception) {
+<span class="nc" id="L206">        handleDittoRuntimeException(exception, DittoHeaders.empty());</span>
+<span class="nc" id="L207">    }</span>
+
+    private void handleDittoRuntimeException(final DittoRuntimeException exception,
+            final DittoHeaders dittoHeaders) {
+<span class="fc" id="L211">        final DittoHeaders mergedHeaders =</span>
+<span class="fc" id="L212">                DittoHeaders.newBuilder(exception.getDittoHeaders()).putHeaders(dittoHeaders).build();</span>
+<span class="fc" id="L213">        final ThingErrorResponse errorResponse = ThingErrorResponse.of(exception, mergedHeaders);</span>
+
+<span class="fc" id="L215">        enhanceLogUtil(exception);</span>
+
+<span class="fc" id="L217">        log.info(&quot;Got DittoRuntimeException '{}' when ExternalMessage was processed: {} - {}&quot;,</span>
+<span class="fc" id="L218">                exception.getErrorCode(), exception.getMessage(), exception.getDescription().orElse(&quot;&quot;));</span>
+
+<span class="fc" id="L220">        handleCommandResponse(errorResponse);</span>
+<span class="fc" id="L221">    }</span>
+
+    private void handleCommandResponse(final CommandResponse&lt;?&gt; response) {
+<span class="fc" id="L224">        enhanceLogUtil(response);</span>
+<span class="fc" id="L225">        finishTrace(response);</span>
+<span class="fc bfc" id="L226" title="All 2 branches covered.">        if (response.getDittoHeaders().isResponseRequired()) {</span>
+
+<span class="fc bfc" id="L228" title="All 2 branches covered.">            if (response.getStatusCodeValue() &lt; HttpStatusCode.BAD_REQUEST.toInt()) {</span>
+<span class="fc" id="L229">                log.debug(&quot;Received response: {}&quot;, response);</span>
+            } else {
+<span class="fc" id="L231">                log.debug(&quot;Received error response: {}&quot;, response.toJsonString());</span>
+            }
+
+<span class="fc" id="L234">            handleSignal(response);</span>
+        } else {
+<span class="fc" id="L236">            log.debug(&quot;Requester did not require response (via DittoHeader '{}') - not mapping back to ExternalMessage&quot;,</span>
+                    DittoHeaderDefinition.RESPONSE_REQUIRED);
+        }
+<span class="fc" id="L239">    }</span>
+
+    private void handleSignal(final Signal&lt;?&gt; signal) {
+<span class="fc" id="L242">        enhanceLogUtil(signal);</span>
+<span class="fc" id="L243">        log.debug(&quot;Handling signal: {}&quot;, signal);</span>
+
+        try {
+<span class="fc" id="L246">            final DittoHeaders filteredDittoHeaders = headerFilter.apply(signal.getDittoHeaders());</span>
+<span class="fc" id="L247">            final Signal signalWithFilteredHeaders = signal.setDittoHeaders(filteredDittoHeaders);</span>
+<span class="fc" id="L248">            processor.process(signalWithFilteredHeaders)</span>
+<span class="fc" id="L249">                    .ifPresent(message -&gt; publisherActor.forward(message, getContext()));</span>
+<span class="nc" id="L250">        } catch (final DittoRuntimeException e) {</span>
+<span class="nc" id="L251">            log.info(&quot;Got DittoRuntimeException during processing Signal: {} - {}&quot;, e.getMessage(),</span>
+<span class="nc" id="L252">                    e.getDescription().orElse(&quot;&quot;));</span>
+<span class="nc" id="L253">        } catch (final Exception e) {</span>
+<span class="nc" id="L254">            log.warning(&quot;Got unexpected exception during processing Signal: {}&quot;, e.getMessage());</span>
+<span class="pc" id="L255">        }</span>
+<span class="fc" id="L256">    }</span>
+
+    private void startTrace(final Signal&lt;?&gt; command) {
+<span class="fc" id="L259">        command.getDittoHeaders().getCorrelationId().ifPresent(correlationId -&gt;</span>
+<span class="fc" id="L260">                traces.put(correlationId, createRoundtripContext(correlationId, connectionId, command.getType()))</span>
+        );
+<span class="fc" id="L262">    }</span>
+
+    private void finishTrace(final Signal&lt;?&gt; response) {
+<span class="fc bfc" id="L265" title="All 2 branches covered.">        if (ThingErrorResponse.class.isAssignableFrom(response.getClass())) {</span>
+<span class="fc" id="L266">            finishTrace(response, ((ThingErrorResponse) response).getDittoRuntimeException());</span>
+        } else {
+<span class="fc" id="L268">            finishTrace(response, null);</span>
+        }
+<span class="fc" id="L270">    }</span>
+
+    private void finishTrace(final Signal&lt;?&gt; response, @Nullable final Throwable cause) {
+<span class="fc" id="L273">        response.getDittoHeaders().getCorrelationId().ifPresent(correlationId -&gt; {</span>
+            try {
+<span class="nc" id="L275">                finishTrace(correlationId, cause);</span>
+<span class="fc" id="L276">            } catch (final IllegalArgumentException e) {</span>
+<span class="fc" id="L277">                log.debug(&quot;Trace missing for response: '{}'&quot;, response);</span>
+<span class="nc" id="L278">            }</span>
+<span class="fc" id="L279">        });</span>
+<span class="fc" id="L280">    }</span>
+
+    private void finishTrace(final String correlationId, @Nullable final Throwable cause) {
+<span class="fc" id="L283">        final Optional&lt;TraceContext&gt; ctxOpt = traces.getBlocking(correlationId);</span>
+<span class="pc bpc" id="L284" title="1 of 2 branches missed.">        if (!ctxOpt.isPresent()) {</span>
+<span class="fc" id="L285">            throw new IllegalArgumentException(&quot;No trace found for correlationId: &quot; + correlationId);</span>
+        }
+<span class="nc" id="L287">        final TraceContext ctx = ctxOpt.get();</span>
+<span class="nc" id="L288">        traces.invalidate(correlationId);</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        if (Objects.isNull(cause)) {</span>
+<span class="nc" id="L290">            ctx.finish();</span>
+        } else {
+<span class="nc" id="L292">            ctx.finishWithError(cause);</span>
+        }
+<span class="nc" id="L294">    }</span>
+
+    private static TraceContext createRoundtripContext(final String correlationId, final String connectionId,
+            final String type) {
+<span class="fc" id="L298">        final Option&lt;String&gt; token = Option.apply(correlationId);</span>
+<span class="fc" id="L299">        final TraceContext ctx = Kamon.tracer().newContext(&quot;roundtrip.&quot; + connectionId + &quot;.&quot; + type,</span>
+                token);
+<span class="fc" id="L301">        ctx.addMetadata(&quot;command&quot;, type);</span>
+<span class="fc" id="L302">        return ctx;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

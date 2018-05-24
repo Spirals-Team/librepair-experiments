@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>KamonConnectionPoolListener.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Persistence Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.persistence.mongo.monitoring</a> &gt; <span class="el_source">KamonConnectionPoolListener.java</span></div><h1>KamonConnectionPoolListener.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ *
+ */
+package org.eclipse.ditto.services.utils.persistence.mongo.monitoring;
+
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.mongodb.connection.ServerId;
+import com.mongodb.event.ConnectionAddedEvent;
+import com.mongodb.event.ConnectionCheckedInEvent;
+import com.mongodb.event.ConnectionCheckedOutEvent;
+import com.mongodb.event.ConnectionPoolClosedEvent;
+import com.mongodb.event.ConnectionPoolListener;
+import com.mongodb.event.ConnectionPoolOpenedEvent;
+import com.mongodb.event.ConnectionPoolWaitQueueEnteredEvent;
+import com.mongodb.event.ConnectionPoolWaitQueueExitedEvent;
+import com.mongodb.event.ConnectionRemovedEvent;
+
+import kamon.Kamon;
+import kamon.metric.instrument.Gauge;
+
+/**
+ * Reports MongoDB connection pool statistics to Kamon.
+ */
+public class KamonConnectionPoolListener implements ConnectionPoolListener {
+
+<span class="nc" id="L40">    private static final Logger LOGGER = LoggerFactory.getLogger(KamonCommandListener.class);</span>
+<span class="nc" id="L41">    private final ConcurrentMap&lt;ServerId, PoolMetric&gt; metrics = new ConcurrentHashMap&lt;&gt;();</span>
+    private final String metricName;
+
+<span class="nc" id="L44">    public KamonConnectionPoolListener(final String metricName) {</span>
+<span class="nc" id="L45">        this.metricName = metricName;</span>
+<span class="nc" id="L46">    }</span>
+
+    @Override
+    public void connectionPoolOpened(final ConnectionPoolOpenedEvent event) {
+<span class="nc bnc" id="L50" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L51">            LOGGER.debug(&quot;Connection pool opened: {}&quot;, event);</span>
+        }
+<span class="nc" id="L53">        final PoolMetric metric = new PoolMetric(event.getServerId());</span>
+<span class="nc" id="L54">        metrics.put(event.getServerId(), metric);</span>
+<span class="nc" id="L55">    }</span>
+
+    @Override
+    public void connectionPoolClosed(final ConnectionPoolClosedEvent event) {
+<span class="nc bnc" id="L59" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L60">            LOGGER.debug(&quot;Connection pool closed: {}&quot;, event);</span>
+        }
+<span class="nc" id="L62">        final PoolMetric metric = metrics.remove(event.getServerId());</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (metric != null) {</span>
+<span class="nc" id="L64">            metric.remove();</span>
+        }
+<span class="nc" id="L66">    }</span>
+
+    @Override
+    public void connectionCheckedOut(final ConnectionCheckedOutEvent event) {
+<span class="nc" id="L70">        metrics.compute(event.getConnectionId().getServerId(), (serverId, metric) -&gt; metric.incCheckedOutCount());</span>
+<span class="nc" id="L71">    }</span>
+
+    @Override
+    public void connectionCheckedIn(final ConnectionCheckedInEvent event) {
+<span class="nc" id="L75">        metrics.compute(event.getConnectionId().getServerId(), (serverId, metric) -&gt; metric.decCheckedOutCount());</span>
+
+<span class="nc" id="L77">    }</span>
+
+    @Override
+    public void waitQueueEntered(final ConnectionPoolWaitQueueEnteredEvent event) {
+<span class="nc" id="L81">        metrics.compute(event.getServerId(), (serverId, metric) -&gt; metric.incWaitQueueSize());</span>
+<span class="nc" id="L82">    }</span>
+
+    @Override
+    public void waitQueueExited(final ConnectionPoolWaitQueueExitedEvent event) {
+<span class="nc" id="L86">        metrics.compute(event.getServerId(), (serverId, metric) -&gt; metric.decWaitQueueSize());</span>
+<span class="nc" id="L87">    }</span>
+
+    @Override
+    public void connectionAdded(final ConnectionAddedEvent event) {
+<span class="nc" id="L91">        metrics.compute(event.getConnectionId().getServerId(), (serverId, metric) -&gt; metric.incPoolSize());</span>
+<span class="nc" id="L92">    }</span>
+
+    @Override
+    public void connectionRemoved(final ConnectionRemovedEvent event) {
+<span class="nc" id="L96">        metrics.compute(event.getConnectionId().getServerId(), (serverId, metric) -&gt; metric.decPoolSize());</span>
+
+<span class="nc" id="L98">    }</span>
+
+    private class PoolMetric {
+
+        private static final String POOL_PREFIX = &quot;.pool.&quot;;
+        private static final String CHECKED_OUT_COUNT = &quot;.checkedOutCount&quot;;
+        private static final String POOL_SIZE = &quot;.poolSize&quot;;
+        private static final String WAIT_QUEUE_SIZE = &quot;.waitQueueSize&quot;;
+
+<span class="nc" id="L107">        private final AtomicLong poolSize = new AtomicLong();</span>
+<span class="nc" id="L108">        private final AtomicLong checkedOutCount = new AtomicLong();</span>
+<span class="nc" id="L109">        private final AtomicLong waitQueueSize = new AtomicLong();</span>
+        private final String name;
+        private final Gauge poolSizeGauge;
+        private final Gauge checkOutCountGauge;
+        private final Gauge waitQueueGauge;
+
+<span class="nc" id="L115">        private PoolMetric(final ServerId serverId) {</span>
+<span class="nc" id="L116">            this.name = serverId.getClusterId().getValue();</span>
+<span class="nc" id="L117">            poolSizeGauge = Kamon.metrics().gauge(metricName + POOL_PREFIX + name + POOL_SIZE, poolSize::get);</span>
+<span class="nc" id="L118">            checkOutCountGauge =</span>
+<span class="nc" id="L119">                    Kamon.metrics().gauge(metricName + POOL_PREFIX + name + CHECKED_OUT_COUNT, checkedOutCount::get);</span>
+<span class="nc" id="L120">            waitQueueGauge =</span>
+<span class="nc" id="L121">                    Kamon.metrics().gauge(metricName + POOL_PREFIX + name + WAIT_QUEUE_SIZE, waitQueueSize::get);</span>
+<span class="nc" id="L122">        }</span>
+
+        private PoolMetric incPoolSize() {
+<span class="nc" id="L125">            poolSizeGauge.record(poolSize.incrementAndGet());</span>
+<span class="nc" id="L126">            return this;</span>
+        }
+
+        private PoolMetric decPoolSize() {
+<span class="nc" id="L130">            poolSizeGauge.record(poolSize.decrementAndGet());</span>
+<span class="nc" id="L131">            return this;</span>
+        }
+
+        private PoolMetric incCheckedOutCount() {
+<span class="nc" id="L135">            checkOutCountGauge.record(checkedOutCount.incrementAndGet());</span>
+<span class="nc" id="L136">            return this;</span>
+        }
+
+        private PoolMetric decCheckedOutCount() {
+<span class="nc" id="L140">            checkOutCountGauge.record(checkedOutCount.decrementAndGet());</span>
+<span class="nc" id="L141">            return this;</span>
+        }
+
+        private PoolMetric incWaitQueueSize() {
+<span class="nc" id="L145">            waitQueueGauge.record(waitQueueSize.incrementAndGet());</span>
+<span class="nc" id="L146">            return this;</span>
+        }
+
+        private PoolMetric decWaitQueueSize() {
+<span class="nc" id="L150">            waitQueueGauge.record(waitQueueSize.decrementAndGet());</span>
+<span class="nc" id="L151">            return this;</span>
+        }
+
+        private void remove() {
+<span class="nc" id="L155">            Kamon.metrics().removeGauge(metricName + POOL_PREFIX + name + POOL_SIZE);</span>
+<span class="nc" id="L156">            Kamon.metrics().removeGauge(metricName + POOL_PREFIX + name + CHECKED_OUT_COUNT);</span>
+<span class="nc" id="L157">            Kamon.metrics().removeGauge(metricName + POOL_PREFIX + name + WAIT_QUEUE_SIZE);</span>
+<span class="nc" id="L158">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

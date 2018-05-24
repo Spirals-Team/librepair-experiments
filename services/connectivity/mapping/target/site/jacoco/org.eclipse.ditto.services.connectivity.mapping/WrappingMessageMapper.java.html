@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WrappingMessageMapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Mapping</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.mapping</a> &gt; <span class="el_source">WrappingMessageMapper.java</span></div><h1>WrappingMessageMapper.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.mapping;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+
+import org.eclipse.ditto.model.base.headers.DittoHeaderDefinition;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.model.connectivity.ConnectivityModelFactory;
+import org.eclipse.ditto.model.connectivity.ExternalMessage;
+import org.eclipse.ditto.model.connectivity.ExternalMessageBuilder;
+import org.eclipse.ditto.protocoladapter.Adaptable;
+import org.eclipse.ditto.protocoladapter.ProtocolFactory;
+
+import com.typesafe.config.Config;
+
+/**
+ * Does wrap any {@link MessageMapper}.
+ * &lt;p&gt;
+ * adds headers to ExternalMessage and Adaptable in mappings even when the wrapped {@link MessageMapper} does
+ * forget to do so by himself.
+ * &lt;/p&gt;
+ */
+final class WrappingMessageMapper implements MessageMapper {
+
+
+    private final MessageMapper delegate;
+
+<span class="fc" id="L43">    private WrappingMessageMapper(final MessageMapper delegate) {</span>
+<span class="fc" id="L44">        this.delegate = checkNotNull(delegate);</span>
+<span class="fc" id="L45">    }</span>
+
+    /**
+     * Enforces content type checking for the mapper
+     *
+     * @param mapper the mapper
+     * @return the wrapped mapper
+     */
+    public static MessageMapper wrap(final MessageMapper mapper) {
+<span class="fc" id="L54">        return new WrappingMessageMapper(mapper);</span>
+    }
+
+    /**
+     * @return the MessageMapper delegate this instance wraps.
+     */
+    public MessageMapper getDelegate() {
+<span class="fc" id="L61">        return delegate;</span>
+    }
+
+    @Override
+    public void configure(final Config mappingConfig, final MessageMapperConfiguration configuration) {
+<span class="fc" id="L66">        delegate.configure(mappingConfig, configuration);</span>
+<span class="fc" id="L67">    }</span>
+
+    @Override
+    public Optional&lt;Adaptable&gt; map(final ExternalMessage message) {
+
+        final ExternalMessage enhancedMessage;
+        final String correlationId;
+<span class="pc bpc" id="L74" title="1 of 2 branches missed.">        if (!message.getHeaders().containsKey(DittoHeaderDefinition.CORRELATION_ID.getKey())) {</span>
+            // if no correlation-id was provided in the ExternalMessage, generate one here:
+<span class="fc" id="L76">            correlationId = UUID.randomUUID().toString();</span>
+<span class="fc" id="L77">            enhancedMessage = ConnectivityModelFactory.newExternalMessageBuilder(message)</span>
+<span class="fc" id="L78">                    .withAdditionalHeaders(DittoHeaderDefinition.CORRELATION_ID.getKey(),</span>
+                            correlationId)
+<span class="fc" id="L80">                    .build();</span>
+        } else {
+<span class="nc" id="L82">            correlationId = message.getHeaders().get(DittoHeaderDefinition.CORRELATION_ID.getKey());</span>
+<span class="nc" id="L83">            enhancedMessage = message;</span>
+        }
+
+<span class="fc" id="L86">        final Optional&lt;Adaptable&gt; mappedOpt = delegate.map(enhancedMessage);</span>
+
+<span class="fc" id="L88">        return mappedOpt.map(mapped -&gt; {</span>
+<span class="fc" id="L89">            final DittoHeadersBuilder headersBuilder = DittoHeaders.newBuilder();</span>
+<span class="fc" id="L90">            headersBuilder.correlationId(correlationId);</span>
+
+<span class="fc" id="L92">            Optional.ofNullable(message.getHeaders().get(ExternalMessage.REPLY_TO_HEADER)).ifPresent(replyTo -&gt;</span>
+<span class="nc" id="L93">                    headersBuilder.putHeader(ExternalMessage.REPLY_TO_HEADER, replyTo)</span>
+            );
+
+<span class="fc" id="L96">            final Optional&lt;DittoHeaders&gt; headersOpt = mapped.getHeaders();</span>
+<span class="fc" id="L97">            headersOpt.ifPresent(headersBuilder::putHeaders); // overwrite with mapped headers (if any)</span>
+
+<span class="fc" id="L99">            return ProtocolFactory.newAdaptableBuilder(mapped)</span>
+<span class="fc" id="L100">                    .withHeaders(headersBuilder.build())</span>
+<span class="fc" id="L101">                    .build();</span>
+        });
+    }
+
+    @Override
+    public Optional&lt;ExternalMessage&gt; map(final Adaptable adaptable) {
+
+<span class="fc" id="L108">        final Optional&lt;ExternalMessage&gt; mappedOpt = delegate.map(adaptable);</span>
+
+<span class="fc" id="L110">        return mappedOpt.map(mapped -&gt; {</span>
+<span class="fc" id="L111">            final ExternalMessageBuilder messageBuilder = ConnectivityModelFactory.newExternalMessageBuilder(mapped);</span>
+<span class="fc" id="L112">            messageBuilder.asResponse(adaptable.getPayload().getStatus().isPresent());</span>
+<span class="fc" id="L113">            adaptable.getHeaders()</span>
+<span class="fc" id="L114">                    .map(h -&gt; h.get(ExternalMessage.REPLY_TO_HEADER))</span>
+<span class="fc" id="L115">                    .ifPresent(</span>
+<span class="nc" id="L116">                            replyTo -&gt; messageBuilder.withAdditionalHeaders(ExternalMessage.REPLY_TO_HEADER, replyTo));</span>
+<span class="fc" id="L117">            return messageBuilder.build();</span>
+        });
+    }
+
+    @Override
+    public boolean equals(final Object o) {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (this == o) {</span>
+<span class="nc" id="L124">            return true;</span>
+        }
+<span class="nc bnc" id="L126" title="All 4 branches missed.">        if (o == null || getClass() != o.getClass()) {</span>
+<span class="nc" id="L127">            return false;</span>
+        }
+<span class="nc" id="L129">        final WrappingMessageMapper that = (WrappingMessageMapper) o;</span>
+<span class="nc" id="L130">        return Objects.equals(delegate, that.delegate);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc" id="L135">        return Objects.hash(delegate);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L140">        return getClass().getSimpleName() + &quot; [&quot; +</span>
+                &quot;delegate=&quot; + delegate +
+                &quot;]&quot;;
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

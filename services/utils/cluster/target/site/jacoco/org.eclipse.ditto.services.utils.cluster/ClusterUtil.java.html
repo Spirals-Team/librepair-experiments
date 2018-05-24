@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClusterUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Cluster Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.cluster</a> &gt; <span class="el_source">ClusterUtil.java</span></div><h1>ClusterUtil.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.cluster;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
+
+import org.eclipse.ditto.services.utils.config.ConfigUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigException;
+
+import akka.actor.ActorSystem;
+import akka.actor.Address;
+import akka.actor.Terminated;
+import akka.cluster.Cluster;
+import akka.dispatch.ExecutionContexts;
+import akka.dispatch.OnComplete;
+
+/**
+ * Utilities for Akka Cluster.
+ */
+public final class ClusterUtil {
+
+<span class="nc" id="L45">    private static final Logger LOGGER = LoggerFactory.getLogger(ClusterUtil.class);</span>
+
+    private static final String CONFIG_CLUSTER_BECOME_LEADER = &quot;ditto.cluster.become-leader&quot;;
+    private static final int SOCKET_CONNECT_TIMEOUT = 500;
+
+<span class="nc" id="L50">    private ClusterUtil() {</span>
+        // no instantiation
+<span class="nc" id="L52">        throw new AssertionError();</span>
+    }
+
+    /**
+     * Joins the cluster using the passed {@code system} and {@code config}.
+     * &lt;p&gt;
+     * Registers for Akka System termination ({@link ActorSystem#registerOnTermination(Runnable)}) to to a
+     * {@code System.exit(-1)} or {@code System.exit(0)} depending on whether it was a graceful shutdown (e.g. triggered
+     * by {@code docker stop}) or a non graceful one (e.g. triggered by failing health checks).
+     * &lt;/p&gt;
+     *
+     * @param system the initialized ActorSystem
+     * @param config the config to use
+     */
+    public static void joinCluster(final ActorSystem system, final Config config) {
+<span class="nc" id="L67">        final String clusterName = system.name();</span>
+<span class="nc" id="L68">        final AtomicBoolean gracefulShutdown = new AtomicBoolean(false);</span>
+
+<span class="nc" id="L70">        final String localAddress = ConfigUtil.getLocalHostAddress();</span>
+<span class="nc" id="L71">        LOGGER.info(&quot;Determined my own local address: '{}'&quot;, localAddress);</span>
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">        if (ConfigUtil.shouldManuallyJoinClusterSeedNodes(config)) {</span>
+<span class="nc" id="L74">            LOGGER.info(&quot;Manually joining cluster seed-nodes..&quot;);</span>
+
+            boolean becomeLeader;
+            try {
+<span class="nc" id="L78">                becomeLeader = config.getBoolean(CONFIG_CLUSTER_BECOME_LEADER);</span>
+<span class="nc" id="L79">            } catch (final ConfigException.Missing e) {</span>
+<span class="nc" id="L80">                becomeLeader = false;</span>
+<span class="nc" id="L81">            }</span>
+
+<span class="nc" id="L83">            List&lt;Address&gt; clusterSeedNodes = ConfigUtil.getClusterSeedNodesExceptOwn(clusterName, config);</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">            if (becomeLeader) {</span>
+<span class="nc" id="L85">                LOGGER.info(&quot;Becoming leader, checking if there are other hosts in cluster '{}'&quot;, clusterName);</span>
+<span class="nc" id="L86">                clusterSeedNodes = clusterSeedNodes.stream().parallel().filter(address -&gt; {</span>
+<span class="nc" id="L87">                    final String host = address.host().get();</span>
+<span class="nc" id="L88">                    final int port = Integer.parseInt(address.port().get().toString());</span>
+
+                    boolean hasOpenPort;
+                    try {
+<span class="nc" id="L92">                        final Socket socket = new Socket();</span>
+<span class="nc" id="L93">                        socket.connect(new InetSocketAddress(host, port), SOCKET_CONNECT_TIMEOUT);</span>
+<span class="nc" id="L94">                        hasOpenPort = true;</span>
+<span class="nc" id="L95">                        socket.close();</span>
+<span class="nc" id="L96">                    } catch (final IOException e) {</span>
+<span class="nc" id="L97">                        hasOpenPort = false;</span>
+<span class="nc" id="L98">                    }</span>
+
+<span class="nc" id="L100">                    return hasOpenPort;</span>
+<span class="nc" id="L101">                }).collect(Collectors.toList());</span>
+            }
+
+<span class="nc" id="L104">            final Address myAddress = ConfigUtil.buildAddress(clusterName, localAddress);</span>
+<span class="nc bnc" id="L105" title="All 4 branches missed.">            if (becomeLeader &amp;&amp; clusterSeedNodes.isEmpty()) {</span>
+<span class="nc" id="L106">                clusterSeedNodes.add(myAddress);</span>
+<span class="nc" id="L107">                LOGGER.info(&quot;Creating new cluster with myself ({}) as leader: {}&quot;, localAddress, clusterSeedNodes);</span>
+            } else {
+<span class="nc" id="L109">                LOGGER.info(&quot;Joining cluster seed nodes: {}&quot;, clusterSeedNodes);</span>
+            }
+<span class="nc" id="L111">            final Cluster cluster = Cluster.get(system);</span>
+<span class="nc" id="L112">            cluster.joinSeedNodes(clusterSeedNodes);</span>
+
+<span class="nc" id="L114">            final CompletableFuture&lt;Terminated&gt; systemTermination = new CompletableFuture&lt;&gt;();</span>
+            // when current cluster member is removed (typically by 'cluster.leave(cluster.selfAddress())'),
+            // shutdown the JVM:
+<span class="nc" id="L117">            cluster.registerOnMemberRemoved(() -&gt; {</span>
+                // shut down ActorSystem
+<span class="nc" id="L119">                LOGGER.info(&quot;Shutting down the ActorSystem ..&quot;);</span>
+<span class="nc" id="L120">                system.terminate().onComplete(new OnComplete&lt;Terminated&gt;() {</span>
+                    @Override
+                    public void onComplete(final Throwable failure, final Terminated success) throws Throwable {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">                        if (success != null) {</span>
+<span class="nc" id="L124">                            systemTermination.complete(success);</span>
+                        } else {
+<span class="nc" id="L126">                            systemTermination.completeExceptionally(failure);</span>
+                        }
+<span class="nc" id="L128">                    }</span>
+<span class="nc" id="L129">                }, ExecutionContexts.fromExecutorService(Executors.newSingleThreadExecutor()));</span>
+<span class="nc" id="L130">            });</span>
+
+<span class="nc" id="L132">            Runtime.getRuntime().addShutdownHook(gracefullyLeaveClusterShutdownHook(myAddress, cluster,</span>
+                    gracefulShutdown, systemTermination));
+        }
+
+<span class="nc" id="L136">        system.registerOnTermination(() -&gt; {</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            if (!gracefulShutdown.get()) {</span>
+<span class="nc" id="L138">                LOGGER.warn(&quot;ActorSystem was shutdown NOT gracefully - exiting JVM with status code '-1'&quot;);</span>
+<span class="nc" id="L139">                System.exit(-1);</span>
+            } else {
+<span class="nc" id="L141">                LOGGER.info(&quot;ActorSystem has shutdown gracefully&quot;);</span>
+            }
+<span class="nc" id="L143">        });</span>
+<span class="nc" id="L144">    }</span>
+
+    private static Thread gracefullyLeaveClusterShutdownHook(final Address myAddress, final Cluster cluster,
+            final AtomicBoolean gracefulShutdown, final CompletableFuture&lt;Terminated&gt; systemTermination) {
+<span class="nc" id="L148">        return new Thread(() -&gt; {</span>
+<span class="nc" id="L149">            gracefulShutdown.set(true);</span>
+<span class="nc" id="L150">            LOGGER.info(&quot;Shutdown issued from outside (e.g. SIGTERM) - gracefully shutting down..&quot;);</span>
+<span class="nc" id="L151">            LOGGER.info(&quot;Leaving the cluster - my address: {}&quot;, myAddress);</span>
+<span class="nc" id="L152">            cluster.leave(myAddress);</span>
+            // after leaving the cluster, don't just end this Thread as this would end the process - wait for the
+            // system termination by waiting for the passed future:
+            try {
+<span class="nc" id="L156">                systemTermination.get(8, TimeUnit.SECONDS);</span>
+<span class="nc" id="L157">            } catch (final InterruptedException | ExecutionException | TimeoutException e) {</span>
+<span class="nc" id="L158">                LOGGER.error(&quot;System termination was interrupted: {}&quot;, e.getMessage(), e);</span>
+<span class="nc" id="L159">            }</span>
+<span class="nc" id="L160">        });</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

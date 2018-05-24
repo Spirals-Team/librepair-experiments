@@ -1,0 +1,439 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DittoService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Base</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.base</a> &gt; <span class="el_source">DittoService.java</span></div><h1>DittoService.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.base;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.argumentNotEmpty;
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+import java.time.Duration;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+
+import javax.annotation.concurrent.Immutable;
+import javax.annotation.concurrent.NotThreadSafe;
+
+import org.eclipse.ditto.services.base.config.ServiceConfigReader;
+import org.eclipse.ditto.services.utils.cluster.ClusterMemberAwareActor;
+import org.eclipse.ditto.services.utils.cluster.ClusterUtil;
+import org.eclipse.ditto.services.utils.config.ConfigUtil;
+import org.eclipse.ditto.services.utils.devops.DevOpsCommandsActor;
+import org.eclipse.ditto.services.utils.devops.LogbackLoggingFacade;
+import org.eclipse.ditto.services.utils.health.status.StatusSupplierActor;
+import org.slf4j.Logger;
+
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
+
+import akka.actor.ActorRef;
+import akka.actor.ActorRefFactory;
+import akka.actor.ActorSystem;
+import akka.actor.Cancellable;
+import akka.actor.Props;
+import akka.actor.Scheduler;
+import akka.cluster.Cluster;
+import akka.cluster.pubsub.DistributedPubSub;
+import akka.stream.ActorMaterializer;
+import kamon.Kamon;
+import scala.concurrent.duration.FiniteDuration;
+
+/**
+ * Abstract base implementation of a Ditto service which takes care of the complete startup procedure.
+ * &lt;p&gt;
+ * This class provides the template method {@link #startActorSystem()} which by default starts the Akka actor system as
+ * well as all Akka actors of this service which are required for startup.
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * Each hook method may be overridden to change this particular part of the startup procedure. Please have a look at
+ * the Javadoc comment before overriding a hook method. The hook methods are automatically called in the following
+ * order:
+ * &lt;/p&gt;
+ * &lt;ol&gt;
+ * &lt;li&gt;{@link #determineConfig()},&lt;/li&gt;
+ * &lt;li&gt;{@link #createActorSystem(Config)},&lt;/li&gt;
+ * &lt;li&gt;{@link #startStatusSupplierActor(ActorSystem, Config)},&lt;/li&gt;
+ * &lt;li&gt;{@link #joinCluster(ActorSystem, Config)},&lt;/li&gt;
+ * &lt;li&gt;{@link #startClusterMemberAwareActor(ActorSystem, ServiceConfigReader)} and&lt;/li&gt;
+ * &lt;li&gt;{@link #startServiceRootActors(ActorSystem, ServiceConfigReader, Cancellable)}.
+ * &lt;ol&gt;
+ * &lt;li&gt;{@link #startStatsdMetricsReporter(ActorSystem, ServiceConfigReader)},&lt;/li&gt;
+ * &lt;li&gt;{@link #getMainRootActorProps(ServiceConfigReader, ActorRef, ActorMaterializer)},&lt;/li&gt;
+ * &lt;li&gt;{@link #startMainRootActor(ActorSystem, Props)},&lt;/li&gt;
+ * &lt;li&gt;{@link #getAdditionalRootActorsInformation(ServiceConfigReader, ActorRef, ActorMaterializer)} and&lt;/li&gt;
+ * &lt;li&gt;{@link #startAdditionalRootActors(ActorSystem, Iterable)}.&lt;/li&gt;
+ * &lt;/ol&gt;
+ * &lt;/li&gt;
+ * &lt;/ol&gt;
+ *
+ * @param &lt;C&gt; type of configuration reader for the service.
+ */
+@NotThreadSafe
+public abstract class DittoService&lt;C extends ServiceConfigReader&gt; {
+
+    /**
+     * Amount of seconds this service waits to join the Akka cluster.
+     */
+    public static final short JOIN_CLUSTER_TIMEOUT = 30; // seconds
+
+    /**
+     * Name of the cluster of this service.
+     */
+    public static final String CLUSTER_NAME = &quot;ditto-cluster&quot;;
+
+    private final Logger logger;
+    private final String serviceName;
+    private final String rootActorName;
+    private final C configReader;
+
+    /**
+     * Constructs a new {@code DittoService} object.
+     *
+     * @param logger the Logger to be used for logging.
+     * @param serviceName the name of this service.
+     * @param rootActorName the name of this service's root actor.
+     * @param configReaderCreator creator of a service config reader.
+     * @throws NullPointerException if any argument is {@code null}.
+     * @throws java.lang.IllegalArgumentException if {@code serviceName} or {@code rootActorName} is empty.
+     */
+    protected DittoService(final Logger logger,
+            final String serviceName,
+            final String rootActorName,
+<span class="nc" id="L113">            final Function&lt;Config, C&gt; configReaderCreator) {</span>
+
+<span class="nc" id="L115">        this.logger = checkNotNull(logger, &quot;logger&quot;);</span>
+<span class="nc" id="L116">        this.serviceName = argumentNotEmpty(serviceName, &quot;service name&quot;);</span>
+<span class="nc" id="L117">        this.rootActorName = argumentNotEmpty(rootActorName, &quot;root actor name&quot;);</span>
+<span class="nc" id="L118">        final Config config = determineConfig();</span>
+<span class="nc" id="L119">        this.configReader = checkNotNull(configReaderCreator, &quot;config reader creator&quot;).apply(config);</span>
+<span class="nc" id="L120">    }</span>
+
+    /**
+     * Starts this service. Any thrown {@code Throwable}s will be logged and re-thrown.
+     */
+    public void start() {
+<span class="nc" id="L126">        MainMethodExceptionHandler.getInstance(logger).run(this::doStart);</span>
+<span class="nc" id="L127">    }</span>
+
+    /**
+     * Starts this service.
+     * &lt;p&gt;
+     * May be overridden to &lt;em&gt;completely&lt;/em&gt; change the way how this service is started.
+     * &lt;em&gt;Note: If this method is overridden, no other method of this class will be called automatically.&lt;/em&gt;
+     * &lt;/p&gt;
+     */
+    protected void doStart() {
+<span class="nc" id="L137">        logRuntimeParameters();</span>
+<span class="nc" id="L138">        startKamon();</span>
+<span class="nc" id="L139">        startActorSystem();</span>
+<span class="nc" id="L140">    }</span>
+
+    private void logRuntimeParameters() {
+<span class="nc" id="L143">        final RuntimeMXBean bean = ManagementFactory.getRuntimeMXBean();</span>
+<span class="nc" id="L144">        logger.info(&quot;Running with following runtime parameters: {}&quot;, bean.getInputArguments());</span>
+<span class="nc" id="L145">        logger.info(&quot;Available processors: {}&quot;, Runtime.getRuntime().availableProcessors());</span>
+<span class="nc" id="L146">    }</span>
+
+    private static void startKamon() {
+<span class="nc" id="L149">        Kamon.start(ConfigFactory.load(&quot;kamon&quot;));</span>
+<span class="nc" id="L150">    }</span>
+
+    /**
+     * Starts the Akka actor system as well as all required actors.
+     * &lt;p&gt;
+     * May be overridden to change the way how the Akka actor system and actors are started. &lt;em&gt;Note: If this
+     * method is overridden, none of the following mentioned methods and their descendant methods will be called
+     * automatically:&lt;/em&gt;
+     * &lt;/p&gt;
+     * &lt;ul&gt;
+     * &lt;li&gt;{@link #determineConfig()},&lt;/li&gt;
+     * &lt;li&gt;{@link #createActorSystem(Config)},&lt;/li&gt;
+     * &lt;li&gt;{@link #startStatusSupplierActor(ActorSystem, Config)},&lt;/li&gt;
+     * &lt;li&gt;{@link #joinCluster(ActorSystem, Config)},&lt;/li&gt;
+     * &lt;li&gt;{@link #startClusterMemberAwareActor(ActorSystem, ServiceConfigReader)} and&lt;/li&gt;
+     * &lt;li&gt;{@link #startServiceRootActors(ActorSystem, ServiceConfigReader, Cancellable)}.&lt;/li&gt;
+     * &lt;/ul&gt;
+     */
+    protected void startActorSystem() {
+<span class="nc" id="L169">        final Config config = configReader.getRawConfig();</span>
+<span class="nc" id="L170">        final double parallelismMax =</span>
+<span class="nc" id="L171">                config.getDouble(&quot;akka.actor.default-dispatcher.fork-join-executor.parallelism-max&quot;);</span>
+<span class="nc" id="L172">        logger.info(&quot;Running 'default-dispatcher' with 'parallelism-max': &lt;{}&gt;&quot;, parallelismMax);</span>
+<span class="nc" id="L173">        final ActorSystem actorSystem = createActorSystem(config);</span>
+
+<span class="nc" id="L175">        startStatusSupplierActor(actorSystem, config);</span>
+<span class="nc" id="L176">        startDevOpsCommandsActor(actorSystem, config);</span>
+<span class="nc" id="L177">        final Cancellable shutdownIfJoinFails = joinCluster(actorSystem, config);</span>
+<span class="nc" id="L178">        startClusterMemberAwareActor(actorSystem, configReader);</span>
+<span class="nc" id="L179">        startServiceRootActors(actorSystem, configReader, shutdownIfJoinFails);</span>
+<span class="nc" id="L180">    }</span>
+
+    /**
+     * Determines the {@link Config} of this service. May be overridden to change the way how the config is determined.
+     *
+     * @return the config of this service.
+     */
+    protected Config determineConfig() {
+<span class="nc" id="L188">        return ConfigUtil.determineConfig(serviceName);</span>
+    }
+
+    /**
+     * Creates the Akka actor system. May be overridden to change the way how the actor system is created.
+     *
+     * @param config the configuration settings of this service.
+     * @return the actor system.
+     */
+    protected ActorSystem createActorSystem(final Config config) {
+<span class="nc" id="L198">        return ActorSystem.create(CLUSTER_NAME, config);</span>
+    }
+
+    /**
+     * Starts the {@link StatusSupplierActor}. May be overridden to change the way how the actor is started.
+     *
+     * @param actorSystem Akka actor system for starting actors.
+     * @param config the configuration settings of this service.
+     */
+    protected void startStatusSupplierActor(final ActorSystem actorSystem, final Config config) {
+<span class="nc" id="L208">        startActor(actorSystem, StatusSupplierActor.props(rootActorName), StatusSupplierActor.ACTOR_NAME);</span>
+<span class="nc" id="L209">    }</span>
+
+    private void startActor(final ActorSystem actorSystem, final Props actorProps, final String actorName) {
+<span class="nc" id="L212">        logStartingActor(actorName);</span>
+<span class="nc" id="L213">        actorSystem.actorOf(actorProps, actorName);</span>
+<span class="nc" id="L214">    }</span>
+
+    private void logStartingActor(final String actorName) {
+<span class="nc" id="L217">        logger.info(&quot;Starting actor &lt;{}&gt;.&quot;, actorName);</span>
+<span class="nc" id="L218">    }</span>
+
+    /**
+     * Starts the {@link DevOpsCommandsActor}. May be overridden to change the way how the actor is started.
+     *
+     * @param actorSystem Akka actor system for starting actors.
+     * @param config the configuration settings of this service.
+     */
+    protected void startDevOpsCommandsActor(final ActorSystem actorSystem, final Config config) {
+<span class="nc" id="L227">        startActor(actorSystem, DevOpsCommandsActor.props(LogbackLoggingFacade.newInstance(), serviceName,</span>
+<span class="nc" id="L228">                ConfigUtil.instanceIndex()), DevOpsCommandsActor.ACTOR_NAME);</span>
+<span class="nc" id="L229">    }</span>
+
+    /**
+     * Lets this service join the Akka cluster.
+     * &lt;p&gt;
+     * May be overridden to change the way how this service joins the Akka cluster. &lt;em&gt;Note: If this method is
+     * overridden the following method won't be called automatically:&lt;/em&gt;
+     * &lt;/p&gt;
+     * &lt;ul&gt;
+     * &lt;li&gt;{@link #scheduleShutdownIfJoinFails(ActorSystem)}.&lt;/li&gt;
+     * &lt;/ul&gt;
+     *
+     * @param actorSystem Akka actor system for starting actors.
+     * @param config the configuration settings of this service.
+     * @return a Cancellable to abort the scheduled termination of the Akka actor system if the cluster was joined
+     * successfully.
+     */
+    protected Cancellable joinCluster(final ActorSystem actorSystem, final Config config) {
+<span class="nc" id="L247">        ClusterUtil.joinCluster(actorSystem, config);</span>
+
+        /*
+         * Important: Register Kamon::shutdown after joining the cluster as there is also a &quot;registerOnTermination&quot;
+         * and they are executed in reverse order.
+         */
+<span class="nc" id="L253">        actorSystem.registerOnTermination(Kamon::shutdown);</span>
+
+<span class="nc" id="L255">        return scheduleShutdownIfJoinFails(actorSystem);</span>
+    }
+
+    /**
+     * Schedules termination of the Akka actor system if this service fails to join the Akka cluster within
+     * {@link #JOIN_CLUSTER_TIMEOUT} seconds.
+     * &lt;p&gt;
+     * May be overridden to change the behaviour if this service fails to join the Akka cluster.
+     * &lt;/p&gt;
+     *
+     * @param actorSystem Akka actor system for starting actors.
+     * @return a Cancellable to abort the scheduled termination of the Akka actor system if the cluster was joined
+     * successfully.
+     */
+    protected Cancellable scheduleShutdownIfJoinFails(final ActorSystem actorSystem) {
+<span class="nc" id="L270">        final Scheduler scheduler = actorSystem.scheduler();</span>
+<span class="nc" id="L271">        return scheduler.scheduleOnce(FiniteDuration.apply(JOIN_CLUSTER_TIMEOUT, TimeUnit.SECONDS), () -&gt; {</span>
+<span class="nc" id="L272">            logger.error(&quot;Member was not able to join the cluster, going to shutdown actor system now.&quot;);</span>
+<span class="nc" id="L273">            actorSystem.terminate();</span>
+<span class="nc" id="L274">        }, actorSystem.dispatcher());</span>
+    }
+
+    /**
+     * Starts the {@link ClusterMemberAwareActor}. May be overridden to change the way how the actor is started.
+     *
+     * @param actorSystem Akka actor system for starting actors.
+     * @param configReader the config reader of this service.
+     */
+    protected void startClusterMemberAwareActor(final ActorSystem actorSystem, final C configReader) {
+<span class="nc" id="L284">        startActor(actorSystem, ClusterMemberAwareActor.props(serviceName, isMajorityCheckEnabled(configReader),</span>
+<span class="nc" id="L285">                getMajorityCheckDelay(configReader)), ClusterMemberAwareActor.ACTOR_NAME);</span>
+<span class="nc" id="L286">    }</span>
+
+    private boolean isMajorityCheckEnabled(final ServiceConfigReader configReader) {
+<span class="nc" id="L289">        return configReader.cluster().majorityCheckEnabled();</span>
+
+    }
+
+    private Duration getMajorityCheckDelay(final ServiceConfigReader configReader) {
+<span class="nc" id="L294">        return configReader.cluster().majorityCheckDelay();</span>
+    }
+
+    /**
+     * Starts the root actor(s) of this service.
+     * &lt;p&gt;
+     * May be overridden to change the way how the root actor(s) of this service are started. &lt;em&gt;Note: If this
+     * method is overridden, the following methods will not be called automatically:&lt;/em&gt;
+     * &lt;/p&gt;
+     * &lt;ul&gt;
+     * &lt;li&gt;{@link #startStatsdMetricsReporter(ActorSystem, ServiceConfigReader)},&lt;/li&gt;
+     * &lt;li&gt;{@link #getMainRootActorProps(ServiceConfigReader, ActorRef, ActorMaterializer)},&lt;/li&gt;
+     * &lt;li&gt;{@link #startMainRootActor(ActorSystem, Props)},&lt;/li&gt;
+     * &lt;li&gt;{@link #getAdditionalRootActorsInformation(ServiceConfigReader, ActorRef, ActorMaterializer)} and&lt;/li&gt;
+     * &lt;li&gt;{@link #startAdditionalRootActors(ActorSystem, Iterable)}.&lt;/li&gt;
+     * &lt;/ul&gt;
+     *
+     * @param actorSystem Akka actor system for starting actors.
+     * @param configReader the configuration settings of this service.
+     * @param shutdownIfJoinFails gets cancelled as soon as the cluster was joined. Otherwise the actor system is
+     * terminated an an error logged.
+     */
+    protected void startServiceRootActors(final ActorSystem actorSystem, final C configReader,
+            final Cancellable shutdownIfJoinFails) {
+
+<span class="nc" id="L319">        logger.info(&quot;Waiting for member to be up before proceeding with further initialisation.&quot;);</span>
+<span class="nc" id="L320">        Cluster.get(actorSystem).registerOnMemberUp(() -&gt; {</span>
+<span class="nc" id="L321">            logger.info(&quot;Member successfully joined the cluster, instantiating remaining actors.&quot;);</span>
+
+<span class="nc" id="L323">            shutdownIfJoinFails.cancel();</span>
+
+<span class="nc" id="L325">            startStatsdMetricsReporter(actorSystem, configReader);</span>
+
+<span class="nc" id="L327">            final ActorRef pubSubMediator = getDistributedPubSubMediatorActor(actorSystem);</span>
+<span class="nc" id="L328">            final ActorMaterializer materializer = createActorMaterializer(actorSystem);</span>
+
+<span class="nc" id="L330">            startMainRootActor(actorSystem, getMainRootActorProps(configReader, pubSubMediator, materializer));</span>
+<span class="nc" id="L331">            startAdditionalRootActors(actorSystem, getAdditionalRootActorsInformation(configReader, pubSubMediator,</span>
+                    materializer));
+<span class="nc" id="L333">        });</span>
+<span class="nc" id="L334">    }</span>
+
+    /**
+     * May be overridden to start a StatsD metrics reporter. &lt;em&gt;The base implementation does nothing.&lt;/em&gt;
+     *
+     * @param actorSystem Akka actor system for starting actors.
+     * @param configReader the configuration reader of this service.
+     */
+    protected void startStatsdMetricsReporter(final ActorSystem actorSystem, final C configReader) {
+        // Does nothing by default.
+<span class="nc" id="L344">    }</span>
+
+    private static ActorRef getDistributedPubSubMediatorActor(final ActorSystem actorSystem) {
+<span class="nc" id="L347">        return DistributedPubSub.get(actorSystem).mediator();</span>
+    }
+
+    private static ActorMaterializer createActorMaterializer(final ActorRefFactory actorSystem) {
+<span class="nc" id="L351">        return ActorMaterializer.create(actorSystem);</span>
+    }
+
+    /**
+     * Returns the Props of this service's main root actor.
+     *
+     * @param configReader the configuration reader of this service.
+     * @param pubSubMediator ActorRef of the distributed pub-sub-mediator.
+     * @param materializer the materializer for the Akka actor system.
+     * @return the Props.
+     */
+    protected abstract Props getMainRootActorProps(C configReader, ActorRef pubSubMediator,
+            ActorMaterializer materializer);
+
+    /**
+     * Starts the main root actor of this service. May be overridden to change the way of starting this service's root
+     * actor.
+     *
+     * @param actorSystem Akka actor system for starting actors.
+     * @param mainRootActorProps the Props of the main root actor.
+     */
+    protected void startMainRootActor(final ActorSystem actorSystem, final Props mainRootActorProps) {
+<span class="nc" id="L373">        startActor(actorSystem, mainRootActorProps, rootActorName);</span>
+<span class="nc" id="L374">    }</span>
+
+    /**
+     * May be overridden to return information of additional root actors of this service. &lt;em&gt;The base implementation
+     * returns an empty collection.&lt;/em&gt;
+     *
+     * @param configReader the configuration reader of this service.
+     * @param pubSubMediator ActorRef of the distributed pub-sub-mediator.
+     * @param materializer the materializer for the Akka actor system.
+     * @return the additional root actors information.
+     */
+    protected Collection&lt;RootActorInformation&gt; getAdditionalRootActorsInformation(final C configReader,
+            final ActorRef pubSubMediator, final ActorMaterializer materializer) {
+
+<span class="nc" id="L388">        return Collections.emptyList();</span>
+    }
+
+    /**
+     * Starts additional root actors of this service. May be overridden to change the way how additional root actors
+     * will be started.
+     *
+     * @param actorSystem Akka actor system for starting actors.
+     * @param additionalRootActorsInformation information of additional root actors to be started.
+     */
+    protected void startAdditionalRootActors(final ActorSystem actorSystem,
+            final Iterable&lt;RootActorInformation&gt; additionalRootActorsInformation) {
+
+<span class="nc bnc" id="L401" title="All 2 branches missed.">        for (final RootActorInformation rootActorInformation : additionalRootActorsInformation) {</span>
+<span class="nc" id="L402">            startActor(actorSystem, rootActorInformation.props, rootActorInformation.name);</span>
+<span class="nc" id="L403">        }</span>
+<span class="nc" id="L404">    }</span>
+
+    /**
+     * This class bundles meta information of this service's root actor.
+     */
+    @Immutable
+    public static final class RootActorInformation {
+
+        private final Props props;
+        private final String name;
+
+<span class="nc" id="L415">        private RootActorInformation(final Props theProps, final String theName) {</span>
+<span class="nc" id="L416">            props = theProps;</span>
+<span class="nc" id="L417">            name = theName;</span>
+<span class="nc" id="L418">        }</span>
+
+        /**
+         * Returns an instance of {@code RootActorInformation}.
+         *
+         * @param props the Props of the root actor.
+         * @param name the name of the root actor.
+         * @return the instance.
+         * @throws NullPointerException if any argument is {@code null}.
+         * @throws IllegalArgumentException if {@code name} is empty.
+         */
+        public static RootActorInformation getInstance(final Props props, final String name) {
+<span class="nc" id="L430">            checkNotNull(props, &quot;root actor props&quot;);</span>
+<span class="nc" id="L431">            argumentNotEmpty(name, &quot;root actor name&quot;);</span>
+
+<span class="nc" id="L433">            return new RootActorInformation(props, name);</span>
+        }
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

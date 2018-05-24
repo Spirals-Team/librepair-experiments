@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MessageAdaptableHelper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Protocol Adapter</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.protocoladapter</a> &gt; <span class="el_source">MessageAdaptableHelper.java</span></div><h1>MessageAdaptableHelper.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.protocoladapter;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Optional;
+import java.util.regex.Pattern;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonPointer;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.common.DittoConstants;
+import org.eclipse.ditto.model.base.headers.DittoHeaderDefinition;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.model.messages.Message;
+import org.eclipse.ditto.model.messages.MessageBuilder;
+import org.eclipse.ditto.model.messages.MessageHeaderDefinition;
+import org.eclipse.ditto.model.messages.MessageHeaders;
+import org.eclipse.ditto.model.messages.MessageHeadersBuilder;
+import org.eclipse.ditto.model.messages.MessagesModelFactory;
+import org.eclipse.ditto.signals.commands.base.CommandResponse;
+import org.eclipse.ditto.signals.commands.messages.MessageCommand;
+
+/**
+ * Common functionality for handling (e.g. decoding) {@link Message}s used in {@link MessageCommandAdapter} and
+ * {@link MessageCommandResponseAdapter}.
+ */
+final class MessageAdaptableHelper {
+
+<span class="fc" id="L44">    private static final Base64.Decoder BASE_64_DECODER = Base64.getDecoder();</span>
+<span class="fc" id="L45">    private static final Pattern CHARSET_PATTERN = Pattern.compile(&quot;;.?charset=&quot;);</span>
+
+    private static final String TEXT_PLAIN = &quot;text/plain&quot;;
+    private static final String APPLICATION_JSON = &quot;application/json&quot;;
+    private static final String APPLICATION_OCTET_STREAM = &quot;application/octet-stream&quot;;
+
+<span class="nc" id="L51">    private MessageAdaptableHelper() {</span>
+<span class="nc" id="L52">        throw new AssertionError();</span>
+    }
+
+    /**
+     * Creates an {@link Adaptable} from the passed {@link Message} and its related arguments.
+     *
+     * @param channel the Channel.
+     * @param thingId the Thing ID.
+     * @param messageCommandJson the JSON representation of the MessageCommand.
+     * @param resourcePath the resource Path of the MessageCommand.
+     * @param message the Message to created the Adaptable from.
+     * @param dittoHeaders the used DittoHeaders.
+     * @return the Adaptable.
+     */
+    static Adaptable adaptableFrom(final TopicPath.Channel channel,
+            final String thingId,
+            final JsonObject messageCommandJson,
+            final JsonPointer resourcePath,
+            final Message&lt;?&gt; message,
+            final DittoHeaders dittoHeaders) {
+
+<span class="fc" id="L73">        final TopicPathBuilder topicPathBuilder = ProtocolFactory.newTopicPathBuilder(thingId);</span>
+
+        final MessagesTopicPathBuilder messagesTopicPathBuilder;
+<span class="pc bpc" id="L76" title="1 of 2 branches missed.">        if (channel == TopicPath.Channel.LIVE) {</span>
+<span class="fc" id="L77">            messagesTopicPathBuilder = topicPathBuilder.live().messages();</span>
+        } else {
+<span class="nc" id="L79">            throw new IllegalArgumentException(&quot;Unknown Channel '&quot; + channel + &quot;'&quot;);</span>
+        }
+
+<span class="fc" id="L82">        messagesTopicPathBuilder.subject(message.getSubject());</span>
+
+<span class="fc" id="L84">        final JsonPointer messagePointer = MessageCommand.JsonFields.JSON_MESSAGE.getPointer();</span>
+<span class="fc" id="L85">        final JsonPointer headersJsonPointer = messagePointer.append(MessageCommand.JsonFields.JSON_MESSAGE_HEADERS</span>
+<span class="fc" id="L86">                .getPointer());</span>
+<span class="fc" id="L87">        final JsonObject messageCommandHeadersJsonObject = messageCommandJson.getValue(headersJsonPointer)</span>
+<span class="fc" id="L88">                .filter(JsonValue::isObject)</span>
+<span class="fc" id="L89">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L90">                .orElseGet(JsonFactory::newObject);</span>
+
+<span class="fc" id="L92">        final DittoHeadersBuilder allHeadersBuilder = DittoHeaders.newBuilder(messageCommandHeadersJsonObject);</span>
+<span class="fc" id="L93">        allHeadersBuilder.putHeaders(dittoHeaders);</span>
+
+<span class="fc" id="L95">        final PayloadBuilder payloadBuilder = Payload.newBuilder(resourcePath);</span>
+
+<span class="fc" id="L97">        messageCommandJson.getValue(messagePointer.append(MessageCommand.JsonFields.JSON_MESSAGE_PAYLOAD.getPointer()))</span>
+<span class="fc" id="L98">                .map(p -&gt; messageCommandHeadersJsonObject.getValue(DittoHeaderDefinition.CONTENT_TYPE.getKey())</span>
+<span class="fc" id="L99">                        .filter(JsonValue::isString)</span>
+<span class="fc" id="L100">                        .map(JsonValue::asString)</span>
+<span class="fc" id="L101">                        .map(contentType -&gt; {</span>
+<span class="fc bfc" id="L102" title="All 2 branches covered.">                            if (MessageAdaptableHelper.shouldBeInterpretedAsText(contentType) ||</span>
+<span class="fc bfc" id="L103" title="All 2 branches covered.">                                    MessageAdaptableHelper.shouldBeInterpretedAsBinary(contentType)) {</span>
+<span class="fc" id="L104">                                return p;</span>
+                            } else {
+<span class="fc" id="L106">                                return JsonValue.of(</span>
+<span class="fc" id="L107">                                        new String(BASE_64_DECODER.decode(p.asString()),</span>
+<span class="fc" id="L108">                                                MessageAdaptableHelper.determineCharset(contentType)));</span>
+                            }
+                        })
+<span class="fc" id="L111">                        .orElse(p))</span>
+<span class="fc" id="L112">                .ifPresent(payloadBuilder::withValue);</span>
+
+<span class="fc" id="L114">        message.getStatusCode().ifPresent(payloadBuilder::withStatus);</span>
+
+<span class="fc" id="L116">        messageCommandJson.getValue(CommandResponse.JsonFields.STATUS).ifPresent(payloadBuilder::withStatus);</span>
+
+<span class="fc" id="L118">        return Adaptable.newBuilder(messagesTopicPathBuilder.build())</span>
+<span class="fc" id="L119">                .withPayload(payloadBuilder.build())</span>
+<span class="fc" id="L120">                .withHeaders(allHeadersBuilder.build()).build();</span>
+    }
+
+    /**
+     * Creates a {@link Message} from the passed {@link Adaptable}.
+     *
+     * @param adaptable the Adaptable to created the Message from.
+     * @param &lt;T&gt; the type of the Message's payload.
+     * @return the Message.
+     * @throws NullPointerException if {@code adaptable} is {@code null}.
+     * @throws IllegalArgumentException if {@code adaptable}
+     * &lt;ul&gt;
+     *     &lt;li&gt;has no headers,&lt;/li&gt;
+     *     &lt;li&gt;contains headers with a value that did not represent its appropriate Java type or&lt;/li&gt;
+     *     &lt;li&gt;if the headers of {@code adaptable} did lack a mandatory header.&lt;/li&gt;
+     * &lt;/ul&gt;
+     * @throws org.eclipse.ditto.model.messages.SubjectInvalidException if {@code initialHeaders} contains an invalid
+     * value for {@link MessageHeaderDefinition#SUBJECT}.
+     */
+    static &lt;T&gt; Message&lt;T&gt; messageFrom(final Adaptable adaptable) {
+<span class="fc" id="L140">        final MessageHeaders messageHeaders = messageHeadersFrom(adaptable);</span>
+
+<span class="fc" id="L142">        final String contentType = String.valueOf(messageHeaders.get(DittoHeaderDefinition.CONTENT_TYPE.getKey()));</span>
+<span class="fc" id="L143">        final boolean shouldBeInterpretedAsText = shouldBeInterpretedAsText(contentType);</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        final Charset charset = shouldBeInterpretedAsText ? determineCharset(contentType) : StandardCharsets.UTF_8;</span>
+
+<span class="fc" id="L146">        final MessageBuilder&lt;T&gt; messageBuilder = MessagesModelFactory.&lt;T&gt;newMessageBuilder(messageHeaders);</span>
+<span class="fc" id="L147">        final Optional&lt;JsonValue&gt; value = adaptable.getPayload().getValue();</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">        if (shouldBeInterpretedAsText) {</span>
+<span class="pc bpc" id="L149" title="1 of 4 branches missed.">            if (isPlainText(contentType) &amp;&amp; value.filter(JsonValue::isString).isPresent()) {</span>
+<span class="fc" id="L150">                messageBuilder.payload((T) value.get().asString());</span>
+            } else {
+<span class="fc" id="L152">                value.ifPresent(jsonValue -&gt; messageBuilder.payload((T) jsonValue));</span>
+            }
+        } else {
+<span class="pc bpc" id="L155" title="1 of 2 branches missed.">            value.map(jsonValue -&gt; jsonValue.isString() ? jsonValue.asString() : jsonValue.toString())</span>
+<span class="fc" id="L156">                    .map(payloadString -&gt; payloadString.getBytes(charset))</span>
+<span class="fc" id="L157">                    .ifPresent(bytes -&gt; messageBuilder.rawPayload(ByteBuffer.wrap(tryToDecode(bytes))));</span>
+        }
+<span class="fc" id="L159">        return messageBuilder.build();</span>
+    }
+
+    /**
+     * Creates {@link MessageHeaders} from the passed {@link Adaptable}.
+     *
+     * @param adaptable the Adaptable to created the MessageHeaders from.
+     * @return the MessageHeaders.
+     * @throws NullPointerException if {@code adaptable} is {@code null}.
+     * @throws IllegalArgumentException if {@code adaptable}
+     * &lt;ul&gt;
+     *     &lt;li&gt;has no headers,&lt;/li&gt;
+     *     &lt;li&gt;contains headers with a value that did not represent its appropriate Java type or&lt;/li&gt;
+     *     &lt;li&gt;if the headers of {@code adaptable} did lack a mandatory header.&lt;/li&gt;
+     * &lt;/ul&gt;
+     * @throws org.eclipse.ditto.model.messages.SubjectInvalidException if {@code initialHeaders} contains an invalid
+     * value for {@link MessageHeaderDefinition#SUBJECT}.
+     */
+    static MessageHeaders messageHeadersFrom(final Adaptable adaptable) {
+<span class="fc" id="L178">        return adaptable.getHeaders()</span>
+<span class="fc" id="L179">                .map(headers -&gt; {</span>
+<span class="fc" id="L180">                    final TopicPath topicPath = adaptable.getTopicPath();</span>
+<span class="fc" id="L181">                    final DittoHeadersBuilder dittoHeadersBuilder = headers.toBuilder();</span>
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">                    if (!headers.containsKey(MessageHeaderDefinition.THING_ID.getKey())) {</span>
+<span class="nc" id="L183">                        dittoHeadersBuilder.putHeader(MessageHeaderDefinition.THING_ID.getKey(),</span>
+<span class="nc" id="L184">                                topicPath.getNamespace() + &quot;:&quot; + topicPath.getId());</span>
+                    }
+<span class="pc bpc" id="L186" title="1 of 2 branches missed.">                    if (!headers.containsKey(MessageHeaderDefinition.SUBJECT.getKey())) {</span>
+<span class="nc" id="L187">                        dittoHeadersBuilder.putHeader(MessageHeaderDefinition.SUBJECT.getKey(),</span>
+<span class="nc" id="L188">                                topicPath.getSubject().orElse(&quot;&quot;));</span>
+                    }
+<span class="fc" id="L190">                    return dittoHeadersBuilder.build();</span>
+                })
+<span class="fc" id="L192">                .map(MessagesModelFactory::newHeadersBuilder)</span>
+<span class="fc" id="L193">                .map(MessageHeadersBuilder::build)</span>
+<span class="pc" id="L194">                .orElseThrow(() -&gt; new IllegalArgumentException(&quot;Adaptable did not have headers at all!&quot;));</span>
+    }
+
+    private static byte[] tryToDecode(final byte[] bytes) {
+        try {
+<span class="fc" id="L199">            return BASE_64_DECODER.decode(bytes);</span>
+<span class="fc" id="L200">        } catch (final IllegalArgumentException e) {</span>
+<span class="fc" id="L201">            return bytes;</span>
+        }
+    }
+
+    private static boolean shouldBeInterpretedAsText(final String contentType) {
+<span class="fc bfc" id="L206" title="All 4 branches covered.">        return isPlainText(contentType) || contentType.startsWith(APPLICATION_JSON) ||</span>
+<span class="pc bpc" id="L207" title="1 of 2 branches missed.">                DittoConstants.DITTO_PROTOCOL_CONTENT_TYPE.equalsIgnoreCase(contentType);</span>
+    }
+
+    private static boolean shouldBeInterpretedAsBinary(final String contentType) {
+<span class="fc" id="L211">        return contentType.startsWith(APPLICATION_OCTET_STREAM);</span>
+    }
+
+    private static boolean isPlainText(final String contentType) {
+<span class="fc" id="L215">        return contentType.startsWith(TEXT_PLAIN);</span>
+    }
+
+    private static Charset determineCharset(final CharSequence contentType) {
+<span class="fc" id="L219">        final String[] withCharset = CHARSET_PATTERN.split(contentType, 2);</span>
+<span class="pc bpc" id="L220" title="3 of 4 branches missed.">        if (2 == withCharset.length &amp;&amp; Charset.isSupported(withCharset[1])) {</span>
+<span class="nc" id="L221">            return Charset.forName(withCharset[1]);</span>
+        }
+<span class="fc" id="L223">        return StandardCharsets.UTF_8;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

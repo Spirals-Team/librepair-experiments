@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractMongoSnapshotAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Persistence Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.persistence.mongo</a> &gt; <span class="el_source">AbstractMongoSnapshotAdapter.java</span></div><h1>AbstractMongoSnapshotAdapter.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.persistence.mongo;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.text.MessageFormat;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
+
+import org.eclipse.ditto.json.JsonField;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonParseException;
+import org.eclipse.ditto.model.base.exceptions.DittoJsonException;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.json.FieldType;
+import org.eclipse.ditto.model.base.json.Jsonifiable;
+import org.eclipse.ditto.services.utils.persistence.SnapshotAdapter;
+import org.slf4j.Logger;
+
+import com.mongodb.DBObject;
+
+import akka.persistence.SelectedSnapshot;
+import akka.persistence.SnapshotOffer;
+
+/**
+ * Abstract implementation of a MongoDB specific
+ * {@link org.eclipse.ditto.services.utils.persistence.SnapshotAdapter} for a
+ * {@link org.eclipse.ditto.model.base.json.Jsonifiable}.
+ *
+ * @param &lt;T&gt; the jsonifiable type to snapshot.
+ */
+@ThreadSafe
+public abstract class AbstractMongoSnapshotAdapter&lt;T extends Jsonifiable.WithFieldSelectorAndPredicate&lt;JsonField&gt;&gt;
+        implements SnapshotAdapter&lt;T&gt; {
+
+    private final Logger logger;
+
+<span class="nc" id="L50">    protected AbstractMongoSnapshotAdapter(final Logger logger) {</span>
+<span class="nc" id="L51">        this.logger = logger;</span>
+<span class="nc" id="L52">    }</span>
+
+    /**
+     * This method is called exactly once when a snapshot is created. It does nothing by default. Subclasses
+     * may override it to inject code.
+     *
+     * @param snapshotEntity The entity for which the snapshot is created.
+     * @param json The JSON object to store as snapshot.
+     */
+    protected void onSnapshotStoreConversion(final T snapshotEntity, final JsonObject json) {
+        // does nothing by default
+<span class="nc" id="L63">    }</span>
+
+    @Override
+    public Object toSnapshotStore(final T snapshotEntity) {
+<span class="nc" id="L67">        checkNotNull(snapshotEntity, &quot;snapshot entity&quot;);</span>
+<span class="nc" id="L68">        final JsonObject json = convertToJson(snapshotEntity);</span>
+
+<span class="nc" id="L70">        onSnapshotStoreConversion(snapshotEntity, json);</span>
+
+<span class="nc" id="L72">        final DittoBsonJson dittoBsonJson = DittoBsonJson.getInstance();</span>
+<span class="nc" id="L73">        return dittoBsonJson.parse(json);</span>
+    }
+
+    @Override
+    public T fromSnapshotStore(final SnapshotOffer snapshotOffer) {
+<span class="nc" id="L78">        return convertSnapshotToJsonifiable(snapshotOffer.snapshot());</span>
+    }
+
+    @Override
+    public T fromSnapshotStore(final SelectedSnapshot selectedSnapshot) {
+<span class="nc" id="L83">        return convertSnapshotToJsonifiable(selectedSnapshot.snapshot());</span>
+    }
+
+    /**
+     * Converts the specified snapshot entity to its {@link org.eclipse.ditto.json.JsonObject} representation.
+     *
+     * @param snapshotEntity the snapshot entity to be converted to a JsonObject.
+     * @return {@code snapshotEntity} as JsonObject.
+     * @throws NullPointerException if {@code snapshotEntity} is {@code null}.
+     */
+    protected JsonObject convertToJson(final T snapshotEntity) {
+<span class="nc" id="L94">        checkNotNull(snapshotEntity, &quot;snapshot entity&quot;);</span>
+<span class="nc" id="L95">        return snapshotEntity.toJson(snapshotEntity.getImplementedSchemaVersion(), FieldType.regularOrSpecial());</span>
+    }
+
+    /**
+     * Algorithm to convert a raw snapshot entity to a Jsonifiable.
+     *
+     * @param rawSnapshotEntity the snapshot entity to be converted.
+     * @return a Jsonifiable whose origin is {@code rawSnapshotEntity} or {@code null}.
+     * @throws NullPointerException if {@code rawSnapshotEntity} is {@code null}.
+     * @throws IllegalArgumentException if {@code rawSnapshotEntity} is not an instance of {@code DBObject}.
+     */
+    @Nullable
+    private T convertSnapshotToJsonifiable(@Nonnull final Object rawSnapshotEntity) {
+<span class="nc" id="L108">        final DBObject snapshotEntityAsDBObject = getSnapshotEntityAsDBObject(rawSnapshotEntity);</span>
+<span class="nc" id="L109">        final JsonObject jsonObject = convertToJson(snapshotEntityAsDBObject);</span>
+<span class="nc" id="L110">        return tryToCreateJsonifiableFrom(jsonObject);</span>
+    }
+
+    private static DBObject getSnapshotEntityAsDBObject(@Nonnull final Object rawSnapshotEntity) {
+<span class="nc" id="L114">        checkNotNull(rawSnapshotEntity, &quot;raw snapshot entity&quot;);</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (!(rawSnapshotEntity instanceof DBObject)) {</span>
+<span class="nc" id="L116">            final String pattern = &quot;Unable to create a Jsonifiable from &lt;{0}&gt;! Expected was a DBObject instance.&quot;;</span>
+<span class="nc" id="L117">            throw new IllegalArgumentException(MessageFormat.format(pattern, rawSnapshotEntity.getClass()));</span>
+        }
+<span class="nc" id="L119">        return (DBObject) rawSnapshotEntity;</span>
+    }
+
+    /**
+     * Converts the specified DBObject to a {@link org.eclipse.ditto.json.JsonObject}.
+     *
+     * @param dbObject the DBObject to be converted.
+     * @return a JsonObject whose origin is {@code dbObject}.
+     * @throws NullPointerException if {@code dbObject} is {@code null}.
+     * @throws org.eclipse.ditto.model.base.exceptions.DittoJsonException if {@code dbObject} cannot be serialized to a
+     * JsonObject.
+     */
+    private static JsonObject convertToJson(@Nonnull final DBObject dbObject) {
+<span class="nc" id="L132">        checkNotNull(dbObject, &quot;DBObject to be converted&quot;);</span>
+<span class="nc" id="L133">        final DittoBsonJson dittoBsonJson = DittoBsonJson.getInstance();</span>
+<span class="nc" id="L134">        final JsonObject jsonObject = dittoBsonJson.serialize(dbObject).asObject();</span>
+<span class="nc" id="L135">        return DittoJsonException.wrapJsonRuntimeException(() -&gt; jsonObject);</span>
+    }
+
+    @Nullable
+    private T tryToCreateJsonifiableFrom(@Nonnull final JsonObject jsonObject) {
+        try {
+<span class="nc" id="L141">            return createJsonifiableFrom(jsonObject);</span>
+<span class="nc" id="L142">        } catch (final JsonParseException | DittoRuntimeException e) {</span>
+<span class="nc" id="L143">            final String pattern = &quot;Failed to deserialize JSON &lt;{0}&gt;!&quot;;</span>
+<span class="nc" id="L144">            logger.error(MessageFormat.format(pattern, jsonObject), e);</span>
+<span class="nc" id="L145">            return null;</span>
+        }
+    }
+
+    /**
+     * Creates a Jsonifiable of type {@code T} from the specified JSON object.
+     *
+     * @param jsonObject a JSON Object representation of a Jsonifiable.
+     * @return the Jsonifiable which originates from {@code jsonObject}.
+     * @throws org.eclipse.ditto.json.JsonParseException if {@code jsonObject} does not have the correct format.
+     */
+    protected abstract T createJsonifiableFrom(@Nonnull JsonObject jsonObject);
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

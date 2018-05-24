@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JwtAuthenticationDirective.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt</a> &gt; <span class="el_source">JwtAuthenticationDirective.java</span></div><h1>JwtAuthenticationDirective.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt;
+
+import static akka.http.javadsl.server.Directives.extractRequestContext;
+import static akka.http.javadsl.server.Directives.onSuccess;
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+import static org.eclipse.ditto.services.gateway.endpoints.utils.HttpUtils.containsAuthorizationForPrefix;
+import static org.eclipse.ditto.services.gateway.endpoints.utils.HttpUtils.getRequestHeader;
+
+import java.security.PublicKey;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletionException;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+import org.eclipse.ditto.model.base.auth.AuthorizationContext;
+import org.eclipse.ditto.model.base.auth.AuthorizationModelFactory;
+import org.eclipse.ditto.model.base.auth.AuthorizationSubject;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.AuthenticationProvider;
+import org.eclipse.ditto.services.gateway.endpoints.utils.DirectivesLoggingUtils;
+import org.eclipse.ditto.services.gateway.security.HttpHeader;
+import org.eclipse.ditto.services.gateway.security.jwt.ImmutableJsonWebToken;
+import org.eclipse.ditto.services.gateway.security.jwt.JsonWebToken;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayAuthenticationFailedException;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayAuthenticationProviderUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.MalformedJwtException;
+import io.jsonwebtoken.SignatureException;
+import io.jsonwebtoken.impl.DefaultJwtParser;
+import kamon.Kamon;
+import kamon.trace.TraceContext;
+
+/**
+ * Implementation of {@link AuthenticationProvider} handling JWT authentication.
+ */
+public final class JwtAuthenticationDirective implements AuthenticationProvider {
+
+<span class="fc" id="L56">    private static final Logger LOGGER = LoggerFactory.getLogger(JwtAuthenticationDirective.class);</span>
+
+    private static final String AUTHORIZATION_JWT = &quot;Bearer&quot;;
+
+    private static final String TRACE_FILTER_AUTH_JWT_FAIL = &quot;filter.auth.jwt.fail&quot;;
+    private static final String TRACE_FILTER_AUTH_JWT_ERROR = &quot;filter.auth.jwt.error&quot;;
+    private static final String TRACE_FILTER_AUTH_JWT_SUCCESS = &quot;filter.auth.jwt.success&quot;;
+
+    private final PublicKeyProvider publicKeyProvider;
+    private final AuthorizationSubjectsProvider authorizationSubjectsProvider;
+
+    /**
+     * Constructs a new {@link JwtAuthenticationDirective}.
+     *
+     * @param publicKeyProvider the provider for public keys.
+     * @param authorizationSubjectsProvider a provider for authorization subjects of a jwt.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public JwtAuthenticationDirective(final PublicKeyProvider publicKeyProvider,
+<span class="fc" id="L75">            final AuthorizationSubjectsProvider authorizationSubjectsProvider) {</span>
+<span class="fc" id="L76">        this.publicKeyProvider = checkNotNull(publicKeyProvider);</span>
+<span class="fc" id="L77">        this.authorizationSubjectsProvider = checkNotNull(authorizationSubjectsProvider);</span>
+<span class="fc" id="L78">    }</span>
+
+    @Override
+    public boolean isApplicable(final RequestContext context) {
+<span class="nc" id="L82">        return containsAuthorizationForPrefix(context, AUTHORIZATION_JWT);</span>
+    }
+
+    @Override
+    public Route unauthorized(final String correlationId) {
+<span class="nc" id="L87">        throw buildMissingJwtException(correlationId);</span>
+    }
+
+
+    @Override
+    public Route authenticate(final String correlationId, final Function&lt;AuthorizationContext, Route&gt; inner) {
+<span class="nc" id="L93">        return extractRequestContext(</span>
+<span class="nc" id="L94">                requestContext -&gt; DirectivesLoggingUtils.enhanceLogWithCorrelationId(correlationId, () -&gt; {</span>
+<span class="nc" id="L95">                    final TraceContext traceContext = Kamon.tracer().newContext(TRACE_FILTER_AUTH_JWT_ERROR);</span>
+<span class="nc" id="L96">                    final Optional&lt;String&gt; authorization =</span>
+<span class="nc" id="L97">                            getRequestHeader(requestContext, HttpHeader.AUTHORIZATION.toString().toLowerCase());</span>
+
+<span class="nc bnc" id="L99" title="All 2 branches missed.">                    if (!authorization.isPresent()) {</span>
+<span class="nc" id="L100">                        traceContext.rename(TRACE_FILTER_AUTH_JWT_FAIL);</span>
+<span class="nc" id="L101">                        traceContext.finish();</span>
+
+<span class="nc" id="L103">                        throw buildMissingJwtException(correlationId);</span>
+                    }
+
+<span class="nc" id="L106">                    final JsonWebToken jwt = ImmutableJsonWebToken.fromAuthorizationString(authorization.get());</span>
+
+<span class="nc" id="L108">                    return onSuccess(() -&gt; publicKeyProvider.getPublicKey(jwt.getIssuer(), jwt.getKeyId())</span>
+<span class="nc" id="L109">                                    .thenApply(publicKeyOpt -&gt;</span>
+<span class="nc" id="L110">                                            DirectivesLoggingUtils.enhanceLogWithCorrelationId(correlationId,</span>
+                                                    () -&gt; {
+                                                        final Supplier&lt;DittoRuntimeException&gt;
+<span class="nc" id="L113">                                                                missingAuthExceptionSupplier =</span>
+<span class="nc" id="L114">                                                                () -&gt; buildJwtUnauthorizedException(correlationId);</span>
+<span class="nc" id="L115">                                                        final PublicKey publicKey = publicKeyOpt</span>
+<span class="nc" id="L116">                                                                .orElseThrow(missingAuthExceptionSupplier);</span>
+
+<span class="nc" id="L118">                                                        validateToken(jwt, publicKey, correlationId);</span>
+
+<span class="nc" id="L120">                                                        final List&lt;AuthorizationSubject&gt; authSubjects =</span>
+                                                                authorizationSubjectsProvider
+<span class="nc" id="L122">                                                                        .getAuthorizationSubjects(jwt);</span>
+<span class="nc" id="L123">                                                        final AuthorizationContext authContext =</span>
+<span class="nc" id="L124">                                                                AuthorizationModelFactory.newAuthContext(authSubjects);</span>
+
+<span class="nc" id="L126">                                                        traceContext.rename(TRACE_FILTER_AUTH_JWT_SUCCESS);</span>
+<span class="nc" id="L127">                                                        traceContext.finish();</span>
+
+<span class="nc" id="L129">                                                        return authContext;</span>
+                                                    })
+<span class="nc" id="L131">                                    ).exceptionally(t -&gt; {</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">                                        final Throwable rootCause =</span>
+<span class="nc" id="L133">                                                (t instanceof CompletionException) ? t.getCause() : t;</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">                                        if (rootCause instanceof GatewayAuthenticationFailedException) {</span>
+<span class="nc" id="L135">                                            traceContext.rename(TRACE_FILTER_AUTH_JWT_FAIL);</span>
+<span class="nc" id="L136">                                            traceContext.finish();</span>
+
+<span class="nc" id="L138">                                            final DittoRuntimeException e = (DittoRuntimeException) rootCause;</span>
+<span class="nc" id="L139">                                            LOGGER.debug(&quot;JWT authentication failed.&quot;, e);</span>
+<span class="nc" id="L140">                                            throw e;</span>
+                                        } else {
+<span class="nc" id="L142">                                            traceContext.finish();</span>
+
+<span class="nc" id="L144">                                            LOGGER.warn(&quot;Unexpected error during JWT authentication.&quot;, rootCause);</span>
+<span class="nc" id="L145">                                            throw buildAuthenticationProviderUnavailableException(correlationId,</span>
+                                                    rootCause);
+                                        }
+                                    }),
+                            inner);
+                }));
+    }
+
+    private static DittoRuntimeException buildMissingJwtException(final String correlationId) {
+<span class="nc" id="L154">        return GatewayAuthenticationFailedException</span>
+<span class="nc" id="L155">                .newBuilder(&quot;The JWT was missing.&quot;)</span>
+<span class="nc" id="L156">                .dittoHeaders(DittoHeaders.newBuilder().correlationId(correlationId).build())</span>
+<span class="nc" id="L157">                .build();</span>
+    }
+
+    private void validateToken(final JsonWebToken authorizationToken, final PublicKey publicKey,
+            final String correlationId) {
+<span class="nc" id="L162">        final DefaultJwtParser defaultJwtParser = new DefaultJwtParser();</span>
+
+        try {
+<span class="nc" id="L165">            defaultJwtParser.setSigningKey(publicKey).parse(authorizationToken.getToken());</span>
+<span class="nc" id="L166">        } catch (final ExpiredJwtException | MalformedJwtException | SignatureException | IllegalArgumentException e) {</span>
+<span class="nc" id="L167">            LOGGER.info(&quot;Got Exception '{}' during parsing JWT: {}&quot;, e.getClass().getSimpleName(), e.getMessage(),</span>
+                    e);
+<span class="nc" id="L169">            throw buildJwtUnauthorizedException(correlationId);</span>
+<span class="nc" id="L170">        }</span>
+<span class="nc" id="L171">    }</span>
+
+    private static DittoRuntimeException buildJwtUnauthorizedException(final String correlationId) {
+<span class="nc" id="L174">        return GatewayAuthenticationFailedException.newBuilder(&quot;The JWT could not be verified&quot;)</span>
+<span class="nc" id="L175">                .description(&quot;Check if your token is not expired and set the token accordingly.&quot;)</span>
+<span class="nc" id="L176">                .dittoHeaders(DittoHeaders.newBuilder().correlationId(correlationId).build())</span>
+<span class="nc" id="L177">                .build();</span>
+    }
+
+    private static DittoRuntimeException buildAuthenticationProviderUnavailableException(final String correlationId,
+            final Throwable cause) {
+<span class="nc" id="L182">        return GatewayAuthenticationProviderUnavailableException</span>
+<span class="nc" id="L183">                .newBuilder()</span>
+<span class="nc" id="L184">                .dittoHeaders(DittoHeaders.newBuilder().correlationId(correlationId).build())</span>
+<span class="nc" id="L185">                .cause(cause)</span>
+<span class="nc" id="L186">                .build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

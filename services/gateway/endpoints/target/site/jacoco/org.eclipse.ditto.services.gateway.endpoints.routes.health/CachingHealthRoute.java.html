@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CachingHealthRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes.health</a> &gt; <span class="el_source">CachingHealthRoute.java</span></div><h1>CachingHealthRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes.health;
+
+import static akka.http.javadsl.server.Directives.completeWithFuture;
+import static akka.http.javadsl.server.Directives.get;
+import static akka.http.javadsl.server.Directives.path;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.CompletionStage;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.services.gateway.health.StatusAndHealthProvider;
+import org.eclipse.ditto.services.utils.health.StatusDetailMessage;
+import org.eclipse.ditto.services.utils.health.StatusInfo;
+
+import akka.http.javadsl.model.ContentTypes;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.model.StatusCodes;
+import akka.http.javadsl.server.Route;
+
+/**
+ * Builder for creating Akka HTTP route for {@code /health}.
+ */
+public final class CachingHealthRoute {
+
+    /**
+     * Public endpoint of health.
+     */
+    public static final String PATH_HEALTH = &quot;health&quot;;
+
+    private final StatusAndHealthProvider statusHealthHelper;
+    private final Duration refreshInterval;
+
+    private CompletionStage&lt;StatusInfo&gt; cachedHealth;
+    private Instant lastCheckInstant;
+
+    /**
+     * Constructs the {@code /health} route builder.
+     *
+     * @param statusHealthHelper the helper for retrieving health status of the cluster.
+     * @param refreshInterval the interval for refreshing the health status.
+     */
+<span class="fc" id="L55">    public CachingHealthRoute(final StatusAndHealthProvider statusHealthHelper, final Duration refreshInterval) {</span>
+<span class="fc" id="L56">        this.statusHealthHelper = statusHealthHelper;</span>
+<span class="fc" id="L57">        this.refreshInterval = refreshInterval;</span>
+<span class="fc" id="L58">    }</span>
+
+    /**
+     * Builds the {@code /health} route.
+     *
+     * @return the {@code /health} route.
+     */
+    public Route buildHealthRoute() {
+<span class="fc" id="L66">        return path(PATH_HEALTH, () -&gt; // /health</span>
+<span class="nc" id="L67">                get(() -&gt; // GET</span>
+<span class="nc" id="L68">                        completeWithFuture(createOverallHealthResponse())</span>
+                )
+        );
+    }
+
+    private boolean isCacheTimedOut() {
+<span class="nc" id="L74">        return lastCheckInstant.plusSeconds(refreshInterval.getSeconds()).isBefore(Instant.now());</span>
+    }
+
+    private CompletionStage&lt;HttpResponse&gt; createOverallHealthResponse() {
+<span class="nc bnc" id="L78" title="All 4 branches missed.">        if (cachedHealth == null || isCacheTimedOut()) {</span>
+<span class="nc" id="L79">            cachedHealth = statusHealthHelper.retrieveHealth()</span>
+<span class="nc" id="L80">                    .exceptionally(t -&gt; StatusInfo.fromDetail(StatusDetailMessage.of(StatusDetailMessage.Level.ERROR,</span>
+<span class="nc" id="L81">                            &quot;Exception: &quot; + t.getMessage())));</span>
+<span class="nc" id="L82">            lastCheckInstant = Instant.now();</span>
+        }
+
+<span class="nc" id="L85">        return cachedHealth.thenApply(overallHealth -&gt; {</span>
+<span class="nc" id="L86">            final JsonObject statusObject = JsonFactory.newObject()</span>
+<span class="nc" id="L87">                    .set(StatusInfo.JSON_KEY_STATUS, overallHealth.getStatus().toString());</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">            if (overallHealth.isHealthy()) {</span>
+<span class="nc" id="L89">                return HttpResponse.create()</span>
+<span class="nc" id="L90">                        .withStatus(StatusCodes.OK)</span>
+<span class="nc" id="L91">                        .withEntity(ContentTypes.APPLICATION_JSON, statusObject.toString());</span>
+            } else {
+<span class="nc" id="L93">                return HttpResponse.create()</span>
+<span class="nc" id="L94">                        .withStatus(StatusCodes.SERVICE_UNAVAILABLE)</span>
+<span class="nc" id="L95">                        .withEntity(ContentTypes.APPLICATION_JSON, statusObject.toString());</span>
+            }
+        });
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

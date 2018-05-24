@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GatewayAuthenticationDirective.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.directives.auth</a> &gt; <span class="el_source">GatewayAuthenticationDirective.java</span></div><h1>GatewayAuthenticationDirective.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.directives.auth;
+
+import static akka.http.javadsl.server.Directives.extractRequestContext;
+import static org.eclipse.ditto.model.base.common.ConditionChecker.argumentNotEmpty;
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+
+import org.eclipse.ditto.model.base.auth.AuthorizationContext;
+import org.eclipse.ditto.services.gateway.endpoints.utils.DirectivesLoggingUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import akka.http.javadsl.model.Uri;
+import akka.http.javadsl.server.Route;
+
+/**
+ * Akka Http directive which performs authentication for the Things service.
+ */
+public final class GatewayAuthenticationDirective {
+
+<span class="fc" id="L37">    private static final Logger LOGGER = LoggerFactory.getLogger(GatewayAuthenticationDirective.class);</span>
+
+    private final List&lt;AuthenticationProvider&gt; authenticationChain;
+    private final Function&lt;String, Route&gt; unauthorizedDirective;
+
+    /**
+     * Constructor.
+     *
+     * @param authenticationChain a list of {@link AuthenticationProvider}s (which are tried to be applied in this
+     * order).
+     * @throws NullPointerException if any argument is {@code null}.
+     * @throws IllegalArgumentException if {@code authenticationChain} is empty
+     */
+    public GatewayAuthenticationDirective(final List&lt;AuthenticationProvider&gt; authenticationChain) {
+<span class="fc" id="L51">        this(authenticationChain, new UnauthorizedDirective());</span>
+<span class="fc" id="L52">    }</span>
+
+    /**
+     * Constructor.
+     *
+     * @param authenticationChain a list of {@link AuthenticationProvider}s (which are tried to be applied in this
+     * order).
+     * @param unauthorizedDirective a directive providing a route for the case that a request cannot be handled by
+     * any of the {@link AuthenticationProvider}s from {@code authenticationChain}.
+     * @throws NullPointerException if any argument is {@code null}.
+     * @throws IllegalArgumentException if {@code authenticationChain} is empty
+     */
+    public GatewayAuthenticationDirective(final List&lt;AuthenticationProvider&gt; authenticationChain,
+<span class="fc" id="L65">            final Function&lt;String, Route&gt; unauthorizedDirective) {</span>
+<span class="fc" id="L66">        checkNotNull(authenticationChain, &quot;authenticationChain&quot;);</span>
+<span class="fc" id="L67">        argumentNotEmpty(authenticationChain, &quot;authenticationChain&quot;);</span>
+<span class="fc" id="L68">        checkNotNull(unauthorizedDirective, &quot;unauthorizedDirective&quot;);</span>
+
+<span class="fc" id="L70">        this.authenticationChain = Collections.unmodifiableList(new ArrayList&lt;&gt;(authenticationChain));</span>
+<span class="fc" id="L71">        this.unauthorizedDirective = unauthorizedDirective;</span>
+<span class="fc" id="L72">    }</span>
+
+    /**
+     * Depending on the request headers, one of the supported authentication mechanisms is applied.
+     *
+     * @param correlationId the correlationId which will be added to the log
+     * @param inner the inner route which will be wrapped with the {@link AuthorizationContext}
+     * @return the inner route wrapped with the {@link AuthorizationContext}
+     */
+    public Route authenticate(final String correlationId, final Function&lt;AuthorizationContext, Route&gt; inner) {
+<span class="fc" id="L82">        return extractRequestContext(</span>
+<span class="fc" id="L83">                requestContext -&gt; DirectivesLoggingUtils.enhanceLogWithCorrelationId(correlationId, () -&gt; {</span>
+<span class="fc" id="L84">                    final Optional&lt;AuthenticationProvider&gt; applicableDirective = authenticationChain.stream()</span>
+<span class="fc" id="L85">                            .filter(authenticationDirective -&gt; authenticationDirective.isApplicable(requestContext))</span>
+<span class="fc" id="L86">                            .findFirst();</span>
+
+<span class="fc" id="L88">                    final Uri requestUri = requestContext.getRequest().getUri();</span>
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">                    if (applicableDirective.isPresent()) {</span>
+<span class="fc" id="L90">                        LOGGER.debug(&quot;Applying Authentication Directive '{}' to URI '{}'&quot;,</span>
+<span class="fc" id="L91">                                applicableDirective.getClass().getSimpleName(), requestUri);</span>
+<span class="fc" id="L92">                        return applicableDirective.get().authenticate(correlationId, inner);</span>
+                    } else {
+<span class="nc" id="L94">                        LOGGER.debug(&quot;Missing Authentication for URI '{}'. Applying unauthorizedDirective '{}'&quot;,</span>
+                                requestUri, unauthorizedDirective);
+<span class="nc" id="L96">                        return unauthorizedDirective.apply(correlationId);</span>
+                    }
+                }));
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

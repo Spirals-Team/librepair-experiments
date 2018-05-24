@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MappingStrategiesBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Cluster Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.cluster</a> &gt; <span class="el_source">MappingStrategiesBuilder.java</span></div><h1>MappingStrategiesBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.cluster;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.BiFunction;
+import java.util.function.Function;
+
+import javax.annotation.Nonnull;
+import javax.annotation.concurrent.NotThreadSafe;
+
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.json.Jsonifiable;
+import org.eclipse.ditto.services.utils.akka.SimpleCommand;
+import org.eclipse.ditto.services.utils.akka.SimpleCommandResponse;
+import org.eclipse.ditto.services.utils.akka.streaming.StreamAck;
+import org.eclipse.ditto.services.utils.health.StatusInfo;
+import org.eclipse.ditto.signals.base.JsonParsableRegistry;
+import org.eclipse.ditto.signals.base.ShardedMessageEnvelope;
+
+/**
+ * A mutable builder with a fluent API for a Map containing mapping strategies. This builder mainly exists to eliminate
+ * redundancy.
+ */
+@NotThreadSafe
+public final class MappingStrategiesBuilder {
+
+    /**
+     * Failure message when json deserialization function is null.
+     */
+    private static final String ERROR_MESSAGE_JSON_DESERIALIZATION_FUNCTION = &quot;JSON deserialization function&quot;;
+    private final Map&lt;String, BiFunction&lt;JsonObject, DittoHeaders, Jsonifiable&gt;&gt; strategies;
+
+<span class="fc" id="L48">    private MappingStrategiesBuilder() {</span>
+<span class="fc" id="L49">        strategies = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L50">    }</span>
+
+    /**
+     * Returns a new instance of {@code MappingStrategiesBuilder}.
+     *
+     * @return the instance.
+     */
+    public static MappingStrategiesBuilder newInstance() {
+<span class="fc" id="L58">        final MappingStrategiesBuilder builder = new MappingStrategiesBuilder();</span>
+
+        // add the commonly known types:
+<span class="pc" id="L61">        builder.add(DittoHeaders.class, jsonObject -&gt; DittoHeaders.newBuilder(jsonObject).build());</span>
+<span class="fc" id="L62">        builder.add(ShardedMessageEnvelope.class,</span>
+<span class="nc" id="L63">                jsonObject -&gt; ShardedMessageEnvelope.fromJson(jsonObject)); // do not replace with lambda!</span>
+<span class="fc" id="L64">        builder.add(SimpleCommand.class,</span>
+<span class="nc" id="L65">                jsonObject -&gt; SimpleCommand.fromJson(jsonObject)); // do not replace with lambda!</span>
+<span class="fc" id="L66">        builder.add(SimpleCommandResponse.class,</span>
+<span class="nc" id="L67">                jsonObject -&gt; SimpleCommandResponse.fromJson(jsonObject)); // do not replace with lambda!</span>
+<span class="fc" id="L68">        builder.add(StatusInfo.class,</span>
+<span class="nc" id="L69">                jsonObject -&gt; StatusInfo.fromJson(jsonObject)); // do not replace with lambda!</span>
+<span class="fc" id="L70">        builder.add(StreamAck.class, StreamAck::fromJson);</span>
+
+<span class="fc" id="L72">        return builder;</span>
+    }
+
+    /**
+     * Adds the given registry to this builder.
+     *
+     * @param jsonParsableRegistry the registry to be added.
+     * @return this builder instance to allow Method Chaining.
+     * @throws NullPointerException if {@code jsonParsableRegistry} is {@code null}.
+     */
+    public MappingStrategiesBuilder add(
+            @Nonnull final JsonParsableRegistry&lt;? extends Jsonifiable&gt; jsonParsableRegistry) {
+<span class="fc" id="L84">        checkNotNull(jsonParsableRegistry, &quot;jsonParsableRegistry&quot;);</span>
+<span class="fc" id="L85">        final Set&lt;String&gt; types = jsonParsableRegistry.getTypes();</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">        for (final String type : types) {</span>
+<span class="fc" id="L87">            strategies.put(type, jsonParsableRegistry::parse);</span>
+<span class="fc" id="L88">        }</span>
+<span class="fc" id="L89">        return this;</span>
+    }
+
+    /**
+     * Adds the given JSON deserialization function for the given class to this builder.
+     *
+     * @param clazz a class whose simple name is the key for {@code jsonDeserializer}.
+     * @param jsonDeserializer a function for creating a particular Jsonifiable based on a JSON object.
+     * @return this builder instance to allow Method Chaining.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public MappingStrategiesBuilder add(@Nonnull final Class&lt;?&gt; clazz,
+            @Nonnull final Function&lt;JsonObject, Jsonifiable&lt;?&gt;&gt; jsonDeserializer) {
+<span class="fc" id="L102">        checkNotNull(clazz, &quot;class&quot;);</span>
+<span class="fc" id="L103">        checkNotNull(jsonDeserializer, ERROR_MESSAGE_JSON_DESERIALIZATION_FUNCTION);</span>
+        // Translate simple Function to BiFunction ignoring the command headers
+<span class="fc" id="L105">        strategies.put(clazz.getSimpleName(), (jsonObject, dittoHeaders) -&gt; jsonDeserializer.apply(jsonObject));</span>
+<span class="fc" id="L106">        return this;</span>
+    }
+
+    /**
+     * Adds the given JSON deserialization function for the given class to this builder.
+     *
+     * @param klasse a class whose simple name is the key for {@code jsonDeserializer}.
+     * @param jsonDeserializer a function for creating a particular Jsonifiable based on a JSON object.
+     * @return this builder instance to allow Method Chaining.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public MappingStrategiesBuilder add(@Nonnull final Class&lt;?&gt; klasse,
+            @Nonnull final BiFunction&lt;JsonObject, DittoHeaders, Jsonifiable&lt;?&gt;&gt; jsonDeserializer) {
+<span class="fc" id="L119">        checkNotNull(klasse, &quot;class&quot;);</span>
+<span class="fc" id="L120">        checkNotNull(jsonDeserializer, ERROR_MESSAGE_JSON_DESERIALIZATION_FUNCTION);</span>
+        // Translate simple Function to BiFunction ignoring the command headers
+<span class="fc" id="L122">        strategies.put(klasse.getSimpleName(), jsonDeserializer::apply);</span>
+<span class="fc" id="L123">        return this;</span>
+    }
+
+    /**
+     * Adds the given JSON deserialization function for the given type to this builder.
+     *
+     * @param type the key for {@code jsonDeserializer}.
+     * @param jsonDeserializer a function for creating a particular Jsonifiable based on a JSON object.
+     * @return this builder instance to allow Method Chaining.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public MappingStrategiesBuilder add(@Nonnull final String type,
+            @Nonnull final Function&lt;JsonObject, Jsonifiable&lt;?&gt;&gt; jsonDeserializer) {
+<span class="fc" id="L136">        checkNotNull(type, &quot;type&quot;);</span>
+<span class="fc" id="L137">        checkNotNull(jsonDeserializer, ERROR_MESSAGE_JSON_DESERIALIZATION_FUNCTION);</span>
+        // Translate simple Function to BiFunction ignoring the command headers
+<span class="fc" id="L139">        strategies.put(type, (jsonObject, dittoHeaders) -&gt; jsonDeserializer.apply(jsonObject));</span>
+<span class="fc" id="L140">        return this;</span>
+    }
+
+    /**
+     * Adds the given JSON deserialization function for the given type to this builder.
+     *
+     * @param type the key for {@code jsonDeserializer}.
+     * @param jsonDeserializer a function for creating a particular Jsonifiable based on a JSON object.
+     * @return this builder instance to allow Method Chaining.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public MappingStrategiesBuilder add(@Nonnull final String type,
+            @Nonnull final BiFunction&lt;JsonObject, DittoHeaders, Jsonifiable&lt;?&gt;&gt; jsonDeserializer) {
+<span class="fc" id="L153">        checkNotNull(type, &quot;type&quot;);</span>
+<span class="fc" id="L154">        checkNotNull(jsonDeserializer, ERROR_MESSAGE_JSON_DESERIALIZATION_FUNCTION);</span>
+        // Translate simple Function to BiFunction ignoring the command headers
+<span class="fc" id="L156">        strategies.put(type, jsonDeserializer::apply);</span>
+<span class="fc" id="L157">        return this;</span>
+    }
+
+    /**
+     * Returns a modifiable Map containing all previously added strategies. It is suggested &lt;em&gt;not&lt;/em&gt; to reuse this
+     * instance after the {@code build} method was called.
+     *
+     * @return the Map.
+     */
+    @Nonnull
+    public Map&lt;String, BiFunction&lt;JsonObject, DittoHeaders, Jsonifiable&gt;&gt; build() {
+<span class="fc" id="L168">        return strategies;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

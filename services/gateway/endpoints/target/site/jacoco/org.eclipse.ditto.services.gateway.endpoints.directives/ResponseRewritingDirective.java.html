@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ResponseRewritingDirective.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.directives</a> &gt; <span class="el_source">ResponseRewritingDirective.java</span></div><h1>ResponseRewritingDirective.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.directives;
+
+import static akka.http.javadsl.server.Directives.mapRouteResult;
+
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+import org.eclipse.ditto.model.base.common.HttpStatusCode;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.services.gateway.endpoints.utils.DirectivesLoggingUtils;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayInternalErrorException;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayServiceUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import akka.http.javadsl.model.ContentTypes;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.server.Complete;
+import akka.http.javadsl.server.Route;
+import akka.http.javadsl.server.RouteResult;
+import akka.http.javadsl.server.RouteResults;
+import akka.util.ByteString;
+
+/**
+ * Custom Akka Http directive which rewrites the response for the end user, e.g. by returning 503 instead of 5xx in
+ * case of error.
+ */
+public final class ResponseRewritingDirective {
+
+<span class="fc" id="L41">    private static final Logger LOGGER = LoggerFactory.getLogger(ResponseRewritingDirective.class);</span>
+<span class="fc" id="L42">    static final Complete UNAVAILABLE_ROUT_RESULT = createUnavailableRouteResult();</span>
+<span class="fc" id="L43">    static final Complete INTERNAL_SERVER_ERROR_RESULT = createInternalServerErrorResult();</span>
+
+    private ResponseRewritingDirective() {
+        // no op
+    }
+
+    /**
+     * Rewrites the response if necessary, e.g. by returning 503 instead of 5xx.
+     *
+     * @param correlationId the correlationId which will be added to the log
+     * @param inner the inner Route to wrap with the response headers
+     * @return the new Route wrapping {@code inner} with the response headers
+     */
+    public static Route rewriteResponse(final String correlationId, final Supplier&lt;Route&gt; inner) {
+<span class="fc" id="L57">        final Function&lt;RouteResult, RouteResult&gt; routeResultRouteResultFunction = routeResult -&gt; {</span>
+<span class="fc" id="L58">            LOGGER.debug(&quot;Got RouteResult '{}'&quot;, routeResult);</span>
+<span class="pc bpc" id="L59" title="1 of 2 branches missed.">            if (routeResult instanceof Complete) {</span>
+<span class="fc" id="L60">                final Complete complete = (Complete) routeResult;</span>
+<span class="fc" id="L61">                return handleCompleteResult(complete);</span>
+            } else {
+                /* routeResult could be Rejected, if no route is able to handle the request -&gt; but this should
+                   not happen when rejections are handled before this directive is called. */
+<span class="nc" id="L65">                return handleNonCompleteResult(routeResult);</span>
+
+            }
+        };
+<span class="fc" id="L69">        return mapRouteResult(</span>
+<span class="fc" id="L70">                DirectivesLoggingUtils.enhanceLogWithCorrelationId(correlationId, () -&gt; routeResultRouteResultFunction),</span>
+                inner);
+    }
+
+    private static RouteResult handleNonCompleteResult(final RouteResult routeResult) {
+<span class="nc" id="L75">        LOGGER.warn(&quot;Unexpected routeResult '{}', will be handled by &quot; +</span>
+                &quot;akka default RejectionHandler.&quot;, routeResult);
+<span class="nc" id="L77">        return routeResult;</span>
+    }
+
+    private static RouteResult handleCompleteResult(final Complete complete) {
+<span class="fc" id="L81">        final int statusCode = complete.getResponse().status().intValue();</span>
+
+<span class="fc bfc" id="L83" title="All 4 branches covered.">        if (statusCode &lt; 500 || statusCode == HttpStatusCode.SERVICE_UNAVAILABLE.toInt()) {</span>
+<span class="fc" id="L84">            LOGGER.debug(&quot;RouteResult with status {} is not rewritten&quot;, statusCode);</span>
+<span class="fc" id="L85">            return complete;</span>
+        } else {
+<span class="fc bfc" id="L87" title="All 2 branches covered.">            if (statusCode == HttpStatusCode.INTERNAL_SERVER_ERROR.toInt()) {</span>
+<span class="fc" id="L88">                LOGGER.debug(&quot;RouteResult with status {} is rewritten to: '{}'&quot;,</span>
+<span class="fc" id="L89">                        statusCode, UNAVAILABLE_ROUT_RESULT);</span>
+<span class="fc" id="L90">                return UNAVAILABLE_ROUT_RESULT;</span>
+            } else {
+<span class="fc" id="L92">                LOGGER.warn(&quot;Status {} is unknown, RouteResult is rewritten to: '{}'&quot;,</span>
+<span class="fc" id="L93">                        statusCode, INTERNAL_SERVER_ERROR_RESULT);</span>
+<span class="fc" id="L94">                return INTERNAL_SERVER_ERROR_RESULT;</span>
+            }
+        }
+    }
+
+    private static Complete createUnavailableRouteResult() {
+<span class="fc" id="L100">        return createExceptionRouteResult(GatewayServiceUnavailableException.newBuilder().build());</span>
+    }
+
+    private static Complete createInternalServerErrorResult() {
+<span class="fc" id="L104">        return createExceptionRouteResult(GatewayInternalErrorException.newBuilder().build());</span>
+    }
+
+    private static Complete createExceptionRouteResult(final DittoRuntimeException dre) {
+<span class="fc" id="L108">        return RouteResults.complete(HttpResponse.create().withStatus(dre.getStatusCode().toInt())</span>
+<span class="fc" id="L109">                .withEntity(ContentTypes.APPLICATION_JSON, ByteString.fromString(dre.toJsonString())));</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

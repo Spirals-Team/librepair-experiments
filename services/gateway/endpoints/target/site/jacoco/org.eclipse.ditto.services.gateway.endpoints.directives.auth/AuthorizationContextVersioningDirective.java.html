@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuthorizationContextVersioningDirective.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.directives.auth</a> &gt; <span class="el_source">AuthorizationContextVersioningDirective.java</span></div><h1>AuthorizationContextVersioningDirective.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.directives.auth;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import org.eclipse.ditto.model.base.auth.AuthorizationContext;
+import org.eclipse.ditto.model.base.auth.AuthorizationModelFactory;
+import org.eclipse.ditto.model.base.auth.AuthorizationSubject;
+import org.eclipse.ditto.model.policies.SubjectId;
+import org.eclipse.ditto.services.gateway.endpoints.utils.DirectivesLoggingUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import akka.http.javadsl.server.Route;
+
+/**
+ * Custom Akka HTTP Directive which adjusts a given {@link AuthorizationContext} with prefixed subjects for the
+ * requested API version.
+ */
+public final class AuthorizationContextVersioningDirective {
+
+<span class="fc" id="L35">    private static final Logger LOGGER = LoggerFactory.getLogger(AuthorizationContextVersioningDirective.class);</span>
+
+    private AuthorizationContextVersioningDirective() {
+        // no op
+    }
+
+    /**
+     * Adapts an {@link AuthorizationContext} with prefixed subjects for use in the requested API version.
+     *
+     * @param correlationId the correlationId (used for logging)
+     * @param apiVersion the API version from the URI (e.g. from &quot;/api/1&quot; it would be &quot;1&quot;)
+     * @param authContextWithPrefixedSubjects an {@link AuthorizationContext} with prefixed subjects
+     * @param inner the inner Route to wrap with the mapped {@link AuthorizationContext}
+     * @return the new Route the mapped authentication {@link AuthorizationContext}
+     */
+    public static Route mapAuthorizationContext(final String correlationId, final int apiVersion,
+            final AuthorizationContext authContextWithPrefixedSubjects,
+            final Function&lt;AuthorizationContext, Route&gt; inner) {
+<span class="fc" id="L53">        return DirectivesLoggingUtils.enhanceLogWithCorrelationId(correlationId, () -&gt; {</span>
+<span class="fc" id="L54">            LOGGER.debug(&quot;Original authorization context: {}&quot;, authContextWithPrefixedSubjects);</span>
+
+<span class="fc" id="L56">            final AuthorizationContext mappedAuthorizationContext =</span>
+<span class="fc" id="L57">                    mapAuthorizationContext(authContextWithPrefixedSubjects, apiVersion);</span>
+<span class="fc" id="L58">            LOGGER.debug(&quot;Mapped authorization context: {}&quot;, mappedAuthorizationContext);</span>
+
+<span class="fc" id="L60">            return inner.apply(mappedAuthorizationContext);</span>
+        });
+    }
+
+    private static AuthorizationContext mapAuthorizationContext(
+            final AuthorizationContext authenticationContextWithPrefixedSubjects, final int version) {
+<span class="fc" id="L66">        final List&lt;AuthorizationSubject&gt; subjects = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L67">        final List&lt;AuthorizationSubject&gt; subjectsWithPrefix = authenticationContextWithPrefixedSubjects</span>
+<span class="fc" id="L68">                .getAuthorizationSubjects();</span>
+<span class="fc" id="L69">        final List&lt;AuthorizationSubject&gt; subjectsWithoutPrefix =</span>
+<span class="fc" id="L70">                subjectsWithPrefix.stream().map(AuthorizationSubject::getId)</span>
+<span class="fc" id="L71">                        .map(SubjectId::newInstance)</span>
+<span class="fc" id="L72">                        .map(SubjectId::getSubject)</span>
+<span class="fc" id="L73">                        .map(AuthorizationModelFactory::newAuthSubject)</span>
+<span class="fc" id="L74">                        .collect(Collectors.toList());</span>
+
+<span class="fc bfc" id="L76" title="All 2 branches covered.">        if (version == 1) {</span>
+            /* while we still support authorization subjects in &quot;old&quot; V1, we must enhance the List of
+               AuthorizationSubjects by PREPENDING AuthorizationSubjects without prefix - because the first
+               AuthorizationSubject is used to create a default ACL
+            */
+
+<span class="fc" id="L82">            subjects.addAll(subjectsWithoutPrefix);</span>
+<span class="fc" id="L83">            subjects.addAll(subjectsWithPrefix);</span>
+        } else {
+            /* for V2 and above, we must enhance the List of
+               AuthorizationSubjects by APPENDING AuthorizationSubjects without prefix - because the first
+               AuthorizationSubject is used to create a default ACL
+            */
+
+<span class="fc" id="L90">            subjects.addAll(subjectsWithPrefix);</span>
+<span class="fc" id="L91">            subjects.addAll(subjectsWithoutPrefix);</span>
+        }
+
+<span class="fc" id="L94">        return AuthorizationModelFactory.newAuthContext(subjects);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

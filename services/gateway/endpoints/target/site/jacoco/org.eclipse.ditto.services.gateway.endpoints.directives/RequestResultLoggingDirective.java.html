@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RequestResultLoggingDirective.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.directives</a> &gt; <span class="el_source">RequestResultLoggingDirective.java</span></div><h1>RequestResultLoggingDirective.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.directives;
+
+import static akka.http.javadsl.server.Directives.extractRequestContext;
+import static akka.http.javadsl.server.Directives.logRequest;
+import static akka.http.javadsl.server.Directives.logResult;
+import static akka.http.javadsl.server.Directives.mapRouteResult;
+
+import java.util.function.Supplier;
+
+import org.eclipse.ditto.model.base.common.HttpStatusCode;
+import org.eclipse.ditto.services.gateway.endpoints.utils.DirectivesLoggingUtils;
+import org.eclipse.ditto.services.gateway.endpoints.utils.HttpUtils;
+import org.eclipse.ditto.services.gateway.endpoints.utils.TraceUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import akka.http.javadsl.model.HttpRequest;
+import akka.http.javadsl.server.Complete;
+import akka.http.javadsl.server.Route;
+
+/**
+ * Custom Akka Http directive logging the StatusCode and duration of the route.
+ */
+public final class RequestResultLoggingDirective {
+
+<span class="fc" id="L37">    private static final Logger LOGGER = LoggerFactory.getLogger(RequestResultLoggingDirective.class);</span>
+
+<span class="fc" id="L39">    private static final int UNKNOWN_STATUS_CODE = HttpStatusCode.IM_A_TEAPOT.toInt();</span>
+
+    private RequestResultLoggingDirective() {
+        // no op
+    }
+
+    /**
+     * Logs the StatusCode and duration of the route.
+     *
+     * @param correlationId the correlationId which will be added to the log
+     * @param inner the inner Route to be logged
+     * @return the new Route wrapping {@code inner} with logging
+     */
+    public static Route logRequestResult(final String correlationId, final Supplier&lt;Route&gt; inner) {
+        // add akka standard logging to the route
+<span class="fc" id="L54">        final Supplier&lt;Route&gt; innerWithAkkaLoggingRoute = () -&gt; logRequest(&quot;http-request&quot;, () -&gt;</span>
+<span class="fc" id="L55">                logResult(&quot;http-response&quot;, inner));</span>
+
+        // add our own logging with time measurement and creating a kamon trace
+        // code is inspired by DebuggingDirectives#logRequestResult
+<span class="fc" id="L59">        return extractRequestContext(requestContext -&gt; {</span>
+<span class="fc" id="L60">            final long startNanos = System.nanoTime();</span>
+<span class="fc" id="L61">            final HttpRequest request = requestContext.getRequest();</span>
+<span class="fc" id="L62">            final String requestMethod = request.method().name();</span>
+<span class="fc" id="L63">            final String requestUri = request.getUri().toRelative().toString();</span>
+<span class="fc" id="L64">            return mapRouteResult(</span>
+<span class="fc" id="L65">                    routeResult -&gt; DirectivesLoggingUtils.enhanceLogWithCorrelationId(correlationId, () -&gt; {</span>
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">                if (routeResult instanceof Complete) {</span>
+<span class="fc" id="L67">                    final Complete complete = (Complete) routeResult;</span>
+<span class="fc" id="L68">                    final int statusCode = complete.getResponse().status().intValue();</span>
+<span class="fc" id="L69">                    LOGGER.info(&quot;StatusCode of request {} '{}' was: {}&quot;, requestMethod, requestUri, statusCode);</span>
+<span class="fc" id="L70">                    final String rawRequestUri = HttpUtils.getRawRequestUri(request);</span>
+<span class="fc" id="L71">                    LOGGER.debug(&quot;Raw request URI was: {}&quot;, rawRequestUri);</span>
+
+<span class="fc" id="L73">                    TraceUtils.createTrace(correlationId, startNanos, requestContext, statusCode);</span>
+<span class="fc" id="L74">                } else {</span>
+                /* routeResult could be Rejected, if no route is able to handle the request -&gt; but this should
+                   not happen when rejections are handled before this directive is called. */
+<span class="nc" id="L77">                    LOGGER.warn(&quot;Unexpected routeResult for request {} '{}': {}, routeResult will be handled by &quot; +</span>
+                                    &quot;akka default RejectionHandler.&quot;, requestMethod, requestUri,
+                            routeResult);
+<span class="nc" id="L80">                    TraceUtils.createTrace(correlationId, startNanos, requestContext, UNKNOWN_STATUS_CODE);</span>
+                }
+
+<span class="fc" id="L83">                return routeResult;</span>
+            }), innerWithAkkaLoggingRoute);
+        });
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

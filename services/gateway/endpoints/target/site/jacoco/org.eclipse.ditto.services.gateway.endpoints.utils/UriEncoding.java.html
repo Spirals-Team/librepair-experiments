@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UriEncoding.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.utils</a> &gt; <span class="el_source">UriEncoding.java</span></div><h1>UriEncoding.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.utils;
+
+import static java.util.Objects.requireNonNull;
+
+import java.io.ByteArrayOutputStream;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.function.IntPredicate;
+
+/**
+ * Utility for URI encoding and decoding based on RFC 3986 or MIME format {@code application/x-www-form-urlencoded}. As
+ * character encoding, UTF-8 is used by all methods.
+ *
+ * @see &lt;a href=&quot;http://www.ietf.org/rfc/rfc3986.txt&quot;&gt;RFC 3986&lt;/a&gt;
+ */
+<span class="nc" id="L29">public final class UriEncoding {</span>
+
+<span class="fc" id="L31">    private static final String ENCODING = StandardCharsets.UTF_8.name();</span>
+<span class="fc bfc" id="L32" title="All 4 branches covered.">    private static final IntPredicate ALLOWED_IN_PATH = c -&gt; isPchar(c) || '/' == c;</span>
+<span class="fc" id="L33">    private static final IntPredicate ALLOWED_IN_PATH_SEGMENT = UriEncoding::isPchar;</span>
+    /*
+     * Workaround: '+' needs to be escaped to '%2B', otherwise it will be recognized as blank when decoding with MIME
+     * format {@code application/x-www-form-urlencoded} - what most servers do (such as akka-http).
+     */
+<span class="fc bfc" id="L38" title="All 8 branches covered.">    private static final IntPredicate ALLOWED_IN_QUERY = c -&gt; c != '+' &amp;&amp; (isPchar(c) || '/' == c || '?' == c);</span>
+<span class="fc" id="L39">    private static final IntPredicate ALLOWED_IN_QUERY_PARAM =</span>
+<span class="fc bfc" id="L40" title="All 6 branches covered.">            c -&gt; !('=' == c || '&amp;' == c) &amp;&amp; ALLOWED_IN_QUERY.test(c);</span>
+
+    /**
+     * Encodes the given path according to RFC 3986.
+     *
+     * @param path the path to be encoded
+     * @return the encoded path
+     */
+    public static String encodePath(final String path) {
+<span class="fc" id="L49">        requireNonNull(path);</span>
+
+<span class="fc" id="L51">        return encodeRFC3986UriComponent(path, ALLOWED_IN_PATH);</span>
+    }
+
+    /**
+     * Encodes the given path segment according to RFC 3986.
+     *
+     * @param pathSegment the path segment to be encoded
+     * @return the encoded path segment
+     */
+    public static String encodePathSegment(final String pathSegment) {
+<span class="fc" id="L61">        requireNonNull(pathSegment);</span>
+
+<span class="fc" id="L63">        return encodeRFC3986UriComponent(pathSegment, ALLOWED_IN_PATH_SEGMENT);</span>
+    }
+
+    /**
+     * Encodes the given query according to the specified encoding type.
+     *
+     * @param query the query to be encoded
+     * @param encType the encoding type to be used for encoding
+     * @return the encoded query
+     */
+    public static String encodeQuery(final String query, final EncodingType encType) {
+<span class="fc" id="L74">        requireNonNull(query);</span>
+<span class="fc" id="L75">        requireNonNull(encType);</span>
+
+<span class="fc bfc" id="L77" title="All 2 branches covered.">        if (encType == EncodingType.FORM_URL_ENCODED) {</span>
+<span class="fc" id="L78">            return encodeFormUrlEncoded(query) //</span>
+<span class="fc" id="L79">                    .replaceAll(&quot;%3D&quot;, &quot;=&quot;) //</span>
+<span class="fc" id="L80">                    .replaceAll(&quot;%26&quot;, &quot;&amp;&quot;);</span>
+        } else {
+<span class="fc" id="L82">            return encodeRFC3986UriComponent(query, ALLOWED_IN_QUERY);</span>
+        }
+    }
+
+    /**
+     * Encodes the given query parameter according to the specified encoding type.
+     *
+     * @param queryParam the query parameter to be encoded
+     * @param encType the encoding type to be used for encoding
+     * @return the encoded query
+     */
+    public static String encodeQueryParam(final String queryParam, final EncodingType encType) {
+<span class="fc" id="L94">        requireNonNull(queryParam);</span>
+<span class="fc" id="L95">        requireNonNull(encType);</span>
+
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        if (encType == EncodingType.FORM_URL_ENCODED) {</span>
+<span class="fc" id="L98">            return encodeFormUrlEncoded(queryParam);</span>
+        } else {
+<span class="fc" id="L100">            return encodeRFC3986UriComponent(queryParam, ALLOWED_IN_QUERY_PARAM);</span>
+        }
+    }
+
+    /**
+     * Decodes the given encoded source String according to the specified encoding type.
+     *
+     * @param source the source
+     * @param encType the encoding type to be used for decoding
+     * @return the decoded URI
+     * @throws IllegalArgumentException when the given source contains invalid encoded sequences
+     */
+    public static String decode(final String source, final EncodingType encType) {
+<span class="fc" id="L113">        requireNonNull(source);</span>
+<span class="fc" id="L114">        requireNonNull(encType);</span>
+
+<span class="fc bfc" id="L116" title="All 2 branches covered.">        if (encType == EncodingType.FORM_URL_ENCODED) {</span>
+<span class="fc" id="L117">            return decodeFormUrlEncoded(source);</span>
+        } else {
+<span class="fc" id="L119">            return decodeRFC3986(source);</span>
+        }
+    }
+
+    private static String encodeFormUrlEncoded(final String s) {
+        try {
+<span class="fc" id="L125">            return URLEncoder.encode(s, ENCODING);</span>
+<span class="nc" id="L126">        } catch (final UnsupportedEncodingException e) {</span>
+<span class="nc" id="L127">            throw new IllegalStateException(e);</span>
+        }
+    }
+
+    private static String decodeFormUrlEncoded(final String source) {
+        try {
+<span class="fc" id="L133">            return URLDecoder.decode(source, ENCODING);</span>
+<span class="nc" id="L134">        } catch (final UnsupportedEncodingException e) {</span>
+<span class="nc" id="L135">            throw new IllegalStateException(e);</span>
+        }
+    }
+
+    @SuppressWarnings(&quot;squid:S3776&quot;) // simplification of this method would be difficult without sacrificing performance
+    private static String decodeRFC3986(final String source) {
+<span class="fc" id="L141">        final int length = source.length();</span>
+<span class="fc" id="L142">        final ByteArrayOutputStream out = new ByteArrayOutputStream(length);</span>
+<span class="fc" id="L143">        boolean changed = false;</span>
+
+<span class="fc" id="L145">        int i = 0;</span>
+<span class="fc bfc" id="L146" title="All 2 branches covered.">        while (i &lt; length) {</span>
+<span class="fc" id="L147">            final int c = source.charAt(i);</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">            if (c == '%') {</span>
+<span class="fc bfc" id="L149" title="All 2 branches covered.">                if ((i + 2) &lt; length) {</span>
+<span class="fc" id="L150">                    final char hex1 = source.charAt(i + 1);</span>
+<span class="fc" id="L151">                    final char hex2 = source.charAt(i + 2);</span>
+<span class="fc" id="L152">                    final int digit1 = Character.digit(hex1, 16);</span>
+<span class="fc" id="L153">                    final int digit2 = Character.digit(hex2, 16);</span>
+<span class="pc bpc" id="L154" title="2 of 4 branches missed.">                    if (digit1 &lt; 0 || digit2 &lt; 0) {</span>
+<span class="nc" id="L155">                        throw new IllegalArgumentException(</span>
+<span class="nc" id="L156">                                &quot;Illegal hex characters in escape pattern - negative value: \&quot;&quot; + source.substring(i) +</span>
+                                        &quot;\&quot;!&quot;);
+                    }
+<span class="fc" id="L159">                    out.write((char) ((digit1 &lt;&lt; 4) + digit2));</span>
+<span class="fc" id="L160">                    i += 2;</span>
+<span class="fc" id="L161">                    changed = true;</span>
+<span class="fc" id="L162">                } else {</span>
+<span class="fc" id="L163">                    throw new IllegalArgumentException(</span>
+<span class="fc" id="L164">                            &quot;Incomplete trailing escape pattern: \&quot;&quot; + source.substring(i) + &quot;\&quot;!&quot;);</span>
+                }
+            } else {
+<span class="fc" id="L167">                out.write(c);</span>
+            }
+<span class="fc" id="L169">            i++;</span>
+<span class="fc" id="L170">        }</span>
+
+<span class="fc bfc" id="L172" title="All 2 branches covered.">        if (changed) {</span>
+            try {
+<span class="fc" id="L174">                return new String(out.toByteArray(), ENCODING);</span>
+<span class="nc" id="L175">            } catch (final UnsupportedEncodingException e) {</span>
+<span class="nc" id="L176">                throw new IllegalStateException(e);</span>
+            }
+        } else {
+<span class="fc" id="L179">            return source;</span>
+        }
+    }
+
+    private static String encodeRFC3986UriComponent(final String source, final IntPredicate allowedChars) {
+<span class="fc" id="L184">        requireNonNull(source);</span>
+
+        try {
+<span class="fc" id="L187">            final byte[] bytes = encodeBytes(source.getBytes(ENCODING), allowedChars);</span>
+<span class="fc" id="L188">            return new String(bytes, StandardCharsets.US_ASCII.name());</span>
+<span class="nc" id="L189">        } catch (final UnsupportedEncodingException e) {</span>
+<span class="nc" id="L190">            throw new IllegalStateException(e);</span>
+        }
+    }
+
+    private static byte[] encodeBytes(final byte[] source, final IntPredicate allowedChars) {
+<span class="fc" id="L195">        requireNonNull(source);</span>
+<span class="fc" id="L196">        requireNonNull(allowedChars);</span>
+<span class="fc" id="L197">        final ByteArrayOutputStream out = new ByteArrayOutputStream(source.length);</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">        for (byte b : source) {</span>
+<span class="fc bfc" id="L199" title="All 2 branches covered.">            if (b &lt; 0) {</span>
+<span class="fc" id="L200">                b += 256;</span>
+            }
+<span class="fc bfc" id="L202" title="All 2 branches covered.">            if (allowedChars.test((char) b)) {</span>
+<span class="fc" id="L203">                out.write(b);</span>
+            } else {
+<span class="fc" id="L205">                out.write('%');</span>
+<span class="fc" id="L206">                final char hex1 = Character.toUpperCase(Character.forDigit((b &gt;&gt; 4) &amp; 0xF, 16));</span>
+<span class="fc" id="L207">                final char hex2 = Character.toUpperCase(Character.forDigit(b &amp; 0xF, 16));</span>
+<span class="fc" id="L208">                out.write(hex1);</span>
+<span class="fc" id="L209">                out.write(hex2);</span>
+            }
+        }
+<span class="fc" id="L212">        return out.toByteArray();</span>
+    }
+
+    /**
+     * Whether the given char belongs to the {@code pchar} set.
+     */
+    private static boolean isPchar(final int c) {
+<span class="fc bfc" id="L219" title="All 8 branches covered.">        return isUnreserved(c) || isSubDelimiter(c) || ':' == c || '@' == c;</span>
+    }
+
+    /**
+     * Whether the given char belongs to the {@code unreserved} set.
+     */
+    private static boolean isUnreserved(final int c) {
+<span class="pc bpc" id="L226" title="4 of 12 branches missed.">        return isAlpha(c) || isDigit(c) || '-' == c || '.' == c || '_' == c || '~' == c;</span>
+    }
+
+    /**
+     * Whether the given char belongs to the {@code ALPHA} set.
+     */
+    private static boolean isAlpha(final int c) {
+<span class="fc bfc" id="L233" title="All 8 branches covered.">        return c &gt;= 'a' &amp;&amp; c &lt;= 'z' || c &gt;= 'A' &amp;&amp; c &lt;= 'Z';</span>
+    }
+
+    /**
+     * Whether the given char belongs to the {@code DIGIT} set.
+     */
+    private static boolean isDigit(final int c) {
+<span class="fc bfc" id="L240" title="All 4 branches covered.">        return c &gt;= '0' &amp;&amp; c &lt;= '9';</span>
+    }
+
+    /**
+     * Whether the given char belongs to the {@code sub-delims} set.
+     */
+    private static boolean isSubDelimiter(final int c) {
+<span class="fc bfc" id="L247" title="All 22 branches covered.">        return '!' == c || '$' == c || '&amp;' == c || '\'' == c || '(' == c || ')' == c || '*' == c || '+' == c || ',' == c</span>
+                || ';' == c || '=' == c;
+    }
+
+    /**
+     * The type of the encoding to be used for encoding/decoding.
+     */
+<span class="fc" id="L254">    public enum EncodingType {</span>
+        /**
+         * Encoding according to RFC 3986.
+         */
+<span class="fc" id="L258">        RFC3986,</span>
+        /**
+         * Encoding according to MIME format {@code application/x-www-form-urlencoded}. This format is used by many
+         * applications incorrectly to encode arbitrary query strings, not only when using this MIME format. For
+         * compatibility reasons it is recommended to decode query strings with this format.
+         **/
+<span class="fc" id="L264">        FORM_URL_ENCODED</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

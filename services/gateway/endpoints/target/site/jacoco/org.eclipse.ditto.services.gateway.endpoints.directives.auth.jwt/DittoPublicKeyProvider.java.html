@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DittoPublicKeyProvider.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt</a> &gt; <span class="el_source">DittoPublicKeyProvider.java</span></div><h1>DittoPublicKeyProvider.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.argumentNotNull;
+
+import java.security.KeyFactory;
+import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.RSAPublicKeySpec;
+import java.text.MessageFormat;
+import java.time.Duration;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.json.JsonArray;
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonMissingFieldException;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonPointer;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.policies.SubjectIssuer;
+import org.eclipse.ditto.services.gateway.security.cache.PublicKeyIdWithIssuer;
+import org.eclipse.ditto.services.gateway.security.jwt.ImmutableJsonWebKey;
+import org.eclipse.ditto.services.gateway.security.jwt.JsonWebKey;
+import org.eclipse.ditto.services.gateway.starter.service.util.HttpClientFacade;
+import org.eclipse.ditto.services.utils.cache.Cache;
+import org.eclipse.ditto.services.utils.cache.CaffeineCache;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayJwtIssuerNotSupportedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.codahale.metrics.MetricRegistry;
+import com.github.benmanes.caffeine.cache.AsyncCacheLoader;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.RemovalListener;
+
+import akka.http.javadsl.model.HttpRequest;
+import akka.http.javadsl.model.HttpResponse;
+import akka.stream.javadsl.Sink;
+import akka.util.ByteString;
+
+
+/**
+ * Implementation of {@link PublicKeyProvider}. This provider requests keys at the {@link SubjectIssuer} and caches
+ * responses to reduce network io.
+ */
+public final class DittoPublicKeyProvider implements PublicKeyProvider {
+
+<span class="fc" id="L69">    private static final Logger LOGGER = LoggerFactory.getLogger(DittoPublicKeyProvider.class);</span>
+
+    private static final long JWK_REQUEST_TIMEOUT_MILLISECONDS = 5000;
+
+    private final JwtSubjectIssuersConfig jwtSubjectIssuersConfig;
+    private final HttpClientFacade httpClient;
+    private final Cache&lt;PublicKeyIdWithIssuer, PublicKey&gt; publicKeyCache;
+
+    private DittoPublicKeyProvider(final JwtSubjectIssuersConfig jwtSubjectIssuersConfig,
+            final HttpClientFacade httpClient, final int maxCacheEntries, final Duration expiry,
+<span class="fc" id="L79">            final Map.Entry&lt;String, MetricRegistry&gt; namedMetricRegistry) {</span>
+
+<span class="fc" id="L81">        this.jwtSubjectIssuersConfig = argumentNotNull(jwtSubjectIssuersConfig);</span>
+<span class="fc" id="L82">        this.httpClient = argumentNotNull(httpClient);</span>
+<span class="fc" id="L83">        argumentNotNull(expiry);</span>
+<span class="fc" id="L84">        argumentNotNull(namedMetricRegistry);</span>
+
+<span class="fc" id="L86">        final AsyncCacheLoader&lt;PublicKeyIdWithIssuer, PublicKey&gt; loader = this::loadPublicKey;</span>
+
+<span class="fc" id="L88">        final Caffeine&lt;PublicKeyIdWithIssuer, PublicKey&gt; caffeine = Caffeine.newBuilder()</span>
+<span class="fc" id="L89">                .maximumSize(maxCacheEntries)</span>
+<span class="fc" id="L90">                .expireAfterWrite(expiry.getSeconds(), TimeUnit.SECONDS)</span>
+<span class="fc" id="L91">                .removalListener(new CacheRemovalListener());</span>
+<span class="fc" id="L92">        this.publicKeyCache = CaffeineCache.of(caffeine, loader, namedMetricRegistry);</span>
+<span class="fc" id="L93">    }</span>
+
+    /**
+     * Returns a new {@code PublicKeyProvider} for the given parameters.
+     *
+     * @param jwtSubjectIssuersConfig the configuration of supported JWT subject issuers
+     * @param httpClient the http client.
+     * @param maxCacheEntries the max amount of public keys to cache.
+     * @param expiry the expiry of cache entries in minutes.
+     * @param namedMetricRegistry the named {@link MetricRegistry} for cache statistics.
+     * @return the PublicKeyProvider.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public static PublicKeyProvider of(final JwtSubjectIssuersConfig jwtSubjectIssuersConfig,
+            final HttpClientFacade httpClient,
+            final int maxCacheEntries, final Duration expiry,
+            final Map.Entry&lt;String, MetricRegistry&gt; namedMetricRegistry) {
+<span class="fc" id="L110">        return new DittoPublicKeyProvider(jwtSubjectIssuersConfig, httpClient, maxCacheEntries, expiry,</span>
+                namedMetricRegistry);
+    }
+
+    @Override
+    public CompletableFuture&lt;Optional&lt;PublicKey&gt;&gt; getPublicKey(final String issuer, final String keyId) {
+<span class="nc" id="L116">        argumentNotNull(issuer);</span>
+<span class="nc" id="L117">        argumentNotNull(keyId);</span>
+
+<span class="nc" id="L119">        return publicKeyCache.get(PublicKeyIdWithIssuer.of(keyId, issuer));</span>
+    }
+
+    /* this method is used to asynchronously load the public key into the cache */
+    private CompletableFuture&lt;PublicKey&gt; loadPublicKey(final PublicKeyIdWithIssuer publicKeyIdWithIssuer,
+            final Executor executor) {
+<span class="nc" id="L125">        final String issuer = publicKeyIdWithIssuer.getIssuer();</span>
+<span class="nc" id="L126">        final String keyId = publicKeyIdWithIssuer.getKeyId();</span>
+<span class="nc" id="L127">        LOGGER.debug(&quot;Loading public key with id &lt;{}&gt; from issuer &lt;{}&gt;.&quot;, keyId, issuer);</span>
+
+<span class="nc" id="L129">        final JwtSubjectIssuerConfig subjectIssuerConfig =</span>
+<span class="nc" id="L130">                jwtSubjectIssuersConfig.getConfigItem(issuer)</span>
+<span class="nc" id="L131">                        .orElseThrow(() -&gt; GatewayJwtIssuerNotSupportedException.newBuilder(issuer).build());</span>
+
+<span class="nc" id="L133">        final String jwkResource = subjectIssuerConfig.getJwkResource();</span>
+<span class="nc" id="L134">        final CompletableFuture&lt;HttpResponse&gt; responseFuture =</span>
+<span class="nc" id="L135">                CompletableFuture.supplyAsync(() -&gt; getPublicKeysFromJwkResource(jwkResource));</span>
+<span class="nc" id="L136">        final CompletableFuture&lt;JsonArray&gt; publicKeysFuture =</span>
+<span class="nc" id="L137">                responseFuture.thenCompose(this::mapResponseToJsonArray);</span>
+<span class="nc" id="L138">        return publicKeysFuture.thenApply(publicKeysArray -&gt; mapToPublicKey(publicKeysArray, keyId, jwkResource))</span>
+<span class="nc" id="L139">                .toCompletableFuture();</span>
+    }
+
+    private CompletableFuture&lt;JsonArray&gt; mapResponseToJsonArray(final HttpResponse response) {
+<span class="nc" id="L143">        final CompletionStage&lt;JsonObject&gt; body =</span>
+<span class="nc" id="L144">                response.entity().getDataBytes().fold(ByteString.empty(), ByteString::concat)</span>
+<span class="nc" id="L145">                        .map(ByteString::utf8String)</span>
+<span class="nc" id="L146">                        .map(JsonFactory::readFrom)</span>
+<span class="nc" id="L147">                        .map(JsonValue::asObject)</span>
+<span class="nc" id="L148">                        .runWith(Sink.head(), httpClient.getActorMaterializer());</span>
+
+<span class="nc" id="L150">        final JsonPointer keysPointer = JsonPointer.of(&quot;keys&quot;);</span>
+
+<span class="nc" id="L152">        return body.toCompletableFuture()</span>
+<span class="nc" id="L153">                .thenApply(jsonObject -&gt; jsonObject.getValue(keysPointer).map(JsonValue::asArray)</span>
+<span class="nc" id="L154">                        .orElseThrow(() -&gt; new JsonMissingFieldException(keysPointer)))</span>
+<span class="nc" id="L155">                .exceptionally(t -&gt; {</span>
+<span class="nc" id="L156">                    throw new IllegalStateException(&quot;Failed to extract public keys from JSON response: &quot; + body, t);</span>
+                });
+    }
+
+    private HttpResponse getPublicKeysFromJwkResource(final String resource) {
+<span class="nc" id="L161">        LOGGER.debug(&quot;Loading public keys from resource &lt;{}&gt;.&quot;, resource);</span>
+
+        final HttpResponse response;
+        try {
+<span class="nc" id="L165">            response = httpClient.createSingleHttpRequest(HttpRequest.GET(resource)).toCompletableFuture()</span>
+<span class="nc" id="L166">                    .get(JWK_REQUEST_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);</span>
+<span class="nc" id="L167">        } catch (final ExecutionException | InterruptedException | TimeoutException e) {</span>
+<span class="nc" id="L168">            throw new IllegalStateException(MessageFormat.format(&quot;Got Exception from JwkResource provider at &quot; +</span>
+                    &quot;resource &lt;{0}&gt;.&quot;, resource), e);
+<span class="nc" id="L170">        }</span>
+<span class="nc" id="L171">        return response;</span>
+    }
+
+    private PublicKey mapToPublicKey(final JsonArray publicKeys, final String keyId, final String resource) {
+<span class="nc" id="L175">        LOGGER.debug(&quot;Trying to find key with id &lt;{}&gt; in json array &lt;{}&gt;.&quot;, keyId, publicKeys);</span>
+
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        for (final JsonValue jsonValue : publicKeys) {</span>
+            try {
+<span class="nc" id="L179">                final JsonObject jsonObject = jsonValue.asObject();</span>
+<span class="nc" id="L180">                final JsonWebKey jsonWebKey = ImmutableJsonWebKey.fromJson(jsonObject);</span>
+
+<span class="nc bnc" id="L182" title="All 2 branches missed.">                if (jsonWebKey.getId().equals(keyId)) {</span>
+<span class="nc" id="L183">                    LOGGER.debug(&quot;Found matching JsonWebKey for id &lt;{}&gt;: &lt;{}&gt;.&quot;, keyId, jsonWebKey);</span>
+<span class="nc" id="L184">                    final KeyFactory keyFactory = KeyFactory.getInstance(jsonWebKey.getType());</span>
+<span class="nc" id="L185">                    final RSAPublicKeySpec rsaPublicKeySpec =</span>
+<span class="nc" id="L186">                            new RSAPublicKeySpec(jsonWebKey.getModulus(), jsonWebKey.getExponent());</span>
+<span class="nc" id="L187">                    return keyFactory.generatePublic(rsaPublicKeySpec);</span>
+                }
+<span class="nc" id="L189">            } catch (final NoSuchAlgorithmException | InvalidKeySpecException e) {</span>
+<span class="nc" id="L190">                throw new IllegalStateException(MessageFormat.format(&quot;Got invalid key from JwkResource provider &quot; +</span>
+                        &quot;at resource &lt;{0}&gt;.&quot;, resource), e);
+<span class="nc" id="L192">            }</span>
+<span class="nc" id="L193">        }</span>
+
+<span class="nc" id="L195">        LOGGER.debug(&quot;Did not find key with id &lt;{}&gt;.&quot;, keyId);</span>
+<span class="nc" id="L196">        return null;</span>
+    }
+
+    private static final class CacheRemovalListener implements RemovalListener&lt;PublicKeyIdWithIssuer, PublicKey&gt; {
+
+        @Override
+        public void onRemoval(@Nullable final PublicKeyIdWithIssuer key, @Nullable final PublicKey value,
+                @Nonnull final com.github.benmanes.caffeine.cache.RemovalCause cause) {
+<span class="nc" id="L204">            final String msgTemplate = &quot;Removed PublicKey with ID &lt;{}&gt; from cache due to cause '{}'.&quot;;</span>
+<span class="nc" id="L205">            LOGGER.debug(msgTemplate, key, cause);</span>
+<span class="nc" id="L206">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

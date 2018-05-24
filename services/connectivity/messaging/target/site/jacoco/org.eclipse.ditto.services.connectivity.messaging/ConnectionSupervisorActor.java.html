@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConnectionSupervisorActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Messaging</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.messaging</a> &gt; <span class="el_source">ConnectionSupervisorActor.java</span></div><h1>ConnectionSupervisorActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.messaging;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+
+import javax.annotation.Nullable;
+import javax.jms.JMSException;
+import javax.jms.JMSRuntimeException;
+import javax.naming.NamingException;
+
+import org.eclipse.ditto.model.base.headers.WithDittoHeaders;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.signals.commands.connectivity.exceptions.ConnectionUnavailableException;
+
+import akka.actor.AbstractActor;
+import akka.actor.ActorKilledException;
+import akka.actor.ActorRef;
+import akka.actor.OneForOneStrategy;
+import akka.actor.Props;
+import akka.actor.SupervisorStrategy;
+import akka.actor.Terminated;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.DeciderBuilder;
+import akka.japi.pf.ReceiveBuilder;
+import scala.concurrent.duration.FiniteDuration;
+
+/**
+ * Supervisor for {@link ConnectionActor} which means it will create, start and watch it as child actor.
+ * &lt;p&gt;
+ * If the child terminates, it will wait for the calculated exponential backoff time and restart it afterwards. The
+ * child has to send {@link ManualReset} after it started successfully. Between the termination of the child and the
+ * restart, this actor answers to all requests with a
+ * {@link ConnectionUnavailableException} as fail fast
+ * strategy.
+ * &lt;/p&gt;
+ */
+public final class ConnectionSupervisorActor extends AbstractActor {
+
+<span class="fc" id="L55">    private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+    private final String connectionId;
+    private final Duration minBackoff;
+    private final Duration maxBackoff;
+    private final double randomFactor;
+    private final SupervisorStrategy supervisorStrategy;
+    private final Props persistenceActorProps;
+
+    @Nullable private ActorRef child;
+    private long restartCount;
+
+    private ConnectionSupervisorActor(final SupervisorStrategy supervisorStrategy,
+            final Duration minBackoff,
+            final Duration maxBackoff,
+            final double randomFactor,
+            final ActorRef pubSubMediator,
+            final ActorRef conciergeForwarder,
+<span class="fc" id="L73">            final ConnectionActorPropsFactory propsFactory) {</span>
+        try {
+<span class="fc" id="L75">            this.connectionId = URLDecoder.decode(getSelf().path().name(), StandardCharsets.UTF_8.name());</span>
+<span class="nc" id="L76">        } catch (final UnsupportedEncodingException e) {</span>
+<span class="nc" id="L77">            throw new IllegalStateException(&quot;Unsupported encoding&quot;, e);</span>
+<span class="fc" id="L78">        }</span>
+<span class="fc" id="L79">        this.supervisorStrategy = supervisorStrategy;</span>
+<span class="fc" id="L80">        this.minBackoff = minBackoff;</span>
+<span class="fc" id="L81">        this.maxBackoff = maxBackoff;</span>
+<span class="fc" id="L82">        this.randomFactor = randomFactor;</span>
+<span class="fc" id="L83">        this.persistenceActorProps =</span>
+<span class="fc" id="L84">                ConnectionActor.props(connectionId, pubSubMediator, conciergeForwarder, propsFactory);</span>
+<span class="fc" id="L85">    }</span>
+
+    /**
+     * Props for creating a {@link ConnectionSupervisorActor}.
+     * &lt;p&gt;
+     * Exceptions in the child are handled with a supervision strategy that restarts the child on {@link
+     * NullPointerException}'s, stops it for {@link ActorKilledException}'s and escalates all others.
+     * &lt;/p&gt;
+     *
+     * @param minBackoff minimum (initial) duration until the child actor will started again, if it is terminated.
+     * @param maxBackoff the exponential back-off is capped to this duration.
+     * @param randomFactor after calculation of the exponential back-off an additional random delay based on this factor
+     * is added, e.g. `0.2` adds up to `20%` delay. In order to skip this additional delay pass in `0`.
+     * for accessing the connection cache in cluster.
+     * @param pubSubMediator the PubSub mediator actor.
+     * @param conciergeForwarder the actor used to send signals to the concierge service.
+     * @param propsFactory the {@link ConnectionActorPropsFactory}
+     * @return the {@link Props} to create this actor.
+     */
+    public static Props props(final Duration minBackoff,
+            final Duration maxBackoff,
+            final double randomFactor,
+            final ActorRef pubSubMediator,
+            final ActorRef conciergeForwarder,
+            final ConnectionActorPropsFactory propsFactory) {
+
+<span class="fc" id="L111">        return Props.create(ConnectionSupervisorActor.class, new Creator&lt;ConnectionSupervisorActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public ConnectionSupervisorActor create() {
+<span class="fc" id="L116">                return new ConnectionSupervisorActor(new OneForOneStrategy(true, DeciderBuilder</span>
+<span class="pc" id="L117">                        .match(JMSRuntimeException.class, e -&gt; SupervisorStrategy.resume())</span>
+<span class="pc" id="L118">                        .match(NullPointerException.class, e -&gt; SupervisorStrategy.restart())</span>
+<span class="pc" id="L119">                        .match(JMSException.class, e -&gt; SupervisorStrategy.stop())</span>
+<span class="pc" id="L120">                        .match(NamingException.class, e -&gt; SupervisorStrategy.stop())</span>
+<span class="pc" id="L121">                        .match(ActorKilledException.class, e -&gt; SupervisorStrategy.stop())</span>
+<span class="pc" id="L122">                        .matchAny(e -&gt; SupervisorStrategy.escalate())</span>
+<span class="fc" id="L123">                        .build()),</span>
+                        minBackoff, maxBackoff, randomFactor, pubSubMediator, conciergeForwarder, propsFactory);
+            }
+        });
+    }
+
+    @Override
+    public SupervisorStrategy supervisorStrategy() {
+<span class="fc" id="L131">        return supervisorStrategy;</span>
+    }
+
+    @Override
+    public void preStart() throws Exception {
+<span class="fc" id="L136">        super.preStart();</span>
+<span class="fc" id="L137">        startChild();</span>
+<span class="fc" id="L138">    }</span>
+
+    @Override
+    public Receive createReceive() {
+<span class="fc" id="L142">        return ReceiveBuilder.create()</span>
+<span class="pc" id="L143">                .match(StartChild.class, startChild -&gt; startChild())</span>
+<span class="fc" id="L144">                .match(ManualReset.class, manualReset -&gt; restartCount = 0)</span>
+<span class="fc" id="L145">                .match(Terminated.class, terminated -&gt; {</span>
+<span class="nc" id="L146">                    LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId);</span>
+<span class="nc" id="L147">                    log.info(&quot;Persistence actor for Connection with ID '{}' terminated abnormally&quot;, connectionId);</span>
+<span class="nc" id="L148">                    child = null;</span>
+<span class="nc" id="L149">                    final Duration restartDelay = calculateRestartDelay();</span>
+<span class="nc" id="L150">                    getContext().system().scheduler()</span>
+<span class="nc" id="L151">                            .scheduleOnce(new FiniteDuration(restartDelay.toNanos(), TimeUnit.NANOSECONDS), getSelf(),</span>
+<span class="nc" id="L152">                                    StartChild.getInstance(),</span>
+<span class="nc" id="L153">                                    getContext().dispatcher(), null);</span>
+<span class="nc" id="L154">                    restartCount += 1;</span>
+<span class="nc" id="L155">                })</span>
+<span class="fc" id="L156">                .matchAny(message -&gt; {</span>
+<span class="fc" id="L157">                    LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId);</span>
+<span class="pc bpc" id="L158" title="1 of 2 branches missed.">                    if (child != null) {</span>
+<span class="pc bpc" id="L159" title="1 of 2 branches missed.">                        if (child.equals(getSender())) {</span>
+<span class="nc" id="L160">                            log.warning(&quot;Received unhandled message from child actor '{}': {}&quot;, connectionId, message);</span>
+<span class="nc" id="L161">                            unhandled(message);</span>
+                        } else {
+<span class="fc" id="L163">                            log.debug(&quot;Forwarding &lt;{}&gt; message to child {}.&quot;, message.getClass().getSimpleName(),</span>
+<span class="fc" id="L164">                                    child.path());</span>
+<span class="fc" id="L165">                            child.forward(message, getContext());</span>
+                        }
+                    } else {
+<span class="nc" id="L168">                        log.warning(&quot;Received message '{}' during downtime of child actor for Connection with ID '{}'&quot;,</span>
+<span class="nc" id="L169">                                message.getClass().getSimpleName(), connectionId);</span>
+<span class="nc" id="L170">                        final ConnectionUnavailableException.Builder builder =</span>
+<span class="nc" id="L171">                                ConnectionUnavailableException.newBuilder(connectionId);</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                        if (message instanceof WithDittoHeaders) {</span>
+<span class="nc" id="L173">                            builder.dittoHeaders(((WithDittoHeaders) message).getDittoHeaders());</span>
+                        }
+<span class="nc" id="L175">                        getSender().tell(builder.build(), getSelf());</span>
+                    }
+<span class="fc" id="L177">                })</span>
+<span class="fc" id="L178">                .build();</span>
+    }
+
+    private void startChild() {
+<span class="fc" id="L182">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId);</span>
+<span class="pc bpc" id="L183" title="1 of 2 branches missed.">        if (child == null) {</span>
+<span class="fc" id="L184">            log.debug(&quot;Starting persistence actor for Connection with ID '{}'&quot;, connectionId);</span>
+<span class="fc" id="L185">            final ActorRef childRef = getContext().actorOf(persistenceActorProps, &quot;pa&quot;);</span>
+<span class="fc" id="L186">            child = getContext().watch(childRef);</span>
+        }
+<span class="fc" id="L188">    }</span>
+
+    private Duration calculateRestartDelay() {
+<span class="nc" id="L191">        final double rnd = 1.0 + ThreadLocalRandom.current().nextDouble() * randomFactor;</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">        if (restartCount &gt;= 30) // Duration overflow protection (&gt; 100 years)</span>
+        {
+<span class="nc" id="L194">            return maxBackoff;</span>
+        } else {
+<span class="nc" id="L196">            final double backoff = minBackoff.toNanos() * Math.pow(2, restartCount) * rnd;</span>
+<span class="nc" id="L197">            return Duration.ofNanos(Math.min(maxBackoff.toNanos(), (long) backoff));</span>
+        }
+    }
+
+    /**
+     * Message that should be sent to this actor to indicate a working child and reset the exponential backoff
+     * mechanism.
+     */
+    static final class ManualReset {
+
+        private ManualReset() {
+            // no-op
+        }
+
+        static ManualReset getInstance() {
+<span class="fc" id="L212">            return new ManualReset();</span>
+        }
+
+    }
+
+    /**
+     * Message that is sent to the actor by itself to restart the child.
+     */
+    private static final class StartChild {
+
+        private StartChild() {
+            // no-op
+        }
+
+        static StartChild getInstance() {
+<span class="nc" id="L227">            return new StartChild();</span>
+        }
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

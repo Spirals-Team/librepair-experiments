@@ -1,0 +1,543 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HttpRequestActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints</a> &gt; <span class="el_source">HttpRequestActor.java</span></div><h1>HttpRequestActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints;
+
+import static org.eclipse.ditto.services.gateway.starter.service.util.FireAndForgetMessageUtil.isFireAndForgetMessage;
+
+import java.nio.ByteBuffer;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonRuntimeException;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.common.HttpStatusCode;
+import org.eclipse.ditto.model.base.exceptions.DittoJsonException;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaderDefinition;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.messages.Message;
+import org.eclipse.ditto.model.messages.MessageDirection;
+import org.eclipse.ditto.model.messages.MessageTimeoutException;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.signals.base.WithOptionalEntity;
+import org.eclipse.ditto.signals.commands.base.Command;
+import org.eclipse.ditto.signals.commands.base.CommandResponse;
+import org.eclipse.ditto.signals.commands.base.ErrorResponse;
+import org.eclipse.ditto.signals.commands.base.WithEntity;
+import org.eclipse.ditto.signals.commands.devops.RetrieveStatisticsResponse;
+import org.eclipse.ditto.signals.commands.messages.MessageCommand;
+import org.eclipse.ditto.signals.commands.messages.MessageCommandResponse;
+import org.eclipse.ditto.signals.commands.messages.SendMessageAcceptedResponse;
+import org.eclipse.ditto.signals.commands.thingsearch.ThingSearchCommand;
+
+import com.typesafe.config.Config;
+
+import akka.actor.AbstractActor;
+import akka.actor.ActorRef;
+import akka.actor.Cancellable;
+import akka.actor.Props;
+import akka.actor.ReceiveTimeout;
+import akka.actor.Status;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.http.javadsl.model.ContentType;
+import akka.http.javadsl.model.ContentTypes;
+import akka.http.javadsl.model.HttpEntities;
+import akka.http.javadsl.model.HttpRequest;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.model.StatusCodes;
+import akka.http.javadsl.model.Uri;
+import akka.http.javadsl.model.headers.Location;
+import akka.http.scaladsl.model.ContentType$;
+import akka.japi.Creator;
+import akka.japi.pf.ReceiveBuilder;
+import akka.pattern.AskTimeoutException;
+import akka.util.ByteString;
+import kamon.Kamon;
+import kamon.trace.TraceContext;
+import scala.Option;
+import scala.concurrent.duration.Duration;
+import scala.concurrent.duration.FiniteDuration;
+import scala.util.Either;
+
+/**
+ * Every HTTP Request causes one new Actor instance of this one to be created. It holds the original sender of an issued
+ * {@link Command} and tells this one the completed HttpResponse.
+ */
+public final class HttpRequestActor extends AbstractActor {
+
+    /**
+     * Signals the completion of a stream request.
+     */
+    public static final String COMPLETE_MESSAGE = &quot;complete&quot;;
+
+    private static final String TRACE_TAG_TYPE = &quot;type&quot;;
+    private static final String TRACE_TAG_TYPE_PREFIX = &quot;type-prefix&quot;;
+    private static final String TRACE_ROUNDTRIP_HTTP = &quot;roundtrip.http&quot;;
+<span class="fc" id="L89">    private static final ContentType CONTENT_TYPE_JSON = ContentTypes.APPLICATION_JSON;</span>
+<span class="fc" id="L90">    private static final ContentType CONTENT_TYPE_TEXT = ContentTypes.TEXT_PLAIN_UTF8;</span>
+
+    private static final String AKKA_HTTP_SERVER_REQUEST_TIMEOUT = &quot;akka.http.server.request-timeout&quot;;
+
+    private static final double NANO_TO_MS_DIVIDER = 1_000_000.0;
+    private static final double HTTP_WARN_TIMEOUT_MS = 1_000.0;
+    private static final double SEARCH_WARN_TIMEOUT_MS = 5_000.0;
+
+<span class="fc" id="L98">    private final DiagnosticLoggingAdapter logger = LogUtil.obtain(this);</span>
+
+    private final ActorRef proxyActor;
+    private final CompletableFuture&lt;HttpResponse&gt; httpResponseFuture;
+    private final Cancellable serverRequestTimeoutCancellable;
+    private final java.time.Duration serverRequestTimeout;
+    private final Receive commandResponseAwaiting;
+
+    private java.time.Duration messageTimeout;
+    private TraceContext traceContext;
+
+    private HttpRequestActor(final ActorRef proxyActor, final HttpRequest request,
+<span class="fc" id="L110">            final CompletableFuture&lt;HttpResponse&gt; httpResponseFuture) {</span>
+<span class="fc" id="L111">        this.proxyActor = proxyActor;</span>
+<span class="fc" id="L112">        this.httpResponseFuture = httpResponseFuture;</span>
+
+<span class="fc" id="L114">        final Config config = getContext().system().settings().config();</span>
+<span class="fc" id="L115">        serverRequestTimeout = config.getDuration(AKKA_HTTP_SERVER_REQUEST_TIMEOUT);</span>
+<span class="fc" id="L116">        serverRequestTimeoutCancellable = getContext().system().scheduler().scheduleOnce</span>
+<span class="fc" id="L117">                (FiniteDuration.apply(serverRequestTimeout.toNanos(), TimeUnit.NANOSECONDS), getSelf(),</span>
+<span class="fc" id="L118">                        ServerRequestTimeoutMessage.INSTANCE,</span>
+<span class="fc" id="L119">                        getContext().dispatcher(), null);</span>
+
+        // wrap JsonRuntimeExceptions
+<span class="fc" id="L122">        commandResponseAwaiting = ReceiveBuilder.create()</span>
+<span class="fc" id="L123">                .matchEquals(COMPLETE_MESSAGE, s -&gt; logger.debug(&quot;Got stream's '{}' message&quot;, COMPLETE_MESSAGE))</span>
+                // If an actor downstream replies with an HTTP response, simply forward it.
+<span class="fc" id="L125">                .match(HttpResponse.class, response -&gt; {</span>
+<span class="nc" id="L126">                    completeWithResult(response);</span>
+<span class="nc" id="L127">                    finishTraceAndStop();</span>
+<span class="nc" id="L128">                })</span>
+<span class="fc" id="L129">                .match(SendMessageAcceptedResponse.class, cmd -&gt; {</span>
+                    final HttpResponse httpResponse =
+<span class="nc" id="L131">                            HttpResponse.create().withStatus(HttpStatusCode.ACCEPTED.toInt());</span>
+<span class="nc" id="L132">                    completeWithResult(httpResponse);</span>
+<span class="nc" id="L133">                })</span>
+<span class="fc" id="L134">                .match(MessageCommandResponse.class, cmd -&gt; {</span>
+<span class="nc" id="L135">                    final HttpResponse httpResponse = handleMessageResponseMessage(cmd);</span>
+<span class="nc" id="L136">                    completeWithResult(httpResponse);</span>
+<span class="nc" id="L137">                })</span>
+<span class="fc" id="L138">                .match(CommandResponse.class, cR -&gt; cR instanceof WithEntity, commandResponse -&gt; {</span>
+<span class="fc" id="L139">                    logger.debug(&quot;Got 'CommandResponse' 'WithEntity' message&quot;);</span>
+<span class="fc" id="L140">                    final WithEntity withEntity = (WithEntity) commandResponse;</span>
+
+<span class="fc" id="L142">                    final HttpResponse responseWithoutBody = HttpResponse.create()</span>
+<span class="fc" id="L143">                            .withStatus(commandResponse.getStatusCode().toInt());</span>
+
+<span class="fc" id="L145">                    completeWithResult(addEntityAccordingToContentType(responseWithoutBody,</span>
+<span class="fc" id="L146">                            withEntity.getEntity(commandResponse.getImplementedSchemaVersion()),</span>
+<span class="fc" id="L147">                            commandResponse.getDittoHeaders()));</span>
+<span class="fc" id="L148">                })</span>
+<span class="pc" id="L149">                .match(CommandResponse.class, cR -&gt; cR instanceof WithOptionalEntity,</span>
+                        commandResponse -&gt; {
+<span class="nc" id="L151">                            logger.debug(&quot;Got 'CommandResponse' 'WithOptionalEntity' message&quot;);</span>
+<span class="nc" id="L152">                            final WithOptionalEntity withOptionalEntity = (WithOptionalEntity) commandResponse;</span>
+
+<span class="nc" id="L154">                            final HttpResponse response =</span>
+<span class="nc" id="L155">                                    createCommandResponse(request, commandResponse, withOptionalEntity);</span>
+<span class="nc" id="L156">                            completeWithResult(response);</span>
+<span class="nc" id="L157">                        })</span>
+<span class="fc" id="L158">                .match(ErrorResponse.class, errorResponse -&gt; {</span>
+<span class="nc" id="L159">                    logger.info(&quot;Got 'ErrorResponse': {}&quot;, errorResponse);</span>
+<span class="nc" id="L160">                    final DittoRuntimeException cre = errorResponse.getDittoRuntimeException();</span>
+<span class="nc" id="L161">                    completeWithResult(HttpResponse.create().withStatus(cre.getStatusCode().toInt())</span>
+<span class="nc" id="L162">                            .withEntity(CONTENT_TYPE_JSON, ByteString.fromString(cre.toJsonString())));</span>
+<span class="nc" id="L163">                })</span>
+<span class="fc" id="L164">                .match(CommandResponse.class, commandResponse -&gt; {</span>
+<span class="nc" id="L165">                    logger.warning(&quot;Got 'CommandResponse' message which did not implement the required interfaces &quot;</span>
+                            + &quot;'WithEntity' / 'WithOptionalEntity': {}&quot;, commandResponse);
+<span class="nc" id="L167">                    completeWithResult(HttpResponse.create().withStatus(HttpStatusCode.INTERNAL_SERVER_ERROR.toInt())</span>
+                    );
+<span class="nc" id="L169">                })</span>
+<span class="fc" id="L170">                .match(RetrieveStatisticsResponse.class, statisticsResponse -&gt; {</span>
+<span class="nc" id="L171">                    logger.debug(&quot;Got 'RetrieveStatisticsResponse' message&quot;);</span>
+<span class="nc" id="L172">                    final JsonObject statisticsJson = statisticsResponse.getStatistics();</span>
+<span class="nc" id="L173">                    completeWithResult(</span>
+<span class="nc" id="L174">                            HttpResponse.create()</span>
+<span class="nc" id="L175">                                    .withEntity(CONTENT_TYPE_JSON, ByteString.fromString(statisticsJson.toString()))</span>
+<span class="nc" id="L176">                                    .withStatus(HttpStatusCode.OK.toInt())</span>
+                    );
+<span class="nc" id="L178">                })</span>
+<span class="pc" id="L179">                .match(Status.Failure.class, f -&gt; f.cause() instanceof AskTimeoutException, failure -&gt; {</span>
+<span class="nc" id="L180">                    logger.warning(&quot;Got AskTimeoutException when a command response was expected: '{}'&quot;,</span>
+<span class="nc" id="L181">                            failure.cause().getMessage());</span>
+<span class="nc" id="L182">                    completeWithResult(HttpResponse.create().withStatus(HttpStatusCode.SERVICE_UNAVAILABLE.toInt())</span>
+                    );
+<span class="nc" id="L184">                })</span>
+<span class="fc" id="L185">                .match(JsonRuntimeException.class, jre -&gt; {</span>
+                    // wrap JsonRuntimeExceptions
+<span class="nc" id="L187">                    final DittoJsonException cre = new DittoJsonException(jre);</span>
+<span class="nc" id="L188">                    logDittoRuntimeException(cre);</span>
+<span class="nc" id="L189">                    completeWithResult(HttpResponse.create().withStatus(cre.getStatusCode().toInt())</span>
+<span class="nc" id="L190">                            .withEntity(CONTENT_TYPE_JSON, ByteString.fromString(cre.toJsonString())));</span>
+<span class="nc" id="L191">                })</span>
+<span class="fc" id="L192">                .match(DittoRuntimeException.class, cre -&gt; {</span>
+<span class="nc" id="L193">                    logDittoRuntimeException(cre);</span>
+<span class="nc" id="L194">                    completeWithResult(HttpResponse.create().withStatus(cre.getStatusCode().toInt())</span>
+<span class="nc" id="L195">                            .withEntity(CONTENT_TYPE_JSON, ByteString.fromString(cre.toJsonString())));</span>
+<span class="nc" id="L196">                })</span>
+<span class="fc" id="L197">                .match(ReceiveTimeout.class, receiveTimeout -&gt; {</span>
+<span class="nc" id="L198">                    logger.info(&quot;Got ReceiveTimeout when a response was expected: '{}'&quot;, receiveTimeout);</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">                    final MessageTimeoutException mte =</span>
+<span class="nc" id="L200">                            new MessageTimeoutException(messageTimeout != null ? messageTimeout.getSeconds() : 0);</span>
+<span class="nc" id="L201">                    completeWithResult(HttpResponse.create().withStatus(mte.getStatusCode().toInt())</span>
+<span class="nc" id="L202">                            .withEntity(CONTENT_TYPE_JSON, ByteString.fromString(mte.toJsonString())));</span>
+<span class="nc" id="L203">                })</span>
+<span class="pc" id="L204">                .match(Status.Failure.class, f -&gt; f.cause() instanceof AskTimeoutException, failure -&gt; {</span>
+<span class="nc" id="L205">                    logger.warning(&quot;Got AskTimeoutException when a command response was expected: '{}'&quot;,</span>
+<span class="nc" id="L206">                            failure.cause().getMessage());</span>
+<span class="nc" id="L207">                    completeWithResult(HttpResponse.create().withStatus(HttpStatusCode.SERVICE_UNAVAILABLE.toInt())</span>
+                    );
+<span class="nc" id="L209">                })</span>
+<span class="pc" id="L210">                .match(Status.Failure.class, failure -&gt; failure.cause() instanceof DittoRuntimeException, failure -&gt; {</span>
+<span class="nc" id="L211">                    final DittoRuntimeException cre = (DittoRuntimeException) failure.cause();</span>
+<span class="nc" id="L212">                    logDittoRuntimeException(cre);</span>
+<span class="nc" id="L213">                    completeWithResult(HttpResponse.create().withStatus(cre.getStatusCode().toInt())</span>
+<span class="nc" id="L214">                            .withEntity(CONTENT_TYPE_JSON, ByteString.fromString(cre.toJsonString())));</span>
+<span class="nc" id="L215">                })</span>
+<span class="fc" id="L216">                .match(Status.Failure.class, failure -&gt; {</span>
+<span class="nc" id="L217">                    logger.error(failure.cause().fillInStackTrace(),</span>
+                            &quot;Got Status.Failure when a command response was expected: '{}'&quot;,
+<span class="nc" id="L219">                            failure.cause().getMessage());</span>
+<span class="nc" id="L220">                    completeWithResult(HttpResponse.create().withStatus(HttpStatusCode.INTERNAL_SERVER_ERROR.toInt())</span>
+                    );
+<span class="nc" id="L222">                })</span>
+<span class="fc" id="L223">                .matchEquals(ServerRequestTimeoutMessage.INSTANCE,</span>
+<span class="nc" id="L224">                        serverRequestTimeoutMessage -&gt; handleServerRequestTimeout())</span>
+<span class="fc" id="L225">                .matchAny(m -&gt; {</span>
+<span class="nc" id="L226">                    logger.warning(&quot;Got unknown message, expected a command response: {}&quot;, m);</span>
+<span class="nc" id="L227">                    completeWithResult(HttpResponse.create().withStatus(HttpStatusCode.INTERNAL_SERVER_ERROR.toInt())</span>
+                    );
+<span class="nc" id="L229">                })</span>
+<span class="fc" id="L230">                .build();</span>
+<span class="fc" id="L231">    }</span>
+
+    private static boolean hasPlainTextContentType(final DittoHeaders dittoHeaders) {
+<span class="fc" id="L234">        final String contentTypeHeader = DittoHeaderDefinition.CONTENT_TYPE.name();</span>
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">        return dittoHeaders.containsKey(contentTypeHeader) &amp;&amp;</span>
+<span class="pc bnc" id="L236" title="All 2 branches missed.">                &quot;text/plain&quot;.equalsIgnoreCase(dittoHeaders.get(contentTypeHeader));</span>
+    }
+
+    private static HttpResponse addEntityAccordingToContentType(final HttpResponse response, final JsonValue entity,
+            final DittoHeaders dittoHeaders) {
+
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">        if (hasPlainTextContentType(dittoHeaders)) {</span>
+<span class="nc" id="L243">            return response.withEntity(CONTENT_TYPE_TEXT, ByteString.fromString(entity.asString()));</span>
+        } else {
+<span class="fc" id="L245">            return response.withEntity(CONTENT_TYPE_JSON, ByteString.fromString(entity.toString()));</span>
+        }
+    }
+
+    private static HttpResponse createCommandResponse(final HttpRequest request, final CommandResponse commandResponse,
+            final WithOptionalEntity withOptionalEntity) {
+
+<span class="nc" id="L252">        final Function&lt;HttpResponse, HttpResponse&gt; addModifiedLocationHeaderForCreatedResponse =</span>
+<span class="nc" id="L253">                createModifiedLocationHeaderAddingResponseMapper(request, commandResponse);</span>
+
+<span class="nc" id="L255">        final Function&lt;HttpResponse, HttpResponse&gt; addBodyIfEntityExists =</span>
+<span class="nc" id="L256">                createBodyAddingResponseMapper(commandResponse, withOptionalEntity);</span>
+
+<span class="nc" id="L258">        return createHttpResponseWithHeadersAndBody(commandResponse,</span>
+                addModifiedLocationHeaderForCreatedResponse, addBodyIfEntityExists);
+    }
+
+    private static Function&lt;HttpResponse, HttpResponse&gt; createBodyAddingResponseMapper(
+            final CommandResponse commandResponse, final WithOptionalEntity withOptionalEntity) {
+<span class="nc" id="L264">        return response -&gt; {</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">            if (StatusCodes.NO_CONTENT.equals(response.status())) {</span>
+<span class="nc" id="L266">                return response;</span>
+            } else {
+<span class="nc" id="L268">                return withOptionalEntity.getEntity(commandResponse.getImplementedSchemaVersion())</span>
+<span class="nc" id="L269">                        .map(entity -&gt;</span>
+<span class="nc" id="L270">                                addEntityAccordingToContentType(response, entity, commandResponse.getDittoHeaders()))</span>
+<span class="nc" id="L271">                        .orElse(response);</span>
+            }
+        };
+    }
+
+    private static Function&lt;HttpResponse, HttpResponse&gt; createModifiedLocationHeaderAddingResponseMapper(
+            final HttpRequest request, final CommandResponse commandResponse) {
+<span class="nc" id="L278">        return response -&gt; {</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                if (HttpStatusCode.CREATED == commandResponse.getStatusCode()) {</span>
+<span class="nc" id="L280">                    Uri newUri = request.getUri();</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                    if (!request.method().isIdempotent()) {</span>
+                        // only for not idempotent requests (e.g.: POST), add the &quot;createdId&quot; to the path:
+<span class="nc" id="L283">                        final String uriStr = newUri.toString();</span>
+                        String createdLocation;
+<span class="nc" id="L285">                        final int uriIdIndex = uriStr.indexOf(commandResponse.getId());</span>
+
+                        // if the uri contains the id, but *not* at the beginning
+<span class="nc bnc" id="L288" title="All 2 branches missed.">                        if (uriIdIndex &gt; 0) {</span>
+<span class="nc" id="L289">                            createdLocation =</span>
+<span class="nc" id="L290">                                    uriStr.substring(0, uriIdIndex) + commandResponse.getId() +</span>
+<span class="nc" id="L291">                                            commandResponse.getResourcePath().toString();</span>
+                        } else {
+<span class="nc" id="L293">                            createdLocation = uriStr + &quot;/&quot; + commandResponse.getId() + commandResponse.getResourcePath()</span>
+<span class="nc" id="L294">                                    .toString();</span>
+                        }
+
+<span class="nc bnc" id="L297" title="All 2 branches missed.">                        if (createdLocation.endsWith(&quot;/&quot;)) {</span>
+<span class="nc" id="L298">                            createdLocation = createdLocation.substring(0, createdLocation.length() - 1);</span>
+                        }
+<span class="nc" id="L300">                        newUri = Uri.create(createdLocation);</span>
+                    }
+<span class="nc" id="L302">                    return response.addHeader(Location.create(newUri));</span>
+                } else {
+<span class="nc" id="L304">                    return response;</span>
+                }
+            };
+    }
+
+    private static HttpResponse createHttpResponseWithHeadersAndBody(
+            final CommandResponse commandResponse, final Function&lt;HttpResponse, HttpResponse&gt; addHeaders,
+            final Function&lt;HttpResponse, HttpResponse&gt; addBody) {
+<span class="nc" id="L312">        HttpResponse response = HttpResponse.create().withStatus(commandResponse.getStatusCodeValue());</span>
+
+<span class="nc" id="L314">        return addBody.apply(addHeaders.apply(response));</span>
+    }
+
+    private void logDittoRuntimeException(final DittoRuntimeException cre) {
+<span class="fc" id="L318">        logger.info(&quot;DittoRuntimeException '{}': {}&quot;, cre.getErrorCode(), cre.getMessage());</span>
+<span class="fc" id="L319">    }</span>
+
+    /**
+     * Creates the Akka configuration object for this {@code HttpRequestActor} for the given {@code proxyActor}, {@code
+     * request}, and {@code httpResponseFuture} which will be completed with a {@link HttpResponse}.
+     *
+     * @param proxyActor the proxy actor which delegates commands.
+     * @param request the HTTP request
+     * @param httpResponseFuture the completable future which is completed with a HTTP response.
+     * @return the configuration object.
+     */
+    public static Props props(final ActorRef proxyActor, final HttpRequest request,
+            final CompletableFuture&lt;HttpResponse&gt; httpResponseFuture) {
+
+<span class="fc" id="L333">        return Props.create(HttpRequestActor.class, new Creator&lt;HttpRequestActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public HttpRequestActor create() {
+<span class="fc" id="L338">                return new HttpRequestActor(proxyActor, request, httpResponseFuture);</span>
+            }
+        });
+    }
+
+    @Override
+    public void postStop() throws Exception {
+<span class="fc" id="L345">        super.postStop();</span>
+
+<span class="pc bpc" id="L347" title="1 of 2 branches missed.">        if (serverRequestTimeoutCancellable != null) {</span>
+<span class="fc" id="L348">            serverRequestTimeoutCancellable.cancel();</span>
+        }
+<span class="fc" id="L350">    }</span>
+
+    @Override
+    public Receive createReceive() {
+<span class="fc" id="L354">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L355">                .match(MessageCommand.class, command -&gt; { // receive MessageCommands</span>
+<span class="fc" id="L356">                    LogUtil.enhanceLogWithCorrelationId(logger, command);</span>
+<span class="fc" id="L357">                    logger.info(&quot;Got &lt;MessageCommand&gt; with subject &lt;{}&gt;, telling the targetActor about it&quot;,</span>
+<span class="fc" id="L358">                            command.getMessage().getSubject());</span>
+
+<span class="fc" id="L360">                    final String messageType = command.getMessageType();</span>
+<span class="fc" id="L361">                    final Message&lt;?&gt; message = command.getMessage();</span>
+<span class="fc" id="L362">                    final MessageDirection direction = message.getDirection();</span>
+<span class="fc" id="L363">                    newTraceFor(command, TRACE_ROUNDTRIP_HTTP + &quot;.&quot; + messageType + &quot;.&quot; + direction);</span>
+<span class="fc" id="L364">                    traceContext.addTag(&quot;type&quot;, messageType);</span>
+<span class="fc" id="L365">                    traceContext.addTag(&quot;direction&quot;, direction.name());</span>
+<span class="fc" id="L366">                    traceContext.addTag(&quot;subject&quot;, message.getSubject());</span>
+
+                    // authorized!
+<span class="fc" id="L369">                    proxyActor.tell(command, getSelf());</span>
+<span class="fc" id="L370">                    getContext().become(commandResponseAwaiting);</span>
+
+<span class="fc" id="L372">                    messageTimeout = message.getTimeout().orElse(null);</span>
+<span class="pc bpc" id="L373" title="1 of 4 branches missed.">                    if (messageTimeout != null &amp;&amp; !isFireAndForgetMessage(command)) {</span>
+<span class="fc" id="L374">                        getContext().setReceiveTimeout(Duration.apply(messageTimeout.getSeconds(), TimeUnit.SECONDS));</span>
+                    }
+<span class="fc" id="L376">                })</span>
+<span class="fc" id="L377">                .match(Status.Failure.class, failure -&gt; {</span>
+<span class="fc" id="L378">                    Throwable cause = failure.cause();</span>
+<span class="pc bpc" id="L379" title="1 of 2 branches missed.">                    if (cause instanceof JsonRuntimeException) {</span>
+                        // wrap JsonRuntimeExceptions
+<span class="nc" id="L381">                        cause = new DittoJsonException((JsonRuntimeException) cause);</span>
+                    }
+
+<span class="pc bpc" id="L384" title="1 of 2 branches missed.">                    if (cause instanceof DittoRuntimeException) {</span>
+<span class="fc" id="L385">                        final DittoRuntimeException cre = (DittoRuntimeException) cause;</span>
+<span class="fc" id="L386">                        logDittoRuntimeException(cre);</span>
+<span class="fc" id="L387">                        completeWithResult(HttpResponse.create().withStatus(cre.getStatusCode().toInt())</span>
+<span class="fc" id="L388">                                .withEntity(CONTENT_TYPE_JSON, ByteString.fromString(cre.toJsonString()))</span>
+                        );
+<span class="fc" id="L390">                    } else {</span>
+<span class="nc" id="L391">                        logger.error(cause, &quot;Got unknown Status.Failure when a 'Command' was expected&quot;);</span>
+<span class="nc" id="L392">                        completeWithResult(</span>
+<span class="nc" id="L393">                                HttpResponse.create().withStatus(HttpStatusCode.INTERNAL_SERVER_ERROR.toInt())</span>
+                        );
+                    }
+<span class="fc" id="L396">                })</span>
+<span class="fc" id="L397">                .match(DittoRuntimeException.class, cre -&gt; {</span>
+<span class="nc" id="L398">                    logDittoRuntimeException(cre);</span>
+<span class="nc" id="L399">                    completeWithResult(HttpResponse.create().withStatus(cre.getStatusCode().toInt())</span>
+<span class="nc" id="L400">                            .withEntity(CONTENT_TYPE_JSON, ByteString.fromString(cre.toJsonString())));</span>
+<span class="nc" id="L401">                })</span>
+<span class="fc" id="L402">                .matchEquals(ServerRequestTimeoutMessage.INSTANCE,</span>
+<span class="nc" id="L403">                        serverRequestTimeoutMessage -&gt; handleServerRequestTimeout())</span>
+<span class="fc" id="L404">                .match(Command.class, command -&gt; { // receive Commands</span>
+<span class="fc" id="L405">                    logger.debug(&quot;Got 'Command' message, telling the targetActor about it&quot;);</span>
+
+<span class="fc" id="L407">                    newTraceFor(command, TRACE_ROUNDTRIP_HTTP + &quot;_&quot; + command.getType());</span>
+
+<span class="fc" id="L409">                    proxyActor.tell(command, getSelf());</span>
+
+<span class="pc bpc" id="L411" title="1 of 2 branches missed.">                    if (!command.getDittoHeaders().isResponseRequired()) {</span>
+<span class="nc" id="L412">                        completeWithResult(HttpResponse.create().withStatus(StatusCodes.ACCEPTED));</span>
+<span class="nc" id="L413">                        finishTraceAndStop();</span>
+                    } else {
+                        // after a Command was received, this Actor can only receive the correlating CommandResponse:
+<span class="fc" id="L416">                        getContext().become(commandResponseAwaiting);</span>
+                    }
+<span class="fc" id="L418">                })</span>
+<span class="fc" id="L419">                .matchAny(m -&gt; {</span>
+<span class="nc" id="L420">                    logger.warning(&quot;Got unknown message, expected a 'Command': {}&quot;, m);</span>
+<span class="nc" id="L421">                    completeWithResult(HttpResponse.create().withStatus(HttpStatusCode.INTERNAL_SERVER_ERROR.toInt())</span>
+                    );
+<span class="nc" id="L423">                })</span>
+<span class="fc" id="L424">                .build();</span>
+    }
+
+    private HttpResponse handleMessageResponseMessage(final MessageCommandResponse&lt;?, ?&gt; messageCommandResponse) {
+        HttpResponse httpResponse;
+
+<span class="nc" id="L430">        final Message&lt;?&gt; message = messageCommandResponse.getMessage();</span>
+<span class="nc" id="L431">        final Optional&lt;?&gt; optionalPayload = message.getPayload();</span>
+<span class="nc" id="L432">        final Optional&lt;ByteBuffer&gt; optionalRawPayload = message.getRawPayload();</span>
+<span class="nc" id="L433">        final Optional&lt;HttpStatusCode&gt; responseStatusCode =</span>
+<span class="nc" id="L434">                Optional.of(messageCommandResponse.getStatusCode())</span>
+<span class="nc" id="L435">                        .filter(code -&gt; StatusCodes.lookup(code.toInt()).isPresent());</span>
+        // only allow status code which are known to akka-http
+
+        // if statusCode is != NO_CONTENT
+<span class="nc bnc" id="L439" title="All 4 branches missed.">        if (responseStatusCode.map(status -&gt; status != HttpStatusCode.NO_CONTENT).orElse(true)) {</span>
+<span class="nc" id="L440">            final Optional&lt;ContentType&gt; optionalContentType = message.getContentType().map(ContentType$.MODULE$::parse)</span>
+<span class="nc" id="L441">                    .filter(Either::isRight)</span>
+<span class="nc" id="L442">                    .map(Either::right)</span>
+<span class="nc" id="L443">                    .map(right -&gt; (ContentType) right.get());</span>
+
+            httpResponse =
+<span class="nc" id="L446">                    HttpResponse.create()</span>
+<span class="nc" id="L447">                            .withStatus(responseStatusCode.orElse(HttpStatusCode.OK).toInt());</span>
+
+<span class="nc bnc" id="L449" title="All 2 branches missed.">            if (optionalPayload.isPresent()) {</span>
+<span class="nc" id="L450">                final Object payload = optionalPayload.get();</span>
+
+<span class="nc bnc" id="L452" title="All 2 branches missed.">                if (optionalContentType.isPresent()) {</span>
+<span class="nc" id="L453">                    httpResponse = httpResponse.withEntity(</span>
+<span class="nc" id="L454">                            HttpEntities.create(optionalContentType.get(),</span>
+<span class="nc" id="L455">                                    ByteString.ByteStrings.fromString(payload.toString())));</span>
+                } else {
+<span class="nc" id="L457">                    httpResponse = httpResponse.withEntity(</span>
+<span class="nc" id="L458">                            HttpEntities.create(payload.toString()));</span>
+                }
+<span class="nc bnc" id="L460" title="All 2 branches missed.">            } else if (optionalRawPayload.isPresent()) {</span>
+
+<span class="nc" id="L462">                final ByteBuffer rawPayload = optionalRawPayload.get();</span>
+<span class="nc bnc" id="L463" title="All 2 branches missed.">                if (optionalContentType.isPresent()) {</span>
+<span class="nc" id="L464">                    httpResponse = httpResponse.withEntity(</span>
+<span class="nc" id="L465">                            HttpEntities.create(optionalContentType.get(), rawPayload.array()));</span>
+                } else {
+<span class="nc" id="L467">                    httpResponse = httpResponse.withEntity(</span>
+<span class="nc" id="L468">                            HttpEntities.create(rawPayload.array()));</span>
+                }
+            }
+<span class="nc" id="L471">        } else {</span>
+            // if payload was missing OR statusCode was NO_CONTENT:
+<span class="nc" id="L473">            optionalRawPayload.ifPresent(byteBuffer -&gt;</span>
+<span class="nc" id="L474">                    logger.info(&quot;Response payload was set, but response statusCode was also set to: {}. Ignoring the &quot; +</span>
+                            &quot;response payload. Command=&lt;{}&gt;&quot;, responseStatusCode, messageCommandResponse)
+            );
+            httpResponse =
+<span class="nc" id="L478">                    HttpResponse.create().withStatus(responseStatusCode.orElse(HttpStatusCode.NO_CONTENT).toInt());</span>
+        }
+
+<span class="nc" id="L481">        return httpResponse;</span>
+    }
+
+    private void handleServerRequestTimeout() {
+<span class="nc" id="L485">        logger.warning(&quot;No response within server request timeout ({}), shutting actor down.&quot;,</span>
+                serverRequestTimeout);
+        // note that we do not need to send a response here, this is handled by RequestTimeoutHandlingDirective
+<span class="nc" id="L488">        finishTraceAndStop();</span>
+<span class="nc" id="L489">    }</span>
+
+    private void completeWithResult(final HttpResponse response) {
+<span class="fc" id="L492">        httpResponseFuture.complete(response);</span>
+<span class="fc" id="L493">        logger.debug(&quot;Responding with HttpResponse code '{}'&quot;, response.status().intValue());</span>
+<span class="pc bpc" id="L494" title="1 of 2 branches missed.">        if (logger.isDebugEnabled()) {</span>
+<span class="nc" id="L495">            logger.debug(&quot;Responding with Entity: {}&quot;, response.entity());</span>
+        }
+<span class="fc" id="L497">        finishTraceAndStop();</span>
+<span class="fc" id="L498">    }</span>
+
+    private void finishTraceAndStop() {
+<span class="fc bfc" id="L501" title="All 2 branches covered.">        if (traceContext != null) {</span>
+<span class="fc" id="L502">            traceContext.finish();</span>
+<span class="fc" id="L503">            final double durationMs = (System.nanoTime() - traceContext.startTimestamp()) / NANO_TO_MS_DIVIDER;</span>
+<span class="fc" id="L504">            final Option&lt;String&gt; typePrefixOption = traceContext.tags().get(TRACE_TAG_TYPE_PREFIX);</span>
+
+<span class="fc bfc" id="L506" title="All 2 branches covered.">            if (typePrefixOption.contains(ThingSearchCommand.TYPE_PREFIX)) {</span>
+<span class="pc bpc" id="L507" title="1 of 2 branches missed.">                if (durationMs &gt; SEARCH_WARN_TIMEOUT_MS) {</span>
+<span class="nc" id="L508">                    logger.warning(&quot;Encountered slow search which took over {}ms: {}ms&quot;,</span>
+<span class="nc" id="L509">                            (int) SEARCH_WARN_TIMEOUT_MS,</span>
+<span class="nc" id="L510">                            (int) durationMs);</span>
+                }
+<span class="pc bpc" id="L512" title="1 of 2 branches missed.">            } else if (durationMs &gt; HTTP_WARN_TIMEOUT_MS) {</span>
+<span class="nc" id="L513">                logger.warning(&quot;Encountered slow HTTP request which took over {}ms: {}ms&quot;,</span>
+<span class="nc" id="L514">                        (int) HTTP_WARN_TIMEOUT_MS,</span>
+<span class="nc" id="L515">                        (int) durationMs);</span>
+            }
+        }
+<span class="fc" id="L518">        logger.clearMDC();</span>
+        // destroy ourself:
+<span class="fc" id="L520">        getContext().stop(getSelf());</span>
+<span class="fc" id="L521">    }</span>
+
+    private void newTraceFor(final Command command, final String name) {
+<span class="fc" id="L524">        final Optional&lt;String&gt; tokenOptional = command.getDittoHeaders().getCorrelationId();</span>
+<span class="fc" id="L525">        final Option&lt;String&gt; tokenScalaOption = tokenOptional</span>
+<span class="fc" id="L526">                .map(Option::&lt;String&gt;apply)</span>
+<span class="fc" id="L527">                .orElse(Option.apply(UUID.randomUUID().toString()));</span>
+<span class="fc" id="L528">        LogUtil.enhanceLogWithCorrelationId(logger, tokenOptional);</span>
+<span class="fc" id="L529">        traceContext = Kamon.tracer().newContext(name, tokenScalaOption);</span>
+<span class="fc" id="L530">        traceContext.addTag(TRACE_TAG_TYPE, command.getType());</span>
+<span class="fc" id="L531">        traceContext.addTag(TRACE_TAG_TYPE_PREFIX, command.getTypePrefix());</span>
+<span class="fc" id="L532">    }</span>
+
+    private static final class ServerRequestTimeoutMessage {
+
+<span class="fc" id="L536">        private static final ServerRequestTimeoutMessage INSTANCE = new ServerRequestTimeoutMessage();</span>
+
+        private ServerRequestTimeoutMessage() {}
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

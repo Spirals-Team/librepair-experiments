@@ -1,0 +1,462 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RootRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes</a> &gt; <span class="el_source">RootRoute.java</span></div><h1>RootRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes;
+
+import static akka.http.javadsl.server.Directives.complete;
+import static akka.http.javadsl.server.Directives.extractRequestContext;
+import static akka.http.javadsl.server.Directives.handleExceptions;
+import static akka.http.javadsl.server.Directives.handleRejections;
+import static akka.http.javadsl.server.Directives.pathPrefixTest;
+import static akka.http.javadsl.server.Directives.rawPathPrefix;
+import static akka.http.javadsl.server.Directives.route;
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.CorrelationIdEnsuringDirective.ensureCorrelationId;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.CustomPathMatchers.mergeDoubleSlashes;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.DevopsBasicAuthenticationDirective.REALM_DEVOPS;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.DevopsBasicAuthenticationDirective.REALM_HEALTH;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.DevopsBasicAuthenticationDirective.authenticateDevopsBasic;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.RequestResultLoggingDirective.logRequestResult;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.ResponseRewritingDirective.rewriteResponse;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.auth.AuthorizationContextVersioningDirective.mapAuthorizationContext;
+import static org.eclipse.ditto.services.gateway.endpoints.utils.DirectivesLoggingUtils.enhanceLogWithCorrelationId;
+
+import java.util.AbstractMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.regex.Pattern;
+
+import org.eclipse.ditto.json.JsonRuntimeException;
+import org.eclipse.ditto.model.base.auth.AuthorizationContext;
+import org.eclipse.ditto.model.base.auth.AuthorizationSubject;
+import org.eclipse.ditto.model.base.exceptions.DittoJsonException;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.model.base.json.JsonSchemaVersion;
+import org.eclipse.ditto.model.policies.SubjectIssuer;
+import org.eclipse.ditto.protocoladapter.DittoProtocolAdapter;
+import org.eclipse.ditto.services.base.metrics.StatsdMetricsReporter;
+import org.eclipse.ditto.services.gateway.endpoints.directives.CorsEnablingDirective;
+import org.eclipse.ditto.services.gateway.endpoints.directives.EncodingEnsuringDirective;
+import org.eclipse.ditto.services.gateway.endpoints.directives.HttpsEnsuringDirective;
+import org.eclipse.ditto.services.gateway.endpoints.directives.RequestTimeoutHandlingDirective;
+import org.eclipse.ditto.services.gateway.endpoints.directives.SecurityResponseHeadersDirective;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.AuthenticationProvider;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.GatewayAuthenticationDirective;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.dummy.DummyAuthenticationProvider;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt.DittoAuthorizationSubjectsProvider;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt.DittoPublicKeyProvider;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt.JwtAuthenticationDirective;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt.JwtSubjectIssuerConfig;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt.JwtSubjectIssuersConfig;
+import org.eclipse.ditto.services.gateway.endpoints.directives.auth.jwt.PublicKeyProvider;
+import org.eclipse.ditto.services.gateway.endpoints.routes.devops.DevOpsRoute;
+import org.eclipse.ditto.services.gateway.endpoints.routes.health.CachingHealthRoute;
+import org.eclipse.ditto.services.gateway.endpoints.routes.policies.PoliciesRoute;
+import org.eclipse.ditto.services.gateway.endpoints.routes.sse.SseThingsRoute;
+import org.eclipse.ditto.services.gateway.endpoints.routes.stats.StatsRoute;
+import org.eclipse.ditto.services.gateway.endpoints.routes.status.OverallStatusRoute;
+import org.eclipse.ditto.services.gateway.endpoints.routes.things.ThingsRoute;
+import org.eclipse.ditto.services.gateway.endpoints.routes.thingsearch.ThingSearchRoute;
+import org.eclipse.ditto.services.gateway.endpoints.routes.websocket.WebsocketRoute;
+import org.eclipse.ditto.services.gateway.endpoints.utils.DittoRejectionHandlerFactory;
+import org.eclipse.ditto.services.gateway.health.DittoStatusAndHealthProviderFactory;
+import org.eclipse.ditto.services.gateway.health.StatusAndHealthProvider;
+import org.eclipse.ditto.services.gateway.starter.service.util.ConfigKeys;
+import org.eclipse.ditto.services.gateway.starter.service.util.HttpClientFacade;
+import org.eclipse.ditto.services.utils.health.cluster.ClusterStatus;
+import org.eclipse.ditto.signals.commands.base.CommandNotSupportedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.codahale.metrics.MetricRegistry;
+import com.typesafe.config.Config;
+
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.dispatch.MessageDispatcher;
+import akka.http.javadsl.model.ContentTypes;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.model.StatusCodes;
+import akka.http.javadsl.server.Directives;
+import akka.http.javadsl.server.ExceptionHandler;
+import akka.http.javadsl.server.PathMatchers;
+import akka.http.javadsl.server.RejectionHandler;
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+import akka.util.ByteString;
+
+/**
+ * Builder for creating Akka HTTP routes for {@code /}.
+ */
+public final class RootRoute {
+
+    static final String HTTP_PATH_API_PREFIX = &quot;api&quot;;
+    static final String WS_PATH_PREFIX = &quot;ws&quot;;
+
+<span class="fc" id="L111">    private static final Logger LOGGER = LoggerFactory.getLogger(RootRoute.class);</span>
+
+    private static final String BLOCKING_DISPATCHER_NAME = &quot;blocking-dispatcher&quot;;
+
+    private static final String JWT_ISSUER_GOOGLE_DOMAIN = &quot;accounts.google.com&quot;;
+    private static final String JWT_ISSUER_GOOGLE_URL = &quot;https://accounts.google.com&quot;;
+    private static final String JWK_RESOURCE_GOOGLE = &quot;https://www.googleapis.com/oauth2/v2/certs&quot;;
+
+    /**
+     * Contains a Pattern which routes are included in devops Basic Auth secured resources.
+     */
+<span class="fc" id="L122">    public static final Pattern DEVOPS_AUTH_SECURED = Pattern.compile(&quot;(&quot; +</span>
+            OverallStatusRoute.PATH_STATUS + &quot;|&quot; +
+            CachingHealthRoute.PATH_HEALTH + &quot;|&quot; +
+            DevOpsRoute.PATH_DEVOPS + &quot;).*&quot;
+    );
+
+    private final OverallStatusRoute overallStatusRoute;
+    private final CachingHealthRoute cachingHealthRoute;
+    private final DevOpsRoute devopsRoute;
+
+    private final PoliciesRoute policiesRoute;
+    private final SseThingsRoute sseThingsRoute;
+    private final ThingsRoute thingsRoute;
+    private final ThingSearchRoute thingSearchRoute;
+    private final WebsocketRoute websocketRoute;
+    private final GatewayAuthenticationDirective apiAuthenticationDirective;
+    private final GatewayAuthenticationDirective wsAuthenticationDirective;
+    private final StatsRoute statsRoute;
+    private final ExceptionHandler exceptionHandler;
+    private final List&lt;Integer&gt; supportedSchemaVersions;
+<span class="fc" id="L142">    private final RejectionHandler rejectionHandler = DittoRejectionHandlerFactory.createInstance();</span>
+
+    /**
+     * Constructs the {@code /} route builder.
+     *
+     * @param actorSystem the Actor System.
+     * @param config the configuration of the service.
+     * @param proxyActor the proxy actor delegating commands.
+     * @param streamingActor the {@link org.eclipse.ditto.services.gateway.streaming.actors.StreamingActor} reference.
+     * @param healthCheckingActor the health-checking actor to use.
+     * @param clusterStateSupplier the supplier to get the cluster state.
+     * @param httpClient the Http Client to use.
+     */
+    public RootRoute(final ActorSystem actorSystem, final Config config,
+            final ActorRef proxyActor,
+            final ActorRef streamingActor,
+            final ActorRef healthCheckingActor,
+            final Supplier&lt;ClusterStatus&gt; clusterStateSupplier,
+<span class="fc" id="L160">            final HttpClientFacade httpClient) {</span>
+<span class="fc" id="L161">        checkNotNull(actorSystem, &quot;Actor System&quot;);</span>
+<span class="fc" id="L162">        checkNotNull(proxyActor, &quot;proxyActor&quot;);</span>
+
+<span class="fc" id="L164">        final MessageDispatcher blockingDispatcher = actorSystem.dispatchers().lookup(BLOCKING_DISPATCHER_NAME);</span>
+        final StatusAndHealthProvider
+<span class="fc" id="L166">                statusHealthProvider = DittoStatusAndHealthProviderFactory.of(actorSystem, clusterStateSupplier);</span>
+
+<span class="fc" id="L168">        statsRoute = new StatsRoute(proxyActor, actorSystem);</span>
+<span class="fc" id="L169">        overallStatusRoute = new OverallStatusRoute(actorSystem, clusterStateSupplier, healthCheckingActor,</span>
+                statusHealthProvider);
+<span class="fc" id="L171">        cachingHealthRoute = new CachingHealthRoute(statusHealthProvider,</span>
+<span class="fc" id="L172">                config.getDuration(ConfigKeys.STATUS_HEALTH_EXTERNAL_CACHE_TIMEOUT));</span>
+<span class="fc" id="L173">        devopsRoute = new DevOpsRoute(proxyActor, actorSystem);</span>
+
+<span class="fc" id="L175">        policiesRoute = new PoliciesRoute(proxyActor, actorSystem);</span>
+<span class="fc" id="L176">        sseThingsRoute = new SseThingsRoute(proxyActor, actorSystem, streamingActor);</span>
+<span class="fc" id="L177">        thingsRoute = new ThingsRoute(proxyActor, actorSystem,</span>
+<span class="fc" id="L178">                config.getDuration(ConfigKeys.MESSAGE_DEFAULT_TIMEOUT),</span>
+<span class="fc" id="L179">                config.getDuration(ConfigKeys.MESSAGE_MAX_TIMEOUT),</span>
+<span class="fc" id="L180">                config.getDuration(ConfigKeys.CLAIMMESSAGE_DEFAULT_TIMEOUT),</span>
+<span class="fc" id="L181">                config.getDuration(ConfigKeys.CLAIMMESSAGE_MAX_TIMEOUT));</span>
+<span class="fc" id="L182">        thingSearchRoute = new ThingSearchRoute(proxyActor, actorSystem);</span>
+<span class="fc" id="L183">        websocketRoute = new WebsocketRoute(streamingActor,</span>
+<span class="fc" id="L184">                config.getInt(ConfigKeys.WEBSOCKET_SUBSCRIBER_BACKPRESSURE),</span>
+<span class="fc" id="L185">                config.getInt(ConfigKeys.WEBSOCKET_PUBLISHER_BACKPRESSURE),</span>
+<span class="fc" id="L186">                DittoProtocolAdapter.newInstance(), actorSystem.eventStream());</span>
+
+<span class="fc" id="L188">        supportedSchemaVersions = config.getIntList(ConfigKeys.SCHEMA_VERSIONS);</span>
+
+<span class="fc" id="L190">        apiAuthenticationDirective =</span>
+<span class="fc" id="L191">                generateGatewayAuthenticationDirective(config, httpClient, blockingDispatcher);</span>
+<span class="fc" id="L192">        wsAuthenticationDirective = apiAuthenticationDirective;</span>
+<span class="fc" id="L193">        exceptionHandler = createExceptionHandler();</span>
+<span class="fc" id="L194">    }</span>
+
+    private GatewayAuthenticationDirective generateGatewayAuthenticationDirective(final Config config,
+            final HttpClientFacade httpClient, final MessageDispatcher blockingDispatcher) {
+<span class="fc" id="L198">        final boolean dummyAuthEnabled = config.getBoolean(ConfigKeys.AUTHENTICATION_DUMMY_ENABLED);</span>
+
+<span class="fc" id="L200">        final List&lt;AuthenticationProvider&gt; authenticationChain = new LinkedList&lt;&gt;();</span>
+<span class="pc bpc" id="L201" title="1 of 2 branches missed.">        if (dummyAuthEnabled) {</span>
+<span class="fc" id="L202">            LOGGER.warn(&quot;Dummy authentication is enabled - Do not use this feature in production.&quot;);</span>
+<span class="fc" id="L203">            authenticationChain.add(DummyAuthenticationProvider.INSTANCE);</span>
+        }
+
+
+<span class="fc" id="L207">        final Map.Entry&lt;String, MetricRegistry&gt; namedPublicKeysCacheMetricRegistry =</span>
+                new AbstractMap.SimpleImmutableEntry&lt;&gt;(&quot;ditto.auth.jwt.publicKeys.cache&quot;, new MetricRegistry());
+<span class="fc" id="L209">        StatsdMetricsReporter.getInstance().add(namedPublicKeysCacheMetricRegistry);</span>
+<span class="fc" id="L210">        final JwtSubjectIssuersConfig jwtSubjectIssuersConfig = buildJwtSubjectIssuersConfig();</span>
+
+<span class="fc" id="L212">        final PublicKeyProvider publicKeyProvider = DittoPublicKeyProvider.of(jwtSubjectIssuersConfig, httpClient,</span>
+<span class="fc" id="L213">                config.getInt(ConfigKeys.CACHE_PUBLIC_KEYS_MAX),</span>
+<span class="fc" id="L214">                config.getDuration(ConfigKeys.CACHE_PUBLIC_KEYS_EXPIRY),</span>
+                namedPublicKeysCacheMetricRegistry);
+<span class="fc" id="L216">        final DittoAuthorizationSubjectsProvider authorizationSubjectsProvider =</span>
+<span class="fc" id="L217">                DittoAuthorizationSubjectsProvider.of(jwtSubjectIssuersConfig);</span>
+
+<span class="fc" id="L219">        authenticationChain.add(</span>
+                new JwtAuthenticationDirective(publicKeyProvider, authorizationSubjectsProvider));
+
+<span class="fc" id="L222">        return new GatewayAuthenticationDirective(authenticationChain);</span>
+    }
+
+    private JwtSubjectIssuersConfig buildJwtSubjectIssuersConfig() {
+<span class="fc" id="L226">        final Set&lt;JwtSubjectIssuerConfig&gt; configItems = new HashSet&lt;&gt;();</span>
+
+<span class="fc" id="L228">        configItems.add(new JwtSubjectIssuerConfig(SubjectIssuer.GOOGLE, JWT_ISSUER_GOOGLE_DOMAIN,</span>
+                JWK_RESOURCE_GOOGLE));
+<span class="fc" id="L230">        configItems.add(new JwtSubjectIssuerConfig(SubjectIssuer.GOOGLE, JWT_ISSUER_GOOGLE_URL,</span>
+                JWK_RESOURCE_GOOGLE));
+
+<span class="fc" id="L233">        return new JwtSubjectIssuersConfig(configItems);</span>
+    }
+
+    /**
+     * Builds the {@code /} route.
+     *
+     * @return the {@code /} route.
+     */
+    public Route buildRoute() {
+<span class="fc" id="L242">        return wrapWithRootDirectives(correlationId -&gt;</span>
+<span class="fc" id="L243">                extractRequestContext(ctx -&gt;</span>
+<span class="fc" id="L244">                        route(</span>
+<span class="fc" id="L245">                                statsRoute.buildStatsRoute(correlationId), // /stats</span>
+<span class="fc" id="L246">                                api(ctx, correlationId), // /api</span>
+<span class="fc" id="L247">                                ws(correlationId), // /ws</span>
+<span class="fc" id="L248">                                pathPrefixTest(PathMatchers.segment(DEVOPS_AUTH_SECURED), segment -&gt; {</span>
+<span class="fc" id="L249">                                    final String realm = getRealmFromSegment(segment);</span>
+<span class="fc" id="L250">                                    return authenticateDevopsBasic(realm,</span>
+<span class="fc" id="L251">                                            route(</span>
+<span class="fc" id="L252">                                                    overallStatusRoute.buildStatusRoute(), // /status</span>
+<span class="fc" id="L253">                                                    cachingHealthRoute.buildHealthRoute(), // /health</span>
+<span class="fc" id="L254">                                                    devopsRoute.buildDevopsRoute(ctx) // /devops</span>
+                                            )
+                                    );
+                                })
+
+
+                        )
+                )
+        );
+    }
+
+    private Route wrapWithRootDirectives(final Function&lt;String, Route&gt; rootRoute) {
+<span class="fc" id="L266">        final Function&lt;Function&lt;String, Route&gt;, Route&gt; outerRouteProvider = innerRouteProvider -&gt;</span>
+                /* the outer handleExceptions is for handling exceptions in the directives wrapping the rootRoute
+                   (which normally should not occur */
+<span class="fc" id="L269">                handleExceptions(exceptionHandler, () -&gt;</span>
+<span class="fc" id="L270">                        ensureCorrelationId(correlationId -&gt;</span>
+<span class="fc" id="L271">                                rewriteResponse(correlationId, () -&gt;</span>
+<span class="fc" id="L272">                                        RequestTimeoutHandlingDirective.handleRequestTimeout(correlationId, () -&gt;</span>
+<span class="fc" id="L273">                                                logRequestResult(correlationId, () -&gt;</span>
+<span class="fc" id="L274">                                                        innerRouteProvider.apply(correlationId)</span>
+                                                )
+                                        )
+                                )
+                        )
+                );
+
+<span class="fc" id="L281">        final Function&lt;String, Route&gt; innerRouteProvider = correlationId -&gt;</span>
+<span class="fc" id="L282">                EncodingEnsuringDirective.ensureEncoding(correlationId, () -&gt;</span>
+<span class="fc" id="L283">                        HttpsEnsuringDirective.ensureHttps(correlationId, () -&gt;</span>
+<span class="fc" id="L284">                                CorsEnablingDirective.enableCors(() -&gt;</span>
+<span class="fc" id="L285">                                        SecurityResponseHeadersDirective.addSecurityResponseHeaders(() -&gt;</span>
+                                                /* handling the rejections is done by akka automatically, but if we
+                                                   do it here explicitly, we are able to log the status code for the
+                                                   rejection (e.g. 404 or 405) in a wrapping directive. */
+<span class="fc" id="L289">                                                handleRejections(rejectionHandler, () -&gt;</span>
+                                                        /* the inner handleExceptions is for handling exceptions
+                                                           occurring in the route route. It makes sure that the
+                                                           wrapping directives such as addSecurityResponseHeaders are
+                                                           even called in an error case in the route route. */
+<span class="fc" id="L294">                                                        handleExceptions(exceptionHandler, () -&gt;</span>
+<span class="fc" id="L295">                                                                rootRoute.apply(correlationId)</span>
+                                                        )
+                                                )
+                                        )
+                                )
+                        )
+                );
+
+<span class="fc" id="L303">        return outerRouteProvider.apply(innerRouteProvider);</span>
+    }
+
+    private Route apiAuthentication(final String correlationId, final Function&lt;AuthorizationContext, Route&gt; inner) {
+<span class="fc" id="L307">        return apiAuthenticationDirective.authenticate(correlationId, inner);</span>
+    }
+
+    private Route wsAuthentication(final String correlationId, final Function&lt;AuthorizationContext, Route&gt; inner) {
+<span class="fc" id="L311">        return wsAuthenticationDirective.authenticate(correlationId, inner);</span>
+    }
+
+    /*
+     * Describes {@code /api} route.
+     *
+     * @return route for API resource.
+     */
+    private Route api(final RequestContext ctx, final String correlationId) {
+<span class="fc" id="L320">        return rawPathPrefix(mergeDoubleSlashes().concat(HTTP_PATH_API_PREFIX), () -&gt; // /api</span>
+<span class="fc" id="L321">                ensureSchemaVersion(apiVersion -&gt; // /api/&lt;apiVersion&gt;</span>
+<span class="fc" id="L322">                        apiAuthentication(correlationId,</span>
+                                authContextWithPrefixedSubjects -&gt;
+<span class="fc" id="L324">                                        mapAuthorizationContext(</span>
+                                                correlationId,
+<span class="fc" id="L326">                                                apiVersion,</span>
+                                                authContextWithPrefixedSubjects,
+                                                authContext -&gt;
+<span class="fc" id="L329">                                                        extractDittoHeaders(</span>
+                                                                authContext,
+                                                                apiVersion,
+                                                                correlationId,
+                                                                dittoHeaders -&gt;
+<span class="fc" id="L334">                                                                        buildApiSubRoutes(ctx, dittoHeaders)</span>
+                                                        )
+                                        )
+                        )
+                )
+        );
+    }
+
+    private Route ensureSchemaVersion(final Function&lt;Integer, Route&gt; inner) {
+<span class="fc" id="L343">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.integerSegment()),</span>
+                apiVersion -&gt; { // /xx/&lt;schemaVersion&gt;
+<span class="fc bfc" id="L345" title="All 2 branches covered.">                    if (supportedSchemaVersions.contains(apiVersion)) {</span>
+                        try {
+<span class="fc" id="L347">                            return inner.apply(apiVersion);</span>
+<span class="nc" id="L348">                        } catch (final RuntimeException e) {</span>
+<span class="nc" id="L349">                            throw e; // rethrow RuntimeExceptions</span>
+<span class="nc" id="L350">                        } catch (final Exception e) {</span>
+<span class="nc" id="L351">                            throw new IllegalStateException(&quot;Unexpected checked exception&quot;, e);</span>
+                        }
+                    } else {
+<span class="fc" id="L354">                        final CommandNotSupportedException commandNotSupportedException =</span>
+<span class="fc" id="L355">                                CommandNotSupportedException.newBuilder(apiVersion).build();</span>
+<span class="fc" id="L356">                        return complete(</span>
+<span class="fc" id="L357">                                HttpResponse.create().withStatus(commandNotSupportedException.getStatusCode().toInt())</span>
+<span class="fc" id="L358">                                        .withEntity(ContentTypes.APPLICATION_JSON,</span>
+<span class="fc" id="L359">                                                ByteString.fromString(commandNotSupportedException.toJsonString())));</span>
+                    }
+                });
+    }
+
+    private Route buildApiSubRoutes(final RequestContext ctx, final DittoHeaders dittoHeaders) {
+<span class="fc" id="L365">        return Directives.route(</span>
+                // /api/{apiVersion}/policies
+<span class="fc" id="L367">                policiesRoute.buildPoliciesRoute(ctx, dittoHeaders),</span>
+                // /api/{apiVersion}/things SSE support
+<span class="fc" id="L369">                sseThingsRoute.buildThingsSseRoute(ctx, dittoHeaders),</span>
+                // /api/{apiVersion}/things
+<span class="fc" id="L371">                thingsRoute.buildThingsRoute(ctx, dittoHeaders),</span>
+                // /api/{apiVersion}/search/things
+<span class="fc" id="L373">                thingSearchRoute.buildSearchRoute(ctx, dittoHeaders)</span>
+        );
+    }
+
+    /*
+     * Describes {@code /ws} route.
+     *
+     * @return route for Websocket resource.
+     */
+    private Route ws(final String correlationId) {
+<span class="fc" id="L383">        return rawPathPrefix(mergeDoubleSlashes().concat(WS_PATH_PREFIX), () -&gt; // /ws</span>
+<span class="fc" id="L384">                ensureSchemaVersion(wsVersion -&gt; // /ws/&lt;wsVersion&gt;</span>
+<span class="fc" id="L385">                        wsAuthentication(correlationId, authContextWithPrefixedSubjects -&gt;</span>
+<span class="fc" id="L386">                                mapAuthorizationContext(correlationId, wsVersion,</span>
+                                        authContextWithPrefixedSubjects,
+                                        authContext -&gt;
+<span class="fc" id="L389">                                                websocketRoute.buildWebsocketRoute(wsVersion, correlationId,</span>
+                                                        authContext)
+                                )
+                        )
+                )
+        );
+    }
+
+    private static Route extractDittoHeaders(final AuthorizationContext authorizationContext,
+            final Integer version, final String correlationId,
+            final Function&lt;DittoHeaders, Route&gt; inner) {
+
+<span class="fc" id="L401">        final DittoHeaders dittoHeaders = buildDittoHeaders(authorizationContext, version, correlationId);</span>
+<span class="fc" id="L402">        return inner.apply(dittoHeaders);</span>
+    }
+
+    private static ExceptionHandler createExceptionHandler() {
+<span class="fc" id="L406">        return ExceptionHandler.newBuilder().match(DittoRuntimeException.class, cre -&gt; {</span>
+<span class="nc" id="L407">            final DittoHeaders dittoHeaders = cre.getDittoHeaders();</span>
+<span class="nc" id="L408">            enhanceLogWithCorrelationId(dittoHeaders.getCorrelationId(), () -&gt;</span>
+<span class="nc" id="L409">                    LOGGER.info(&quot;DittoRuntimeException in gateway RootRoute: {}&quot;, cre.getMessage())</span>
+            );
+<span class="nc" id="L411">            return complete(HttpResponse.create().withStatus(cre.getStatusCode().toInt())</span>
+<span class="nc" id="L412">                    .withEntity(ContentTypes.APPLICATION_JSON, ByteString.fromString(cre.toJsonString())));</span>
+        })
+<span class="fc" id="L414">                .match(JsonRuntimeException.class, jre -&gt; {</span>
+<span class="nc" id="L415">                    final DittoJsonException dittoJsonException = new DittoJsonException(jre);</span>
+<span class="nc" id="L416">                    final DittoHeaders dittoHeaders = dittoJsonException.getDittoHeaders();</span>
+<span class="nc" id="L417">                    enhanceLogWithCorrelationId(dittoHeaders.getCorrelationId(), () -&gt;</span>
+<span class="nc" id="L418">                            LOGGER.info(&quot;DittoJsonException in gateway RootRoute: {}&quot;,</span>
+<span class="nc" id="L419">                                    dittoJsonException.getMessage()));</span>
+<span class="nc" id="L420">                    return complete(HttpResponse.create().withStatus(dittoJsonException.getStatusCode().toInt())</span>
+<span class="nc" id="L421">                            .withEntity(ContentTypes.APPLICATION_JSON,</span>
+<span class="nc" id="L422">                                    ByteString.fromString(dittoJsonException.toJsonString())));</span>
+                })
+<span class="fc" id="L424">                .matchAny(throwable -&gt; {</span>
+<span class="nc" id="L425">                    LOGGER.error(&quot;Unexpected RuntimeException in gateway RootRoute: {}&quot;, throwable.getMessage(),</span>
+                            throwable);
+<span class="nc" id="L427">                    return complete(StatusCodes.INTERNAL_SERVER_ERROR);</span>
+                })
+<span class="fc" id="L429">                .build();</span>
+    }
+
+    private static DittoHeaders buildDittoHeaders(final AuthorizationContext authorizationContext,
+            final Integer version, final String correlationId) {
+<span class="fc" id="L434">        final JsonSchemaVersion jsonSchemaVersion = JsonSchemaVersion.forInt(version)</span>
+<span class="pc" id="L435">                .orElseThrow(() -&gt; CommandNotSupportedException.newBuilder(version).build());</span>
+<span class="fc" id="L436">        final DittoHeadersBuilder builder = DittoHeaders.newBuilder()</span>
+<span class="fc" id="L437">                .authorizationContext(authorizationContext)</span>
+<span class="fc" id="L438">                .schemaVersion(jsonSchemaVersion)</span>
+<span class="fc" id="L439">                .correlationId(correlationId);</span>
+
+<span class="fc" id="L441">        authorizationContext.getFirstAuthorizationSubject().map(AuthorizationSubject::getId).ifPresent(builder::source);</span>
+
+<span class="fc" id="L443">        return builder.build();</span>
+    }
+
+    /**
+     * Computes the basic-auth realm from the path segment.
+     *
+     * @param segment The path segment, should match {@link this#DEVOPS_AUTH_SECURED}
+     * @return Basic-auth realm for the path
+     */
+    private static String getRealmFromSegment(final String segment) {
+<span class="pc bpc" id="L453" title="1 of 2 branches missed.">        if (segment.startsWith(CachingHealthRoute.PATH_HEALTH)) {</span>
+<span class="nc" id="L454">            return REALM_HEALTH;</span>
+        } else {
+<span class="fc" id="L456">            return REALM_DEVOPS;</span>
+        }
+    }
+
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

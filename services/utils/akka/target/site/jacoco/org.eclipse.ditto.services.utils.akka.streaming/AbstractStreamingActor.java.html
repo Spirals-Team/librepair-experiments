@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractStreamingActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Akka Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.akka.streaming</a> &gt; <span class="el_source">AbstractStreamingActor.java</span></div><h1>AbstractStreamingActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.akka.streaming;
+
+import static org.eclipse.ditto.services.utils.akka.streaming.StreamConstants.STREAM_COMPLETED;
+import static org.eclipse.ditto.services.utils.akka.streaming.StreamConstants.STREAM_FAILED;
+import static org.eclipse.ditto.services.utils.akka.streaming.StreamConstants.STREAM_STARTED;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+
+import akka.NotUsed;
+import akka.actor.AbstractActor;
+import akka.actor.ActorRef;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.pf.PFBuilder;
+import akka.japi.pf.ReceiveBuilder;
+import akka.pattern.PatternsCS;
+import akka.stream.ActorMaterializer;
+import akka.stream.javadsl.Sink;
+import akka.stream.javadsl.Source;
+
+/**
+ * Abstract actor that responds to each command by streaming elements from a source to the sender of the command.
+ *
+ * @param &lt;C&gt; Type of commands to start a stream.
+ * @param &lt;E&gt; Type of elements of a stream.
+ */
+<span class="nc" id="L41">public abstract class AbstractStreamingActor&lt;C, E&gt; extends AbstractActor {</span>
+
+    /**
+     * Logger for this actor.
+     */
+<span class="nc" id="L46">    protected final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+    /**
+     * Actor materializer of this actor's system.
+     */
+<span class="nc" id="L51">    protected final ActorMaterializer materializer = ActorMaterializer.create(getContext());</span>
+
+    /**
+     * @return Class of the commands.
+     */
+    protected abstract Class&lt;C&gt; getCommandClass();
+
+    /**
+     * Extract batch size from a command. The rate specifies the number of elements to be sent per message.
+     * Default to 1.
+     *
+     * @param command The command to start a stream.
+     * @return The number of elements to be streamed per second.
+     */
+    protected Optional&lt;Integer&gt; getBurst(final C command) {
+<span class="nc" id="L66">        return Optional.of(1);</span>
+    }
+
+    /**
+     * Batch elements together into 1 message. Default to the first element of the list if it is a singleton and the
+     * list itself otherwise.
+     *
+     * @param elements Elements from the source.
+     * @return A batched message.
+     */
+    protected Object batchMessages(final List&lt;E&gt; elements) {
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        return elements.size() == 1</span>
+<span class="nc" id="L78">                ? elements.get(0)</span>
+                : elements;
+    }
+
+    /**
+     * Extract timeout in milliseconds.
+     *
+     * @param command The command to start a stream.
+     * @return Timeout in milliseconds.
+     */
+    protected abstract Optional&lt;Long&gt; getTimeoutMillis(final C command);
+
+    /**
+     * Starts a source of elements according to the command.
+     *
+     * @param command The command to start a stream.
+     * @return A source of elements to stream to the recipient.
+     */
+    protected abstract Source&lt;E, NotUsed&gt; createSource(final C command);
+
+    @Override
+    public final Receive createReceive() {
+<span class="nc" id="L100">        return ReceiveBuilder.create()</span>
+<span class="nc" id="L101">                .match(getCommandClass(), this::startStreaming)</span>
+<span class="nc" id="L102">                .matchAny(message -&gt; log.warning(&quot;Unexpected message: &lt;{}&gt;&quot;, message))</span>
+<span class="nc" id="L103">                .build();</span>
+    }
+
+    private void startStreaming(final C command) {
+<span class="nc" id="L107">        log.debug(&quot;Starting streaming due to command: {}&quot;, command);</span>
+<span class="nc" id="L108">        final ActorRef recipient = getSender();</span>
+<span class="nc" id="L109">        final int burst = getBurst(command).orElse(1);</span>
+<span class="nc" id="L110">        final long timeoutMillis = getTimeoutMillis(command).orElse(60_000L);</span>
+
+        // The stream below has the behavior of Sink.actorRefWithAck:
+        // - STREAM_STARTED is sent as first message expecting acknowledgement,
+        // - each batched stream message is sent expecting acknowledgement,
+        // - STREAM_COMPLETED is sent when upstream completes successfully,
+        // - STREAM_FAILURE is sent when upstream fails.
+        //
+        // DO NOT replace the stream below by Sink.actorRefWithAck from Akka 2.5.8,
+        // because it sends STREAM_COMPLETED without waiting for the acknowledgement
+        // of the final stream element, complicating the state transition of
+        // AbstractStreamForwarder.
+        //
+        // See:
+        // https://github.com/akka/akka/issues/21015
+<span class="nc" id="L125">        createSource(command)</span>
+<span class="nc" id="L126">                .grouped(burst)</span>
+<span class="nc" id="L127">                .map(this::batchMessages)</span>
+<span class="nc" id="L128">                .prepend(Source.single(STREAM_STARTED))</span>
+<span class="nc" id="L129">                .concat(Source.single(STREAM_COMPLETED))</span>
+<span class="nc" id="L130">                .mapAsync(1, message -&gt; {</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">                    if (STREAM_COMPLETED.equals(message)) {</span>
+<span class="nc" id="L132">                        recipient.tell(message, ActorRef.noSender());</span>
+<span class="nc" id="L133">                        return CompletableFuture.completedFuture(message);</span>
+                    } else {
+<span class="nc" id="L135">                        return PatternsCS.ask(recipient, message, timeoutMillis);</span>
+                    }
+                })
+<span class="nc" id="L138">                .recoverWithRetries(1,</span>
+                        new PFBuilder&lt;Throwable, Source&lt;Object, NotUsed&gt;&gt;()
+<span class="nc" id="L140">                                .matchAny(error -&gt; {</span>
+<span class="nc" id="L141">                                    recipient.tell(STREAM_FAILED, ActorRef.noSender());</span>
+<span class="nc" id="L142">                                    return Source.single(STREAM_FAILED);</span>
+                                })
+<span class="nc" id="L144">                                .build())</span>
+<span class="nc" id="L145">                .log(&quot;future completed&quot;, log)</span>
+<span class="nc" id="L146">                .runWith(Sink.ignore(), materializer);</span>
+<span class="nc" id="L147">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

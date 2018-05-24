@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AmqpPublisherActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Messaging</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.messaging.amqp</a> &gt; <span class="el_source">AmqpPublisherActor.java</span></div><h1>AmqpPublisherActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.messaging.amqp;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+import static org.eclipse.ditto.model.base.headers.DittoHeaderDefinition.CORRELATION_ID;
+
+import java.nio.ByteBuffer;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import javax.annotation.Nullable;
+import javax.jms.BytesMessage;
+import javax.jms.Destination;
+import javax.jms.JMSException;
+import javax.jms.Message;
+import javax.jms.MessageProducer;
+import javax.jms.Session;
+
+import org.apache.qpid.jms.message.JmsMessage;
+import org.apache.qpid.jms.message.facade.JmsMessageFacade;
+import org.apache.qpid.jms.provider.amqp.message.AmqpJmsMessageFacade;
+import org.eclipse.ditto.model.base.headers.DittoHeaderDefinition;
+import org.eclipse.ditto.model.connectivity.AddressMetric;
+import org.eclipse.ditto.model.connectivity.ConnectionStatus;
+import org.eclipse.ditto.model.connectivity.ConnectivityModelFactory;
+import org.eclipse.ditto.model.connectivity.ExternalMessage;
+import org.eclipse.ditto.model.connectivity.Target;
+import org.eclipse.ditto.services.connectivity.messaging.BasePublisherActor;
+import org.eclipse.ditto.services.connectivity.messaging.internal.RetrieveAddressMetric;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+
+import akka.actor.Props;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.ReceiveBuilder;
+
+/**
+ * Responsible for creating JMS {@link MessageProducer}s and sending {@link ExternalMessage}s as JMSMessages to those.
+ */
+public final class AmqpPublisherActor extends BasePublisherActor&lt;AmqpTarget&gt; {
+
+    /**
+     * The name prefix of this Actor in the ActorSystem.
+     */
+    static final String ACTOR_NAME = &quot;amqpPublisherActor&quot;;
+
+<span class="fc" id="L60">    private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+    private final Session session;
+    private final Map&lt;Destination, MessageProducer&gt; producerMap;
+
+    private AddressMetric addressMetric;
+<span class="fc" id="L66">    private long publishedMessages = 0L;</span>
+    private Instant lastMessagePublishedAt;
+
+
+    private AmqpPublisherActor(final Session session, final Set&lt;Target&gt; targets) {
+<span class="fc" id="L71">        super(targets);</span>
+<span class="fc" id="L72">        this.session = checkNotNull(session, &quot;session&quot;);</span>
+<span class="fc" id="L73">        this.producerMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L74">        addressMetric =</span>
+<span class="fc" id="L75">                ConnectivityModelFactory.newAddressMetric(ConnectionStatus.OPEN, &quot;Started at &quot; + Instant.now(),</span>
+                        0, null);
+<span class="fc" id="L77">    }</span>
+
+    /**
+     * Creates Akka configuration object {@link Props} for this {@code AmqpPublisherActor}.
+     *
+     * @param session the jms session
+     * @param targets the targets to publish to
+     * @return the Akka configuration Props object.
+     */
+    static Props props(final Session session, final Set&lt;Target&gt; targets) {
+<span class="fc" id="L87">        return Props.create(AmqpPublisherActor.class, new Creator&lt;AmqpPublisherActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public AmqpPublisherActor create() {
+<span class="fc" id="L92">                return new AmqpPublisherActor(session, targets);</span>
+            }
+        });
+    }
+
+    @Override
+    public Receive createReceive() {
+<span class="fc" id="L99">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L100">                .match(ExternalMessage.class, this::isResponseOrError, response -&gt; {</span>
+<span class="nc" id="L101">                    final String correlationId = response.getHeaders().get(CORRELATION_ID.getKey());</span>
+<span class="nc" id="L102">                    LogUtil.enhanceLogWithCorrelationId(log, correlationId);</span>
+<span class="nc" id="L103">                    log.debug(&quot;Received response or error {} &quot;, response);</span>
+
+<span class="nc" id="L105">                    final String replyToFromHeader = response.getHeaders().get(ExternalMessage.REPLY_TO_HEADER);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">                    if (replyToFromHeader != null) {</span>
+<span class="nc" id="L107">                        final AmqpTarget amqpTarget = AmqpTarget.fromTargetAddress(replyToFromHeader);</span>
+<span class="nc" id="L108">                        sendMessage(amqpTarget, response);</span>
+<span class="nc" id="L109">                    } else {</span>
+<span class="nc" id="L110">                        log.info(&quot;Response dropped, missing replyTo address: {}&quot;, response);</span>
+                    }
+<span class="nc" id="L112">                })</span>
+<span class="fc" id="L113">                .match(ExternalMessage.class, message -&gt; {</span>
+<span class="fc" id="L114">                    final String correlationId = message.getHeaders().get(CORRELATION_ID.getKey());</span>
+<span class="fc" id="L115">                    LogUtil.enhanceLogWithCorrelationId(log, correlationId);</span>
+<span class="fc" id="L116">                    log.debug(&quot;Received mapped message {} &quot;, message);</span>
+
+<span class="fc" id="L118">                    final Set&lt;AmqpTarget&gt; destinationForMessage = getDestinationForMessage(message);</span>
+<span class="fc" id="L119">                    destinationForMessage.forEach(amqpTarget -&gt; sendMessage(amqpTarget, message));</span>
+<span class="fc" id="L120">                })</span>
+<span class="fc" id="L121">                .match(AddressMetric.class, this::handleAddressMetric)</span>
+<span class="fc" id="L122">                .match(RetrieveAddressMetric.class, ram -&gt; {</span>
+<span class="nc" id="L123">                    getSender().tell(ConnectivityModelFactory.newAddressMetric(</span>
+<span class="nc" id="L124">                            addressMetric.getStatus(),</span>
+<span class="nc" id="L125">                            addressMetric.getStatusDetails().orElse(null),</span>
+<span class="nc" id="L126">                            publishedMessages, lastMessagePublishedAt), getSelf());</span>
+<span class="nc" id="L127">                })</span>
+<span class="fc" id="L128">                .matchAny(m -&gt; {</span>
+<span class="nc" id="L129">                    log.warning(&quot;Unknown message: {}&quot;, m);</span>
+<span class="nc" id="L130">                    unhandled(m);</span>
+<span class="pc" id="L131">                }).build();</span>
+    }
+
+    @Override
+    protected AmqpTarget toPublishTarget(final String address) {
+<span class="fc" id="L136">        return AmqpTarget.fromTargetAddress(address);</span>
+    }
+
+    private void handleAddressMetric(final AddressMetric addressMetric) {
+<span class="nc" id="L140">        this.addressMetric = addressMetric;</span>
+<span class="nc" id="L141">    }</span>
+
+    private void sendMessage(final AmqpTarget target, final ExternalMessage message) {
+        try {
+<span class="fc" id="L145">            final MessageProducer producer = getProducer(target.getJmsDestination());</span>
+<span class="pc bpc" id="L146" title="1 of 2 branches missed.">            if (producer != null) {</span>
+<span class="fc" id="L147">                final Message jmsMessage = toJmsMessage(message);</span>
+<span class="fc" id="L148">                producer.send(jmsMessage);</span>
+<span class="fc" id="L149">                publishedMessages++;</span>
+<span class="fc" id="L150">                lastMessagePublishedAt = Instant.now();</span>
+<span class="fc" id="L151">            } else {</span>
+<span class="nc" id="L152">                log.warning(&quot;No producer for destination {} available.&quot;, target);</span>
+            }
+<span class="nc" id="L154">        } catch (final JMSException e) {</span>
+<span class="nc" id="L155">            log.info(&quot;Failed to send JMS response: {}&quot;, e.getMessage());</span>
+<span class="fc" id="L156">        }</span>
+<span class="fc" id="L157">    }</span>
+
+    private Message toJmsMessage(final ExternalMessage externalMessage) throws JMSException {
+        final Message message;
+<span class="fc" id="L161">        final Optional&lt;String&gt; optTextPayload = externalMessage.getTextPayload();</span>
+<span class="pc bpc" id="L162" title="1 of 2 branches missed.">        if (optTextPayload.isPresent()) {</span>
+<span class="fc" id="L163">            message = session.createTextMessage(optTextPayload.get());</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        } else if (externalMessage.getBytePayload().isPresent()) {</span>
+<span class="nc" id="L165">            final BytesMessage bytesMessage = session.createBytesMessage();</span>
+<span class="nc" id="L166">            bytesMessage.writeBytes(externalMessage.getBytePayload().map(ByteBuffer::array).orElse(new byte[]{}));</span>
+<span class="nc" id="L167">            message = bytesMessage;</span>
+<span class="nc" id="L168">        } else {</span>
+<span class="nc" id="L169">            message = session.createMessage();</span>
+        }
+<span class="pc bpc" id="L171" title="1 of 2 branches missed.">        if (message instanceof JmsMessage) {</span>
+<span class="nc" id="L172">            final JmsMessageFacade facade = ((JmsMessage) message).getFacade();</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if (facade instanceof AmqpJmsMessageFacade) {</span>
+<span class="nc" id="L174">                final AmqpJmsMessageFacade amqpJmsMessageFacade = (AmqpJmsMessageFacade) facade;</span>
+<span class="nc" id="L175">                externalMessage.getHeaders()</span>
+<span class="nc" id="L176">                        .forEach((key, value) -&gt; {</span>
+                            try {
+<span class="nc" id="L178">                                amqpJmsMessageFacade.setApplicationProperty(key, value);</span>
+<span class="nc" id="L179">                            } catch (final JMSException e) {</span>
+<span class="nc" id="L180">                                log.warning(&quot;Could not set application-property &lt;{}&gt;&quot;, key);</span>
+<span class="nc" id="L181">                            }</span>
+<span class="nc" id="L182">                        });</span>
+            }
+        }
+<span class="fc" id="L185">        message.setJMSCorrelationID(externalMessage.getHeaders().get(DittoHeaderDefinition.CORRELATION_ID.getKey()));</span>
+<span class="fc" id="L186">        return message;</span>
+    }
+
+    @Nullable
+    private MessageProducer getProducer(final Destination destination) {
+<span class="fc" id="L191">        return Optional.of(destination)</span>
+<span class="fc" id="L192">                .map(t -&gt; producerMap.computeIfAbsent(destination, this::createMessageProducer))</span>
+<span class="fc" id="L193">                .orElse(null);</span>
+    }
+
+    @Nullable
+    private MessageProducer createMessageProducer(final Destination destination) {
+<span class="fc" id="L198">        log.debug(&quot;Creating AMQP Producer for '{}'&quot;, destination);</span>
+        try {
+<span class="fc" id="L200">            return session.createProducer(destination);</span>
+<span class="nc" id="L201">        } catch (final JMSException e) {</span>
+<span class="nc" id="L202">            log.warning(&quot;Could not create producer for {}.&quot;, destination);</span>
+<span class="nc" id="L203">            return null;</span>
+        }
+    }
+
+    @Override
+    public void postStop() throws Exception {
+<span class="fc" id="L209">        super.postStop();</span>
+<span class="fc" id="L210">        producerMap.forEach((target, producer) -&gt; {</span>
+            try {
+<span class="fc" id="L212">                log.debug(&quot;Closing AMQP Producer for '{}'&quot;, target);</span>
+<span class="fc" id="L213">                producer.close();</span>
+<span class="nc" id="L214">            } catch (final JMSException jmsException) {</span>
+<span class="nc" id="L215">                log.debug(&quot;Closing consumer failed (can be ignored if connection was closed already): {}&quot;,</span>
+<span class="nc" id="L216">                        jmsException.getMessage());</span>
+<span class="fc" id="L217">            }</span>
+<span class="fc" id="L218">        });</span>
+<span class="fc" id="L219">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PolicySupervisorActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Policies :: Persistence</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.policies.persistence.actors.policy</a> &gt; <span class="el_source">PolicySupervisorActor.java</span></div><h1>PolicySupervisorActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.policies.persistence.actors.policy;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+
+import javax.annotation.concurrent.NotThreadSafe;
+
+import org.eclipse.ditto.model.base.headers.WithDittoHeaders;
+import org.eclipse.ditto.model.policies.Policy;
+import org.eclipse.ditto.services.policies.persistence.actors.AbstractReceiveStrategy;
+import org.eclipse.ditto.services.policies.persistence.actors.ReceiveStrategy;
+import org.eclipse.ditto.services.policies.persistence.actors.StrategyAwareReceiveBuilder;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.services.utils.persistence.SnapshotAdapter;
+import org.eclipse.ditto.signals.commands.policies.exceptions.PolicyUnavailableException;
+
+import akka.actor.AbstractActor;
+import akka.actor.ActorKilledException;
+import akka.actor.ActorRef;
+import akka.actor.OneForOneStrategy;
+import akka.actor.Props;
+import akka.actor.SupervisorStrategy;
+import akka.actor.Terminated;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.DeciderBuilder;
+import scala.concurrent.duration.FiniteDuration;
+
+/**
+ * Supervisor for {@link PolicyPersistenceActor} which means it will create, start and watch it as child actor.
+ * &lt;p&gt;
+ * If the child terminates, it will wait for the calculated exponential backoff time and restart it afterwards.
+ * The child has to send {@link ManualReset} after it started successfully.
+ * Between the termination of the child and the restart, this actor answers to all requests with a {@link
+ * PolicyUnavailableException} as fail fast strategy.
+ */
+public class PolicySupervisorActor extends AbstractActor {
+
+<span class="nc" id="L57">    private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+    private final Props persistenceActorProps;
+    private final String policyId;
+    private final Duration minBackoff;
+    private final Duration maxBackoff;
+    private final double randomFactor;
+    private final SupervisorStrategy supervisorStrategy;
+
+    private ActorRef child;
+    private long restartCount;
+
+    private PolicySupervisorActor(final ActorRef pubSubMediator,
+            final Duration minBackoff,
+            final Duration maxBackoff,
+            final double randomFactor,
+            final SupervisorStrategy supervisorStrategy,
+<span class="nc" id="L74">            final SnapshotAdapter&lt;Policy&gt; snapshotAdapter) {</span>
+        try {
+<span class="nc" id="L76">            this.policyId = URLDecoder.decode(getSelf().path().name(), StandardCharsets.UTF_8.name());</span>
+<span class="nc" id="L77">        } catch (final UnsupportedEncodingException e) {</span>
+<span class="nc" id="L78">            throw new IllegalStateException(&quot;Unsupported encoding&quot;, e);</span>
+<span class="nc" id="L79">        }</span>
+<span class="nc" id="L80">        this.persistenceActorProps =</span>
+<span class="nc" id="L81">                PolicyPersistenceActor.props(policyId, snapshotAdapter, pubSubMediator);</span>
+<span class="nc" id="L82">        this.minBackoff = minBackoff;</span>
+<span class="nc" id="L83">        this.maxBackoff = maxBackoff;</span>
+<span class="nc" id="L84">        this.randomFactor = randomFactor;</span>
+<span class="nc" id="L85">        this.supervisorStrategy = supervisorStrategy;</span>
+<span class="nc" id="L86">    }</span>
+
+    /**
+     * Props for creating a {@link PolicySupervisorActor}.
+     * &lt;p&gt;
+     * Exceptions in the child are handled with a supervision strategy that restarts the child on {@link
+     * NullPointerException}'s, stops it for {@link ActorKilledException}'s and escalates all others.
+     * &lt;/p&gt;
+     *
+     * @param pubSubMediator the PubSub mediator actor.
+     * @param minBackoff minimum (initial) duration until the child actor will started again, if it is terminated.
+     * @param maxBackoff the exponential back-off is capped to this duration.
+     * @param randomFactor after calculation of the exponential back-off an additional random delay based on this factor
+     * is added, e.g. `0.2` adds up to `20%` delay. In order to skip this additional delay pass in `0`.
+     * @param snapshotAdapter the adapter to serialize snapshots.
+     * @return the {@link Props} to create this actor.
+     */
+    public static Props props(final ActorRef pubSubMediator,
+            final Duration minBackoff,
+            final Duration maxBackoff,
+            final double randomFactor,
+            final SnapshotAdapter&lt;Policy&gt; snapshotAdapter) {
+<span class="nc" id="L108">        return Props.create(PolicySupervisorActor.class, new Creator&lt;PolicySupervisorActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public PolicySupervisorActor create() throws Exception {
+<span class="nc" id="L113">                return new PolicySupervisorActor(pubSubMediator, minBackoff, maxBackoff, randomFactor,</span>
+                        new OneForOneStrategy(true, DeciderBuilder
+<span class="nc" id="L115">                                .match(NullPointerException.class, e -&gt; SupervisorStrategy.restart())</span>
+<span class="nc" id="L116">                                .match(ActorKilledException.class, e -&gt; SupervisorStrategy.stop())</span>
+<span class="nc" id="L117">                                .matchAny(e -&gt; SupervisorStrategy.escalate())</span>
+<span class="nc" id="L118">                                .build()),</span>
+                        snapshotAdapter);
+            }
+        });
+    }
+
+    private Collection&lt;ReceiveStrategy&lt;?&gt;&gt; initReceiveStrategies() {
+<span class="nc" id="L125">        final Collection&lt;ReceiveStrategy&lt;?&gt;&gt; result = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L127">        result.add(new StartChildStrategy());</span>
+<span class="nc" id="L128">        result.add(new ChildTerminatedStrategy());</span>
+<span class="nc" id="L129">        result.add(new ManualResetStrategy());</span>
+
+<span class="nc" id="L131">        return result;</span>
+    }
+
+    @Override
+    public SupervisorStrategy supervisorStrategy() {
+<span class="nc" id="L136">        return supervisorStrategy;</span>
+    }
+
+    @Override
+    public void preStart() throws Exception {
+<span class="nc" id="L141">        super.preStart();</span>
+<span class="nc" id="L142">        startChild();</span>
+<span class="nc" id="L143">    }</span>
+
+    @Override
+    public Receive createReceive() {
+<span class="nc" id="L147">        final Collection&lt;ReceiveStrategy&lt;?&gt;&gt; receiveStrategies = initReceiveStrategies();</span>
+<span class="nc" id="L148">        final StrategyAwareReceiveBuilder strategyAwareReceiveBuilder = new StrategyAwareReceiveBuilder();</span>
+<span class="nc" id="L149">        receiveStrategies.forEach(strategyAwareReceiveBuilder::match);</span>
+<span class="nc" id="L150">        strategyAwareReceiveBuilder.matchAny(new MatchAnyStrategy());</span>
+
+<span class="nc" id="L152">        return strategyAwareReceiveBuilder.build();</span>
+    }
+
+    private Optional&lt;ActorRef&gt; getChild() {
+<span class="nc" id="L156">        return Optional.ofNullable(child);</span>
+    }
+
+    private void startChild() {
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        if (!getChild().isPresent()) {</span>
+<span class="nc" id="L161">            log.debug(&quot;Starting persistence actor for Policy with ID '{}'&quot;, policyId);</span>
+<span class="nc" id="L162">            final ActorRef childRef = getContext().actorOf(persistenceActorProps, &quot;pa&quot;);</span>
+<span class="nc" id="L163">            child = getContext().watch(childRef);</span>
+        }
+<span class="nc" id="L165">    }</span>
+
+    private Duration calculateRestartDelay() {
+<span class="nc" id="L168">        final double rnd = 1.0 + ThreadLocalRandom.current().nextDouble() * randomFactor;</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (restartCount &gt;= 30) // Duration overflow protection (&gt; 100 years)</span>
+        {
+<span class="nc" id="L171">            return maxBackoff;</span>
+        } else {
+<span class="nc" id="L173">            final double backoff = minBackoff.toNanos() * Math.pow(2, restartCount) * rnd;</span>
+<span class="nc" id="L174">            return Duration.ofNanos(Math.min(maxBackoff.toNanos(), (long) backoff));</span>
+        }
+    }
+
+    /**
+     * Message that should be sent to this actor to indicate a working child and reset the exponential backoff
+     * mechanism.
+     */
+<span class="fc" id="L182">    static final class ManualReset {</span>
+
+    }
+
+    /**
+     * This strategy handles the Termination of the child actor by restarting it after an exponential backoff.
+     */
+    @NotThreadSafe
+    private final class ChildTerminatedStrategy extends AbstractReceiveStrategy&lt;Terminated&gt; {
+
+<span class="nc" id="L192">        ChildTerminatedStrategy() {</span>
+<span class="nc" id="L193">            super(Terminated.class, log);</span>
+<span class="nc" id="L194">        }</span>
+
+        @Override
+        public void doApply(final Terminated message) {
+<span class="nc" id="L198">            log.info(&quot;Persistence actor for Policy with ID '{}' terminated abnormally&quot;, policyId);</span>
+<span class="nc" id="L199">            child = null;</span>
+<span class="nc" id="L200">            final Duration restartDelay = calculateRestartDelay();</span>
+<span class="nc" id="L201">            getContext().system().scheduler()</span>
+<span class="nc" id="L202">                    .scheduleOnce(new FiniteDuration(restartDelay.toNanos(), TimeUnit.NANOSECONDS), getSelf(),</span>
+                            new StartChild(),
+<span class="nc" id="L204">                            getContext().dispatcher(), null);</span>
+<span class="nc" id="L205">            restartCount += 1;</span>
+<span class="nc" id="L206">        }</span>
+    }
+
+    /**
+     * Message that is sent to the actor by itself to restart the child.
+     */
+<span class="nc" id="L212">    private final class StartChild {</span>
+
+    }
+
+    /**
+     * This strategy handles a {@link StartChild} message by starting the child actor immediatly.
+     */
+    @NotThreadSafe
+    private final class StartChildStrategy extends AbstractReceiveStrategy&lt;StartChild&gt; {
+
+<span class="nc" id="L222">        StartChildStrategy() {</span>
+<span class="nc" id="L223">            super(StartChild.class, log);</span>
+<span class="nc" id="L224">        }</span>
+
+        @Override
+        public void doApply(final StartChild message) {
+<span class="nc" id="L228">            startChild();</span>
+<span class="nc" id="L229">        }</span>
+    }
+
+    /**
+     * This strategy handles a {@link ManualReset} message by resetting the exponential backoff restart count.
+     */
+    @NotThreadSafe
+    private final class ManualResetStrategy extends AbstractReceiveStrategy&lt;ManualReset&gt; {
+
+<span class="nc" id="L238">        ManualResetStrategy() {</span>
+<span class="nc" id="L239">            super(ManualReset.class, log);</span>
+<span class="nc" id="L240">        }</span>
+
+        @Override
+        public void doApply(final ManualReset message) {
+<span class="nc" id="L244">            restartCount = 0;</span>
+<span class="nc" id="L245">        }</span>
+    }
+
+    /**
+     * This strategy handles all other messages by forwarding all messages to the child if it is active or by replying
+     * immediately with a {@link PolicyUnavailableException} if the child has terminated (fail fast).
+     */
+    @NotThreadSafe
+    private final class MatchAnyStrategy extends AbstractReceiveStrategy&lt;Object&gt; {
+
+<span class="nc" id="L255">        MatchAnyStrategy() {</span>
+<span class="nc" id="L256">            super(Object.class, log);</span>
+<span class="nc" id="L257">        }</span>
+
+        @Override
+        public void doApply(final Object message) {
+<span class="nc bnc" id="L261" title="All 2 branches missed.">            if (getChild().isPresent()) {</span>
+<span class="nc bnc" id="L262" title="All 2 branches missed.">                if (child.equals(getSender())) {</span>
+<span class="nc" id="L263">                    log.warning(&quot;Received unhandled message from child actor '{}': {}&quot;, policyId, message);</span>
+<span class="nc" id="L264">                    unhandled(message);</span>
+                } else {
+<span class="nc" id="L266">                    child.forward(message, getContext());</span>
+                }
+            } else {
+<span class="nc" id="L269">                log.warning(&quot;Received message during downtime of child actor for Policy with ID '{}'&quot;, policyId);</span>
+<span class="nc" id="L270">                final PolicyUnavailableException.Builder builder = PolicyUnavailableException.newBuilder(policyId);</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">                if (message instanceof WithDittoHeaders) {</span>
+<span class="nc" id="L272">                    builder.dittoHeaders(((WithDittoHeaders) message).getDittoHeaders());</span>
+                }
+<span class="nc" id="L274">                getSender().tell(builder.build(), getSelf());</span>
+            }
+<span class="nc" id="L276">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

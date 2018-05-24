@@ -1,0 +1,505 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ImmutablePolicy.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Model :: Policies</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.model.policies</a> &gt; <span class="el_source">ImmutablePolicy.java</span></div><h1>ImmutablePolicy.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.model.policies;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+import static org.eclipse.ditto.model.policies.PoliciesModelFactory.emptyResources;
+import static org.eclipse.ditto.model.policies.PoliciesModelFactory.newPolicyEntry;
+import static org.eclipse.ditto.model.policies.PoliciesModelFactory.newResources;
+
+import java.text.MessageFormat;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.Immutable;
+
+import org.eclipse.ditto.json.JsonCollectors;
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonField;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonObjectBuilder;
+import org.eclipse.ditto.json.JsonParseException;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.exceptions.DittoJsonException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.json.FieldType;
+import org.eclipse.ditto.model.base.json.JsonSchemaVersion;
+
+/**
+ * Immutable implementation of {@link Policy}.
+ */
+@Immutable
+final class ImmutablePolicy implements Policy {
+
+<span class="fc" id="L59">    private static final Pattern ID_PATTERN = Pattern.compile(ID_REGEX);</span>
+
+    @Nullable private final String policyId;
+    private final Map&lt;Label, PolicyEntry&gt; entries;
+    @Nullable private final String namespace;
+    @Nullable private final PolicyLifecycle lifecycle;
+    @Nullable private final PolicyRevision revision;
+    @Nullable private final Instant modified;
+
+    private ImmutablePolicy(@Nullable final CharSequence policyId,
+            final Map&lt;Label, PolicyEntry&gt; theEntries,
+            @Nullable final PolicyLifecycle lifecycle,
+            @Nullable final PolicyRevision revision,
+<span class="fc" id="L72">            @Nullable final Instant modified) {</span>
+
+<span class="pc bpc" id="L74" title="1 of 2 branches missed.">        if (null != policyId) {</span>
+<span class="fc" id="L75">            PolicyIdValidator.getInstance().accept(policyId, DittoHeaders.empty());</span>
+<span class="fc" id="L76">            this.policyId = policyId.toString();</span>
+        } else {
+<span class="nc" id="L78">            this.policyId = null;</span>
+        }
+<span class="fc" id="L80">        entries = Collections.unmodifiableMap(new LinkedHashMap&lt;&gt;(theEntries));</span>
+<span class="fc" id="L81">        namespace = parseNamespace(policyId);</span>
+<span class="fc" id="L82">        this.lifecycle = lifecycle;</span>
+<span class="fc" id="L83">        this.revision = revision;</span>
+<span class="fc" id="L84">        this.modified = modified;</span>
+<span class="fc" id="L85">    }</span>
+
+    @Nullable
+    private static String parseNamespace(@Nullable final CharSequence theId) {
+<span class="fc" id="L89">        String result = null;</span>
+
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">        if (null != theId) {</span>
+<span class="fc" id="L92">            final Matcher namespaceMatcher = ID_PATTERN.matcher(theId);</span>
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">            if (namespaceMatcher.matches()) {</span>
+<span class="fc" id="L94">                result = namespaceMatcher.group(&quot;ns&quot;);</span>
+            }
+        }
+
+<span class="fc" id="L98">        return result;</span>
+    }
+
+    /**
+     * Returns a new Policy which is initialised with the specified entries.
+     *
+     * @param policyId the ID of the new Policy.
+     * @param lifecycle the lifecycle of the Policy to be created.
+     * @param revision the revision of the Policy to be created.
+     * @param modified the modified timestamp of the Policy to be created.
+     * @param entries the entries of the Policy to be created.
+     * @return a new initialised Policy.
+     * @throws NullPointerException if {@code entries} is {@code null}.
+     * @throws PolicyIdInvalidException if {@code policyId} did not comply to {@link Policy#ID_REGEX}.
+     */
+    public static Policy of(@Nullable final CharSequence policyId,
+            @Nullable final PolicyLifecycle lifecycle,
+            @Nullable final PolicyRevision revision,
+            @Nullable final Instant modified,
+            final Iterable&lt;PolicyEntry&gt; entries) {
+
+<span class="fc" id="L119">        checkNotNull(entries, &quot;Policy entries&quot;);</span>
+
+<span class="fc" id="L121">        final Map&lt;Label, PolicyEntry&gt; entryMap = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L122">        entries.forEach(policyEntry -&gt; entryMap.put(policyEntry.getLabel(), policyEntry));</span>
+
+<span class="fc" id="L124">        return new ImmutablePolicy(policyId, entryMap, lifecycle, revision, modified);</span>
+    }
+
+    /**
+     * Creates a new {@code Policy} object from the specified JSON object.
+     *
+     * @param jsonObject a JSON object which provides the data for the Policy to be created.
+     * @return a new Policy which is initialised with the extracted data from {@code jsonObject}.
+     * @throws NullPointerException if {@code jsonObject} is {@code null}.
+     * @throws PolicyEntryInvalidException if an Policy entry does not contain any known permission which evaluates to
+     * {@code true} or {@code false}.
+     * @throws PolicyIdInvalidException if the parsed policy ID did not comply to {@link Policy#ID_REGEX}.
+     */
+    public static Policy fromJson(final JsonObject jsonObject) {
+<span class="fc" id="L138">        final String readId = jsonObject.getValue(JsonFields.ID).orElse(null);</span>
+
+<span class="fc" id="L140">        final PolicyLifecycle readLifecycle = jsonObject.getValue(JsonFields.LIFECYCLE)</span>
+<span class="fc" id="L141">                .flatMap(PolicyLifecycle::forName)</span>
+<span class="fc" id="L142">                .orElse(null);</span>
+
+<span class="fc" id="L144">        final PolicyRevision readRevision = jsonObject.getValue(JsonFields.REVISION)</span>
+<span class="fc" id="L145">                .map(PolicyRevision::newInstance)</span>
+<span class="fc" id="L146">                .orElse(null);</span>
+
+<span class="fc" id="L148">        final Instant readModified = jsonObject.getValue(JsonFields.MODIFIED)</span>
+<span class="fc" id="L149">                .map(ImmutablePolicy::tryToParseModified)</span>
+<span class="fc" id="L150">                .orElse(null);</span>
+
+<span class="fc" id="L152">        final JsonObject readEntries = jsonObject.getValueOrThrow(JsonFields.ENTRIES);</span>
+
+<span class="fc" id="L154">        final Function&lt;JsonField, PolicyEntry&gt; toPolicyEntry = jsonField -&gt; {</span>
+<span class="fc" id="L155">            final JsonValue jsonValue = jsonField.getValue();</span>
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">            if (!jsonValue.isObject()) {</span>
+<span class="nc" id="L157">                throw new DittoJsonException(JsonParseException.newBuilder()</span>
+<span class="nc" id="L158">                        .message(MessageFormat.format(&quot;&lt;{0}&gt; is not a JSON object!&quot;, jsonValue))</span>
+<span class="nc" id="L159">                        .build());</span>
+            }
+<span class="fc" id="L161">            return ImmutablePolicyEntry.fromJson(jsonField.getKey(), jsonValue.asObject());</span>
+        };
+
+<span class="fc" id="L164">        final Collection&lt;PolicyEntry&gt; policyEntries = readEntries.stream()</span>
+<span class="pc bpc" id="L165" title="1 of 2 branches missed.">                .filter(jsonField -&gt; !Objects.equals(jsonField.getKey(), JsonSchemaVersion.getJsonKey()))</span>
+<span class="fc" id="L166">                .map(toPolicyEntry)</span>
+<span class="fc" id="L167">                .collect(Collectors.toSet());</span>
+
+<span class="fc" id="L169">        return of(readId, readLifecycle, readRevision, readModified, policyEntries);</span>
+    }
+
+    private static Instant tryToParseModified(final CharSequence dateTime) {
+        try {
+<span class="nc" id="L174">            return Instant.parse(dateTime);</span>
+<span class="nc" id="L175">        } catch (final DateTimeParseException e) {</span>
+<span class="nc" id="L176">            throw new JsonParseException(&quot;The JSON object's field '&quot; + JsonFields.MODIFIED.getPointer() + &quot;' &quot; +</span>
+                    &quot;is not in ISO-8601 format as expected&quot;);
+        }
+    }
+
+    @Override
+    public Optional&lt;String&gt; getId() {
+<span class="fc" id="L183">        return Optional.ofNullable(policyId);</span>
+    }
+
+    @Override
+    public Optional&lt;String&gt; getNamespace() {
+<span class="fc" id="L188">        return Optional.ofNullable(namespace);</span>
+    }
+
+    @Override
+    public Optional&lt;PolicyLifecycle&gt; getLifecycle() {
+<span class="fc" id="L193">        return Optional.ofNullable(lifecycle);</span>
+    }
+
+    @Override
+    public Optional&lt;PolicyRevision&gt; getRevision() {
+<span class="fc" id="L198">        return Optional.ofNullable(revision);</span>
+    }
+
+    @Override
+    public Optional&lt;Instant&gt; getModified() {
+<span class="fc" id="L203">        return Optional.ofNullable(modified);</span>
+    }
+
+    @Override
+    public Policy setEntry(final PolicyEntry policyEntry) {
+<span class="nc" id="L208">        checkNotNull(policyEntry, &quot;entry to be set to this Policy&quot;);</span>
+
+        final Policy result;
+
+<span class="nc" id="L212">        final PolicyEntry existingPolicyEntry = entries.get(policyEntry.getLabel());</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (null != existingPolicyEntry) {</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">            if (existingPolicyEntry.equals(policyEntry)) {</span>
+<span class="nc" id="L215">                result = this;</span>
+            } else {
+<span class="nc" id="L217">                final Map&lt;Label, PolicyEntry&gt; entriesCopy = copyEntries();</span>
+<span class="nc" id="L218">                entriesCopy.put(policyEntry.getLabel(), policyEntry);</span>
+<span class="nc" id="L219">                result = new ImmutablePolicy(policyId, entriesCopy, lifecycle, revision, modified);</span>
+<span class="nc" id="L220">            }</span>
+        } else {
+<span class="nc" id="L222">            final Map&lt;Label, PolicyEntry&gt; entriesCopy = copyEntries();</span>
+<span class="nc" id="L223">            entriesCopy.put(policyEntry.getLabel(), policyEntry);</span>
+<span class="nc" id="L224">            result = new ImmutablePolicy(policyId, entriesCopy, lifecycle, revision, modified);</span>
+        }
+
+<span class="nc" id="L227">        return result;</span>
+    }
+
+    @Override
+    public Set&lt;Label&gt; getLabels() {
+<span class="fc" id="L232">        return entries.keySet();</span>
+    }
+
+    @Override
+    public boolean contains(final CharSequence label) {
+<span class="nc" id="L237">        return entries.containsKey(Label.of(label));</span>
+    }
+
+    @Override
+    public Optional&lt;PolicyEntry&gt; getEntryFor(final CharSequence label) {
+<span class="fc" id="L242">        return Optional.ofNullable(entries.get(Label.of(label)));</span>
+    }
+
+    @Override
+    public Policy removeEntry(final CharSequence label) {
+<span class="fc" id="L247">        final Label lbl = Label.of(label);</span>
+
+<span class="pc bpc" id="L249" title="1 of 2 branches missed.">        if (!entries.containsKey(lbl)) {</span>
+<span class="nc" id="L250">            return this;</span>
+        }
+
+<span class="fc" id="L253">        final Map&lt;Label, PolicyEntry&gt; entriesCopy = copyEntries();</span>
+<span class="fc" id="L254">        entriesCopy.remove(lbl);</span>
+
+<span class="fc" id="L256">        return new ImmutablePolicy(policyId, entriesCopy, lifecycle, revision, modified);</span>
+    }
+
+    @Override
+    public Policy removeEntry(final PolicyEntry entry) {
+<span class="nc" id="L261">        checkNotNull(entry, &quot;Policy entry to be removed&quot;);</span>
+
+<span class="nc" id="L263">        return removeEntry(entry.getLabel());</span>
+    }
+
+    @Override
+    public Policy setSubjectsFor(final CharSequence label, final Subjects subjects) {
+<span class="fc" id="L268">        final Label lbl = Label.of(label);</span>
+<span class="fc" id="L269">        checkNotNull(subjects, &quot;subjects to set to the Policy entry&quot;);</span>
+
+<span class="fc" id="L271">        final Map&lt;Label, PolicyEntry&gt; entriesCopy = copyEntries();</span>
+        final PolicyEntry modifiedEntry;
+
+<span class="fc bfc" id="L274" title="All 2 branches covered.">        if (!entriesCopy.containsKey(lbl)) {</span>
+<span class="fc" id="L275">            modifiedEntry = newPolicyEntry(lbl, subjects, emptyResources());</span>
+        } else {
+<span class="fc" id="L277">            final PolicyEntry policyEntry = entriesCopy.get(lbl);</span>
+<span class="fc" id="L278">            modifiedEntry = newPolicyEntry(lbl, subjects, policyEntry.getResources());</span>
+        }
+
+<span class="fc" id="L281">        entriesCopy.put(lbl, modifiedEntry);</span>
+<span class="fc" id="L282">        return new ImmutablePolicy(policyId, entriesCopy, lifecycle, revision, modified);</span>
+    }
+
+    @Override
+    public Policy setSubjectFor(final CharSequence label, final Subject subject) {
+<span class="fc" id="L287">        final Label lbl = Label.of(label);</span>
+<span class="fc" id="L288">        checkNotNull(subject, &quot;subject to set to the Policy entry&quot;);</span>
+
+        final Policy result;
+<span class="fc" id="L291">        final PolicyEntry existingPolicyEntry = entries.get(lbl);</span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">        if (null != existingPolicyEntry) {</span>
+<span class="fc" id="L293">            final Subjects existingSubjects = existingPolicyEntry.getSubjects();</span>
+<span class="fc" id="L294">            final Subjects newSubjects = existingSubjects.setSubject(subject);</span>
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">            if (!Objects.equals(existingSubjects, newSubjects)) {</span>
+<span class="fc" id="L296">                final Map&lt;Label, PolicyEntry&gt; entriesCopy = copyEntries();</span>
+<span class="fc" id="L297">                entriesCopy.put(lbl, newPolicyEntry(lbl, newSubjects, existingPolicyEntry.getResources()));</span>
+<span class="fc" id="L298">                result = new ImmutablePolicy(policyId, entriesCopy, lifecycle, revision, modified);</span>
+<span class="fc" id="L299">            } else {</span>
+<span class="nc" id="L300">                result = this;</span>
+            }
+<span class="fc" id="L302">        } else {</span>
+<span class="fc" id="L303">            result = setSubjectsFor(label, Subjects.newInstance(subject));</span>
+        }
+
+<span class="fc" id="L306">        return result;</span>
+    }
+
+    @Override
+    public Policy removeSubjectFor(final CharSequence label, final SubjectId subjectId) {
+<span class="fc" id="L311">        final Label lbl = Label.of(label);</span>
+
+<span class="fc" id="L313">        Policy result = this;</span>
+<span class="fc" id="L314">        final PolicyEntry existingPolicyEntry = entries.get(lbl);</span>
+<span class="pc bpc" id="L315" title="1 of 2 branches missed.">        if (null != existingPolicyEntry) {</span>
+<span class="fc" id="L316">            final Subjects existingSubjects = existingPolicyEntry.getSubjects();</span>
+<span class="fc" id="L317">            final Subjects newSubjects = existingSubjects.removeSubject(subjectId);</span>
+<span class="pc bpc" id="L318" title="1 of 2 branches missed.">            if (!Objects.equals(existingSubjects, newSubjects)) {</span>
+<span class="fc" id="L319">                final Map&lt;Label, PolicyEntry&gt; entriesCopy = copyEntries();</span>
+<span class="fc" id="L320">                entriesCopy.put(lbl, newPolicyEntry(lbl, newSubjects, existingPolicyEntry.getResources()));</span>
+<span class="fc" id="L321">                result = new ImmutablePolicy(policyId, entriesCopy, lifecycle, revision, modified);</span>
+            }
+        }
+
+<span class="fc" id="L325">        return result;</span>
+    }
+
+    @Override
+    public Policy setResourcesFor(final CharSequence label, final Resources resources) {
+<span class="fc" id="L330">        final Label lbl = Label.of(label);</span>
+<span class="fc" id="L331">        checkNotNull(resources, &quot;resources to set to the Policy entry&quot;);</span>
+
+<span class="fc" id="L333">        final Map&lt;Label, PolicyEntry&gt; entriesCopy = copyEntries();</span>
+<span class="fc" id="L334">        final PolicyEntry policyEntry = entriesCopy.get(lbl);</span>
+        final PolicyEntry modifiedEntry;
+<span class="pc bpc" id="L336" title="1 of 2 branches missed.">        if (null == policyEntry) {</span>
+<span class="nc" id="L337">            modifiedEntry = newPolicyEntry(lbl, PoliciesModelFactory.emptySubjects(), resources);</span>
+        } else {
+<span class="fc" id="L339">            modifiedEntry = newPolicyEntry(lbl, policyEntry.getSubjects(), resources);</span>
+        }
+<span class="fc" id="L341">        entriesCopy.put(lbl, modifiedEntry);</span>
+
+<span class="fc" id="L343">        return new ImmutablePolicy(policyId, entriesCopy, lifecycle, revision, modified);</span>
+    }
+
+    @Override
+    public Policy setResourceFor(final CharSequence label, final Resource resource) {
+<span class="fc" id="L348">        final Label lbl = Label.of(label);</span>
+<span class="fc" id="L349">        checkNotNull(resource, &quot;resource to set to the Policy entry&quot;);</span>
+
+<span class="fc" id="L351">        final Map&lt;Label, PolicyEntry&gt; entriesCopy = copyEntries();</span>
+        final PolicyEntry modifiedEntry;
+
+<span class="pc bpc" id="L354" title="1 of 2 branches missed.">        if (!entriesCopy.containsKey(lbl)) {</span>
+<span class="nc" id="L355">            modifiedEntry = newPolicyEntry(label, PoliciesModelFactory.emptySubjects(), newResources(resource));</span>
+        } else {
+<span class="fc" id="L357">            final PolicyEntry policyEntry = entriesCopy.get(lbl);</span>
+<span class="fc" id="L358">            final Resources modifiedResources = policyEntry.getResources().setResource(resource);</span>
+<span class="fc" id="L359">            modifiedEntry = newPolicyEntry(label, policyEntry.getSubjects(), modifiedResources);</span>
+        }
+
+<span class="fc" id="L362">        entriesCopy.put(lbl, modifiedEntry);</span>
+<span class="fc" id="L363">        return new ImmutablePolicy(policyId, entriesCopy, lifecycle, revision, modified);</span>
+    }
+
+    @Override
+    public Policy removeResourceFor(final CharSequence label, final ResourceKey resourceKey) {
+<span class="fc" id="L368">        final Label lbl = Label.of(label);</span>
+
+<span class="fc" id="L370">        Policy result = this;</span>
+
+<span class="fc" id="L372">        final PolicyEntry existingEntry = entries.get(lbl);</span>
+<span class="pc bpc" id="L373" title="1 of 2 branches missed.">        if (null != existingEntry) {</span>
+<span class="fc" id="L374">            final Resources existingResources = existingEntry.getResources();</span>
+<span class="fc" id="L375">            final Resources newResources = existingResources.removeResource(resourceKey);</span>
+<span class="pc bpc" id="L376" title="1 of 2 branches missed.">            if (!Objects.equals(existingResources, newResources)) {</span>
+<span class="fc" id="L377">                final Map&lt;Label, PolicyEntry&gt; entriesCopy = copyEntries();</span>
+<span class="fc" id="L378">                entriesCopy.put(lbl, newPolicyEntry(lbl, existingEntry.getSubjects(), newResources));</span>
+<span class="fc" id="L379">                result = new ImmutablePolicy(policyId, entriesCopy, lifecycle, revision, modified);</span>
+            }
+        }
+
+<span class="fc" id="L383">        return result;</span>
+    }
+
+    @Override
+    public Optional&lt;EffectedPermissions&gt; getEffectedPermissionsFor(final CharSequence label, final SubjectId subjectId,
+            final ResourceKey resourceKey) {
+
+<span class="fc" id="L390">        final Label lbl = Label.of(label);</span>
+
+<span class="fc" id="L392">        Optional&lt;EffectedPermissions&gt; result = Optional.empty();</span>
+
+<span class="fc" id="L394">        final PolicyEntry policyEntry = entries.get(lbl);</span>
+<span class="fc bfc" id="L395" title="All 2 branches covered.">        if (null != policyEntry) {</span>
+<span class="fc" id="L396">            final Subjects subjects = policyEntry.getSubjects();</span>
+<span class="fc" id="L397">            final Optional&lt;Subject&gt; subjectOptional = subjects.getSubject(subjectId);</span>
+<span class="pc bpc" id="L398" title="1 of 2 branches missed.">            if (subjectOptional.isPresent()) {</span>
+<span class="fc" id="L399">                final Resources resources = policyEntry.getResources();</span>
+<span class="fc" id="L400">                result = resources.getResource(resourceKey).map(Resource::getEffectedPermissions);</span>
+            }
+        }
+
+<span class="fc" id="L404">        return result;</span>
+    }
+
+    @Override
+    public boolean isEmpty() {
+<span class="fc" id="L409">        return entries.isEmpty();</span>
+    }
+
+    @Override
+    public int getSize() {
+<span class="fc" id="L414">        return entries.size();</span>
+    }
+
+    @Override
+    public Set&lt;PolicyEntry&gt; getEntriesSet() {
+<span class="fc" id="L419">        return stream().collect(Collectors.toSet());</span>
+    }
+
+    @Override
+    public Stream&lt;PolicyEntry&gt; stream() {
+<span class="fc" id="L424">        return entries.values().stream();</span>
+    }
+
+    @Override
+    public Iterator&lt;PolicyEntry&gt; iterator() {
+<span class="fc" id="L429">        final Set&lt;PolicyEntry&gt; policyEntries = getEntriesSet();</span>
+<span class="fc" id="L430">        return policyEntries.iterator();</span>
+    }
+
+    @Override
+    public JsonObject toJson(final JsonSchemaVersion schemaVersion, final Predicate&lt;JsonField&gt; thePredicate) {
+<span class="fc" id="L435">        checkNotNull(schemaVersion, &quot;schema version&quot;);</span>
+<span class="fc" id="L436">        checkNotNull(thePredicate, &quot;predicate&quot;);</span>
+
+<span class="fc" id="L438">        final Predicate&lt;JsonField&gt; predicate = schemaVersion.and(thePredicate);</span>
+<span class="fc" id="L439">        final JsonObjectBuilder jsonObjectBuilder = JsonFactory.newObjectBuilder();</span>
+
+<span class="fc" id="L441">        jsonObjectBuilder.set(JsonFields.SCHEMA_VERSION, schemaVersion.toInt(), predicate);</span>
+<span class="fc bfc" id="L442" title="All 2 branches covered.">        if (null != lifecycle) {</span>
+<span class="fc" id="L443">            jsonObjectBuilder.set(JsonFields.LIFECYCLE, lifecycle.name(), predicate);</span>
+        }
+<span class="fc bfc" id="L445" title="All 2 branches covered.">        if (null != revision) {</span>
+<span class="fc" id="L446">            jsonObjectBuilder.set(JsonFields.REVISION, revision.toLong(), predicate);</span>
+        }
+<span class="pc bpc" id="L448" title="1 of 2 branches missed.">        if (null != modified) {</span>
+<span class="nc" id="L449">            jsonObjectBuilder.set(JsonFields.MODIFIED, modified.toString(), predicate);</span>
+        }
+<span class="pc bpc" id="L451" title="1 of 2 branches missed.">        if (null != policyId) {</span>
+<span class="fc" id="L452">            jsonObjectBuilder.set(JsonFields.NAMESPACE, namespace, predicate);</span>
+<span class="fc" id="L453">            jsonObjectBuilder.set(JsonFields.ID, policyId, predicate);</span>
+        }
+<span class="fc" id="L455">        jsonObjectBuilder.set(JsonFields.ENTRIES, stream()</span>
+<span class="fc" id="L456">                .map(policyEntry -&gt; JsonFactory.newObjectBuilder()</span>
+<span class="fc" id="L457">                        .set(policyEntry.getLabel().getJsonFieldDefinition(),</span>
+<span class="fc" id="L458">                                policyEntry.toJson(schemaVersion, thePredicate.and(FieldType.notHidden())),</span>
+                                predicate) // notice: only &quot;not HIDDEN&quot; sub-fields of PolicyEntry are included
+<span class="fc" id="L460">                        .build())</span>
+<span class="fc" id="L461">                .collect(JsonCollectors.objectsToObject()), predicate);</span>
+
+<span class="fc" id="L463">        return jsonObjectBuilder.build();</span>
+    }
+
+    private Map&lt;Label, PolicyEntry&gt; copyEntries() {
+<span class="fc" id="L467">        return new HashMap&lt;&gt;(entries);</span>
+    }
+
+    @Override
+    public boolean equals(final Object o) {
+<span class="fc bfc" id="L472" title="All 2 branches covered.">        if (this == o) {</span>
+<span class="fc" id="L473">            return true;</span>
+        }
+<span class="fc bfc" id="L475" title="All 4 branches covered.">        if (o == null || getClass() != o.getClass()) {</span>
+<span class="fc" id="L476">            return false;</span>
+        }
+<span class="fc" id="L478">        final ImmutablePolicy that = (ImmutablePolicy) o;</span>
+<span class="fc bfc" id="L479" title="All 2 branches covered.">        return Objects.equals(policyId, that.policyId) &amp;&amp;</span>
+<span class="fc bfc" id="L480" title="All 4 branches covered.">                Objects.equals(namespace, that.namespace) &amp;&amp;</span>
+                lifecycle == that.lifecycle &amp;&amp;
+<span class="fc bfc" id="L482" title="All 2 branches covered.">                Objects.equals(revision, that.revision) &amp;&amp;</span>
+<span class="fc bfc" id="L483" title="All 2 branches covered.">                Objects.equals(modified, that.modified) &amp;&amp;</span>
+<span class="fc bfc" id="L484" title="All 2 branches covered.">                Objects.equals(entries, that.entries);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L489">        return Objects.hash(policyId, namespace, lifecycle, revision, modified, entries);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L494">        return getClass().getSimpleName() + &quot; [&quot; +</span>
+                &quot;policyId=&quot; + policyId +
+                &quot;, namespace=&quot; + namespace +
+                &quot;, lifecycle=&quot; + lifecycle +
+                &quot;, revision=&quot; + revision +
+                &quot;, modified=&quot; + modified +
+                &quot;, entries=&quot; + entries +
+                &quot;]&quot;;
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

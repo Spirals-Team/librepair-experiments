@@ -1,0 +1,848 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BaseClientActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Messaging</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.messaging</a> &gt; <span class="el_source">BaseClientActor.java</span></div><h1>BaseClientActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.messaging;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+import static org.eclipse.ditto.services.connectivity.messaging.BaseClientState.CONNECTED;
+import static org.eclipse.ditto.services.connectivity.messaging.BaseClientState.CONNECTING;
+import static org.eclipse.ditto.services.connectivity.messaging.BaseClientState.DISCONNECTED;
+import static org.eclipse.ditto.services.connectivity.messaging.BaseClientState.DISCONNECTING;
+import static org.eclipse.ditto.services.connectivity.messaging.BaseClientState.FAILED;
+import static org.eclipse.ditto.services.connectivity.messaging.DittoHeadersFilter.Mode.EXCLUDE;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.text.MessageFormat;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.WithDittoHeaders;
+import org.eclipse.ditto.model.connectivity.AddressMetric;
+import org.eclipse.ditto.model.connectivity.Connection;
+import org.eclipse.ditto.model.connectivity.ConnectionStatus;
+import org.eclipse.ditto.model.connectivity.ConnectivityModelFactory;
+import org.eclipse.ditto.model.connectivity.ExternalMessage;
+import org.eclipse.ditto.model.connectivity.MappingContext;
+import org.eclipse.ditto.model.connectivity.Source;
+import org.eclipse.ditto.model.connectivity.SourceMetrics;
+import org.eclipse.ditto.model.connectivity.Target;
+import org.eclipse.ditto.model.connectivity.TargetMetrics;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ClientConnected;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ClientDisconnected;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ConnectClient;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ConnectionFailure;
+import org.eclipse.ditto.services.connectivity.messaging.internal.DisconnectClient;
+import org.eclipse.ditto.services.connectivity.messaging.internal.RetrieveAddressMetric;
+import org.eclipse.ditto.services.connectivity.util.ConfigKeys;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.signals.base.Signal;
+import org.eclipse.ditto.signals.commands.base.Command;
+import org.eclipse.ditto.signals.commands.connectivity.exceptions.ConnectionFailedException;
+import org.eclipse.ditto.signals.commands.connectivity.modify.CloseConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.ConnectivityModifyCommand;
+import org.eclipse.ditto.signals.commands.connectivity.modify.CreateConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.DeleteConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.ModifyConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.OpenConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.TestConnection;
+import org.eclipse.ditto.signals.commands.connectivity.query.RetrieveConnectionMetrics;
+import org.eclipse.ditto.signals.commands.connectivity.query.RetrieveConnectionMetricsResponse;
+
+import com.typesafe.config.Config;
+
+import akka.actor.AbstractFSM;
+import akka.actor.ActorRef;
+import akka.actor.Props;
+import akka.actor.Status;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Pair;
+import akka.japi.pf.FSMStateFunctionBuilder;
+import akka.japi.pf.FSMTransitionHandlerBuilder;
+import akka.pattern.PatternsCS;
+import akka.routing.DefaultResizer;
+import akka.routing.RoundRobinPool;
+import akka.util.Timeout;
+import scala.concurrent.duration.Duration;
+
+/**
+ * Base class for ClientActors which implement the connection handling for various connectivity protocols.
+ * &lt;p&gt;
+ * The actor expects to receive a {@link CreateConnection} command after it was started. If this command is not received
+ * within timeout (can be the case when this actor is remotely deployed after the command was sent) the actor requests
+ * the required information from ConnectionActor.
+ * &lt;/p&gt;
+ */
+public abstract class BaseClientActor extends AbstractFSM&lt;BaseClientState, BaseClientData&gt; {
+
+    private static final int CONNECTING_TIMEOUT = 10;
+    protected static final int RETRIEVE_METRICS_TIMEOUT = 2;
+
+    private static final int SOCKET_CHECK_TIMEOUT_MS = 2000;
+
+<span class="fc" id="L105">    protected final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+    private final List&lt;String&gt; headerBlacklist;
+    private final ActorRef conciergeForwarder;
+
+    @Nullable private ActorRef messageMappingProcessorActor;
+
+<span class="fc" id="L111">    private long consumedMessageCounter = 0L;</span>
+<span class="fc" id="L112">    private long publishedMessageCounter = 0L;</span>
+
+    protected BaseClientActor(final Connection connection, final ConnectionStatus desiredConnectionStatus,
+<span class="fc" id="L115">            final ActorRef conciergeForwarder) {</span>
+<span class="fc" id="L116">        checkNotNull(connection, &quot;connection&quot;);</span>
+
+<span class="fc" id="L118">        final Config config = getContext().getSystem().settings().config();</span>
+<span class="fc" id="L119">        final java.time.Duration initTimeout = config.getDuration(ConfigKeys.Client.INIT_TIMEOUT);</span>
+<span class="fc" id="L120">        headerBlacklist = config.getStringList(ConfigKeys.Message.HEADER_BLACKLIST);</span>
+<span class="fc" id="L121">        this.conciergeForwarder = conciergeForwarder;</span>
+
+<span class="fc" id="L123">        startWith(DISCONNECTED, new BaseClientData(connection.getId(), connection, ConnectionStatus.UNKNOWN,</span>
+<span class="fc" id="L124">                desiredConnectionStatus, &quot;initialized&quot;, Instant.now(), null));</span>
+
+<span class="fc" id="L126">        when(DISCONNECTED, Duration.fromNanos(initTimeout.toNanos()),</span>
+<span class="fc" id="L127">                inDisconnectedState(initTimeout));</span>
+<span class="fc" id="L128">        when(CONNECTING, Duration.create(CONNECTING_TIMEOUT, TimeUnit.SECONDS),</span>
+<span class="fc" id="L129">                inConnectingState());</span>
+<span class="fc" id="L130">        when(CONNECTED,</span>
+<span class="fc" id="L131">                inConnectedState());</span>
+<span class="fc" id="L132">        when(DISCONNECTING, Duration.create(CONNECTING_TIMEOUT, TimeUnit.SECONDS),</span>
+<span class="fc" id="L133">                inDisconnectingState());</span>
+<span class="fc" id="L134">        when(FAILED,</span>
+<span class="fc" id="L135">                inFailedState());</span>
+
+<span class="fc" id="L137">        onTransition(handleTransitions());</span>
+
+<span class="fc" id="L139">        whenUnhandled(unhandledHandler(connection.getId()).</span>
+<span class="fc" id="L140">                anyEvent((event, state) -&gt; {</span>
+<span class="nc" id="L141">                    log.warning(&quot;received unknown/unsupported message {} in state {} - status: {}&quot;,</span>
+<span class="nc" id="L142">                            event, stateName(),</span>
+<span class="nc" id="L143">                            state.getConnectionStatus() + &quot;: &quot; +</span>
+<span class="nc" id="L144">                                    state.getConnectionStatusDetails().orElse(&quot;&quot;));</span>
+<span class="nc" id="L145">                    return stay();</span>
+                }));
+
+<span class="fc" id="L148">        initialize();</span>
+<span class="fc" id="L149">    }</span>
+
+    private FSMTransitionHandlerBuilder&lt;BaseClientState&gt; handleTransitions() {
+<span class="fc" id="L152">        return matchState(DISCONNECTED, CONNECTING, this::onTransition)</span>
+<span class="fc" id="L153">                .state(DISCONNECTED, CONNECTED, this::onTransition)</span>
+<span class="fc" id="L154">                .state(DISCONNECTED, DISCONNECTING, this::onTransition)</span>
+<span class="fc" id="L155">                .state(DISCONNECTED, FAILED, this::onTransition)</span>
+<span class="fc" id="L156">                .state(CONNECTING, CONNECTED, this::onTransition)</span>
+<span class="fc" id="L157">                .state(CONNECTING, DISCONNECTING, this::onTransition)</span>
+<span class="fc" id="L158">                .state(CONNECTING, DISCONNECTED, this::onTransition)</span>
+<span class="fc" id="L159">                .state(CONNECTING, CONNECTING, this::onTransition)</span>
+<span class="fc" id="L160">                .state(CONNECTING, FAILED, this::onTransition)</span>
+<span class="fc" id="L161">                .state(CONNECTED, CONNECTING, this::onTransition)</span>
+<span class="fc" id="L162">                .state(CONNECTED, DISCONNECTING, this::onTransition)</span>
+<span class="fc" id="L163">                .state(CONNECTED, DISCONNECTED, this::onTransition)</span>
+<span class="fc" id="L164">                .state(CONNECTED, FAILED, this::onTransition)</span>
+<span class="fc" id="L165">                .state(DISCONNECTING, CONNECTING, this::onTransition)</span>
+<span class="fc" id="L166">                .state(DISCONNECTING, CONNECTED, this::onTransition)</span>
+<span class="fc" id="L167">                .state(DISCONNECTING, DISCONNECTED, this::onTransition)</span>
+<span class="fc" id="L168">                .state(DISCONNECTING, FAILED, this::onTransition)</span>
+<span class="fc" id="L169">                .state(FAILED, CONNECTING, this::onTransition)</span>
+<span class="fc" id="L170">                .state(FAILED, CONNECTED, this::onTransition)</span>
+<span class="fc" id="L171">                .state(FAILED, DISCONNECTING, this::onTransition)</span>
+<span class="fc" id="L172">                .state(FAILED, DISCONNECTED, this::onTransition);</span>
+    }
+
+    private FSMStateFunctionBuilder&lt;BaseClientState, BaseClientData&gt; inDisconnectedState(
+            final java.time.Duration initTimeout) {
+<span class="fc" id="L177">        final List&lt;Object&gt; closeOrDeleteConnection = Arrays.asList(CloseConnection.class, DeleteConnection.class);</span>
+<span class="fc" id="L178">        return matchEvent(closeOrDeleteConnection, BaseClientData.class, (event, data) -&gt; {</span>
+<span class="fc" id="L179">                    final BaseClientData nextStateData = data</span>
+<span class="fc" id="L180">                            .setOrigin(getSender())</span>
+<span class="fc" id="L181">                            .setDesiredConnectionStatus(ConnectionStatus.CLOSED);</span>
+<span class="fc" id="L182">                    return stay().using(nextStateData)</span>
+<span class="fc" id="L183">                            .replying(new Status.Success(DISCONNECTED));</span>
+                })
+<span class="fc" id="L185">                .eventEquals(StateTimeout(), BaseClientData.class, (state, data) -&gt; {</span>
+<span class="pc bpc" id="L186" title="1 of 2 branches missed.">                    if (data.getDesiredConnectionStatus() == ConnectionStatus.OPEN) {</span>
+<span class="nc" id="L187">                        log.info(&quot;Did not receive connect command within {}, trying to go to CONNECTING&quot;,</span>
+                                initTimeout);
+<span class="nc" id="L189">                        return goTo(CONNECTING);</span>
+                    } else {
+                        // desired is not OPEN, so stay:
+<span class="fc" id="L192">                        return stay();</span>
+                    }
+                })
+<span class="fc" id="L195">                .event(TestConnection.class, BaseClientData.class, (testConnection, data) -&gt; {</span>
+<span class="nc" id="L196">                    final Connection connection = testConnection.getConnection();</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">                    if (!canConnectViaSocket(connection, testConnection.getDittoHeaders())) {</span>
+<span class="nc" id="L198">                        return stop();</span>
+                    }
+
+                    try {
+<span class="nc" id="L202">                        final CompletionStage&lt;Status.Status&gt; connectionStatusStage =</span>
+<span class="nc" id="L203">                                doTestConnection(connection);</span>
+<span class="nc" id="L204">                        final CompletionStage&lt;Status.Status&gt; mappingStatusStage =</span>
+<span class="nc" id="L205">                                testMessageMappingProcessor(connection.getMappingContext().orElse(null));</span>
+
+<span class="nc" id="L207">                        final ActorRef sender = getSender();</span>
+<span class="nc" id="L208">                        connectionStatusStage.toCompletableFuture()</span>
+<span class="nc" id="L209">                                .thenCombine(mappingStatusStage, (connectionStatus, mappingStatus) -&gt; {</span>
+<span class="nc bnc" id="L210" title="All 4 branches missed.">                                    if (connectionStatus instanceof Status.Success &amp;&amp; mappingStatus instanceof Status.Success) {</span>
+<span class="nc" id="L211">                                        return new Status.Success(&quot;successfully connected + initialized mapper&quot;);</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">                                    } else if (connectionStatus instanceof Status.Failure) {</span>
+<span class="nc" id="L213">                                        return connectionStatus;</span>
+                                    } else {
+<span class="nc" id="L215">                                        return mappingStatus;</span>
+                                    }
+<span class="nc" id="L217">                                }).thenAccept(testStatus -&gt; sender.tell(testStatus, getSelf()));</span>
+<span class="nc" id="L218">                    } catch (final DittoRuntimeException e) {</span>
+<span class="nc" id="L219">                        getSender().tell(new Status.Failure(e), getSelf());</span>
+<span class="nc" id="L220">                    }</span>
+<span class="nc" id="L221">                    return stop();</span>
+                })
+<span class="fc" id="L223">                .event(CreateConnection.class, BaseClientData.class, (createConnection, data) -&gt; {</span>
+<span class="fc" id="L224">                    final Connection connection = createConnection.getConnection();</span>
+<span class="fc" id="L225">                    canConnectViaSocket(connection, createConnection.getDittoHeaders());</span>
+
+<span class="fc" id="L227">                    return goTo(baseClientStateFromConnectionStatus(connection.getConnectionStatus()))</span>
+<span class="fc" id="L228">                            .using(data</span>
+<span class="fc" id="L229">                                    .setConnection(connection)</span>
+<span class="fc" id="L230">                                    .setDesiredConnectionStatus(connection.getConnectionStatus())</span>
+<span class="fc" id="L231">                                    .setConnectionStatusDetails(&quot;creating connection at &quot; + Instant.now())</span>
+<span class="fc" id="L232">                                    .setOrigin(getSender())</span>
+                            );
+                })
+<span class="fc" id="L235">                .event(OpenConnection.class, BaseClientData.class, (openConnection, data) -&gt;</span>
+<span class="nc" id="L236">                        goTo(CONNECTING).using(data.setOrigin(getSender()))</span>
+                );
+    }
+
+    private FSMStateFunctionBuilder&lt;BaseClientState, BaseClientData&gt; inConnectingState() {
+<span class="fc" id="L241">        return matchEvent(</span>
+<span class="fc" id="L242">                Arrays.asList(CreateConnection.class, OpenConnection.class), BaseClientData.class, (event, data) -&gt;</span>
+<span class="nc" id="L243">                        stay().using(data.setOrigin(getSender()))</span>
+        )
+<span class="fc" id="L245">                .event(Arrays.asList(CloseConnection.class, DeleteConnection.class), BaseClientData.class,</span>
+                        (event, data) -&gt;
+<span class="nc" id="L247">                                goTo(DISCONNECTING).using(data</span>
+<span class="nc" id="L248">                                        .setDesiredConnectionStatus(ConnectionStatus.CLOSED)</span>
+<span class="nc" id="L249">                                        .setConnectionStatusDetails(</span>
+<span class="nc" id="L250">                                                &quot;closing or deleting connection at &quot; + Instant.now())</span>
+<span class="nc" id="L251">                                        .setOrigin(getSender())</span>
+                                )
+                )
+<span class="fc" id="L254">                .eventEquals(StateTimeout(), BaseClientData.class, (event, data) -&gt; {</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">                    if (data.getConnectionStatus() == ConnectionStatus.FAILED) {</span>
+                        // if the status is already in FAILED, keep the status + detail:
+<span class="nc" id="L257">                        return goTo(CONNECTING); // re-trigger connecting</span>
+                    } else {
+<span class="nc" id="L259">                        return goTo(CONNECTING).using(data // re-trigger connecting</span>
+<span class="nc" id="L260">                                .setConnectionStatus(ConnectionStatus.FAILED)</span>
+<span class="nc" id="L261">                                .setConnectionStatusDetails(&quot;Connecting timed out at &quot; + Instant.now())</span>
+                        );
+                    }
+                });
+    }
+
+    private FSMStateFunctionBuilder&lt;BaseClientState, BaseClientData&gt; inConnectedState() {
+<span class="fc" id="L268">        return matchEvent(</span>
+<span class="fc" id="L269">                Arrays.asList(CloseConnection.class, DeleteConnection.class), BaseClientData.class, (event, data) -&gt;</span>
+<span class="fc" id="L270">                        goTo(DISCONNECTING).using(data</span>
+<span class="fc" id="L271">                                .setOrigin(getSender())</span>
+<span class="fc" id="L272">                                .setDesiredConnectionStatus(ConnectionStatus.CLOSED)</span>
+                        )
+        )
+<span class="fc" id="L275">                .event(OpenConnection.class, BaseClientData.class, (openConnection, data) -&gt;</span>
+                        // interpret as reconnecting
+<span class="fc" id="L277">                        goTo(CONNECTING).using(data.setOrigin(getSender()))</span>
+                );
+    }
+
+    private FSMStateFunctionBuilder&lt;BaseClientState, BaseClientData&gt; inDisconnectingState() {
+<span class="fc" id="L282">        return matchEvent(</span>
+<span class="fc" id="L283">                Arrays.asList(CloseConnection.class, DeleteConnection.class), BaseClientData.class, (event, data) -&gt;</span>
+<span class="nc" id="L284">                        stay()</span>
+        )
+<span class="fc" id="L286">                .eventEquals(StateTimeout(), BaseClientData.class, (event, data) -&gt;</span>
+<span class="nc" id="L287">                        goTo(CONNECTED).using(data</span>
+<span class="nc" id="L288">                                .setConnectionStatus(ConnectionStatus.OPEN)</span>
+<span class="nc" id="L289">                                .setConnectionStatusDetails(</span>
+<span class="nc" id="L290">                                        &quot;Disconnecting timed out, still connected at &quot; + Instant.now())</span>
+<span class="nc" id="L291">                                .setOrigin(getSender())</span>
+                        )
+                );
+    }
+
+    private FSMStateFunctionBuilder&lt;BaseClientState, BaseClientData&gt; inFailedState() {
+<span class="fc" id="L297">        return matchEvent(OpenConnection.class, BaseClientData.class, (event, data) -&gt; {</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">                    if (data.getDesiredConnectionStatus() == ConnectionStatus.OPEN) {</span>
+<span class="nc" id="L299">                        return goTo(CONNECTING).using(data.setOrigin(getSender()));</span>
+                    } else {
+<span class="nc" id="L301">                        return stay();</span>
+                    }
+                }
+        );
+    }
+
+    /**
+     * Creates the handler for unhandled messages to this actor.
+     * &lt;p&gt;
+     * Overwrite and extend by additional matchers.
+     * &lt;/p&gt;
+     *
+     * @param connectionId the connection ID
+     * @return an FSM function builder
+     */
+    protected FSMStateFunctionBuilder&lt;BaseClientState, BaseClientData&gt; unhandledHandler(final String connectionId) {
+<span class="pc" id="L317">        return matchEvent(RetrieveConnectionMetrics.class, BaseClientData.class, (command, data) -&gt; stay()</span>
+<span class="nc" id="L318">                .using(data.setOrigin(getSender()))</span>
+<span class="nc" id="L319">                .replying(RetrieveConnectionMetricsResponse.of(</span>
+                        connectionId,
+<span class="nc" id="L321">                        ConnectivityModelFactory.newConnectionMetrics(</span>
+<span class="nc" id="L322">                                getCurrentConnectionStatus(), getCurrentConnectionStatusDetails().orElse(null),</span>
+<span class="nc" id="L323">                                getInConnectionStatusSince(), stateName().name(),</span>
+<span class="nc" id="L324">                                getCurrentSourcesMetrics(), getCurrentTargetsMetrics()),</span>
+<span class="nc" id="L325">                        command.getDittoHeaders().toBuilder()</span>
+<span class="nc" id="L326">                                .source(org.eclipse.ditto.services.utils.config.ConfigUtil.calculateInstanceUniqueSuffix())</span>
+<span class="nc" id="L327">                                .build())</span>
+                )
+        )
+<span class="fc" id="L330">                .event(ModifyConnection.class, BaseClientData.class, (modifyConnection, data) -&gt; {</span>
+<span class="nc" id="L331">                    final Connection connection = modifyConnection.getConnection();</span>
+<span class="nc" id="L332">                    return goTo(baseClientStateFromConnectionStatus(connection.getConnectionStatus()))</span>
+<span class="nc" id="L333">                            .using(data</span>
+<span class="nc" id="L334">                                    .setConnection(connection)</span>
+<span class="nc" id="L335">                                    .setDesiredConnectionStatus(connection.getConnectionStatus())</span>
+<span class="nc" id="L336">                                    .setConnectionStatusDetails(&quot;modifying connection at &quot; + Instant.now())</span>
+<span class="nc" id="L337">                                    .setOrigin(getSender())</span>
+                            );
+                })
+<span class="pc bnc" id="L340" title="All 2 branches missed.">                .event(ConnectClient.class, BaseClientData.class, (connectClient, data) -&gt; shouldBeConnecting(data) ?</span>
+<span class="nc" id="L341">                        goTo(CONNECTING).using(data.setOrigin(getSender())) :</span>
+<span class="nc" id="L342">                        goTo(DISCONNECTING).using(data.setOrigin(getSender())))</span>
+<span class="fc" id="L343">                .event(DisconnectClient.class, BaseClientData.class,</span>
+<span class="nc" id="L344">                        (disconnectClient, data) -&gt; goTo(DISCONNECTING).using(data.setOrigin(getSender())))</span>
+<span class="fc" id="L345">                .event(ClientConnected.class, BaseClientData.class, this::handleClientConnected)</span>
+<span class="fc" id="L346">                .event(ClientDisconnected.class, BaseClientData.class, this::handleClientDisconnected)</span>
+<span class="fc" id="L347">                .event(ConnectionFailure.class, BaseClientData.class, this::handleConnectionFailure)</span>
+<span class="fc" id="L348">                .event(ConnectivityModifyCommand.class, BaseClientData.class, (command, data) -&gt; {</span>
+<span class="nc" id="L349">                    cannotHandle(command, data.getConnection());</span>
+<span class="nc" id="L350">                    return stay().using(data.setOrigin(getSender()));</span>
+                })
+<span class="fc" id="L352">                .event(Signal.class, BaseClientData.class, (signal, data) -&gt; {</span>
+<span class="fc" id="L353">                    handleSignal(signal);</span>
+<span class="fc" id="L354">                    return stay();</span>
+                })
+<span class="fc" id="L356">                .event(ExternalMessage.class, BaseClientData.class, (externalMessage, data) -&gt; {</span>
+<span class="fc" id="L357">                    handleExternalMessage(externalMessage);</span>
+<span class="fc" id="L358">                    return stay();</span>
+                })
+<span class="fc" id="L360">                .event(Status.Success.class, BaseClientData.class, (success, data) -&gt; {</span>
+<span class="nc" id="L361">                    log.info(&quot;Got Status.Success: {}&quot;, success);</span>
+<span class="nc" id="L362">                    return stay();</span>
+                });
+    }
+
+    private static BaseClientState baseClientStateFromConnectionStatus(final ConnectionStatus connectionStatus) {
+<span class="pc bpc" id="L367" title="1 of 2 branches missed.">        return connectionStatus == ConnectionStatus.OPEN ? CONNECTING : DISCONNECTING;</span>
+    }
+
+    private boolean canConnectViaSocket(final Connection connection, final DittoHeaders dittoHeaders) {
+<span class="pc bpc" id="L371" title="1 of 2 branches missed.">        if (!checkHostAndPortForAvailability(connection.getHostname(), connection.getPort())) {</span>
+<span class="nc" id="L372">            final ConnectionFailedException connectionFailedException = ConnectionFailedException</span>
+<span class="nc" id="L373">                    .newBuilder(connection.getId())</span>
+<span class="nc" id="L374">                    .dittoHeaders(dittoHeaders)</span>
+<span class="nc" id="L375">                    .description(&quot;Could not establish a connection on '&quot; +</span>
+<span class="nc" id="L376">                            connection.getHostname() + &quot;:&quot; + connection.getPort() + &quot;'. Make sure the &quot; +</span>
+                            &quot;endpoint is reachable and that no firewall prevents the connection.&quot;)
+<span class="nc" id="L378">                    .build();</span>
+<span class="nc" id="L379">            getSender().tell(new Status.Failure(connectionFailedException), getSelf());</span>
+<span class="nc" id="L380">            return false;</span>
+        }
+<span class="fc" id="L382">        return true;</span>
+    }
+
+    private boolean checkHostAndPortForAvailability(final String host, final int port) {
+<span class="fc" id="L386">        try (final Socket socket = new Socket()) {</span>
+<span class="fc" id="L387">            socket.connect(new InetSocketAddress(host, port), SOCKET_CHECK_TIMEOUT_MS);</span>
+<span class="fc" id="L388">            return true;</span>
+<span class="nc" id="L389">        } catch (final IOException ex) {</span>
+<span class="nc" id="L390">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="nc" id="L391">            log.warning(&quot;Socket could not be opened for &lt;{}:{}&gt;&quot;, host, port);</span>
+        }
+<span class="nc" id="L393">        return false;</span>
+    }
+
+    private State&lt;BaseClientState, BaseClientData&gt; handleClientConnected(final ClientConnected clientConnected,
+            final BaseClientData data) {
+
+<span class="fc" id="L399">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="fc" id="L400">        startMessageMappingProcessor(data.getConnection().getMappingContext().orElse(null));</span>
+<span class="fc" id="L401">        onClientConnected(clientConnected, data);</span>
+<span class="fc" id="L402">        return goTo(CONNECTED).using(data</span>
+<span class="fc" id="L403">                .setConnectionStatus(ConnectionStatus.OPEN)</span>
+<span class="fc" id="L404">                .setConnectionStatusDetails(&quot;Connected at &quot; + Instant.now())</span>
+<span class="fc" id="L405">                .setOrigin(getSender())</span>
+<span class="fc" id="L406">        ).replying(new Status.Success(CONNECTED));</span>
+    }
+
+    private State&lt;BaseClientState, BaseClientData&gt; handleClientDisconnected(final ClientDisconnected event,
+            final BaseClientData data) {
+
+<span class="fc" id="L412">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="pc bpc" id="L413" title="1 of 2 branches missed.">        if (this.isConsuming()) {</span>
+<span class="fc" id="L414">          stopMessageMappingProcessorActor();</span>
+        }
+<span class="fc" id="L416">        onClientDisconnected(event, data);</span>
+<span class="fc" id="L417">        return goTo(DISCONNECTED).using(data</span>
+<span class="fc" id="L418">                .setConnectionStatus(ConnectionStatus.CLOSED)</span>
+<span class="fc" id="L419">                .setConnectionStatusDetails(&quot;Disconnected at &quot; + Instant.now())</span>
+<span class="fc" id="L420">                .setOrigin(getSender())</span>
+<span class="fc" id="L421">        ).replying(new Status.Success(DISCONNECTED));</span>
+    }
+
+    private State&lt;BaseClientState, BaseClientData&gt; handleConnectionFailure(final ConnectionFailure event,
+            final BaseClientData data) {
+
+<span class="fc" id="L427">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="fc" id="L428">        onConnectionFailure(event, data);</span>
+<span class="fc" id="L429">        return stay().using(data</span>
+<span class="fc" id="L430">                .setConnectionStatus(ConnectionStatus.FAILED)</span>
+<span class="fc" id="L431">                .setConnectionStatusDetails(event.getFailureDescription())</span>
+<span class="fc" id="L432">                .setOrigin(getSender())</span>
+        );
+    }
+
+    /**
+     * Invoked on each transition {@code from} a {@link BaseClientState} {@code to} another.
+     * &lt;p&gt;
+     * May be extended to react on special transitions.
+     * &lt;/p&gt;
+     *
+     * @param from the previous State
+     * @param to the next State
+     */
+    protected void onTransition(final BaseClientState from, final BaseClientState to) {
+<span class="fc" id="L446">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="fc" id="L447">        log.info(&quot;Transition: {} -&gt; {}&quot;, from, to);</span>
+
+<span class="fc" id="L449">        final Connection connection = nextStateData().getConnection();</span>
+<span class="fc" id="L450">        final ActorRef origin = nextStateData().getOrigin().orElse(null);</span>
+
+<span class="fc bfc" id="L452" title="All 2 branches covered.">        if (to == BaseClientState.CONNECTING) {</span>
+<span class="fc bfc" id="L453" title="All 2 branches covered.">            if (from == CONNECTED) {</span>
+                // reconnect!
+<span class="fc" id="L455">                log.info(&quot;Triggering reconnection&quot;);</span>
+<span class="fc" id="L456">                doReconnectClient(connection, origin);</span>
+            } else {
+<span class="fc" id="L458">                doConnectClient(connection, origin);</span>
+            }
+<span class="fc bfc" id="L460" title="All 2 branches covered.">        } else if (to == BaseClientState.DISCONNECTING) {</span>
+<span class="fc" id="L461">            doDisconnectClient(connection, origin);</span>
+        }
+<span class="fc" id="L463">    }</span>
+
+    /**
+     * Handles {@link TestConnection} commands by returning a CompletionState of
+     * {@link akka.actor.Status.Status Status} which may be {@link akka.actor.Status.Success Success} or
+     * {@link akka.actor.Status.Failure Failure}.
+     *
+     * @param connection the Connection to test
+     * @return the CompletionStage with the test result
+     */
+    protected abstract CompletionStage&lt;Status.Status&gt; doTestConnection(final Connection connection);
+
+    /**
+     * Called when this {@code Client} connected successfully.
+     *
+     * @param clientConnected the ClientConnected message which may be subclassed and thus adding more information
+     * @param data the data of the current State
+     */
+    protected abstract void onClientConnected(final ClientConnected clientConnected, final BaseClientData data);
+
+    /**
+     * Called when this {@code Client} disconnected.
+     *
+     * @param clientDisconnected the ClientDisconnected message which may be subclassed and thus adding more information
+     * @param data the data of the current State
+     */
+    protected abstract void onClientDisconnected(final ClientDisconnected clientDisconnected,
+            final BaseClientData data);
+
+    /**
+     * @return the optional Actor to use for Publishing commandResponses/events
+     */
+    protected abstract Optional&lt;ActorRef&gt; getPublisherActor();
+
+    /**
+     * Called when this {@code Client} encountered a Failure.
+     *
+     * @param connectionFailure the ConnectionFailure message which may be subclassed and thus adding more information
+     * @param data the data of the current State
+     */
+    protected void onConnectionFailure(final ConnectionFailure connectionFailure, final BaseClientData data) {
+<span class="fc" id="L504">        connectionFailure.getOrigin().ifPresent(o -&gt; o.tell(connectionFailure.getFailure(), getSelf()));</span>
+<span class="fc" id="L505">    }</span>
+
+    /**
+     * Invoked when this {@code Client} should connect.
+     *
+     * @param connection the Connection to use for connecting
+     * @param origin the ActorRef which caused the ConnectClient command
+     */
+    protected abstract void doConnectClient(final Connection connection, @Nullable final ActorRef origin);
+
+    /**
+     * Invoked when this {@code Client} should be reconnected.
+     *
+     * @param connection the Connection to use for reconnecting
+     * @param origin the ActorRef which caused the ReconnectClient command
+     */
+    protected abstract void doReconnectClient(final Connection connection, @Nullable final ActorRef origin);
+
+    /**
+     * Invoked when this {@code Client} should disconnect.
+     *
+     * @param connection the Connection to use for disconnecting
+     * @param origin the ActorRef which caused the DisconnectClient command
+     */
+    protected abstract void doDisconnectClient(final Connection connection, @Nullable final ActorRef origin);
+
+    /**
+     * Retrieves the connection status of the passed {@link Source}.
+     *
+     * @param source the Source to retrieve the connection status for
+     * @return the result as Map containing an entry for each source
+     */
+    protected abstract Map&lt;String, AddressMetric&gt; getSourceConnectionStatus(final Source source);
+
+    /**
+     * Retrieves the connection status of the passed {@link Target}.
+     *
+     * @param target the Target to retrieve the connection status for
+     * @return the result as Map containing an entry for each target
+     */
+    protected abstract Map&lt;String, AddressMetric&gt; getTargetConnectionStatus(final Target target);
+
+    /**
+     * Retrieves the {@link AddressMetric} of a single address which is handled by a child actor with the passed
+     * {@code childActorName}.
+     *
+     * @param addressIdentifier the identifier used as first entry in the Pair of CompletableFuture
+     * @param childActorName the actor name of the child to ask for the AddressMetric
+     * @return a CompletableFuture with the addressIdentifier and the retrieved AddressMetric
+     */
+    protected final CompletableFuture&lt;Pair&lt;String, AddressMetric&gt;&gt; retrieveAddressMetric(
+            final String addressIdentifier, final String childActorName) {
+
+<span class="nc" id="L558">        final Optional&lt;ActorRef&gt; childActor = getContext().findChild(childActorName);</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">        if (childActor.isPresent()) {</span>
+<span class="nc" id="L560">            final ActorRef actorRef = childActor.get();</span>
+<span class="nc" id="L561">            return PatternsCS.ask(actorRef, RetrieveAddressMetric.getInstance(),</span>
+<span class="nc" id="L562">                    Timeout.apply(RETRIEVE_METRICS_TIMEOUT, TimeUnit.SECONDS))</span>
+<span class="nc" id="L563">                    .handle((response, throwable) -&gt; {</span>
+<span class="nc bnc" id="L564" title="All 2 branches missed.">                        if (response != null) {</span>
+<span class="nc" id="L565">                            return Pair.create(addressIdentifier, (AddressMetric) response);</span>
+                        } else {
+<span class="nc" id="L567">                            return Pair.create(addressIdentifier,</span>
+<span class="nc" id="L568">                                    ConnectivityModelFactory.newAddressMetric(</span>
+                                            ConnectionStatus.FAILED,
+<span class="nc" id="L570">                                            throwable.getClass().getSimpleName() + &quot;: &quot; +</span>
+<span class="nc" id="L571">                                                    throwable.getMessage(),</span>
+<span class="nc" id="L572">                                            -1, Instant.now()));</span>
+                        }
+<span class="nc" id="L574">                    }).toCompletableFuture();</span>
+        } else {
+<span class="nc" id="L576">            log.warning(&quot;Consumer actor child &lt;{}&gt; was not found&quot;, childActorName);</span>
+<span class="nc" id="L577">            return CompletableFuture.completedFuture(Pair.create(addressIdentifier,</span>
+<span class="nc" id="L578">                    ConnectivityModelFactory.newAddressMetric(</span>
+                            ConnectionStatus.FAILED,
+                            &quot;child &lt;&quot; + childActorName + &quot;&gt; not found&quot;,
+<span class="nc" id="L581">                            -1, Instant.now())));</span>
+        }
+    }
+
+    /**
+     * Increments the consumed message counter by 1.
+     */
+    protected final void incrementConsumedMessageCounter() {
+<span class="nc" id="L589">        consumedMessageCounter++;</span>
+<span class="nc" id="L590">    }</span>
+
+    /**
+     * Increments the published message counter by 1.
+     */
+    protected final void incrementPublishedMessageCounter() {
+<span class="fc" id="L596">        publishedMessageCounter++;</span>
+<span class="fc" id="L597">    }</span>
+
+    private static boolean shouldBeConnecting(final BaseClientData data) {
+<span class="nc bnc" id="L600" title="All 2 branches missed.">        return data.getConnectionStatus() == ConnectionStatus.OPEN;</span>
+    }
+
+    private void handleSignal(final Signal&lt;?&gt; signal) {
+<span class="fc" id="L604">        enhanceLogUtil(signal);</span>
+<span class="pc bpc" id="L605" title="1 of 2 branches missed.">        if (messageMappingProcessorActor != null) {</span>
+<span class="fc" id="L606">            messageMappingProcessorActor.tell(signal, getSelf());</span>
+        } else {
+<span class="nc" id="L608">            log.info(&quot;Cannot handle &lt;{}&gt; signal, no MessageMappingProcessor available.&quot;, signal.getType());</span>
+        }
+<span class="fc" id="L610">    }</span>
+
+    private void enhanceLogUtil(final WithDittoHeaders&lt;?&gt; signal) {
+<span class="fc" id="L613">        LogUtil.enhanceLogWithCorrelationId(log, signal);</span>
+<span class="fc" id="L614">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="fc" id="L615">    }</span>
+
+    private void handleExternalMessage(final ExternalMessage externalMessage) {
+<span class="fc" id="L618">        getPublisherActor().ifPresent(publisher -&gt; {</span>
+<span class="fc" id="L619">            incrementPublishedMessageCounter();</span>
+<span class="fc" id="L620">            publisher.forward(externalMessage, getContext());</span>
+<span class="fc" id="L621">        });</span>
+<span class="fc" id="L622">    }</span>
+
+    private ConnectionStatus getCurrentConnectionStatus() {
+<span class="nc" id="L625">        return stateData().getConnectionStatus();</span>
+    }
+
+    private Instant getInConnectionStatusSince() {
+<span class="nc" id="L629">        return stateData().getInConnectionStatusSince();</span>
+    }
+
+    private Optional&lt;String&gt; getCurrentConnectionStatusDetails() {
+<span class="nc" id="L633">        return stateData().getConnectionStatusDetails();</span>
+    }
+
+    private List&lt;SourceMetrics&gt; getCurrentSourcesMetrics() {
+<span class="nc" id="L637">        return getSourcesOrEmptySet()</span>
+<span class="nc" id="L638">                .stream()</span>
+<span class="nc" id="L639">                .map(source -&gt; ConnectivityModelFactory.newSourceMetrics(</span>
+<span class="nc" id="L640">                        getSourceConnectionStatus(source),</span>
+                        consumedMessageCounter)
+                )
+<span class="nc" id="L643">                .collect(Collectors.toList());</span>
+    }
+
+    private List&lt;TargetMetrics&gt; getCurrentTargetsMetrics() {
+<span class="nc" id="L647">        return getTargetsOrEmptySet()</span>
+<span class="nc" id="L648">                .stream()</span>
+<span class="nc" id="L649">                .map(target -&gt; ConnectivityModelFactory.newTargetMetrics(</span>
+<span class="nc" id="L650">                        getTargetConnectionStatus(target),</span>
+                        publishedMessageCounter)
+                )
+<span class="nc" id="L653">                .collect(Collectors.toList());</span>
+    }
+
+    private CompletionStage&lt;Status.Status&gt; testMessageMappingProcessor(@Nullable final MappingContext mappingContext) {
+        try {
+            // this one throws DittoRuntimeExceptions when the mapper could not be configured
+<span class="nc" id="L659">            MessageMappingProcessor.of(connectionId(), mappingContext, getContext().getSystem(), log);</span>
+<span class="nc" id="L660">            return CompletableFuture.completedFuture(new Status.Success(&quot;mapping&quot;));</span>
+<span class="nc" id="L661">        } catch (final DittoRuntimeException dre) {</span>
+<span class="nc" id="L662">            log.info(&quot;Got DittoRuntimeException during initialization of MessageMappingProcessor: {} {} - desc: {}&quot;,</span>
+<span class="nc" id="L663">                    dre.getClass().getSimpleName(), dre.getMessage(), dre.getDescription().orElse(&quot;&quot;));</span>
+<span class="nc" id="L664">            getSender().tell(dre, getSelf());</span>
+<span class="nc" id="L665">            return CompletableFuture.completedFuture(new Status.Failure(dre));</span>
+        }
+    }
+
+    /**
+     * Starts the {@link MessageMappingProcessorActor} responsible for payload transformation/mapping as child actor
+     * behind a (cluster node local) RoundRobin pool and a dynamic resizer.
+     *
+     * @param mappingContext the MappingContext containing information about how to map external messages
+     */
+    private void startMessageMappingProcessor(@Nullable final MappingContext mappingContext) {
+<span class="fc bfc" id="L676" title="All 2 branches covered.">        if (!getMessageMappingProcessorActor().isPresent()) {</span>
+<span class="fc" id="L677">            final Connection connection = connection();</span>
+
+            final MessageMappingProcessor processor;
+            try {
+                // this one throws DittoRuntimeExceptions when the mapper could not be configured
+<span class="fc" id="L682">                processor = MessageMappingProcessor.of(connectionId(), mappingContext, getContext().getSystem(), log);</span>
+<span class="nc" id="L683">            } catch (final DittoRuntimeException dre) {</span>
+<span class="nc" id="L684">                log.info(</span>
+                        &quot;Got DittoRuntimeException during initialization of MessageMappingProcessor: {} {} - desc: {}&quot;,
+<span class="nc" id="L686">                        dre.getClass().getSimpleName(), dre.getMessage(), dre.getDescription().orElse(&quot;&quot;));</span>
+<span class="nc" id="L687">                getSender().tell(dre, getSelf());</span>
+<span class="nc" id="L688">                return;</span>
+<span class="fc" id="L689">            }</span>
+
+<span class="fc" id="L691">            log.info(&quot;Configured for processing messages with the following MessageMapperRegistry: &lt;{}&gt;&quot;,</span>
+<span class="fc" id="L692">                    processor.getRegistry());</span>
+
+<span class="fc" id="L694">            log.debug(&quot;Starting MessageMappingProcessorActor with pool size of &lt;{}&gt;.&quot;,</span>
+<span class="fc" id="L695">                    connection.getProcessorPoolSize());</span>
+<span class="fc" id="L696">            final Props props =</span>
+<span class="fc" id="L697">                    MessageMappingProcessorActor.props(getSelf(), conciergeForwarder,</span>
+<span class="fc" id="L698">                            connection.getAuthorizationContext(), new DittoHeadersFilter(EXCLUDE, headerBlacklist),</span>
+<span class="fc" id="L699">                            processor, connectionId());</span>
+
+<span class="fc" id="L701">            final DefaultResizer resizer = new DefaultResizer(1, connection.getProcessorPoolSize());</span>
+<span class="fc" id="L702">            messageMappingProcessorActor = getContext().actorOf(new RoundRobinPool(1)</span>
+<span class="fc" id="L703">                    .withDispatcher(&quot;message-mapping-processor-dispatcher&quot;)</span>
+<span class="fc" id="L704">                    .withResizer(resizer)</span>
+<span class="fc" id="L705">                    .props(props), MessageMappingProcessorActor.ACTOR_NAME);</span>
+<span class="fc" id="L706">        } else {</span>
+<span class="fc" id="L707">            log.info(&quot;MessageMappingProcessor already instantiated, don't initialize again..&quot;);</span>
+        }
+<span class="fc" id="L709">    }</span>
+
+    /**
+     * @return the optional MessageMappingProcessorActor
+     */
+    protected final Optional&lt;ActorRef&gt; getMessageMappingProcessorActor() {
+<span class="fc" id="L715">        return Optional.ofNullable(messageMappingProcessorActor);</span>
+    }
+
+    private void stopMessageMappingProcessorActor() {
+<span class="pc bpc" id="L719" title="1 of 2 branches missed.">        if (messageMappingProcessorActor != null) {</span>
+<span class="fc" id="L720">            log.debug(&quot;Stopping MessageMappingProcessorActor.&quot;);</span>
+<span class="fc" id="L721">            getContext().stop(messageMappingProcessorActor);</span>
+<span class="fc" id="L722">            messageMappingProcessorActor = null;</span>
+        }
+<span class="fc" id="L724">    }</span>
+
+    private void cannotHandle(final Command&lt;?&gt; command, @Nullable final Connection connection) {
+<span class="nc" id="L727">        enhanceLogUtil(command);</span>
+<span class="nc" id="L728">        log.info(&quot;Command &lt;{}&gt; cannot be handled in current state &lt;{}&gt;.&quot;, command.getType(), stateName());</span>
+<span class="nc" id="L729">        final String message =</span>
+<span class="nc" id="L730">                MessageFormat.format(&quot;Cannot execute command &lt;{0}&gt; in current state &lt;{1}&gt;.&quot;, command.getType(),</span>
+<span class="nc" id="L731">                        stateName());</span>
+<span class="nc bnc" id="L732" title="All 2 branches missed.">        final String connectionId = connection != null ? connection.getId() : &quot;?&quot;;</span>
+<span class="nc" id="L733">        final ConnectionFailedException failedException =</span>
+<span class="nc" id="L734">                ConnectionFailedException.newBuilder(connectionId).message(message).build();</span>
+<span class="nc" id="L735">        getSender().tell(new Status.Failure(failedException), getSelf());</span>
+<span class="nc" id="L736">    }</span>
+
+    /**
+     * Escapes the passed actorName in a actorName valid way.
+     *
+     * @param name the actorName to escape
+     * @return the escaped name
+     */
+    protected static String escapeActorName(final String name) {
+<span class="fc" id="L745">        return name.replace('/', '_');</span>
+    }
+
+    /**
+     * Transforms a List of CompletableFutures to a CompletableFuture of a List.
+     *
+     * @param futures the List of futures
+     * @param &lt;T&gt; the type of the CompletableFuture and the List elements
+     * @return the CompletableFuture of a List
+     */
+    protected static &lt;T&gt; CompletableFuture&lt;List&lt;T&gt;&gt; collectAsList(final List&lt;CompletableFuture&lt;T&gt;&gt; futures) {
+<span class="nc" id="L756">        return collect(futures, Collectors.toList());</span>
+    }
+
+    private static &lt;T, A, R&gt; CompletableFuture&lt;R&gt; collect(final List&lt;CompletableFuture&lt;T&gt;&gt; futures,
+            final Collector&lt;T, A, R&gt; collector) {
+
+<span class="nc" id="L762">        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[futures.size()]))</span>
+<span class="nc" id="L763">                .thenApply(v -&gt; futures.stream().map(CompletableFuture::join).collect(collector));</span>
+    }
+
+    /**
+     * Starts a child actor.
+     *
+     * @param name the Actor's name
+     * @param props the Props
+     * @return the created ActorRef
+     */
+    protected final ActorRef startChildActor(final String name, final Props props) {
+<span class="fc" id="L774">        log.debug(&quot;Starting child actor '{}'&quot;, name);</span>
+<span class="fc" id="L775">        final String nameEscaped = escapeActorName(name);</span>
+<span class="fc" id="L776">        return getContext().actorOf(props, nameEscaped);</span>
+    }
+
+    /**
+     * Stops a child actor.
+     *
+     * @param name the Actor's name
+     */
+    protected final void stopChildActor(final String name) {
+<span class="fc" id="L785">        final String nameEscaped = escapeActorName(name);</span>
+<span class="fc" id="L786">        final Optional&lt;ActorRef&gt; child = getContext().findChild(nameEscaped);</span>
+<span class="pc bpc" id="L787" title="1 of 2 branches missed.">        if (child.isPresent()) {</span>
+<span class="fc" id="L788">            log.debug(&quot;Stopping child actor '{}'&quot;, nameEscaped);</span>
+<span class="fc" id="L789">            getContext().stop(child.get());</span>
+        } else {
+<span class="nc" id="L791">            log.debug(&quot;Cannot stop child actor '{}' because it does not exist.&quot;, nameEscaped);</span>
+        }
+<span class="fc" id="L793">    }</span>
+
+    /**
+     * Stops a child actor.
+     *
+     * @param actor the ActorRef
+     */
+    protected final void stopChildActor(final ActorRef actor) {
+<span class="fc" id="L801">        log.debug(&quot;Stopping child actor '{}'&quot;, actor.path());</span>
+<span class="fc" id="L802">        getContext().stop(actor);</span>
+<span class="fc" id="L803">    }</span>
+
+    /**
+     * @return whether this client is consuming at all
+     */
+    protected final boolean isConsuming() {
+<span class="pc bpc" id="L809" title="1 of 2 branches missed.">        return !connection().getSources().isEmpty();</span>
+    }
+
+    /**
+     * @return whether this client is publishing at all
+     */
+    protected final boolean isPublishing() {
+<span class="pc bpc" id="L816" title="1 of 2 branches missed.">        return !connection().getTargets().isEmpty();</span>
+    }
+
+    /**
+     * @return the currently managed Connection
+     */
+    protected final Connection connection() {
+<span class="fc" id="L823">        return stateData().getConnection();</span>
+    }
+
+    /**
+     * @return the Connection Id
+     */
+    protected final String connectionId() {
+<span class="fc" id="L830">        return stateData().getConnectionId();</span>
+    }
+
+    /**
+     * @return the sources configured for this connection or an empty set if no sources were configured.
+     */
+    protected final Set&lt;Source&gt; getSourcesOrEmptySet() {
+<span class="fc" id="L837">        return connection().getSources();</span>
+    }
+
+    /**
+     * @return the targets configured for this connection or an empty set if no targets were configured.
+     */
+    protected final Set&lt;Target&gt; getTargetsOrEmptySet() {
+<span class="fc" id="L844">        return connection().getTargets();</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

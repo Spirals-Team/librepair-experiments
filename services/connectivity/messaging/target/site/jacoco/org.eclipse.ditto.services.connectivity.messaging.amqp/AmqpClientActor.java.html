@@ -1,0 +1,490 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AmqpClientActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Messaging</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.messaging.amqp</a> &gt; <span class="el_source">AmqpClientActor.java</span></div><h1>AmqpClientActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.messaging.amqp;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.net.URI;
+import java.text.MessageFormat;
+import java.time.Instant;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+import javax.annotation.Nullable;
+import javax.jms.ExceptionListener;
+import javax.jms.JMSException;
+import javax.jms.MessageConsumer;
+import javax.jms.MessageProducer;
+import javax.jms.Session;
+
+import org.apache.qpid.jms.JmsConnection;
+import org.apache.qpid.jms.JmsConnectionListener;
+import org.apache.qpid.jms.message.JmsInboundMessageDispatch;
+import org.apache.qpid.jms.provider.ProviderFactory;
+import org.eclipse.ditto.model.connectivity.AddressMetric;
+import org.eclipse.ditto.model.connectivity.Connection;
+import org.eclipse.ditto.model.connectivity.ConnectionConfigurationInvalidException;
+import org.eclipse.ditto.model.connectivity.ConnectionStatus;
+import org.eclipse.ditto.model.connectivity.ConnectivityModelFactory;
+import org.eclipse.ditto.model.connectivity.Source;
+import org.eclipse.ditto.model.connectivity.Target;
+import org.eclipse.ditto.services.connectivity.messaging.BaseClientActor;
+import org.eclipse.ditto.services.connectivity.messaging.BaseClientData;
+import org.eclipse.ditto.services.connectivity.messaging.internal.AbstractWithOrigin;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ClientConnected;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ClientDisconnected;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ConnectClient;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ConnectionFailure;
+import org.eclipse.ditto.services.connectivity.messaging.internal.DisconnectClient;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ImmutableConnectionFailure;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ReconnectClient;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.signals.commands.connectivity.exceptions.ConnectionFailedException;
+
+import akka.actor.ActorRef;
+import akka.actor.Props;
+import akka.actor.Status;
+import akka.japi.Pair;
+import akka.pattern.PatternsCS;
+import akka.util.Timeout;
+
+/**
+ * Actor which manages a connection to an AMQP 1.0 server using the Qpid JMS client.
+ * This actor delegates interaction with the JMS client to a child actor because the JMS client blocks in most cases
+ * which does not work well with actors.
+ */
+public final class AmqpClientActor extends BaseClientActor implements ExceptionListener {
+
+    private static final int TEST_CONNECTION_TIMEOUT = 5;
+
+    private final JmsConnectionFactory jmsConnectionFactory;
+    private final ConnectionListener connectionListener;
+    private final Map&lt;String, MessageConsumer&gt; consumerMap;
+
+    @Nullable private JmsConnection jmsConnection;
+    @Nullable private Session jmsSession;
+    @Nullable private ActorRef amqpPublisherActor;
+
+    private AmqpClientActor(final Connection connection, final ConnectionStatus connectionStatus,
+            final JmsConnectionFactory jmsConnectionFactory, final ActorRef conciergeForwarder) {
+<span class="fc" id="L87">        super(connection, connectionStatus, conciergeForwarder);</span>
+<span class="fc" id="L88">        this.jmsConnectionFactory = jmsConnectionFactory;</span>
+<span class="fc" id="L89">        connectionListener = new ConnectionListener();</span>
+<span class="fc" id="L90">        consumerMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L91">    }</span>
+
+    /**
+     * Creates Akka configuration object for this actor.
+     *
+     * @param connection the connection.
+     * @param conciergeForwarder the actor used to send signals to the concierge service.
+     * @return the Akka configuration Props object.
+     */
+    public static Props props(final Connection connection, final ActorRef conciergeForwarder) {
+<span class="nc" id="L101">        return Props.create(AmqpClientActor.class, validateConnection(connection), connection.getConnectionStatus(),</span>
+<span class="nc" id="L102">                ConnectionBasedJmsConnectionFactory.getInstance(), conciergeForwarder);</span>
+    }
+
+    /**
+     * Creates Akka configuration object for this actor.
+     *
+     * @param connection connection parameters.
+     * @param connectionStatus the desired status of the connection.
+     * @param conciergeForwarder the actor used to send signals to the concierge service.
+     * @param jmsConnectionFactory the JMS connection factory.
+     * @return the Akka configuration Props object.
+     */
+    public static Props propsForTests(final Connection connection, final ConnectionStatus connectionStatus,
+            final ActorRef conciergeForwarder, final JmsConnectionFactory jmsConnectionFactory) {
+<span class="fc" id="L116">        return Props.create(AmqpClientActor.class, validateConnection(connection), connectionStatus,</span>
+                jmsConnectionFactory, conciergeForwarder);
+    }
+
+    private static Connection validateConnection(final Connection connection) {
+        try {
+<span class="fc" id="L122">            final URI uri =</span>
+<span class="fc" id="L123">                    URI.create(ConnectionBasedJmsConnectionFactory.buildAmqpConnectionUriFromConnection(connection));</span>
+<span class="fc" id="L124">            ProviderFactory.create(uri);</span>
+<span class="fc" id="L125">            return connection;</span>
+<span class="fc" id="L126">        } catch (final Exception e) {</span>
+<span class="fc" id="L127">            final String errorMessageTemplate =</span>
+                    &quot;Failed to instantiate an amqp provider from the given configuration: {0}&quot;;
+<span class="fc" id="L129">            final String errorMessage = MessageFormat.format(errorMessageTemplate, e.getMessage());</span>
+<span class="fc" id="L130">            throw ConnectionConfigurationInvalidException</span>
+<span class="fc" id="L131">                    .newBuilder(errorMessage)</span>
+<span class="fc" id="L132">                    .description(e.getMessage())</span>
+<span class="fc" id="L133">                    .cause(e)</span>
+<span class="fc" id="L134">                    .build();</span>
+        }
+    }
+
+    @Override
+    protected CompletionStage&lt;Status.Status&gt; doTestConnection(final Connection connection) {
+        // delegate to child actor because the QPID JMS client is blocking until connection is opened/closed
+<span class="nc" id="L141">        return PatternsCS.ask(startConnectionHandlingActor(&quot;test&quot;, connection),</span>
+<span class="nc" id="L142">                new JmsConnect(getSender()), Timeout.apply(TEST_CONNECTION_TIMEOUT, TimeUnit.SECONDS))</span>
+<span class="nc" id="L143">                .handle((response, throwable) -&gt; {</span>
+<span class="nc bnc" id="L144" title="All 6 branches missed.">                    if (throwable != null || response instanceof Status.Failure || response instanceof Throwable) {</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">                        final Throwable ex =</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">                                (response instanceof Status.Failure) ? ((Status.Failure) response).cause() :</span>
+                                        (response instanceof Throwable) ? (Throwable) response : throwable;
+<span class="nc" id="L148">                        final ConnectionFailedException failedException =</span>
+<span class="nc" id="L149">                                ConnectionFailedException.newBuilder(connectionId())</span>
+<span class="nc" id="L150">                                        .description(&quot;The requested Connection could not be connected due to '&quot; +</span>
+<span class="nc" id="L151">                                                ex.getClass().getSimpleName() + &quot;: &quot; + ex.getMessage() + &quot;'&quot;)</span>
+<span class="nc" id="L152">                                        .cause(ex).build();</span>
+<span class="nc" id="L153">                        return new Status.Failure(failedException);</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">                    } else if (response instanceof ConnectionFailure){</span>
+<span class="nc" id="L155">                        return ((ConnectionFailure) response).getFailure();</span>
+                    } else {
+<span class="nc" id="L157">                        return new Status.Success(response);</span>
+                    }
+                });
+    }
+
+    @Override
+    protected void doConnectClient(final Connection connection, @Nullable final ActorRef origin) {
+        // delegate to child actor because the QPID JMS client is blocking until connection is opened/closed
+<span class="fc" id="L165">        startConnectionHandlingActor(&quot;connect&quot;, connection).tell(new JmsConnect(origin), getSelf());</span>
+<span class="fc" id="L166">    }</span>
+
+    @Override
+    protected void doReconnectClient(final Connection connection, @Nullable final ActorRef origin) {
+        // delegate to child actor because the QPID JMS client is blocking until connection is opened/closed
+<span class="fc" id="L171">        startConnectionHandlingActor(&quot;reconnect&quot;, connection).tell(new JmsReconnect(origin, jmsConnection),</span>
+<span class="fc" id="L172">                getSelf());</span>
+<span class="fc" id="L173">    }</span>
+
+    @Override
+    protected void doDisconnectClient(final Connection connection, @Nullable final ActorRef origin) {
+        // delegate to child actor because the QPID JMS client is blocking until connection is opened/closed
+<span class="fc" id="L178">        startConnectionHandlingActor(&quot;disconnect&quot;, connection)</span>
+<span class="fc" id="L179">                .tell(new JmsDisconnect(origin, jmsConnection), getSelf());</span>
+<span class="fc" id="L180">    }</span>
+
+    @Override
+    protected Map&lt;String, AddressMetric&gt; getSourceConnectionStatus(final Source source) {
+
+        try {
+<span class="nc" id="L186">            return collectAsList(source.getAddresses().stream()</span>
+<span class="nc" id="L187">                    .flatMap(sourceAddress -&gt; IntStream.range(0, source.getConsumerCount())</span>
+<span class="nc" id="L188">                            .mapToObj(idx -&gt; {</span>
+<span class="nc" id="L189">                                final String addressWithIndex = sourceAddress + &quot;-&quot; + idx;</span>
+<span class="nc" id="L190">                                final String actorName =</span>
+<span class="nc" id="L191">                                        escapeActorName(AmqpConsumerActor.ACTOR_NAME_PREFIX + addressWithIndex);</span>
+<span class="nc" id="L192">                                return retrieveAddressMetric(addressWithIndex, actorName);</span>
+                            })
+<span class="nc" id="L194">                    ).collect(Collectors.toList()))</span>
+<span class="nc" id="L195">                    .thenApply((entries) -&gt;</span>
+<span class="nc" id="L196">                            entries.stream().collect(Collectors.toMap(Pair::first, Pair::second)))</span>
+<span class="nc" id="L197">                    .get(RETRIEVE_METRICS_TIMEOUT, TimeUnit.SECONDS);</span>
+<span class="nc" id="L198">        } catch (final InterruptedException | ExecutionException | TimeoutException e) {</span>
+<span class="nc" id="L199">            log.error(e, &quot;Error while aggregating sources ConnectionStatus: {}&quot;, e.getMessage());</span>
+<span class="nc" id="L200">            return Collections.emptyMap();</span>
+        }
+    }
+
+    @Override
+    protected Map&lt;String, AddressMetric&gt; getTargetConnectionStatus(final Target target) {
+
+<span class="nc" id="L207">        final String actorName = AmqpPublisherActor.ACTOR_NAME;</span>
+<span class="nc" id="L208">        final HashMap&lt;String, AddressMetric&gt; targetStatus = new HashMap&lt;&gt;();</span>
+        try {
+<span class="nc" id="L210">            final Pair&lt;String, AddressMetric&gt; targetEntry =</span>
+<span class="nc" id="L211">                    retrieveAddressMetric(target.getAddress(), actorName).get(RETRIEVE_METRICS_TIMEOUT,</span>
+                            TimeUnit.SECONDS);
+<span class="nc" id="L213">            targetStatus.put(targetEntry.first(), targetEntry.second());</span>
+<span class="nc" id="L214">            return targetStatus;</span>
+<span class="nc" id="L215">        } catch (final InterruptedException | ExecutionException | TimeoutException e) {</span>
+<span class="nc" id="L216">            log.error(e, &quot;Error while aggregating target ConnectionStatus: {}&quot;, e.getMessage());</span>
+<span class="nc" id="L217">            return Collections.emptyMap();</span>
+        }
+    }
+
+    @Override
+    protected void onClientConnected(final ClientConnected clientConnected, final BaseClientData data) {
+<span class="pc bpc" id="L223" title="1 of 2 branches missed.">        if (clientConnected instanceof JmsConnected) {</span>
+<span class="fc" id="L224">            final JmsConnected c = (JmsConnected) clientConnected;</span>
+<span class="fc" id="L225">            log.info(&quot;Received JmsConnected&quot;);</span>
+<span class="fc" id="L226">            this.jmsConnection = c.connection;</span>
+<span class="fc" id="L227">            this.jmsConnection.addConnectionListener(connectionListener);</span>
+<span class="fc" id="L228">            this.jmsSession = c.session;</span>
+<span class="fc" id="L229">            consumerMap.clear();</span>
+<span class="fc" id="L230">            consumerMap.putAll(c.consumers);</span>
+<span class="fc" id="L231">            amqpPublisherActor = startAmqpPublisherActor().orElse(null);</span>
+<span class="fc" id="L232">            startCommandConsumers(consumerMap);</span>
+<span class="fc" id="L233">        } else {</span>
+<span class="nc" id="L234">            log.info(&quot;ClientConnected was not JmsConnected as expected, ignoring as this probably was a reconnection&quot;);</span>
+        }
+<span class="fc" id="L236">    }</span>
+
+    @Override
+    protected void onClientDisconnected(final ClientDisconnected clientDisconnected, final BaseClientData data) {
+<span class="fc" id="L240">        log.info(&quot;Received ClientDisconnected&quot;);</span>
+<span class="fc" id="L241">        stopCommandConsumers();</span>
+<span class="fc" id="L242">        stopCommandProducer();</span>
+<span class="fc" id="L243">        this.jmsSession = null;</span>
+<span class="pc bpc" id="L244" title="1 of 2 branches missed.">        if (jmsConnection != null) {</span>
+<span class="fc" id="L245">            jmsConnection.removeConnectionListener(connectionListener);</span>
+        }
+<span class="fc" id="L247">        this.jmsConnection = null;</span>
+<span class="pc bpc" id="L248" title="1 of 2 branches missed.">        if (amqpPublisherActor != null) {</span>
+<span class="fc" id="L249">            stopChildActor(amqpPublisherActor);</span>
+<span class="fc" id="L250">            amqpPublisherActor = null;</span>
+        }
+<span class="fc" id="L252">        this.consumerMap.clear();</span>
+<span class="fc" id="L253">    }</span>
+
+    @Override
+    protected Optional&lt;ActorRef&gt; getPublisherActor() {
+<span class="fc" id="L257">        return Optional.ofNullable(amqpPublisherActor);</span>
+    }
+
+    private void startCommandConsumers(final Map&lt;String, MessageConsumer&gt; consumerMap) {
+<span class="fc" id="L261">        final Optional&lt;ActorRef&gt; messageMappingProcessor = getMessageMappingProcessorActor();</span>
+<span class="pc bpc" id="L262" title="1 of 2 branches missed.">        if (messageMappingProcessor.isPresent()) {</span>
+<span class="pc bpc" id="L263" title="1 of 2 branches missed.">            if (isConsuming()) {</span>
+<span class="fc" id="L264">                stopCommandConsumers();</span>
+<span class="fc" id="L265">                consumerMap.forEach((sourceAddress, messageConsumer) -&gt;</span>
+<span class="fc" id="L266">                        startCommandConsumer(sourceAddress, messageConsumer, messageMappingProcessor.get())</span>
+                );
+<span class="fc" id="L268">                log.info(&quot;Subscribed Connection &lt;{}&gt; to sources: {}&quot;, connectionId(), consumerMap.keySet());</span>
+            } else {
+<span class="nc" id="L270">                log.debug(&quot;Not starting consumers, no sources were configured&quot;);</span>
+            }
+        } else {
+<span class="nc" id="L273">            log.warning(&quot;The MessageMappingProcessor was not available and therefore no consumers were started!&quot;);</span>
+        }
+<span class="fc" id="L275">    }</span>
+
+    private void startCommandConsumer(final String sourceAddress, final MessageConsumer messageConsumer,
+            final ActorRef messageMappingProcessor) {
+<span class="fc" id="L279">        final String name = AmqpConsumerActor.ACTOR_NAME_PREFIX + sourceAddress;</span>
+<span class="pc bpc" id="L280" title="1 of 2 branches missed.">        if (!getContext().findChild(name).isPresent()) {</span>
+<span class="fc" id="L281">            final Props props = AmqpConsumerActor.props(sourceAddress, messageConsumer, messageMappingProcessor);</span>
+<span class="fc" id="L282">            startChildActor(name, props);</span>
+<span class="fc" id="L283">        } else {</span>
+<span class="nc" id="L284">            log.debug(&quot;Child actor {} already exists.&quot;, name);</span>
+        }
+<span class="fc" id="L286">    }</span>
+
+    private Optional&lt;ActorRef&gt; startAmqpPublisherActor() {
+<span class="pc bpc" id="L289" title="1 of 2 branches missed.">        if (isPublishing()) {</span>
+<span class="fc" id="L290">            final String name = AmqpPublisherActor.ACTOR_NAME;</span>
+<span class="fc" id="L291">            return Optional.of(getContext().findChild(name).orElseGet(() -&gt; {</span>
+<span class="pc bpc" id="L292" title="1 of 2 branches missed.">                if (jmsSession != null) {</span>
+<span class="fc" id="L293">                    final Props props = AmqpPublisherActor.props(jmsSession, getTargetsOrEmptySet());</span>
+<span class="fc" id="L294">                    return startChildActor(name, props);</span>
+                } else {
+<span class="nc" id="L296">                    throw new IllegalStateException(</span>
+                            &quot;Could not start AmqpPublisherActor due to missing jmsSession or connection&quot;);
+                }
+            }));
+        } else {
+<span class="nc" id="L301">            log.info(&quot;This client is not configured for publishing, not starting AmqpPublisherActor&quot;);</span>
+<span class="nc" id="L302">            return Optional.empty();</span>
+        }
+    }
+
+    private void stopCommandProducer() {
+<span class="fc" id="L307">        final String name = escapeActorName(AmqpPublisherActor.ACTOR_NAME);</span>
+<span class="fc" id="L308">        getContext().findChild(name).ifPresent(this::stopChildActor);</span>
+<span class="fc" id="L309">    }</span>
+
+    private void stopCommandConsumers() {
+<span class="fc" id="L312">        getContext().getChildren().forEach(child -&gt; {</span>
+<span class="fc" id="L313">            final String actorName = child.path().name();</span>
+<span class="fc bfc" id="L314" title="All 2 branches covered.">            if (actorName.startsWith(AmqpConsumerActor.ACTOR_NAME_PREFIX)) {</span>
+<span class="fc" id="L315">                stopChildActor(child);</span>
+            }
+<span class="fc" id="L317">        });</span>
+<span class="fc" id="L318">    }</span>
+
+    private ActorRef startConnectionHandlingActor(final String suffix, final Connection connection) {
+<span class="fc" id="L321">        final String name =</span>
+<span class="fc" id="L322">                JMSConnectionHandlingActor.ACTOR_NAME_PREFIX + escapeActorName(connectionId() + &quot;-&quot; + suffix);</span>
+<span class="fc" id="L323">        final Optional&lt;ActorRef&gt; child = getContext().findChild(name);</span>
+<span class="pc bpc" id="L324" title="1 of 2 branches missed.">        if (child.isPresent()) {</span>
+<span class="nc" id="L325">            log.info(&quot;JMSConnectionHandlingActor &lt;{}&gt; is still existing and busy executing a command, queuing &quot; +</span>
+                    &quot;new command..&quot;, name);
+<span class="nc" id="L327">            return child.get();</span>
+        } else {
+<span class="fc" id="L329">            final Props props = JMSConnectionHandlingActor.props(connection, this, jmsConnectionFactory);</span>
+<span class="fc" id="L330">            return getContext().actorOf(props, name);</span>
+        }
+    }
+
+    @Override
+    public void onException(final JMSException exception) {
+<span class="nc" id="L336">        log.warning(&quot;{} occurred: {}&quot;, exception.getClass().getName(), exception.getMessage());</span>
+<span class="nc" id="L337">    }</span>
+
+    /**
+     * {@code Connect} message for internal communication with {@link JMSConnectionHandlingActor}.
+     */
+    static class JmsConnect extends AbstractWithOrigin implements ConnectClient {
+
+        JmsConnect(@Nullable final ActorRef origin) {
+<span class="fc" id="L345">            super(origin);</span>
+<span class="fc" id="L346">        }</span>
+    }
+
+    /**
+     * {@code Reconnect} message for internal communication with {@link JMSConnectionHandlingActor}.
+     */
+    static class JmsReconnect extends AbstractWithOrigin implements ReconnectClient {
+
+        private final javax.jms.Connection connection;
+
+        JmsReconnect(@Nullable final ActorRef origin, @Nullable final javax.jms.Connection connection) {
+<span class="fc" id="L357">            super(origin);</span>
+<span class="fc" id="L358">            this.connection = checkNotNull(connection, &quot;connection&quot;);</span>
+<span class="fc" id="L359">        }</span>
+
+        javax.jms.Connection getConnection() {
+<span class="fc" id="L362">            return connection;</span>
+        }
+    }
+
+    /**
+     * {@code Disconnect} message for internal communication with {@link JMSConnectionHandlingActor}.
+     */
+    static class JmsDisconnect extends AbstractWithOrigin implements DisconnectClient {
+
+        @Nullable private final javax.jms.Connection connection;
+
+        JmsDisconnect(@Nullable final ActorRef origin, @Nullable final javax.jms.Connection connection) {
+<span class="fc" id="L374">            super(origin);</span>
+<span class="fc" id="L375">            this.connection = connection;</span>
+<span class="fc" id="L376">        }</span>
+
+        Optional&lt;javax.jms.Connection&gt; getConnection() {
+<span class="fc" id="L379">            return Optional.ofNullable(connection);</span>
+        }
+    }
+
+    /**
+     * Response to {@code Connect} message from {@link JMSConnectionHandlingActor}.
+     */
+    static class JmsConnected extends AbstractWithOrigin implements ClientConnected {
+
+        private final JmsConnection connection;
+        private final Session session;
+        private final Map&lt;String, MessageConsumer&gt; consumers;
+
+        JmsConnected(@Nullable final ActorRef origin, final JmsConnection connection, final Session session,
+                final Map&lt;String, MessageConsumer&gt; consumers) {
+<span class="fc" id="L394">            super(origin);</span>
+<span class="fc" id="L395">            this.connection = connection;</span>
+<span class="fc" id="L396">            this.session = session;</span>
+<span class="fc" id="L397">            this.consumers = consumers;</span>
+<span class="fc" id="L398">        }</span>
+    }
+
+    /**
+     * Response to {@code Disconnect} message from {@link JMSConnectionHandlingActor}.
+     */
+    static class JmsDisconnected extends AbstractWithOrigin implements ClientDisconnected {
+
+        JmsDisconnected(@Nullable final ActorRef origin) {
+<span class="fc" id="L407">            super(origin);</span>
+<span class="fc" id="L408">        }</span>
+    }
+
+<span class="fc" id="L411">    private class ConnectionListener implements JmsConnectionListener {</span>
+
+        @Override
+        public void onConnectionEstablished(final URI remoteURI) {
+<span class="nc" id="L415">            log.info(&quot;Connection established: {}&quot;, remoteURI);</span>
+<span class="nc" id="L416">        }</span>
+
+        @Override
+        public void onConnectionFailure(final Throwable error) {
+<span class="nc" id="L420">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="nc" id="L421">            log.warning(&quot;Connection Failure: {}&quot;, error.getMessage());</span>
+<span class="nc" id="L422">            getSelf().tell(new ImmutableConnectionFailure(ActorRef.noSender(), error, null), ActorRef.noSender());</span>
+<span class="nc" id="L423">        }</span>
+
+        @Override
+        public void onConnectionInterrupted(final URI remoteURI) {
+<span class="nc" id="L427">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="nc" id="L428">            log.warning(&quot;Connection interrupted: {}&quot;, remoteURI);</span>
+<span class="nc" id="L429">            getSelf().tell(new ImmutableConnectionFailure(ActorRef.noSender(), null, &quot;JMS Interrupted&quot;),</span>
+<span class="nc" id="L430">                    ActorRef.noSender());</span>
+<span class="nc" id="L431">        }</span>
+
+        @Override
+        public void onConnectionRestored(final URI remoteURI) {
+<span class="nc" id="L435">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="nc" id="L436">            log.info(&quot;Connection restored: {}&quot;, remoteURI);</span>
+<span class="nc" id="L437">            getSelf().tell((ClientConnected) Optional::empty, ActorRef.noSender());</span>
+<span class="nc" id="L438">        }</span>
+
+        @Override
+        public void onInboundMessage(final JmsInboundMessageDispatch envelope) {
+<span class="nc" id="L442">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="nc" id="L443">            log.debug(&quot;Inbound message: {}&quot;, envelope);</span>
+<span class="nc" id="L444">            incrementConsumedMessageCounter();</span>
+<span class="nc" id="L445">        }</span>
+
+        @Override
+        public void onSessionClosed(final Session session, final Throwable cause) {
+<span class="nc" id="L449">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="nc" id="L450">            log.warning(&quot;Session closed: {} - {}&quot;, session, cause.getMessage());</span>
+<span class="nc" id="L451">            getSelf().tell(new ImmutableConnectionFailure(ActorRef.noSender(), cause, &quot;JMS Session closed&quot;),</span>
+<span class="nc" id="L452">                    ActorRef.noSender());</span>
+<span class="nc" id="L453">        }</span>
+
+        @Override
+        public void onConsumerClosed(final MessageConsumer consumer, final Throwable cause) {
+
+<span class="nc" id="L458">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+
+<span class="nc" id="L460">            consumerMap.entrySet().stream()</span>
+<span class="nc" id="L461">                    .filter(e -&gt; e.getValue().equals(consumer))</span>
+<span class="nc" id="L462">                    .findFirst()</span>
+<span class="nc" id="L463">                    .ifPresent(entry -&gt; {</span>
+<span class="nc" id="L464">                        log.warning(&quot;Consumer &lt;{}&gt; closed due to {}: {}&quot;, entry.getKey(),</span>
+<span class="nc" id="L465">                                cause.getClass().getSimpleName(), cause.getMessage());</span>
+<span class="nc" id="L466">                        final String actorName = escapeActorName(AmqpConsumerActor.ACTOR_NAME_PREFIX + entry.getKey());</span>
+<span class="nc" id="L467">                        getContext().findChild(actorName)</span>
+<span class="nc" id="L468">                                .ifPresent(consumerActor -&gt;</span>
+<span class="nc" id="L469">                                        consumerActor.tell(</span>
+<span class="nc" id="L470">                                                ConnectivityModelFactory.newAddressMetric(ConnectionStatus.FAILED,</span>
+<span class="nc" id="L471">                                                        &quot;Consumer closed at &quot; + Instant.now(),</span>
+                                                        0, null), null));
+<span class="nc" id="L473">                    });</span>
+<span class="nc" id="L474">        }</span>
+
+        @Override
+        public void onProducerClosed(final MessageProducer producer, final Throwable cause) {
+<span class="nc" id="L478">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="nc" id="L479">            log.warning(&quot;Producer &lt;{}&gt; closed due to {}: {}&quot;, producer, cause.getClass().getSimpleName(),</span>
+<span class="nc" id="L480">                    cause.getMessage());</span>
+
+<span class="nc" id="L482">            final String name = escapeActorName(AmqpPublisherActor.ACTOR_NAME);</span>
+<span class="nc" id="L483">            getContext().findChild(name).ifPresent(producerActor -&gt;</span>
+<span class="nc" id="L484">                    producerActor.tell(ConnectivityModelFactory.newAddressMetric(ConnectionStatus.FAILED,</span>
+<span class="nc" id="L485">                            &quot;Producer closed at &quot; + Instant.now(), 0, null), null));</span>
+<span class="nc" id="L486">        }</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

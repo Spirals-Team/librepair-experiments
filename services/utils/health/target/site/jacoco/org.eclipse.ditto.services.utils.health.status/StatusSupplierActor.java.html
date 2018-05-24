@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StatusSupplierActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Health Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.health.status</a> &gt; <span class="el_source">StatusSupplierActor.java</span></div><h1>StatusSupplierActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.health.status;
+
+import java.util.concurrent.TimeUnit;
+
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.services.utils.akka.SimpleCommand;
+import org.eclipse.ditto.services.utils.akka.SimpleCommandResponse;
+import org.eclipse.ditto.services.utils.health.AbstractHealthCheckingActor;
+import org.eclipse.ditto.services.utils.health.RetrieveHealth;
+import org.eclipse.ditto.services.utils.health.StatusInfo;
+
+import akka.actor.AbstractActor;
+import akka.actor.ActorRef;
+import akka.actor.Props;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.ReceiveBuilder;
+import akka.pattern.PatternsCS;
+import akka.util.Timeout;
+
+/**
+ * Actor supplying &quot;status&quot; and &quot;health&quot; information of an ActorSystem. Has to be started as &quot;root&quot; actor so that
+ * address is the same for all microservices in Things-Cluster.
+ */
+public final class StatusSupplierActor extends AbstractActor {
+
+    /**
+     * The name of this Actor in the ActorSystem.
+     */
+    public static final String ACTOR_NAME = &quot;statusSupplier&quot;;
+
+    /**
+     * Command name for retrieving the &quot;status&quot; of this instance.
+     */
+    public static final String SIMPLE_COMMAND_RETRIEVE_STATUS = &quot;retrieveStatus&quot;;
+
+    /**
+     * Command name for retrieving the &quot;health&quot; of this instance.
+     */
+    public static final String SIMPLE_COMMAND_RETRIEVE_HEALTH = &quot;retrieveHealth&quot;;
+
+<span class="nc" id="L53">    private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+    private final String rootActorName;
+
+<span class="nc" id="L57">    private StatusSupplierActor(final String rootActorName) {</span>
+<span class="nc" id="L58">        this.rootActorName = rootActorName;</span>
+<span class="nc" id="L59">    }</span>
+
+    /**
+     * Creates Akka configuration object Props for this StatusSupplierActor.
+     *
+     * @param rootActorName sets the name of the root actor (e.g. &quot;thingsRoot&quot;) which is used as the parent of
+     * {@link org.eclipse.ditto.services.utils.health.AbstractHealthCheckingActor#ACTOR_NAME}.
+     * @return the Akka configuration Props object
+     */
+    public static Props props(final String rootActorName) {
+<span class="nc" id="L69">        return Props.create(StatusSupplierActor.class, new Creator&lt;StatusSupplierActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public StatusSupplierActor create() throws Exception {
+<span class="nc" id="L74">                return new StatusSupplierActor(rootActorName);</span>
+            }
+        });
+    }
+
+    @Override
+    public Receive createReceive() {
+<span class="nc" id="L81">        return ReceiveBuilder.create()</span>
+<span class="nc" id="L82">                .match(SimpleCommand.class, command -&gt; SIMPLE_COMMAND_RETRIEVE_STATUS.equals(command.getCommandName()),</span>
+                        command -&gt; {
+<span class="nc" id="L84">                            log.info(&quot;Sending the status of this system as requested..&quot;);</span>
+<span class="nc" id="L85">                            final SimpleCommandResponse response = SimpleCommandResponse.of(</span>
+<span class="nc" id="L86">                                    command.getCorrelationId().orElse(&quot;?&quot;), Status.provideStaticStatus());</span>
+<span class="nc" id="L87">                            getSender().tell(response, getSelf());</span>
+<span class="nc" id="L88">                        })</span>
+<span class="nc" id="L89">                .match(SimpleCommand.class, command -&gt; SIMPLE_COMMAND_RETRIEVE_HEALTH.equals(command.getCommandName()),</span>
+                        command -&gt; {
+<span class="nc" id="L91">                            final ActorRef sender = getSender();</span>
+<span class="nc" id="L92">                            final ActorRef self = getSelf();</span>
+<span class="nc" id="L93">                            PatternsCS.ask(getContext().system().actorSelection(&quot;/user/&quot; + rootActorName + &quot;/&quot; +</span>
+                                            AbstractHealthCheckingActor.ACTOR_NAME),
+<span class="nc" id="L95">                                    RetrieveHealth.newInstance(), Timeout.apply(2, TimeUnit.SECONDS))</span>
+<span class="nc" id="L96">                                    .thenAccept(health -&gt; {</span>
+<span class="nc" id="L97">                                        log.info(&quot;Sending the health of this system as requested: {}&quot;, health);</span>
+<span class="nc" id="L98">                                        sender.tell(health, self);</span>
+<span class="nc" id="L99">                                    })</span>
+<span class="nc" id="L100">                                    .exceptionally(throwable -&gt; {</span>
+<span class="nc" id="L101">                                        sender.tell(</span>
+<span class="nc" id="L102">                                                StatusInfo.fromStatus(StatusInfo.Status.DOWN, throwable.getMessage()),</span>
+                                                self);
+<span class="nc" id="L104">                                        return null;</span>
+                                    });
+<span class="nc" id="L106">                        })</span>
+<span class="nc" id="L107">                .match(SimpleCommand.class, command -&gt; {</span>
+<span class="nc" id="L108">                    log.warning(&quot;Unsupported SimpleCommand with name '{}': {}&quot;, command.getCommandName(),</span>
+                            command);
+<span class="nc" id="L110">                })</span>
+<span class="nc" id="L111">                .matchAny(m -&gt; {</span>
+<span class="nc" id="L112">                    log.warning(&quot;Unknown message: {}&quot;, m);</span>
+<span class="nc" id="L113">                    unhandled(m);</span>
+<span class="nc" id="L114">                }).build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

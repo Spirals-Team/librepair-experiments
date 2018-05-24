@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CollectPartialGrantedSubjectIdsVisitor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Model :: Enforcers</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.model.enforcers.tree</a> &gt; <span class="el_source">CollectPartialGrantedSubjectIdsVisitor.java</span></div><h1>CollectPartialGrantedSubjectIdsVisitor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.model.enforcers.tree;
+
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
+
+import org.eclipse.ditto.json.JsonPointer;
+import org.eclipse.ditto.model.policies.EffectedPermissions;
+import org.eclipse.ditto.model.policies.Permissions;
+
+/**
+ * This visitor collects all subject IDs each of which has all the specified permissions granted on the specified
+ * resource or on any sub resource down in the hierarchy. Revoked permissions are not taken into account.
+ */
+@NotThreadSafe
+final class CollectPartialGrantedSubjectIdsVisitor implements Visitor&lt;Set&lt;String&gt;&gt; {
+
+    private final Permissions expectedPermissions;
+
+    private final Function&lt;JsonPointer, PointerLocation&gt; pointerLocationEvaluator;
+    private final Set&lt;String&gt; grantedSubjects;
+    private final Collection&lt;ResourceNodeEvaluator&gt; evaluators;
+    @Nullable private ResourceNodeEvaluator currentEvaluator;
+
+    /**
+     * Constructs a new {@code CollectPartialGrantedSubjectIdsVisitor} object.
+     *
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+<span class="fc" id="L46">    CollectPartialGrantedSubjectIdsVisitor(final JsonPointer resourcePointer, final Permissions expectedPermissions) {</span>
+<span class="fc" id="L47">        this.expectedPermissions = expectedPermissions;</span>
+
+<span class="fc" id="L49">        pointerLocationEvaluator = new PointerLocationEvaluator(resourcePointer);</span>
+<span class="fc" id="L50">        grantedSubjects = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L51">        evaluators = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L52">        currentEvaluator = null;</span>
+<span class="fc" id="L53">    }</span>
+
+    @Override
+    public void visitTreeNode(final PolicyTreeNode node) {
+<span class="fc bfc" id="L57" title="All 2 branches covered.">        if (PolicyTreeNode.Type.SUBJECT == node.getType()) {</span>
+<span class="fc" id="L58">            visitSubjectNode(node);</span>
+        } else {
+<span class="fc" id="L60">            visitResourceNode((ResourceNode) node);</span>
+        }
+<span class="fc" id="L62">    }</span>
+
+    private void visitSubjectNode(final PolicyTreeNode subjectNode) {
+<span class="fc" id="L65">        final String currentSubjectId = subjectNode.getName();</span>
+
+        // We know that we visit each SubjectNode exactly once.
+<span class="fc" id="L68">        currentEvaluator = new ResourceNodeEvaluator(currentSubjectId);</span>
+<span class="fc" id="L69">        evaluators.add(currentEvaluator);</span>
+<span class="fc" id="L70">    }</span>
+
+    private void visitResourceNode(final ResourceNode resourceNode) {
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">        if (null != currentEvaluator) {</span>
+<span class="fc" id="L74">            currentEvaluator.aggregateWeightedPermissions(resourceNode);</span>
+        }
+<span class="fc" id="L76">    }</span>
+
+    @Override
+    public Set&lt;String&gt; get() {
+
+        // populate effectedSubjectIdsBuilder via side effect
+<span class="fc" id="L82">        evaluators.forEach(ResourceNodeEvaluator::evaluate);</span>
+<span class="fc" id="L83">        return new HashSet&lt;&gt;(grantedSubjects);</span>
+    }
+
+    /**
+     * The permissions have to be evaluated for each subject ID separately as this visitor's task is to collect
+     * subject IDs. This class aggregates and evaluates the permissions for a particular subject ID. If the subject
+     * ID is granted or revoked an expected permission it is added to the effectedSubjectIdsBuilder via side effect.
+     */
+    @NotThreadSafe
+    private final class ResourceNodeEvaluator {
+
+        private final String subjectId;
+        private final WeightedPermissions weightedPermissionsForSubjectId;
+
+<span class="fc" id="L97">        private ResourceNodeEvaluator(final String subjectId) {</span>
+<span class="fc" id="L98">            this.subjectId = subjectId;</span>
+<span class="fc" id="L99">            weightedPermissionsForSubjectId = new WeightedPermissions();</span>
+<span class="fc" id="L100">        }</span>
+
+        private void aggregateWeightedPermissions(final ResourceNode resourceNode) {
+<span class="fc" id="L103">            final PointerLocation pointerLocation = getLocationInRelationToTargetPointer(resourceNode);</span>
+<span class="fc" id="L104">            final EffectedPermissions effectedPermissions = resourceNode.getPermissions();</span>
+<span class="fc" id="L105">            final Permissions grantedPermissions = effectedPermissions.getGrantedPermissions();</span>
+<span class="fc bfc" id="L106" title="All 4 branches covered.">            if (PointerLocation.ABOVE == pointerLocation || PointerLocation.SAME == pointerLocation) {</span>
+<span class="fc" id="L107">                final Permissions revokedPermissions = effectedPermissions.getRevokedPermissions();</span>
+<span class="fc" id="L108">                weightedPermissionsForSubjectId.addGranted(grantedPermissions, resourceNode.getLevel());</span>
+<span class="fc" id="L109">                weightedPermissionsForSubjectId.addRevoked(revokedPermissions, resourceNode.getLevel());</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">            } else if (PointerLocation.BELOW == pointerLocation) {</span>
+<span class="fc" id="L111">                weightedPermissionsForSubjectId.addGranted(grantedPermissions, resourceNode.getLevel());</span>
+            }
+<span class="fc" id="L113">        }</span>
+
+        private PointerLocation getLocationInRelationToTargetPointer(final ResourceNode resourceNode) {
+<span class="fc" id="L116">            return pointerLocationEvaluator.apply(resourceNode.getAbsolutePointer());</span>
+        }
+
+        private void evaluate() {
+<span class="fc" id="L120">            final Map&lt;String, WeightedPermission&gt; revoked =</span>
+<span class="fc" id="L121">                    weightedPermissionsForSubjectId.getRevokedWithHighestWeight(expectedPermissions);</span>
+<span class="fc" id="L122">            final Map&lt;String, WeightedPermission&gt; granted =</span>
+<span class="fc" id="L123">                    weightedPermissionsForSubjectId.getGrantedWithHighestWeight(expectedPermissions);</span>
+<span class="fc bfc" id="L124" title="All 2 branches covered.">            if (areExpectedPermissionsEffectivelyRevoked(revoked, granted)) {</span>
+<span class="fc" id="L125">                grantedSubjects.remove(subjectId);</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">            } else if (areExpectedPermissionsEffectivelyGranted(granted, revoked)) {</span>
+<span class="fc" id="L127">                grantedSubjects.add(subjectId);</span>
+            } // else the expected permissions are undefined
+<span class="fc" id="L129">        }</span>
+
+        @SuppressWarnings(&quot;MethodWithMultipleReturnPoints&quot;)
+        private boolean areExpectedPermissionsEffectivelyRevoked(final Map&lt;String, WeightedPermission&gt; revoked,
+                final Map&lt;String, WeightedPermission&gt; granted) {
+
+<span class="fc bfc" id="L135" title="All 2 branches covered.">            if (revoked.size() != expectedPermissions.size()) {</span>
+<span class="fc" id="L136">                return false;</span>
+            }
+
+<span class="fc bfc" id="L139" title="All 2 branches covered.">            for (final String expectedPermission : expectedPermissions) {</span>
+<span class="fc" id="L140">                final WeightedPermission revokedPermission = revoked.get(expectedPermission);</span>
+<span class="fc" id="L141">                final WeightedPermission grantedPermission = granted.get(expectedPermission);</span>
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">                if (null != grantedPermission) {</span>
+<span class="fc" id="L143">                    final int grantedPermissionWeight = grantedPermission.getWeight();</span>
+<span class="fc" id="L144">                    final int revokedPermissionWeight = revokedPermission.getWeight();</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">                    if (grantedPermissionWeight &gt; revokedPermissionWeight) {</span>
+<span class="fc" id="L146">                        return false;</span>
+                    }
+                }
+<span class="fc" id="L149">            }</span>
+
+<span class="fc" id="L151">            return true;</span>
+        }
+
+        @SuppressWarnings(&quot;MethodWithMultipleReturnPoints&quot;)
+        private boolean areExpectedPermissionsEffectivelyGranted(final Map&lt;String, WeightedPermission&gt; granted,
+                final Map&lt;String, WeightedPermission&gt; revoked) {
+
+<span class="fc bfc" id="L158" title="All 2 branches covered.">            if (granted.size() != expectedPermissions.size()) {</span>
+<span class="fc" id="L159">                return false;</span>
+            }
+
+<span class="fc bfc" id="L162" title="All 2 branches covered.">            for (final String expectedPermission : expectedPermissions) {</span>
+<span class="fc" id="L163">                final WeightedPermission grantedPermission = granted.get(expectedPermission);</span>
+<span class="fc" id="L164">                final WeightedPermission revokedPermission = revoked.get(expectedPermission);</span>
+<span class="fc bfc" id="L165" title="All 2 branches covered.">                if (null != revokedPermission) {</span>
+<span class="fc" id="L166">                    final int revokedPermissionWeight = revokedPermission.getWeight();</span>
+<span class="fc" id="L167">                    final int grantedPermissionWeight = grantedPermission.getWeight();</span>
+<span class="pc bpc" id="L168" title="1 of 2 branches missed.">                    if (revokedPermissionWeight &gt;= grantedPermissionWeight) {</span>
+<span class="nc" id="L169">                        return false;</span>
+                    }
+                }
+<span class="fc" id="L172">            }</span>
+
+<span class="fc" id="L174">            return true;</span>
+        }
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

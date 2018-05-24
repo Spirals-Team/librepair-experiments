@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MongoSearchSyncPersistence.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Persistence Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.persistence.mongo.streaming</a> &gt; <span class="el_source">MongoSearchSyncPersistence.java</span></div><h1>MongoSearchSyncPersistence.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.persistence.mongo.streaming;
+
+import java.time.Instant;
+import java.util.Date;
+import java.util.Optional;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import javax.annotation.Nullable;
+
+import org.bson.Document;
+import org.eclipse.ditto.services.utils.akka.streaming.StreamMetadataPersistence;
+import org.eclipse.ditto.services.utils.persistence.mongo.MongoClientWrapper;
+import org.reactivestreams.Publisher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.mongodb.MongoCommandException;
+import com.mongodb.client.model.CreateCollectionOptions;
+import com.mongodb.reactivestreams.client.MongoCollection;
+import com.mongodb.reactivestreams.client.Success;
+
+import akka.NotUsed;
+import akka.stream.Materializer;
+import akka.stream.javadsl.Sink;
+import akka.stream.javadsl.Source;
+
+/**
+ * MongoDB implementation of {@link StreamMetadataPersistence}.
+ */
+public final class MongoSearchSyncPersistence implements StreamMetadataPersistence {
+
+    /**
+     * The minimum size a capped collection claims in MongoDB.
+     */
+    private static final long MIN_CAPPED_COLLECTION_SIZE_IN_BYTES = 4096;
+
+    private static final long BLOCKING_TIMEOUT_SECS = 20;
+
+    private static final String FIELD_TIMESTAMP = &quot;ts&quot;;
+    /**
+     * MongoDB error code if a collection that is being created already exists
+     */
+    private static final int COLLECTION_ALREADY_EXISTS_ERROR_CODE = 48;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L62">    private static final Logger LOGGER = LoggerFactory.getLogger(MongoSearchSyncPersistence.class);</span>
+    private final Materializer mat;
+    private final MongoCollection&lt;Document&gt; lastSuccessfulSearchSyncCollection;
+
+    /**
+     * Constructor.
+     *
+     * @param lastSuccessfulSearchSyncCollection the collection in which the last successful sync timestamps can be
+     * stored.
+     * @param mat the {@link Materializer} to be used for stream
+     */
+    private MongoSearchSyncPersistence(final MongoCollection&lt;Document&gt; lastSuccessfulSearchSyncCollection,
+<span class="nc" id="L74">            final Materializer mat) {</span>
+<span class="nc" id="L75">        this.mat = mat;</span>
+<span class="nc" id="L76">        this.lastSuccessfulSearchSyncCollection = lastSuccessfulSearchSyncCollection;</span>
+<span class="nc" id="L77">    }</span>
+
+    /**
+     * Creates a new initialized instance.
+     *
+     * @param collectionName The name of the collection.
+     * @param clientWrapper the client wrapper holding the connection information.
+     * @param materializer the {@link Materializer} to be used for stream
+     * @return a new initialized instance.
+     */
+    public static MongoSearchSyncPersistence initializedInstance(final String collectionName,
+            final MongoClientWrapper clientWrapper, final Materializer materializer) {
+<span class="nc" id="L89">        final MongoCollection&lt;Document&gt; lastSuccessfulSearchSyncCollection = createOrGetCappedCollection(</span>
+                clientWrapper,
+                collectionName,
+                MIN_CAPPED_COLLECTION_SIZE_IN_BYTES,
+                BLOCKING_TIMEOUT_SECS,
+                materializer);
+<span class="nc" id="L95">        return new MongoSearchSyncPersistence(lastSuccessfulSearchSyncCollection, materializer);</span>
+    }
+
+
+    @Override
+    public Source&lt;NotUsed, NotUsed&gt; updateLastSuccessfulStreamEnd(final Instant timestamp) {
+<span class="nc" id="L101">        final Date mongoStorableDate = Date.from(timestamp);</span>
+
+<span class="nc" id="L103">        final Document toStore = new Document()</span>
+<span class="nc" id="L104">                .append(FIELD_TIMESTAMP, mongoStorableDate);</span>
+
+<span class="nc" id="L106">        return Source.fromPublisher(lastSuccessfulSearchSyncCollection.insertOne(toStore))</span>
+<span class="nc" id="L107">                .map(success -&gt; {</span>
+<span class="nc" id="L108">                    LOGGER.debug(&quot;Successfully inserted timestamp for search synchronization: &lt;{}&gt;.&quot;, timestamp);</span>
+<span class="nc" id="L109">                    return NotUsed.getInstance();</span>
+                });
+    }
+
+    @Override
+    public Optional&lt;Instant&gt; retrieveLastSuccessfulStreamEnd() {
+<span class="nc" id="L115">        final Source&lt;Optional&lt;Instant&gt;, NotUsed&gt; source = retrieveLastSuccessfulStreamEndAsync();</span>
+<span class="nc" id="L116">        final CompletionStage&lt;Optional&lt;Instant&gt;&gt; done = source.runWith(Sink.head(), mat);</span>
+        try {
+<span class="nc" id="L118">            return done.toCompletableFuture().get(BLOCKING_TIMEOUT_SECS, TimeUnit.SECONDS);</span>
+<span class="nc" id="L119">        } catch (final InterruptedException | ExecutionException | TimeoutException e) {</span>
+<span class="nc" id="L120">            throw new IllegalStateException(e);</span>
+        }
+    }
+
+    private Source&lt;Optional&lt;Instant&gt;, NotUsed&gt; retrieveLastSuccessfulStreamEndAsync() {
+<span class="nc" id="L125">        return Source.fromPublisher(lastSuccessfulSearchSyncCollection.find())</span>
+<span class="nc" id="L126">                .limit(1)</span>
+<span class="nc" id="L127">                .flatMapConcat(doc -&gt; {</span>
+<span class="nc" id="L128">                    final Date date = doc.getDate(FIELD_TIMESTAMP);</span>
+<span class="nc" id="L129">                    final Instant timestamp = date.toInstant();</span>
+<span class="nc" id="L130">                    LOGGER.debug(&quot;Returning last timestamp of search synchronization: &lt;{}&gt;.&quot;, timestamp);</span>
+<span class="nc" id="L131">                    return Source.single(Optional.of(timestamp));</span>
+                })
+<span class="nc" id="L133">                .orElse(Source.single(Optional.empty()));</span>
+    }
+
+    /**
+     * Creates the capped collection {@code collectionName} using {@code clientWrapper} if it doesn't exists yet.
+     *
+     * @param clientWrapper The client to use.
+     * @param collectionName The name of the capped collection that should be created.
+     * @param cappedCollectionSizeInBytes The size in bytes of the collection that should be created.
+     * @param createTimeoutSeconds How long to wait for success of the create operation.
+     * @param materializer The {@link akka.stream.Materializer} to be used for streams
+     * @return Returns the created or retrieved collection.
+     */
+    private static MongoCollection&lt;Document&gt; createOrGetCappedCollection(
+            final MongoClientWrapper clientWrapper,
+            final String collectionName,
+            final long cappedCollectionSizeInBytes,
+            final long createTimeoutSeconds,
+            final Materializer materializer) {
+<span class="nc" id="L152">        createCappedCollectionIfItDoesNotExist(clientWrapper, collectionName, cappedCollectionSizeInBytes,</span>
+                createTimeoutSeconds, materializer);
+<span class="nc" id="L154">        return clientWrapper</span>
+<span class="nc" id="L155">                .getDatabase()</span>
+<span class="nc" id="L156">                .getCollection(collectionName);</span>
+    }
+
+    private static void createCappedCollectionIfItDoesNotExist(
+            final MongoClientWrapper clientWrapper,
+            final String collectionName,
+            final long cappedCollectionSizeInBytes,
+            final long createTimeoutSeconds,
+            final Materializer materializer) {
+        try {
+<span class="nc" id="L166">            final CreateCollectionOptions collectionOptions = new CreateCollectionOptions()</span>
+<span class="nc" id="L167">                    .autoIndex(false)</span>
+<span class="nc" id="L168">                    .capped(true)</span>
+<span class="nc" id="L169">                    .sizeInBytes(cappedCollectionSizeInBytes)</span>
+<span class="nc" id="L170">                    .maxDocuments(1);</span>
+<span class="nc" id="L171">            final Publisher&lt;Success&gt; publisher = clientWrapper.getDatabase()</span>
+<span class="nc" id="L172">                    .createCollection(collectionName, collectionOptions);</span>
+<span class="nc" id="L173">            final Source&lt;Success, NotUsed&gt; source = Source.fromPublisher(publisher);</span>
+<span class="nc" id="L174">            final CompletionStage&lt;Success&gt; done = source.runWith(Sink.head(), materializer);</span>
+<span class="nc" id="L175">            done.toCompletableFuture().get(createTimeoutSeconds, TimeUnit.SECONDS);</span>
+<span class="nc" id="L176">            LOGGER.debug(&quot;Successfully created collection: &lt;{}&gt;.&quot;, collectionName);</span>
+<span class="nc" id="L177">        } catch (final InterruptedException | TimeoutException e) {</span>
+<span class="nc" id="L178">            throw new IllegalStateException(e);</span>
+<span class="nc" id="L179">        } catch (final ExecutionException e) {</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            if (isCollectionAlreadyExistsError(e.getCause())) {</span>
+<span class="nc" id="L181">                LOGGER.debug(&quot;Collection already exists: &lt;{}&gt;.&quot;, collectionName);</span>
+            } else {
+<span class="nc" id="L183">                throw new IllegalStateException(e);</span>
+            }
+<span class="nc" id="L185">        }</span>
+<span class="nc" id="L186">    }</span>
+
+    private static boolean isCollectionAlreadyExistsError(@Nullable final Throwable t) {
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        if (t instanceof MongoCommandException) {</span>
+<span class="nc" id="L190">            final MongoCommandException commandException = (MongoCommandException) t;</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">            return commandException.getErrorCode() == COLLECTION_ALREADY_EXISTS_ERROR_CODE;</span>
+        }
+<span class="nc" id="L193">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

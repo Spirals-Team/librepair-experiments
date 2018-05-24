@@ -1,0 +1,522 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConfigUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Config Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.config</a> &gt; <span class="el_source">ConfigUtil.java</span></div><h1>ConfigUtil.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.config;
+
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.text.MessageFormat;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigException;
+import com.typesafe.config.ConfigFactory;
+import com.typesafe.config.ConfigList;
+import com.typesafe.config.ConfigObject;
+import com.typesafe.config.ConfigRenderOptions;
+import com.typesafe.config.ConfigValue;
+import com.typesafe.config.ConfigValueFactory;
+import com.typesafe.config.ConfigValueType;
+
+import akka.actor.Address;
+
+/**
+ * Utilities for Typesafe {@link Config}.
+ */
+public final class ConfigUtil {
+
+    /**
+     * The hosting environment config key.
+     */
+    public static final String HOSTING_ENVIRONMENT = &quot;hosting.environment&quot;;
+
+    /**
+     * The default TCP port used if {@value #ENV_TCP_PORT} is not set.
+     */
+    private static final String DEFAULT_TCP_PORT = &quot;2551&quot;;
+
+    /**
+     * Key of the uri for mongodb.
+     */
+    static final String AKKA_PERSISTENCE_MONGO_URI = &quot;akka.contrib.persistence.mongodb.mongo.mongouri&quot;;
+
+    private static final String HOSTING_ENVIRONMENT_DOCKER = &quot;docker&quot;;
+    private static final String HOSTING_ENVIRONMENT_FILEBASED = &quot;filebased&quot;;
+
+    private static final String ENV_HOSTING_ENVIRONMENT_FILE_LOCATION = &quot;HOSTING_ENVIRONMENT_FILE_LOCATION&quot;;
+
+    private static final String ENV_INSTANCE_INDEX = &quot;INSTANCE_INDEX&quot;;
+    private static final String ENV_CF_VCAP_SERVICES = &quot;VCAP_SERVICES&quot;;
+    private static final String ENV_CONFIG_ALIASES = &quot;CONFIG_ALIASES&quot;;
+    private static final String ENV_HOSTING_ENVIRONMENT = &quot;HOSTING_ENVIRONMENT&quot;;
+    private static final String ENV_VCAP_LOCATION = &quot;VCAP_LOCATION&quot;;
+    private static final String ENV_HOSTNAME = &quot;HOSTNAME&quot;;
+    private static final String ENV_BIND_TCP_PORT = &quot;BIND_TCP_PORT&quot;;
+    private static final String ENV_DNS_PREFIX = &quot;DNS_PREFIX&quot;;
+    private static final String ENV_TCP_PORT = &quot;TCP_PORT&quot;;
+
+    private static final String CLOUD_PROFILE_SUFFIX = &quot;-cloud&quot;;
+    private static final String DOCKER_PROFILE_SUFFIX = &quot;-docker&quot;;
+    private static final String DEV_PROFILE_SUFFIX = &quot;-dev&quot;;
+
+    private static final String VCAP_PREFIX = &quot;vcap&quot;;
+    private static final String VCAP_SERVICE_NAME = &quot;name&quot;;
+    private static final String DOT_SEPARATOR = &quot;.&quot;;
+
+    private static final String AKKA_CLUSTER_SEED_NODES = &quot;akka.cluster.seed-nodes&quot;;
+    private static final String AKKA_TCP_PROTOCOL = &quot;akka.tcp&quot;;
+
+    private static final String SECRETS_PATH = &quot;/run/secrets&quot;;
+    private static final String SECRETS_CONFIG_KEY = &quot;secrets&quot;;
+
+<span class="nc" id="L98">    private static final Map&lt;String, String&gt; DEFAULT_CONFIG_ALIASES = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L100">    private static final Logger LOGGER = LoggerFactory.getLogger(ConfigUtil.class);</span>
+
+    private ConfigUtil() {
+        // no-op
+    }
+
+    /**
+     * Determines the {@link Config} to use based on the environment we are running in. Applies a simple logic: &lt;ul&gt;
+     * &lt;li&gt;When environment variable &quot;{@value #ENV_CF_VCAP_SERVICES}&quot; is present - CloudFoundry profile - loading
+     * &quot;resourceBasename{@value #CLOUD_PROFILE_SUFFIX}&quot; Config&lt;/li&gt; &lt;li&gt;When environment variable &quot;{@value
+     * #ENV_HOSTING_ENVIRONMENT}&quot; is set to &quot;{@value #HOSTING_ENVIRONMENT_DOCKER}&quot; - Docker profile - loading
+     * &quot;resourceBasename{@value #DOCKER_PROFILE_SUFFIX}&quot; Config&lt;/li&gt; &lt;li&gt;When nothing else is detected - Development
+     * profile - loading &quot;resourceBasename{@value #DEV_PROFILE_SUFFIX}&quot; Config&lt;/li&gt; &lt;/ul&gt;
+     *
+     * @param resourceBasename the resource in the classpath to load config from (e.g. &quot;things&quot;).
+     * @return the determined Config.
+     */
+    public static Config determineConfig(final String resourceBasename) {
+        final Config config;
+
+<span class="nc" id="L120">        final String environment = System.getenv(ENV_HOSTING_ENVIRONMENT);</span>
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (System.getenv(ENV_CF_VCAP_SERVICES) != null) {</span>
+<span class="nc" id="L123">            LOGGER.info(&quot;Running with 'CloudFoundry' config&quot;);</span>
+<span class="nc" id="L124">            final String vcapServices = System.getenv(ENV_CF_VCAP_SERVICES);</span>
+<span class="nc" id="L125">            config = ConfigFactory.parseResourcesAnySyntax(resourceBasename + CLOUD_PROFILE_SUFFIX)</span>
+<span class="nc" id="L126">                    .withValue(HOSTING_ENVIRONMENT, ConfigValueFactory.fromAnyRef(environment))</span>
+<span class="nc" id="L127">                    .withFallback(transformVcapStringToConfig(vcapServices));</span>
+<span class="nc bnc" id="L128" title="All 4 branches missed.">        } else if (environment != null &amp;&amp; environment.equalsIgnoreCase(HOSTING_ENVIRONMENT_DOCKER)) {</span>
+<span class="nc" id="L129">            LOGGER.info(&quot;Running with 'Docker' config&quot;);</span>
+<span class="nc" id="L130">            config = ConfigFactory.parseResourcesAnySyntax(resourceBasename + DOCKER_PROFILE_SUFFIX)</span>
+<span class="nc" id="L131">                    .withValue(HOSTING_ENVIRONMENT, ConfigValueFactory.fromAnyRef(environment));</span>
+<span class="nc bnc" id="L132" title="All 4 branches missed.">        } else if (environment != null &amp;&amp; environment.equalsIgnoreCase(HOSTING_ENVIRONMENT_FILEBASED)) {</span>
+<span class="nc" id="L133">            config = buildConfigForFilebased(null)</span>
+<span class="nc" id="L134">                    .withValue(HOSTING_ENVIRONMENT, ConfigValueFactory.fromAnyRef(environment));</span>
+<span class="nc bnc" id="L135" title="All 4 branches missed.">        } else if (environment != null &amp;&amp; !environment.isEmpty()) {</span>
+<span class="nc" id="L136">            config = buildConfigForFilebased(resourceBasename + &quot;-&quot; + environment)</span>
+<span class="nc" id="L137">                    .withValue(HOSTING_ENVIRONMENT, ConfigValueFactory.fromAnyRef(environment));</span>
+        } else {
+<span class="nc" id="L139">            LOGGER.info(&quot;Docker environment was not detected - assuming running in 'development' environment&quot;);</span>
+<span class="nc" id="L140">            config = ConfigFactory.parseResourcesAnySyntax(resourceBasename + DEV_PROFILE_SUFFIX)</span>
+<span class="nc" id="L141">                    .withValue(HOSTING_ENVIRONMENT, ConfigValueFactory.fromAnyRef(environment));</span>
+        }
+
+<span class="nc" id="L144">        final Config loadedConfig = setAkkaPersistenceMongoUri(</span>
+<span class="nc" id="L145">                ConfigFactory.load(config.withFallback(ConfigFactory.parseResourcesAnySyntax(resourceBasename))));</span>
+<span class="nc" id="L146">        LOGGER.debug(&quot;Using config: {}&quot;, loadedConfig.root().render(ConfigRenderOptions.concise()));</span>
+        // resolve all properties with default config at the end:
+<span class="nc" id="L148">        return loadedConfig;</span>
+    }
+
+    private static Config buildConfigForFilebased(@Nullable final String resourceName) {
+        final Config initialConfig;
+<span class="nc bnc" id="L153" title="All 2 branches missed.">        if (resourceName != null) {</span>
+<span class="nc" id="L154">            initialConfig = ConfigFactory.parseResourcesAnySyntax(resourceName);</span>
+        } else {
+<span class="nc" id="L156">            final String configFileLocation = System.getenv(ENV_HOSTING_ENVIRONMENT_FILE_LOCATION);</span>
+<span class="nc" id="L157">            LOGGER.info(&quot;Running with 'Filebased backed' config for service from file '{}'&quot;, configFileLocation);</span>
+<span class="nc" id="L158">            initialConfig = ConfigFactory.parseFileAnySyntax(Paths.get(configFileLocation).toFile());</span>
+        }
+
+<span class="nc" id="L161">        final String vcapLocation = System.getenv(ENV_VCAP_LOCATION);</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (vcapLocation != null) {</span>
+<span class="nc" id="L163">            LOGGER.info(&quot;Reading vcap config from path '{}'&quot;, vcapLocation);</span>
+
+            final String vcap;
+            try {
+<span class="nc" id="L167">                vcap = new String(Files.readAllBytes(Paths.get(vcapLocation)));</span>
+<span class="nc" id="L168">            } catch (final IOException e) {</span>
+<span class="nc" id="L169">                LOGGER.error(&quot;Could not read vcap config from path '{}'&quot;, vcapLocation, e);</span>
+<span class="nc" id="L170">                throw new IllegalArgumentException(&quot;Could not read vcap config file&quot;, e);</span>
+<span class="nc" id="L171">            }</span>
+
+            // do the &quot;-cloud&quot; config parsing with fallback to vcap :
+<span class="nc" id="L174">            final Config configFromVcap = transformVcapStringToConfig(vcap);</span>
+<span class="nc" id="L175">            final Config configFromSecrets = transformSecretsToConfig();</span>
+
+<span class="nc" id="L177">            return initialConfig</span>
+<span class="nc" id="L178">                    .withFallback(configFromVcap)</span>
+<span class="nc" id="L179">                    .withFallback(configFromSecrets);</span>
+        } else {
+<span class="nc" id="L181">            return initialConfig</span>
+<span class="nc" id="L182">                    .withFallback(transformSecretsToConfig());</span>
+        }
+    }
+
+    /**
+     * Determines from the passed {@code config} whether a manual {@code joinSeedNodes()} is required or not.
+     *
+     * @param config the config to determine the settings from.
+     * @return whether manually joining cluster seed nodes is required or not.
+     */
+    public static boolean shouldManuallyJoinClusterSeedNodes(final Config config) {
+<span class="nc bnc" id="L193" title="All 4 branches missed.">        return !config.hasPath(AKKA_CLUSTER_SEED_NODES) || config.getStringList(AKKA_CLUSTER_SEED_NODES).isEmpty();</span>
+    }
+
+    /**
+     * Retrieves a list of cluster seed nodes by looking up the passed {@code clusterName} at the DNS.
+     * Uses {@code seed-nodes} configured in the passed {@code config} as fallback if the hostname {@code clusterName}
+     * could not be resolved at the DNS.
+     *
+     * @param clusterName the clusterName to use for looking up at the DNS
+     * @param config the config as fallback for seed-nodes
+     * @return a sorted List (by index id upwards) of resolved cluster seed nodes
+     */
+    public static List&lt;Address&gt; getClusterSeedNodesExceptOwn(final String clusterName, final Config config) {
+        try {
+<span class="nc" id="L207">            return getCanonicalHostnameStreamExceptOwn(clusterName)</span>
+<span class="nc" id="L208">                    .map(addressString -&gt; buildAddress(clusterName, addressString)) //</span>
+<span class="nc" id="L209">                    .collect(Collectors.toList());</span>
+<span class="nc" id="L210">        } catch (final UnknownHostException e) {</span>
+<span class="nc" id="L211">            LOGGER.debug(&quot;UnknownHost: {}&quot;, e.getMessage(), e);</span>
+<span class="nc" id="L212">            return config.getStringList(AKKA_CLUSTER_SEED_NODES).stream() //</span>
+<span class="nc" id="L213">                    .map(ConfigUtil::convertAkkaTcpStringToAddress) //</span>
+<span class="nc" id="L214">                    .collect(Collectors.toList());</span>
+        }
+    }
+
+    /**
+     * Retrieves a Stream of {@link InetAddress#getCanonicalHostName()}s by looking up the passed {@code hostName} at
+     * the DNS via {@link InetAddress#getAllByName(String)}. This method calculates the canonical hostname which
+     * currently (Docker Swarm Mode in Docker 1.13.1) looks like this:
+     * &lt;ul&gt;
+     * &lt;li&gt;THINGS_policies-leader.1.8dnykvh0b0xt2sv95ooerbkgi.THINGS_blue-net&lt;/li&gt;
+     * &lt;/ul&gt;
+     *
+     * @param hostName the hostname to lookup at DNS
+     * @return a Stream of canonical hostnames
+     * @throws UnknownHostException when the passed {@code hostName} could not be resolved
+     */
+    private static Stream&lt;String&gt; getCanonicalHostnameStreamExceptOwn(final String hostName)
+            throws UnknownHostException {
+<span class="nc" id="L232">        final String hostNameToUse = Optional.ofNullable(System.getenv(ENV_DNS_PREFIX))</span>
+<span class="nc" id="L233">                .map(prefix -&gt; prefix + hostName)</span>
+<span class="nc" id="L234">                .orElse(hostName);</span>
+<span class="nc" id="L235">        final InetAddress[] allKnownServiceAddresses = InetAddress.getAllByName(hostNameToUse);</span>
+<span class="nc" id="L236">        LOGGER.info(&quot;All known service addresses for service '{}': {}&quot;, hostNameToUse,</span>
+<span class="nc" id="L237">                Arrays.stream(allKnownServiceAddresses).map(InetAddress::getCanonicalHostName)</span>
+<span class="nc" id="L238">                        .collect(Collectors.joining(&quot;,&quot;)));</span>
+
+<span class="nc" id="L240">        final String myHostname = System.getenv(ENV_HOSTNAME);</span>
+
+<span class="nc" id="L242">        return Arrays.stream(allKnownServiceAddresses)</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">                .filter(addr -&gt; !addr.getCanonicalHostName().equals(myHostname)) // exclude &quot;my&quot; address</span>
+<span class="nc" id="L244">                .map(InetAddress::getCanonicalHostName);</span>
+    }
+
+    /**
+     * Builds an {@link Address} from the passed in {@code clusterName} and {@code hostname} using the port from
+     * environment variables or the default fallback port &quot;{@value DEFAULT_TCP_PORT}&quot;.
+     *
+     * @param clusterName the clusterName to use for building the Address
+     * @param hostname the hostname to use for building the Address
+     * @return the built Address
+     */
+    public static Address buildAddress(final String clusterName, final String hostname) {
+<span class="nc" id="L256">        final String tcpPort = Optional.ofNullable(System.getenv(ENV_BIND_TCP_PORT))</span>
+<span class="nc" id="L257">                .orElse(Optional.ofNullable(System.getenv(ENV_TCP_PORT)).orElse(DEFAULT_TCP_PORT));</span>
+<span class="nc" id="L258">        return buildAddress(clusterName, hostname, Integer.parseInt(tcpPort));</span>
+    }
+
+    private static Address buildAddress(final String clusterName, final String hostname, final int port) {
+        // in this case, we would get a problem with java.net.URI which does not parse URIs well with such hostnames
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (hostname.contains(&quot;_&quot;)) {</span>
+            final String ip;
+            try {
+                // use the IP address instead:
+<span class="nc" id="L267">                ip = InetAddress.getByName(hostname).getHostAddress();</span>
+<span class="nc" id="L268">            } catch (final UnknownHostException e) {</span>
+<span class="nc" id="L269">                throw new IllegalStateException(&quot;Could not resolve hostname '&quot; + hostname + &quot;'&quot;, e);</span>
+<span class="nc" id="L270">            }</span>
+<span class="nc" id="L271">            return Address.apply(AKKA_TCP_PROTOCOL, clusterName, ip, port);</span>
+        } else {
+<span class="nc" id="L273">            return Address.apply(AKKA_TCP_PROTOCOL, clusterName, hostname, port);</span>
+        }
+    }
+
+    private static Address convertAkkaTcpStringToAddress(final String addressString) {
+<span class="nc" id="L278">        final String[] split1 = addressString.split(&quot;://&quot;, 2);</span>
+<span class="nc" id="L279">        final String[] split2 = split1[1].split(&quot;@&quot;, 2);</span>
+<span class="nc" id="L280">        final String[] split3 = split2[1].split(&quot;:&quot;, 2);</span>
+<span class="nc" id="L281">        return buildAddress(split2[0], split3[0], Integer.parseInt(split3[1]));</span>
+    }
+
+    /**
+     * Returns the host name determined from the environment variable &quot;HOSTNAME&quot;.
+     *
+     * @return the host name
+     */
+    public static String getHostNameFromEnv() {
+<span class="nc" id="L290">        return Optional.ofNullable(System.getenv(ENV_HOSTNAME)).orElseGet(() -&gt; {</span>
+            try {
+<span class="nc" id="L292">                return InetAddress.getLocalHost().getHostAddress();</span>
+<span class="nc" id="L293">            } catch (final UnknownHostException e) {</span>
+<span class="nc" id="L294">                throw new IllegalStateException(&quot;Could not retrieve 'localhost' address&quot;, e);</span>
+            }
+        });
+    }
+
+    /**
+     * Returns the host address determined from the passed in host name.
+     *
+     * @param hostName the name to determine the address from
+     * @return the host address
+     */
+    private static String getHostAddressByName(final String hostName) {
+        try {
+<span class="nc" id="L307">            return InetAddress.getByName(hostName).getHostAddress();</span>
+<span class="nc" id="L308">        } catch (final UnknownHostException e) {</span>
+<span class="nc" id="L309">            throw new IllegalStateException(&quot;Could not resolve hostname '&quot; + hostName + &quot;'&quot;, e);</span>
+        }
+    }
+
+    /**
+     * Returns the address of the host name which was determined by the env variable &quot;HOSTNAME&quot;.
+     *
+     * @return the host address
+     */
+    public static String getLocalHostAddress() {
+<span class="nc" id="L319">        return getHostAddressByName(getHostNameFromEnv());</span>
+    }
+
+    /**
+     * Returns the instance index integer.
+     *
+     * @return the instance index
+     */
+    public static Integer instanceIndex() {
+<span class="nc" id="L328">        return Optional.ofNullable(System.getenv(ENV_INSTANCE_INDEX)).map(Integer::parseInt).orElse(-1);</span>
+    }
+
+    /**
+     * Calculates a unique suffix for instance-specific resources (e.g. response queues or kamon &quot;Host&quot; value) based on
+     * the environment the service runs in. E.g.:
+     * &lt;ul&gt;
+     * &lt;li&gt;for Docker Swarm environment the suffix would be the Swarm Instance Index (starting from &quot;1&quot;)&lt;/li&gt;
+     * &lt;li&gt;as fallback the &quot;HOSTNAME&quot; environment variable is used&lt;/li&gt;
+     * &lt;/ul&gt;
+     *
+     * @return the calculated unique suffix.
+     */
+    public static String calculateInstanceUniqueSuffix() {
+<span class="nc" id="L342">        return Optional.ofNullable(System.getenv(ENV_INSTANCE_INDEX)).orElseGet(ConfigUtil::getHostNameFromEnv);</span>
+    }
+
+    private static Config transformVcapStringToConfig(final String vcapServices) {
+<span class="nc" id="L346">        final List&lt;Config&gt; collect = ConfigFactory.parseString(vcapServices).entrySet().stream().map(entry -&gt; {</span>
+<span class="nc" id="L347">            final String key = entry.getKey();</span>
+<span class="nc" id="L348">            final ConfigValue value = entry.getValue();</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">            if (value.valueType() == ConfigValueType.LIST) {</span>
+                // when parsing arrays
+<span class="nc" id="L351">                return parseList(key, (ConfigList) value);</span>
+            } else {
+<span class="nc" id="L353">                return ConfigFactory.empty().withValue(key, value);</span>
+            }
+<span class="nc" id="L355">        }).collect(Collectors.toList());</span>
+
+<span class="nc" id="L357">        Config vcapConfig = ConfigFactory.empty();</span>
+<span class="nc bnc" id="L358" title="All 2 branches missed.">        for (final Config c : collect) {</span>
+<span class="nc" id="L359">            vcapConfig = vcapConfig.withFallback(c);</span>
+<span class="nc" id="L360">        }</span>
+
+<span class="nc" id="L362">        vcapConfig = ConfigFactory.empty().withValue(VCAP_PREFIX, vcapConfig.root());</span>
+
+<span class="nc" id="L364">        final Config aliasConfig = determineAliasesConfig(vcapConfig);</span>
+<span class="nc" id="L365">        vcapConfig = vcapConfig.withFallback(aliasConfig);</span>
+
+<span class="nc" id="L367">        return vcapConfig;</span>
+    }
+
+    private static Config parseList(final String key, final ConfigList list) {
+<span class="nc" id="L371">        Config tmpCfg = ConfigFactory.empty();</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        for (int i = 0; i &lt; list.size(); i++) {</span>
+<span class="nc" id="L373">            final ConfigValue cVal = list.get(i);</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">            if (cVal instanceof ConfigObject) {</span>
+                // use the &quot;name&quot; as key in a &quot;map&quot; for &quot;objects&quot;:
+<span class="nc" id="L376">                final String name = ((ConfigObject) cVal).toConfig().getString(VCAP_SERVICE_NAME);</span>
+<span class="nc" id="L377">                tmpCfg = tmpCfg.withValue(key + DOT_SEPARATOR + name, cVal);</span>
+<span class="nc" id="L378">            } else {</span>
+                // use the index as key in a &quot;map&quot;:
+<span class="nc" id="L380">                tmpCfg = tmpCfg.withValue(key + DOT_SEPARATOR + i, cVal);</span>
+            }
+        }
+<span class="nc" id="L383">        return tmpCfg;</span>
+    }
+
+    private static Config determineAliasesConfig(final Config vcapConfig) {
+<span class="nc" id="L387">        final Map&lt;String, String&gt; aliases = getAliases();</span>
+
+<span class="nc" id="L389">        Config aliasesConfig = ConfigFactory.empty();</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">        for (final Map.Entry&lt;String, String&gt; entry : aliases.entrySet()) {</span>
+<span class="nc" id="L391">            final String alias = entry.getKey();</span>
+<span class="nc" id="L392">            final String originalKey = entry.getValue();</span>
+
+<span class="nc" id="L394">            ConfigValue originalValue = null;</span>
+            try {
+<span class="nc" id="L396">                originalValue = vcapConfig.getValue(originalKey);</span>
+<span class="nc" id="L397">            } catch (final ConfigException e) {</span>
+<span class="nc" id="L398">                LOGGER.warn(&quot;Could not retrieve value for creating alias {} -&gt; {}&quot;, originalKey, alias, e);</span>
+<span class="nc" id="L399">            }</span>
+
+<span class="nc bnc" id="L401" title="All 2 branches missed.">            if (originalValue != null) {</span>
+<span class="nc" id="L402">                final Config aliasConfig = ConfigFactory.empty().withValue(alias, originalValue);</span>
+<span class="nc" id="L403">                aliasesConfig = aliasesConfig.withFallback(aliasConfig);</span>
+            }
+<span class="nc" id="L405">        }</span>
+
+<span class="nc" id="L407">        return aliasesConfig;</span>
+    }
+
+    private static Map&lt;String, String&gt; getAliases() {
+<span class="nc" id="L411">        final String configAliasesStr = System.getenv(ENV_CONFIG_ALIASES);</span>
+<span class="nc bnc" id="L412" title="All 4 branches missed.">        if (configAliasesStr == null || configAliasesStr.isEmpty()) {</span>
+<span class="nc" id="L413">            LOGGER.info(&quot;Environment variable {} is not defined or empty, using default config aliases: {}&quot;,</span>
+                    ENV_CONFIG_ALIASES, DEFAULT_CONFIG_ALIASES);
+<span class="nc" id="L415">            return DEFAULT_CONFIG_ALIASES;</span>
+        }
+
+<span class="nc" id="L418">        final Map&lt;String, String&gt; aliases = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L419">        final JsonObject configAliasesJsonObj = JsonFactory.newObject(configAliasesStr);</span>
+<span class="nc" id="L420">        configAliasesJsonObj.stream().forEach(jsonField -&gt; {</span>
+<span class="nc" id="L421">            final String alias = jsonField.getKeyName();</span>
+<span class="nc" id="L422">            final String originalPathStr = jsonField.getValue().asString();</span>
+
+<span class="nc" id="L424">            aliases.put(alias, originalPathStr);</span>
+<span class="nc" id="L425">        });</span>
+
+<span class="nc" id="L427">        LOGGER.info(&quot;Environment variable {} defines these config aliases: {}&quot;, ENV_CONFIG_ALIASES, aliases);</span>
+
+<span class="nc" id="L429">        return aliases;</span>
+    }
+
+    private static Config transformSecretsToConfig() {
+<span class="nc" id="L433">        try (final Stream&lt;Path&gt; filesStream = Files.list(Paths.get(SECRETS_PATH))) {</span>
+<span class="nc" id="L434">            final Map&lt;String, String&gt; secrets = filesStream.map(ConfigUtil::readSecretFromPath)</span>
+<span class="nc" id="L435">                    .filter(Optional::isPresent)</span>
+<span class="nc" id="L436">                    .map(Optional::get)</span>
+<span class="nc" id="L437">                    .collect(Collectors.toMap(Secret::getKey, Secret::getValue));</span>
+
+<span class="nc" id="L439">            final Map&lt;String, ConfigObject&gt; config = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L440">            config.put(SECRETS_CONFIG_KEY, ConfigValueFactory.fromMap(secrets));</span>
+
+<span class="nc" id="L442">            return ConfigFactory.parseMap(config);</span>
+<span class="nc" id="L443">        } catch (final IOException e) {</span>
+<span class="nc" id="L444">            LOGGER.warn(&quot;No secrets present at path '{}'&quot;, SECRETS_PATH, e);</span>
+        }
+
+<span class="nc" id="L447">        return ConfigFactory.empty();</span>
+    }
+
+    /**
+     * Sets Akka persistence MongoDB URI from configurations in {@code services-utils-config.mongodb}.
+     *
+     * @param config The loaded config.
+     * @return Config with akka persistence MongoDB URI set according to the options in the config.
+     */
+    private static Config setAkkaPersistenceMongoUri(final Config config) {
+<span class="nc bnc" id="L457" title="All 2 branches missed.">        if (MongoConfig.isUriDefined(config)) {</span>
+<span class="nc" id="L458">            final Map&lt;String, String&gt; akkaPersistenceMongoUri = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L459">            akkaPersistenceMongoUri.put(AKKA_PERSISTENCE_MONGO_URI, MongoConfig.getMongoUri(config));</span>
+<span class="nc" id="L460">            return ConfigFactory.parseMap(akkaPersistenceMongoUri).withFallback(config);</span>
+        } else {
+<span class="nc" id="L462">            return config;</span>
+        }
+    }
+
+    private static Optional&lt;Secret&gt; readSecretFromPath(final Path path) {
+        try {
+<span class="nc" id="L468">            final String secretName = path.getName(path.getNameCount() - 1).toString();</span>
+<span class="nc" id="L469">            final List&lt;String&gt; lines = Files.readAllLines(path);</span>
+<span class="nc bnc" id="L470" title="All 2 branches missed.">            if (lines.isEmpty()) {</span>
+<span class="nc" id="L471">                final String message = &quot;Expected a secret but found no lines in file '{0}'.&quot;;</span>
+<span class="nc" id="L472">                throw new IOException(MessageFormat.format(message, path));</span>
+            }
+<span class="nc" id="L474">            return Optional.of(new Secret(secretName, lines.get(0)));</span>
+<span class="nc" id="L475">        } catch (final IOException e) {</span>
+<span class="nc" id="L476">            LOGGER.warn(&quot;Could not read secret at path '{}'&quot;, path);</span>
+<span class="nc" id="L477">            return Optional.empty();</span>
+        }
+    }
+
+    private static final class Secret {
+
+        private final String key;
+        private final String value;
+
+<span class="nc" id="L486">        Secret(final String key, final String value) {</span>
+<span class="nc" id="L487">            this.key = key;</span>
+<span class="nc" id="L488">            this.value = value;</span>
+<span class="nc" id="L489">        }</span>
+
+        String getKey() {
+<span class="nc" id="L492">            return key;</span>
+        }
+
+        String getValue() {
+<span class="nc" id="L496">            return value;</span>
+        }
+
+        @Override
+        public boolean equals(final Object o) {
+<span class="nc bnc" id="L501" title="All 2 branches missed.">            if (this == o) return true;</span>
+<span class="nc bnc" id="L502" title="All 4 branches missed.">            if (o == null || getClass() != o.getClass()) return false;</span>
+<span class="nc" id="L503">            final Secret secret = (Secret) o;</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">            return Objects.equals(key, secret.key) &amp;&amp;</span>
+<span class="nc bnc" id="L505" title="All 2 branches missed.">                    Objects.equals(value, secret.value);</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L510">            return Objects.hash(key, value);</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L515">            return getClass().getSimpleName() + &quot; [&quot; +</span>
+                    &quot;, key=&quot; + key +
+                    &quot;, value=&quot; + value +
+                    &quot;]&quot;;
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

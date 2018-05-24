@@ -1,0 +1,435 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultStreamSupervisor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Akka Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.akka.streaming</a> &gt; <span class="el_source">DefaultStreamSupervisor.java</span></div><h1>DefaultStreamSupervisor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.akka.streaming;
+
+import static java.util.Objects.requireNonNull;
+import static org.eclipse.ditto.services.utils.akka.streaming.StreamConstants.FORWARDER_EXCEEDED_MAX_IDLE_TIME_MSG;
+import static org.eclipse.ditto.services.utils.akka.streaming.StreamConstants.STREAM_COMPLETED;
+import static org.eclipse.ditto.services.utils.akka.streaming.StreamConstants.STREAM_FAILED;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.services.models.streaming.SudoStreamModifiedEntities;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+
+import akka.NotUsed;
+import akka.actor.AbstractActor;
+import akka.actor.ActorRef;
+import akka.actor.Cancellable;
+import akka.actor.OneForOneStrategy;
+import akka.actor.Props;
+import akka.actor.SupervisorStrategy;
+import akka.actor.Terminated;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.DeciderBuilder;
+import akka.japi.pf.ReceiveBuilder;
+import akka.stream.Materializer;
+import akka.stream.javadsl.Source;
+import scala.Option;
+import scala.concurrent.duration.FiniteDuration;
+
+/**
+ * An actor that supervises stream forwarders. It maintains the end time of the last successful stream in a
+ * {@code StreamMetadataPersistence} and starts streams whenever the timestamp becomes too old. It collaborates
+ * with {@code AbstractStreamingActor} and {@code AbstractStreamForwarder} to ensure that the recipient of stream
+ * messages eventually receive all messages up until the recent past.
+ * &lt;pre&gt;
+ * {@code
+ * Streaming                                                                       Supervisor           Stream
+ * Actor                                                                              +                 Message
+ *    +                                                                               |                 Recipient
+ *    |                                                                               |                   +
+ *    |                                                                               |                   |
+ *    |                                                                         spawns|                   |
+ *    |                                          START_STREAMING            &lt;---------+                   |
+ *    |  &lt;-----------------------------------------------------+  Stream                                  |
+ *    |                                                           Forwarder                               |
+ *    |                                                              +                                    |
+ *    |                                                              |                                    |
+ *    |                                                              |                                    |
+ *    |                                                              |                                    |
+ *    |                                                              |                                    |
+ *    |                                                              |                                    |
+ *    |                                                              |                                    |
+ *    |  spawns          Akka                                        |                                    |
+ *    |  +------------&gt;  Stream                                      |                                    |
+ *    |                  Source                                      |                                    |
+ *    |                    +                                         |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |  STREAM_STARTED(BATCH_SIZE)             |                                    |
+ *    |                    |  +-----------------------------------&gt;  |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |                                    ACK  |                                    |
+ *    |                    |  &lt;-----------------------------------+  |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |  BATCH(ELEMENT)                         |                                    |
+ *    |                    |  +-----------------------------------&gt;  |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |                                         |  MESSAGE #1 of ELEMENT             |
+ *    |                    |                                         |  +------------------------------&gt;  |
+ *    |                    |                                         |                                    |
+ *    |                    |                                         |                               ACK  |
+ *    |                    |                                         |  &lt;------------------------------+  |
+ *    |                    |                                         |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |                                         |  MESSAGE #2 of ELEMENT             |
+ *    |                    |                                         |  +------------------------------&gt;  |
+ *    |                    |                                         |                                    |
+ *    |                    |                                         |                               ACK  |
+ *    |                    |                                         |  &lt;------------------------------+  |
+ *    |                    |                                         |                                    |
+ *    |                    |                                    ACK  |                                    |
+ *    |                    |  &lt;-----------------------------------+  |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    |  STREAM_COMPLETED                       |                                    |
+ *    |                    |  +-----------------------------------&gt;  |                                    |
+ *    |                    |                                         |                                    |
+ *    |                    +                                         |                                    |
+ *    |                   Dead                                       | STREAM_COMPLETED                   |
+ *    |                                                              | +--------------+                   |
+ *    |                                                              +                |                   |
+ *    |                                                             Dead              |                   |
+ *    |                                                                               |                   |
+ *    |                                                                               |                   |
+ *    |                                                                               v                   |
+ *    |                                                                            Stream                 |
+ *    |                                                                            Supervisor             |
+ * }
+ * &lt;/pre&gt;
+ */
+public final class DefaultStreamSupervisor&lt;E&gt; extends AbstractActor {
+
+    /**
+     * The name of the supervised stream forwarder.
+     */
+    public static final String STREAM_FORWARDER_ACTOR_NAME = &quot;streamForwarder&quot;;
+
+<span class="fc" id="L129">    protected final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+<span class="fc" id="L131">    private final SupervisorStrategy supervisorStrategy =</span>
+<span class="pc" id="L132">            new OneForOneStrategy(true, DeciderBuilder.matchAny(e -&gt; SupervisorStrategy.stop()).build());</span>
+
+    private Cancellable activityCheck;
+
+    private final ActorRef forwardTo;
+    private final ActorRef provider;
+    private final Class&lt;E&gt; elementClass;
+    private final Function&lt;E, Source&lt;Object, NotUsed&gt;&gt; mapEntityFunction;
+    private final Function&lt;SudoStreamModifiedEntities, ?&gt; streamTriggerMessageMapper;
+    private final StreamMetadataPersistence streamMetadataPersistence;
+    private final Materializer materializer;
+    private final StreamConsumerSettings streamConsumerSettings;
+    private @Nullable ActorRef forwarder;
+    private @Nullable StreamTrigger nextStream;
+    private @Nullable StreamTrigger activeStream;
+    private @Nullable Boolean activeStreamSuccess;
+
+    private DefaultStreamSupervisor(final ActorRef forwardTo, final ActorRef provider,
+            final Class&lt;E&gt; elementClass,
+            final Function&lt;E, Source&lt;Object, NotUsed&gt;&gt; mapEntityFunction,
+            final Function&lt;SudoStreamModifiedEntities, ?&gt; streamTriggerMessageMapper,
+            final StreamMetadataPersistence streamMetadataPersistence,
+            final Materializer materializer,
+<span class="fc" id="L155">            final StreamConsumerSettings streamConsumerSettings) {</span>
+<span class="fc" id="L156">        this.forwardTo = requireNonNull(forwardTo);</span>
+<span class="fc" id="L157">        this.provider = requireNonNull(provider);</span>
+<span class="fc" id="L158">        this.elementClass = requireNonNull(elementClass);</span>
+<span class="fc" id="L159">        this.mapEntityFunction = requireNonNull(mapEntityFunction);</span>
+<span class="fc" id="L160">        this.streamTriggerMessageMapper = requireNonNull(streamTriggerMessageMapper);</span>
+<span class="fc" id="L161">        this.streamMetadataPersistence = requireNonNull(streamMetadataPersistence);</span>
+<span class="fc" id="L162">        this.materializer = requireNonNull(materializer);</span>
+<span class="fc" id="L163">        this.streamConsumerSettings = requireNonNull(streamConsumerSettings);</span>
+<span class="fc" id="L164">    }</span>
+
+    /**
+     * Creates the props for {@link DefaultStreamSupervisor}.
+     *
+     * @param &lt;E&gt; the type of elements.
+     * @param forwardTo the {@link ActorRef} to which the stream will be forwarded.
+     * @param provider the {@link ActorRef} which provides the stream.
+     * @param elementClass the class of elements.
+     * @param mapEntityFunction the function to create a source of messages from each streamed element.
+     * @param streamTriggerMessageMapper a mapping function to convert a {@link SudoStreamModifiedEntities} message to a
+     * message understood by the stream provider. Can be used to send messages via Akka PubSub.
+     * @param streamMetadataPersistence the {@link StreamMetadataPersistence} used to read and write stream metadata (is
+     * used to remember the end time of the last stream after a re-start).
+     * @param materializer the materializer to run Akka streams with.
+     * @param streamConsumerSettings The settings for stream consumption.
+     * @return the props
+     */
+    public static &lt;E&gt; Props props(final ActorRef forwardTo, final ActorRef provider,
+            final Class&lt;E&gt; elementClass,
+            final Function&lt;E, Source&lt;Object, NotUsed&gt;&gt; mapEntityFunction,
+            final Function&lt;SudoStreamModifiedEntities, ?&gt; streamTriggerMessageMapper,
+            final StreamMetadataPersistence streamMetadataPersistence,
+            final Materializer materializer,
+            final StreamConsumerSettings streamConsumerSettings) {
+
+<span class="fc" id="L190">        return Props.create(DefaultStreamSupervisor.class, new Creator&lt;DefaultStreamSupervisor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public DefaultStreamSupervisor create() throws Exception {
+<span class="fc" id="L195">                return new DefaultStreamSupervisor&lt;&gt;(forwardTo, provider, elementClass, mapEntityFunction,</span>
+                        streamTriggerMessageMapper, streamMetadataPersistence, materializer, streamConsumerSettings);
+            }
+        });
+    }
+
+    private Props getStreamForwarderProps() {
+<span class="fc" id="L202">        return DefaultStreamForwarder.props(forwardTo, getSelf(), streamConsumerSettings.getMaxIdleTime(),</span>
+                elementClass, mapEntityFunction);
+    }
+
+    private Object newStartStreamingCommand(final StreamTrigger streamRestrictions) {
+<span class="fc" id="L207">        final SudoStreamModifiedEntities retrieveModifiedEntityIdWithRevisions =</span>
+<span class="fc" id="L208">                SudoStreamModifiedEntities.of(streamRestrictions.getQueryStart(),</span>
+<span class="fc" id="L209">                        streamRestrictions.getQueryEnd(),</span>
+<span class="fc" id="L210">                        streamConsumerSettings.getElementsStreamedPerBatch(),</span>
+<span class="fc" id="L211">                        streamConsumerSettings.getStreamingActorTimeout().toMillis(),</span>
+<span class="fc" id="L212">                        DittoHeaders.empty());</span>
+
+<span class="fc" id="L214">        return streamTriggerMessageMapper.apply(retrieveModifiedEntityIdWithRevisions);</span>
+    }
+
+    @Override
+    public SupervisorStrategy supervisorStrategy() {
+<span class="fc" id="L219">        return supervisorStrategy;</span>
+    }
+
+    @Override
+    public void preStart() throws Exception {
+<span class="fc" id="L224">        super.preStart();</span>
+
+<span class="fc" id="L226">        final StreamTrigger nextStreamTrigger = computeNextStreamTrigger(null);</span>
+<span class="fc" id="L227">        scheduleStream(nextStreamTrigger);</span>
+<span class="fc" id="L228">    }</span>
+
+    @Override
+    public void postStop() throws Exception {
+<span class="pc bpc" id="L232" title="1 of 2 branches missed.">        if (null != activityCheck) {</span>
+<span class="fc" id="L233">            activityCheck.cancel();</span>
+        }
+<span class="fc" id="L235">        super.postStop();</span>
+<span class="fc" id="L236">    }</span>
+
+    @Override
+    public Receive createReceive() {
+<span class="fc" id="L240">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L241">                .matchEquals(TryToStartStream.INSTANCE, tryToStartStream -&gt; {</span>
+<span class="fc" id="L242">                    log.debug(&quot;Switching to supervisingBehaviour has been triggered by message: {}&quot;,</span>
+                            tryToStartStream);
+<span class="fc" id="L244">                    becomeSupervising();</span>
+<span class="fc" id="L245">                    tryToStartStream();</span>
+<span class="fc" id="L246">                })</span>
+<span class="fc" id="L247">                .match(Terminated.class, this::terminated)</span>
+<span class="fc" id="L248">                .build();</span>
+    }
+
+    private void becomeSupervising() {
+<span class="fc" id="L252">        log.debug(&quot;becoming supervising...&quot;);</span>
+<span class="fc" id="L253">        getContext().become(createSupervisingBehavior());</span>
+<span class="fc" id="L254">    }</span>
+
+    private Receive createSupervisingBehavior() {
+<span class="fc" id="L257">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L258">                .matchEquals(STREAM_COMPLETED, msg -&gt; streamCompleted())</span>
+<span class="pc" id="L259">                .matchEquals(STREAM_FAILED, msg -&gt; streamFailed())</span>
+<span class="fc" id="L260">                .matchEquals(FORWARDER_EXCEEDED_MAX_IDLE_TIME_MSG, msg -&gt; streamTimedOut())</span>
+<span class="fc" id="L261">                .matchEquals(TryToStartStream.INSTANCE, msg -&gt; tryToStartStream())</span>
+<span class="fc" id="L262">                .match(Terminated.class, this::terminated)</span>
+<span class="fc" id="L263">                .build();</span>
+    }
+
+    private void streamCompleted() {
+<span class="fc" id="L267">        log.debug(&quot;Stream completed.&quot;);</span>
+<span class="fc" id="L268">        activeStreamSuccess = true;</span>
+<span class="fc" id="L269">    }</span>
+
+    private void streamTimedOut() {
+<span class="fc" id="L272">        log.debug(&quot;Stream timed out.&quot;);</span>
+<span class="fc" id="L273">        activeStreamSuccess = false;</span>
+<span class="fc" id="L274">    }</span>
+
+    private void streamFailed() {
+<span class="nc" id="L277">        log.debug(&quot;Stream failed&quot;);</span>
+<span class="nc" id="L278">        activeStreamSuccess = false;</span>
+<span class="nc" id="L279">    }</span>
+
+    private void scheduleNextStream() {
+<span class="pc bpc" id="L282" title="1 of 2 branches missed.">        if (activeStream == null) {</span>
+<span class="nc" id="L283">            log.error(&quot;Cannot schedule next stream, because active stream is unknown.&quot;);</span>
+<span class="nc" id="L284">            return;</span>
+        }
+<span class="pc bpc" id="L286" title="1 of 2 branches missed.">        if (activeStreamSuccess == null) {</span>
+<span class="nc" id="L287">            log.warning(&quot;Cannot schedule next stream, because success of active stream is unknown.&quot;);</span>
+<span class="nc" id="L288">            return;</span>
+        }
+
+<span class="fc bfc" id="L291" title="All 2 branches covered.">        if (activeStreamSuccess) {</span>
+<span class="fc" id="L292">            final Instant lastSuccessfulQueryEnd = activeStream.getQueryEnd();</span>
+<span class="fc" id="L293">            streamMetadataPersistence.updateLastSuccessfulStreamEnd(lastSuccessfulQueryEnd)</span>
+<span class="fc" id="L294">                    .runWith(akka.stream.javadsl.Sink.last(), materializer)</span>
+<span class="fc" id="L295">                    .thenRun(() -&gt; log.info(&quot;Updated last sync timestamp to value: &lt;{}&gt;.&quot;, lastSuccessfulQueryEnd))</span>
+<span class="fc" id="L296">                    .exceptionally(error -&gt; {</span>
+<span class="fc" id="L297">                        log.error(error, &quot;Failed to update last sync timestamp to value: &lt;{}&gt;.&quot;,</span>
+                                lastSuccessfulQueryEnd);
+<span class="fc" id="L299">                        return null;</span>
+                    });
+
+<span class="fc" id="L302">            final StreamTrigger nextStreamTrigger = computeNextStreamTrigger(lastSuccessfulQueryEnd);</span>
+<span class="fc" id="L303">            scheduleStream(nextStreamTrigger);</span>
+<span class="fc" id="L304">        } else {</span>
+<span class="fc" id="L305">            rescheduleActiveStream();</span>
+        }
+<span class="fc" id="L307">    }</span>
+
+    private StreamTrigger computeNextStreamTrigger(@Nullable final Instant lastSuccessfulQueryEnd) {
+<span class="fc" id="L310">        final Instant now = Instant.now();</span>
+
+        final Instant queryStart;
+        // short-cut: we do not need to access the database if last synch has been completed
+<span class="fc bfc" id="L314" title="All 2 branches covered.">        if (lastSuccessfulQueryEnd != null) {</span>
+<span class="fc" id="L315">            queryStart = lastSuccessfulQueryEnd;</span>
+        } else {
+            // the initial start ts is only used when no sync has been run yet (i.e. no timestamp has been persisted)
+<span class="fc" id="L318">            final Instant initialStartTsWithoutStandardOffset =</span>
+<span class="fc" id="L319">                    now.minus(streamConsumerSettings.getInitialStartOffset());</span>
+<span class="fc" id="L320">            final Optional&lt;Instant&gt; instant = streamMetadataPersistence.retrieveLastSuccessfulStreamEnd();</span>
+<span class="fc" id="L321">            queryStart = instant.orElse</span>
+<span class="fc" id="L322">                    (initialStartTsWithoutStandardOffset);</span>
+        }
+
+<span class="fc" id="L325">        final Duration offsetFromNow = Duration.between(queryStart, now);</span>
+        // check if the queryStart is very long in the past to be able to log a warning
+<span class="fc" id="L327">        final Duration warnOffset = streamConsumerSettings.getOutdatedWarningOffset();</span>
+<span class="pc bpc" id="L328" title="2 of 4 branches missed.">        if (!offsetFromNow.isNegative() &amp;&amp; offsetFromNow.compareTo(warnOffset) &gt; 0) {</span>
+<span class="nc" id="L329">            log.warning(&quot;The next Query-Start &lt;{}&gt; is older than the configured warn-offset &lt;{}&gt;. Please verify that&quot; +</span>
+                            &quot; this does not happen frequently, otherwise won't get \&quot;up-to-date\&quot; anymore.&quot;,
+                    queryStart, warnOffset);
+        }
+
+<span class="fc" id="L334">        final Duration startOffset = streamConsumerSettings.getStartOffset();</span>
+<span class="fc" id="L335">        final Duration streamInterval = streamConsumerSettings.getStreamInterval();</span>
+<span class="fc" id="L336">        return StreamTrigger.calculateStreamTrigger(now, queryStart, startOffset, streamInterval);</span>
+    }
+
+    private void scheduleStream(final StreamTrigger streamTrigger) {
+<span class="fc" id="L340">        this.nextStream = streamTrigger;</span>
+
+<span class="fc" id="L342">        scheduleStream(streamTrigger.getPlannedStreamStart());</span>
+<span class="fc" id="L343">    }</span>
+
+    private void scheduleStream(final Instant when) {
+        final Duration duration;
+<span class="fc" id="L347">        final Instant now = Instant.now();</span>
+<span class="fc bfc" id="L348" title="All 2 branches covered.">        if (when.isBefore(now)) {</span>
+            // if &quot;when&quot; is in the past, schedule immediately
+<span class="fc" id="L350">            duration = Duration.ZERO;</span>
+        } else {
+<span class="fc" id="L352">            duration = Duration.between(now, when);</span>
+        }
+
+<span class="fc" id="L355">        scheduleStream(duration);</span>
+<span class="fc" id="L356">    }</span>
+
+    private void scheduleStream(final Duration duration) {
+<span class="fc" id="L359">        log.info(&quot;Schedule Stream in: {}&quot;, duration);</span>
+<span class="fc bfc" id="L360" title="All 2 branches covered.">        if (activityCheck != null) {</span>
+<span class="fc" id="L361">            activityCheck.cancel();</span>
+        }
+
+<span class="fc" id="L364">        final FiniteDuration finiteDuration = FiniteDuration.create(duration.getSeconds(), TimeUnit.SECONDS);</span>
+<span class="fc" id="L365">        activityCheck = getContext().system().scheduler()</span>
+<span class="fc" id="L366">                .scheduleOnce(finiteDuration, getSelf(), TryToStartStream.INSTANCE,</span>
+<span class="fc" id="L367">                        getContext().dispatcher(), ActorRef.noSender());</span>
+<span class="fc" id="L368">    }</span>
+
+    private void tryToStartStream() {
+<span class="pc bpc" id="L371" title="1 of 2 branches missed.">        if (forwarder != null) {</span>
+<span class="nc" id="L372">            log.warning(&quot;Forwarder is still running: {}. Re-scheduling current stream.&quot;, forwarder);</span>
+<span class="nc" id="L373">            rescheduleActiveStream();</span>
+        } else {
+<span class="fc" id="L375">            final Object startStreamCommand = newStartStreamingCommand(nextStream);</span>
+
+<span class="fc" id="L377">            forwarder = createOrGetForwarder();</span>
+
+<span class="fc" id="L379">            log.info(&quot;Requesting stream from &lt;{}&gt; on behalf of &lt;{}&gt; by &lt;{}&gt;&quot;, provider, forwarder,</span>
+                    startStreamCommand);
+<span class="fc" id="L381">            provider.tell(startStreamCommand, forwarder);</span>
+<span class="fc" id="L382">            activeStream = nextStream;</span>
+<span class="fc" id="L383">            activeStreamSuccess = null;</span>
+        }
+<span class="fc" id="L385">    }</span>
+
+    private void rescheduleActiveStream() {
+<span class="fc" id="L388">        final Instant rescheduledPlannedStreamStart = Instant.now().plus(streamConsumerSettings.getStreamInterval());</span>
+<span class="fc" id="L389">        log.warning(&quot;Re-scheduling at {}&quot;, rescheduledPlannedStreamStart);</span>
+
+<span class="pc bpc" id="L391" title="1 of 2 branches missed.">        if (activeStream == null) {</span>
+<span class="nc" id="L392">            log.error(&quot;Cannot re-schedule stream, because metadata of active stream is unknown.&quot;);</span>
+<span class="nc" id="L393">            return;</span>
+        }
+
+<span class="fc" id="L396">        final StreamTrigger rescheduledStreamTrigger = activeStream.rescheduleAt(rescheduledPlannedStreamStart);</span>
+<span class="fc" id="L397">        scheduleStream(rescheduledStreamTrigger);</span>
+<span class="fc" id="L398">    }</span>
+
+    private ActorRef createOrGetForwarder() {
+<span class="fc" id="L401">        final Option&lt;ActorRef&gt; refOption = getContext().child(STREAM_FORWARDER_ACTOR_NAME);</span>
+        final ActorRef forwarderRef;
+<span class="pc bpc" id="L403" title="1 of 2 branches missed.">        if (refOption.isDefined()) {</span>
+<span class="nc" id="L404">            forwarderRef = refOption.get();</span>
+        } else {
+<span class="fc" id="L406">            forwarderRef = getContext().actorOf(getStreamForwarderProps(), STREAM_FORWARDER_ACTOR_NAME);</span>
+<span class="fc" id="L407">            log.debug(&quot;Watching forwarder: {}&quot;, forwarderRef);</span>
+            // important: watch the child to get notified when it terminates
+<span class="fc" id="L409">            getContext().watch(forwarderRef);</span>
+        }
+
+<span class="fc" id="L412">        return forwarderRef;</span>
+    }
+
+    private void terminated(final Terminated terminated) {
+<span class="fc" id="L416">        final ActorRef terminatedActor = terminated.getActor();</span>
+<span class="fc" id="L417">        log.debug(&quot;Received Terminated-Message: {}&quot;, terminated);</span>
+
+<span class="pc bpc" id="L419" title="1 of 2 branches missed.">        if (!Objects.equals(terminatedActor, forwarder)) {</span>
+<span class="nc" id="L420">            log.warning(&quot;Received Terminated-Message from actor &lt;{}&gt; which does not match current forwarder &lt;{}&gt;&quot;,</span>
+                    terminatedActor, forwarder);
+<span class="nc" id="L422">            return;</span>
+        }
+
+<span class="fc" id="L425">        getContext().unwatch(terminatedActor);</span>
+<span class="fc" id="L426">        forwarder = null;</span>
+
+<span class="fc" id="L428">        scheduleNextStream();</span>
+<span class="fc" id="L429">    }</span>
+
+<span class="fc" id="L431">    private enum TryToStartStream {</span>
+<span class="fc" id="L432">        INSTANCE</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

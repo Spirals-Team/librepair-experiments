@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ImmutablePolicyBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Model :: Policies</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.model.policies</a> &gt; <span class="el_source">ImmutablePolicyBuilder.java</span></div><h1>ImmutablePolicyBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.model.policies;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.time.Instant;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
+
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+
+/**
+ * A mutable builder for a {@link ImmutablePolicy} with a fluent API.
+ */
+@NotThreadSafe
+final class ImmutablePolicyBuilder implements PolicyBuilder {
+
+    private final Map&lt;Label, Map&lt;SubjectId, Subject&gt;&gt; subjects;
+    private final Map&lt;Label, Map&lt;ResourceKey, Permissions&gt;&gt; grantedPermissions;
+    private final Map&lt;Label, Map&lt;ResourceKey, Permissions&gt;&gt; revokedPermissions;
+    @Nullable private String id;
+    @Nullable private PolicyLifecycle lifecycle;
+    @Nullable private PolicyRevision revision;
+    @Nullable private Instant modified;
+
+<span class="fc" id="L43">    private ImmutablePolicyBuilder() {</span>
+<span class="fc" id="L44">        subjects = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L45">        grantedPermissions = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L46">        revokedPermissions = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L47">        id = null;</span>
+<span class="fc" id="L48">        lifecycle = null;</span>
+<span class="fc" id="L49">        revision = null;</span>
+<span class="fc" id="L50">        modified = null;</span>
+<span class="fc" id="L51">    }</span>
+
+    /**
+     * Returns a new empty builder for a {@code Policy}.
+     *
+     * @param id the ID of the new Policy.
+     * @return the new builder.
+     * @throws PolicyIdInvalidException if {@code policyId} did not comply to {@link Policy#ID_REGEX}.
+     */
+    public static ImmutablePolicyBuilder of(final CharSequence id) {
+<span class="fc" id="L61">        return new ImmutablePolicyBuilder().setId(id);</span>
+    }
+
+    /**
+     * Returns a new builder for a {@code Policy} which is initialised with the given entries. Be aware: if there are
+     * several entries with the same {@link Label} in the given Iterable, later entries will replace earlier ones.
+     *
+     * @param id the ID of the new Policy.
+     * @param policyEntries the initials entries of the new builder.
+     * @return the new builder.
+     * @throws NullPointerException if {@code policyEntries} is null;
+     * @throws PolicyIdInvalidException if {@code policyId} did not comply to {@link Policy#ID_REGEX}.
+     */
+    public static PolicyBuilder of(final CharSequence id, final Iterable&lt;PolicyEntry&gt; policyEntries) {
+<span class="nc" id="L75">        checkNotNull(policyEntries, &quot;initial Policy entries&quot;);</span>
+
+<span class="nc" id="L77">        final ImmutablePolicyBuilder result = new ImmutablePolicyBuilder();</span>
+<span class="nc" id="L78">        result.setId(id);</span>
+<span class="nc" id="L79">        policyEntries.forEach(result::set);</span>
+
+<span class="nc" id="L81">        return result;</span>
+    }
+
+    /**
+     * Returns a new builder for a {@code Policy} based on the given {@code existingPolicy}.
+     *
+     * @param existingPolicy the existing Policy to instantiate the builder with.
+     * @return the new builder.
+     * @throws NullPointerException if {@code existingPolicy} is {@code null}.
+     * @throws PolicyIdInvalidException if {@code policyId} did not comply to {@link Policy#ID_REGEX}.
+     */
+    public static PolicyBuilder of(final Policy existingPolicy) {
+<span class="fc" id="L93">        checkNotNull(existingPolicy, &quot;existing Policy&quot;);</span>
+
+        @SuppressWarnings(&quot;ConstantConditions&quot;)
+<span class="fc" id="L96">        final ImmutablePolicyBuilder result = new ImmutablePolicyBuilder()</span>
+<span class="fc" id="L97">                .setId(existingPolicy.getId().orElse(null))</span>
+<span class="fc" id="L98">                .setLifecycle(existingPolicy.getLifecycle().orElse(null))</span>
+<span class="fc" id="L99">                .setRevision(existingPolicy.getRevision().orElse(null))</span>
+<span class="fc" id="L100">                .setModified(existingPolicy.getModified().orElse(null));</span>
+
+<span class="fc" id="L102">        existingPolicy.forEach(result::set);</span>
+
+<span class="fc" id="L104">        return result;</span>
+    }
+
+    @Override
+    public LabelScoped forLabel(final Label label) {
+<span class="fc" id="L109">        return ImmutablePolicyBuilderLabelScoped.newInstance(this, label);</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setId(final CharSequence id) {
+<span class="fc" id="L114">        PolicyIdValidator.getInstance().accept(id, DittoHeaders.empty());</span>
+<span class="fc" id="L115">        this.id = String.valueOf(id);</span>
+<span class="fc" id="L116">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setLifecycle(@Nullable final PolicyLifecycle lifecycle) {
+<span class="fc" id="L121">        this.lifecycle = lifecycle;</span>
+<span class="fc" id="L122">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setRevision(@Nullable final PolicyRevision revision) {
+<span class="fc" id="L127">        this.revision = revision;</span>
+<span class="fc" id="L128">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setModified(@Nullable final Instant modified) {
+<span class="fc" id="L133">        this.modified = modified;</span>
+<span class="fc" id="L134">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder set(final PolicyEntry entry) {
+<span class="fc" id="L139">        setPolicyEntry(checkNotNull(entry, &quot;entry to be set&quot;));</span>
+<span class="fc" id="L140">        return this;</span>
+    }
+
+    private void setPolicyEntry(final PolicyEntry entry) {
+<span class="fc" id="L144">        putAllSubjects(entry);</span>
+
+<span class="fc" id="L146">        final Label label = entry.getLabel();</span>
+<span class="fc" id="L147">        grantedPermissions.put(label, new LinkedHashMap&lt;&gt;());</span>
+<span class="fc" id="L148">        revokedPermissions.put(label, new LinkedHashMap&lt;&gt;());</span>
+
+<span class="fc" id="L150">        setResourcesFor(entry.getLabel(), entry.getResources());</span>
+<span class="fc" id="L151">    }</span>
+
+    private void putAllSubjects(final PolicyEntry policyEntry) {
+<span class="fc" id="L154">        final Subjects entrySubjects = policyEntry.getSubjects();</span>
+<span class="fc" id="L155">        final Map&lt;SubjectId, Subject&gt; subjectsMap = new LinkedHashMap&lt;&gt;(entrySubjects.getSize());</span>
+<span class="fc" id="L156">        entrySubjects.forEach(entrySubject -&gt; subjectsMap.put(entrySubject.getId(), entrySubject));</span>
+
+<span class="fc" id="L158">        subjects.put(policyEntry.getLabel(), subjectsMap);</span>
+<span class="fc" id="L159">    }</span>
+
+    @Override
+    public ImmutablePolicyBuilder setAll(final Iterable&lt;PolicyEntry&gt; entries) {
+<span class="nc" id="L163">        checkNotNull(entries, &quot;entries to be set&quot;);</span>
+<span class="nc" id="L164">        entries.forEach(this::setPolicyEntry);</span>
+<span class="nc" id="L165">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder remove(final CharSequence label) {
+<span class="fc" id="L170">        checkNotNull(label, &quot;label of the entry to be removed&quot;);</span>
+<span class="fc" id="L171">        removePolicyEntryFor(Label.of(label));</span>
+<span class="fc" id="L172">        return this;</span>
+    }
+
+    private void removePolicyEntryFor(final Label label) {
+<span class="fc" id="L176">        subjects.remove(label);</span>
+<span class="fc" id="L177">        grantedPermissions.remove(label);</span>
+<span class="fc" id="L178">        revokedPermissions.remove(label);</span>
+<span class="fc" id="L179">    }</span>
+
+    @Override
+    public ImmutablePolicyBuilder removeAll(final Iterable&lt;PolicyEntry&gt; entries) {
+<span class="nc" id="L183">        checkNotNull(entries, &quot;entries to be removed&quot;);</span>
+<span class="nc" id="L184">        entries.forEach(this::remove);</span>
+<span class="nc" id="L185">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setSubjectsFor(final CharSequence label, final Subjects subjects) {
+<span class="nc" id="L190">        checkNotNull(subjects, &quot;Subjects to be set&quot;);</span>
+
+<span class="nc" id="L192">        final Map&lt;SubjectId, Subject&gt; existingSubject = retrieveExistingSubjects(label);</span>
+<span class="nc" id="L193">        subjects.forEach(subject -&gt; existingSubject.put(subject.getId(), subject));</span>
+<span class="nc" id="L194">        return this;</span>
+    }
+
+    private Map&lt;SubjectId, Subject&gt; retrieveExistingSubjects(final CharSequence label) {
+<span class="fc" id="L198">        return subjects.computeIfAbsent(Label.of(label), l -&gt; new LinkedHashMap&lt;&gt;());</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setSubjectFor(final CharSequence label, final Subject subject) {
+<span class="fc" id="L203">        checkNotNull(subject, &quot;Subject to be set&quot;);</span>
+
+<span class="fc" id="L205">        final Map&lt;SubjectId, Subject&gt; existingSubject = retrieveExistingSubjects(label);</span>
+<span class="fc" id="L206">        existingSubject.put(subject.getId(), subject);</span>
+
+<span class="fc" id="L208">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder removeSubjectFor(final CharSequence label,
+            final CharSequence subjectIssuerWithId) {
+
+<span class="nc" id="L215">        final Map&lt;SubjectId, Subject&gt; existingSubject = retrieveExistingSubjects(label);</span>
+<span class="nc" id="L216">        existingSubject.remove(SubjectId.newInstance(subjectIssuerWithId));</span>
+<span class="nc" id="L217">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder removeSubjectFor(final CharSequence label, final Subject subject) {
+<span class="nc" id="L222">        checkNotNull(subject, &quot;Subject&quot;);</span>
+
+<span class="nc" id="L224">        final Map&lt;SubjectId, Subject&gt; existingSubject = retrieveExistingSubjects(label);</span>
+<span class="nc" id="L225">        existingSubject.remove(subject.getId());</span>
+
+<span class="nc" id="L227">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setResourcesFor(final CharSequence label, final Resources resources) {
+<span class="fc" id="L232">        checkNotNull(resources, &quot;Resources to be set&quot;);</span>
+
+<span class="fc" id="L234">        final Map&lt;ResourceKey, Permissions&gt; grantedMap = retrieveGrantedPermissions(label);</span>
+<span class="fc" id="L235">        final Map&lt;ResourceKey, Permissions&gt; revokedMap = retrieveRevokedPermissions(label);</span>
+<span class="fc" id="L236">        resources.forEach(resource -&gt; {</span>
+<span class="fc" id="L237">            final ResourceKey resourceKey = resource.getResourceKey();</span>
+<span class="fc" id="L238">            final EffectedPermissions effectedPermissions = resource.getEffectedPermissions();</span>
+<span class="fc" id="L239">            grantedMap.put(resourceKey, effectedPermissions.getGrantedPermissions());</span>
+<span class="fc" id="L240">            revokedMap.put(resourceKey, effectedPermissions.getRevokedPermissions());</span>
+<span class="fc" id="L241">        });</span>
+<span class="fc" id="L242">        return this;</span>
+    }
+
+    private Map&lt;ResourceKey, Permissions&gt; retrieveGrantedPermissions(final CharSequence label) {
+<span class="fc" id="L246">        return getPermissions(label, grantedPermissions);</span>
+    }
+
+    private static Map&lt;ResourceKey, Permissions&gt; getPermissions(final CharSequence l,
+            final Map&lt;Label, Map&lt;ResourceKey, Permissions&gt;&gt; permissionsMap) {
+
+<span class="fc" id="L252">        return permissionsMap.computeIfAbsent(Label.of(l), k -&gt; new LinkedHashMap&lt;&gt;());</span>
+    }
+
+    private Map&lt;ResourceKey, Permissions&gt; retrieveRevokedPermissions(final CharSequence label) {
+<span class="fc" id="L256">        return getPermissions(label, revokedPermissions);</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setResourceFor(final CharSequence label, final Resource resource) {
+<span class="nc" id="L261">        return setResourcesFor(label, Resources.newInstance(resource));</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder removeResourceFor(final CharSequence label, final ResourceKey resourceKey) {
+<span class="nc" id="L266">        checkNotNull(resourceKey, &quot;key of the resource to be removed&quot;);</span>
+<span class="nc" id="L267">        retrieveGrantedPermissions(label).remove(resourceKey);</span>
+<span class="nc" id="L268">        retrieveRevokedPermissions(label).remove(resourceKey);</span>
+<span class="nc" id="L269">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder removeResourceFor(final CharSequence label, final Resource resource) {
+<span class="nc" id="L274">        checkNotNull(resource, &quot;the resource to be removed&quot;);</span>
+<span class="nc" id="L275">        return removeResourceFor(label, resource.getResourceKey());</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setPermissionsFor(final CharSequence label, final ResourceKey resourceKey,
+            final EffectedPermissions effectedPermissions) {
+
+<span class="nc" id="L282">        checkResourceKey(resourceKey);</span>
+<span class="nc" id="L283">        checkNotNull(effectedPermissions, &quot;permissions to be set&quot;);</span>
+
+<span class="nc" id="L285">        retrieveGrantedPermissions(label).put(resourceKey, effectedPermissions.getGrantedPermissions());</span>
+<span class="nc" id="L286">        retrieveRevokedPermissions(label).put(resourceKey, effectedPermissions.getRevokedPermissions());</span>
+<span class="nc" id="L287">        return this;</span>
+    }
+
+    private static void checkResourceKey(final ResourceKey resourceKey) {
+<span class="fc" id="L291">        checkNotNull(resourceKey, &quot;resource key&quot;);</span>
+<span class="fc" id="L292">    }</span>
+
+    @Override
+    public ImmutablePolicyBuilder setGrantedPermissionsFor(final CharSequence label, final ResourceKey resourceKey,
+            final Permissions grantedPermissions) {
+
+<span class="fc" id="L298">        checkResourceKey(resourceKey);</span>
+<span class="fc" id="L299">        checkNotNull(revokedPermissions, &quot;granted permissions&quot;);</span>
+<span class="fc" id="L300">        retrieveGrantedPermissions(label).put(resourceKey, grantedPermissions);</span>
+<span class="fc" id="L301">        return this;</span>
+    }
+
+    @Override
+    public ImmutablePolicyBuilder setRevokedPermissionsFor(final CharSequence label, final ResourceKey resourceKey,
+            final Permissions revokedPermissions) {
+
+<span class="fc" id="L308">        checkResourceKey(resourceKey);</span>
+<span class="fc" id="L309">        checkNotNull(revokedPermissions, &quot;revoked permissions&quot;);</span>
+<span class="fc" id="L310">        retrieveRevokedPermissions(label).put(resourceKey, revokedPermissions);</span>
+<span class="fc" id="L311">        return this;</span>
+    }
+
+    @Override
+    public Policy build() {
+<span class="fc" id="L316">        final Collection&lt;Label&gt; allLabels = getAllLabels();</span>
+
+<span class="fc" id="L318">        final Collection&lt;PolicyEntry&gt; policyEntries = allLabels.stream()</span>
+<span class="fc" id="L319">                .map(lbl -&gt; PoliciesModelFactory.newPolicyEntry(lbl, getFinalSubjects(lbl), getFinalResources(lbl)))</span>
+<span class="fc" id="L320">                .collect(Collectors.toList());</span>
+
+<span class="fc" id="L322">        return ImmutablePolicy.of(id, lifecycle, revision, modified, policyEntries);</span>
+    }
+
+    @Nonnull
+    private Collection&lt;Label&gt; getAllLabels() {
+<span class="fc" id="L327">        final Collection&lt;Label&gt; result = new LinkedHashSet&lt;&gt;(subjects.keySet());</span>
+<span class="fc" id="L328">        result.addAll(grantedPermissions.keySet());</span>
+<span class="fc" id="L329">        result.addAll(revokedPermissions.keySet());</span>
+<span class="fc" id="L330">        return result;</span>
+    }
+
+    @Nonnull
+    private Subjects getFinalSubjects(final CharSequence label) {
+<span class="fc" id="L335">        return PoliciesModelFactory.newSubjects(retrieveExistingSubjects(label).values());</span>
+    }
+
+    @Nonnull
+    private Resources getFinalResources(final CharSequence label) {
+<span class="fc" id="L340">        final Map&lt;ResourceKey, Permissions&gt; grantedMap = retrieveGrantedPermissions(label);</span>
+<span class="fc" id="L341">        final Map&lt;ResourceKey, Permissions&gt; revokedMap = retrieveRevokedPermissions(label);</span>
+
+<span class="fc" id="L343">        final Collection&lt;ResourceKey&gt; allResourceKeys = new LinkedHashSet&lt;&gt;(grantedMap.keySet());</span>
+<span class="fc" id="L344">        allResourceKeys.addAll(revokedMap.keySet());</span>
+
+<span class="fc" id="L346">        final Collection&lt;Resource&gt; resourcesList = allResourceKeys.stream()</span>
+<span class="fc" id="L347">                .map(resourceKey -&gt; {</span>
+<span class="fc" id="L348">                    final Permissions granted = grantedMap.get(resourceKey);</span>
+<span class="fc" id="L349">                    final Permissions revoked = revokedMap.get(resourceKey);</span>
+<span class="fc" id="L350">                    final EffectedPermissions ep = PoliciesModelFactory.newEffectedPermissions(granted, revoked);</span>
+<span class="fc" id="L351">                    return PoliciesModelFactory.newResource(resourceKey, ep);</span>
+                })
+<span class="fc" id="L353">                .collect(Collectors.toList());</span>
+
+<span class="fc" id="L355">        return PoliciesModelFactory.newResources(resourcesList);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

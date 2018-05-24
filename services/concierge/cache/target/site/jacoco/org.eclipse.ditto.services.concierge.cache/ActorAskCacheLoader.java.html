@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ActorAskCacheLoader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Concierge :: Cache</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.concierge.cache</a> &gt; <span class="el_source">ActorAskCacheLoader.java</span></div><h1>ActorAskCacheLoader.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.concierge.cache;
+
+import static java.util.Objects.requireNonNull;
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.time.Duration;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.function.Function;
+
+import javax.annotation.concurrent.Immutable;
+
+import org.eclipse.ditto.services.models.concierge.EntityId;
+import org.eclipse.ditto.services.models.concierge.cache.Entry;
+import org.eclipse.ditto.signals.commands.base.Command;
+
+import com.github.benmanes.caffeine.cache.AsyncCacheLoader;
+
+import akka.actor.ActorRef;
+import akka.pattern.PatternsCS;
+
+/**
+ * Asynchronous cache loader that loads a value by asking an actor provided by a &quot;Entity-Region-Provider&quot;.
+ *
+ * @param &lt;V&gt; type of values in the cache entry.
+ */
+@Immutable
+public final class ActorAskCacheLoader&lt;V&gt; implements AsyncCacheLoader&lt;EntityId, Entry&lt;V&gt;&gt; {
+
+    private final long askTimeoutMillis;
+    private final Function&lt;String, ActorRef&gt; entityRegionProvider;
+    private final Map&lt;String, Function&lt;String, Command&gt;&gt; commandCreatorMap;
+    private final Map&lt;String, Function&lt;Object, Entry&lt;V&gt;&gt;&gt; responseTransformerMap;
+
+    /**
+     * Constructor for creating an {@link ActorAskCacheLoader} which supports multiple resource types.
+     *
+     * @param askTimeout the ask timeout.
+     * @param entityRegionProvider function providing an entity region for a resource type.
+     * @param commandCreatorMap functions per resource type for creating a load-command by an entity id (without resource
+     * type).
+     * @param responseTransformerMap functions per resource type for mapping a load-response to an {@link Entry}.
+     */
+    public ActorAskCacheLoader(final Duration askTimeout,
+            final Function&lt;String, ActorRef&gt; entityRegionProvider,
+            final Map&lt;String, Function&lt;String, Command&gt;&gt; commandCreatorMap,
+<span class="nc" id="L61">            final Map&lt;String, Function&lt;Object, Entry&lt;V&gt;&gt;&gt; responseTransformerMap) {</span>
+<span class="nc" id="L62">        this.askTimeoutMillis = requireNonNull(askTimeout).toMillis();</span>
+<span class="nc" id="L63">        this.entityRegionProvider = requireNonNull(entityRegionProvider);</span>
+<span class="nc" id="L64">        this.commandCreatorMap = Collections.unmodifiableMap(new HashMap&lt;&gt;(requireNonNull(commandCreatorMap)));</span>
+<span class="nc" id="L65">        this.responseTransformerMap =</span>
+<span class="nc" id="L66">                Collections.unmodifiableMap(new HashMap&lt;&gt;(requireNonNull(responseTransformerMap)));</span>
+<span class="nc" id="L67">    }</span>
+
+    /**
+     * Constructor for creating an {@link ActorAskCacheLoader} which supports a single resource type.
+     *
+     * @param askTimeout the ask timeout.
+     * @param resourceType the resource type.
+     * @param entityRegion the entity region.
+     * @param commandCreator function for creating a load-command by an entity id (without resource type).
+     * @param responseTransformer function for mapping a load-response to an {@link Entry}.
+     */
+    public ActorAskCacheLoader(final Duration askTimeout,
+            final String resourceType, final ActorRef entityRegion,
+            final Function&lt;String, Command&gt; commandCreator,
+<span class="nc" id="L81">            final Function&lt;Object, Entry&lt;V&gt;&gt; responseTransformer) {</span>
+<span class="nc" id="L82">        this.askTimeoutMillis = requireNonNull(askTimeout).toMillis();</span>
+<span class="nc" id="L83">        requireNonNull(resourceType);</span>
+<span class="nc" id="L84">        requireNonNull(entityRegion);</span>
+<span class="nc" id="L85">        this.entityRegionProvider = EntityRegionMap.singleton(resourceType, entityRegion);</span>
+<span class="nc" id="L86">        requireNonNull(commandCreator);</span>
+<span class="nc" id="L87">        this.commandCreatorMap = Collections.singletonMap(resourceType, commandCreator);</span>
+<span class="nc" id="L88">        requireNonNull(responseTransformer);</span>
+<span class="nc" id="L89">        this.responseTransformerMap = Collections.singletonMap(resourceType, responseTransformer);</span>
+<span class="nc" id="L90">    }</span>
+
+    @Override
+    public final CompletableFuture&lt;Entry&lt;V&gt;&gt; asyncLoad(final EntityId key, final Executor executor) {
+<span class="nc" id="L94">        final String resourceType = key.getResourceType();</span>
+<span class="nc" id="L95">        return CompletableFuture.supplyAsync(() -&gt; {</span>
+<span class="nc" id="L96">            final String entityId = getEntityId(key);</span>
+<span class="nc" id="L97">            return getCommand(resourceType, entityId);</span>
+<span class="nc" id="L98">        }, executor).thenComposeAsync(command -&gt; {</span>
+<span class="nc" id="L99">            final ActorRef entityRegion = getEntityRegion(key.getResourceType());</span>
+<span class="nc" id="L100">            return PatternsCS.ask(entityRegion, command, askTimeoutMillis)</span>
+<span class="nc" id="L101">                    .thenApply(response -&gt; transformResponse(resourceType, response))</span>
+<span class="nc" id="L102">                    .toCompletableFuture();</span>
+        }, executor);
+    }
+
+    private static String getEntityId(final EntityId key) {
+<span class="nc" id="L107">        return key.getId();</span>
+    }
+
+    private ActorRef getEntityRegion(final String resourceType) {
+<span class="nc" id="L111">        final ActorRef entityRegion = entityRegionProvider.apply(resourceType);</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (entityRegion == null) {</span>
+<span class="nc" id="L113">            throw new IllegalStateException(&quot;null entity region returned for resource type &quot; +</span>
+                    resourceType);
+        }
+
+<span class="nc" id="L117">        return entityRegion;</span>
+    }
+
+    private Command getCommand(final String resourceType, final String id) {
+<span class="nc" id="L121">        final Function&lt;String, Command&gt; commandCreator = commandCreatorMap.get(resourceType);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (commandCreator == null) {</span>
+<span class="nc" id="L123">            final String message =</span>
+<span class="nc" id="L124">                    String.format(&quot;Don't know how to create retrieve command for resource type &lt;%s&gt; and id &lt;%s&gt;&quot;,</span>
+                            resourceType, id);
+<span class="nc" id="L126">            throw new NullPointerException(message);</span>
+        } else {
+<span class="nc" id="L128">            return commandCreator.apply(id);</span>
+        }
+    }
+
+    private Entry&lt;V&gt; transformResponse(final String resourceType, final Object response) {
+<span class="nc" id="L133">        return checkNotNull(responseTransformerMap.get(resourceType), resourceType).apply(response);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

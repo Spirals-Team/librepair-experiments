@@ -1,0 +1,783 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConnectionActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Messaging</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.messaging</a> &gt; <span class="el_source">ConnectionActor.java</span></div><h1>ConnectionActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.messaging;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+import static org.eclipse.ditto.services.models.connectivity.ConnectivityMessagingConstants.CLUSTER_ROLE;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.model.base.auth.AuthorizationContext;
+import org.eclipse.ditto.model.base.common.HttpStatusCode;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.WithDittoHeaders;
+import org.eclipse.ditto.model.connectivity.Connection;
+import org.eclipse.ditto.model.connectivity.ConnectionConfigurationInvalidException;
+import org.eclipse.ditto.model.connectivity.ConnectionStatus;
+import org.eclipse.ditto.services.connectivity.messaging.persistence.ConnectionMongoSnapshotAdapter;
+import org.eclipse.ditto.services.connectivity.util.ConfigKeys;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.services.utils.persistence.SnapshotAdapter;
+import org.eclipse.ditto.signals.base.Signal;
+import org.eclipse.ditto.signals.commands.base.Command;
+import org.eclipse.ditto.signals.commands.base.CommandResponse;
+import org.eclipse.ditto.signals.commands.connectivity.AggregatedConnectivityCommandResponse;
+import org.eclipse.ditto.signals.commands.connectivity.ConnectivityCommand;
+import org.eclipse.ditto.signals.commands.connectivity.ConnectivityErrorResponse;
+import org.eclipse.ditto.signals.commands.connectivity.exceptions.ConnectionConflictException;
+import org.eclipse.ditto.signals.commands.connectivity.exceptions.ConnectionFailedException;
+import org.eclipse.ditto.signals.commands.connectivity.exceptions.ConnectionNotAccessibleException;
+import org.eclipse.ditto.signals.commands.connectivity.modify.CloseConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.CloseConnectionResponse;
+import org.eclipse.ditto.signals.commands.connectivity.modify.CreateConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.CreateConnectionResponse;
+import org.eclipse.ditto.signals.commands.connectivity.modify.DeleteConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.DeleteConnectionResponse;
+import org.eclipse.ditto.signals.commands.connectivity.modify.ModifyConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.ModifyConnectionResponse;
+import org.eclipse.ditto.signals.commands.connectivity.modify.OpenConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.OpenConnectionResponse;
+import org.eclipse.ditto.signals.commands.connectivity.modify.TestConnection;
+import org.eclipse.ditto.signals.commands.connectivity.modify.TestConnectionResponse;
+import org.eclipse.ditto.signals.commands.connectivity.query.RetrieveConnection;
+import org.eclipse.ditto.signals.commands.connectivity.query.RetrieveConnectionMetrics;
+import org.eclipse.ditto.signals.commands.connectivity.query.RetrieveConnectionResponse;
+import org.eclipse.ditto.signals.commands.connectivity.query.RetrieveConnectionStatus;
+import org.eclipse.ditto.signals.commands.connectivity.query.RetrieveConnectionStatusResponse;
+import org.eclipse.ditto.signals.events.base.Event;
+import org.eclipse.ditto.signals.events.connectivity.ConnectionClosed;
+import org.eclipse.ditto.signals.events.connectivity.ConnectionCreated;
+import org.eclipse.ditto.signals.events.connectivity.ConnectionDeleted;
+import org.eclipse.ditto.signals.events.connectivity.ConnectionModified;
+import org.eclipse.ditto.signals.events.connectivity.ConnectionOpened;
+
+import com.typesafe.config.Config;
+
+import akka.ConfigurationException;
+import akka.actor.AbstractActor;
+import akka.actor.ActorRef;
+import akka.actor.PoisonPill;
+import akka.actor.Props;
+import akka.actor.ReceiveTimeout;
+import akka.actor.Status;
+import akka.cluster.pubsub.DistributedPubSubMediator;
+import akka.cluster.routing.ClusterRouterPool;
+import akka.cluster.routing.ClusterRouterPoolSettings;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.japi.Creator;
+import akka.japi.pf.ReceiveBuilder;
+import akka.pattern.PatternsCS;
+import akka.persistence.AbstractPersistentActor;
+import akka.persistence.RecoveryCompleted;
+import akka.persistence.SaveSnapshotSuccess;
+import akka.persistence.SnapshotOffer;
+import akka.routing.Broadcast;
+import akka.routing.RoundRobinPool;
+import scala.concurrent.duration.Duration;
+
+/**
+ * Handles {@code *Connection} commands and manages the persistence of connection. The actual connection handling to the
+ * remote server is delegated to a child actor that uses a specific client (AMQP 1.0 or 0.9.1).
+ */
+final class ConnectionActor extends AbstractPersistentActor {
+
+    private static final String PERSISTENCE_ID_PREFIX = &quot;connection:&quot;;
+
+    private static final String JOURNAL_PLUGIN_ID = &quot;akka-contrib-mongodb-persistence-connection-journal&quot;;
+    private static final String SNAPSHOT_PLUGIN_ID = &quot;akka-contrib-mongodb-persistence-connection-snapshots&quot;;
+
+    private static final long DEFAULT_TIMEOUT_MS = 5000;
+
+    private static final String PUB_SUB_GROUP_PREFIX = &quot;connection:&quot;;
+
+<span class="fc" id="L114">    private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+    private final String connectionId;
+    private final ActorRef pubSubMediator;
+    private final ActorRef conciergeForwarder;
+    private final long snapshotThreshold;
+    private final SnapshotAdapter&lt;Connection&gt; snapshotAdapter;
+    private final ConnectionActorPropsFactory propsFactory;
+    private final Receive connectionCreatedBehaviour;
+
+    @Nullable private ActorRef clientActor;
+    @Nullable private Connection connection;
+
+<span class="fc" id="L127">    private long lastSnapshotSequenceNr = -1L;</span>
+<span class="fc" id="L128">    private boolean snapshotInProgress = false;</span>
+
+<span class="fc" id="L130">    private Set&lt;String&gt; uniqueTopicPaths = Collections.emptySet();</span>
+
+    private ConnectionActor(final String connectionId, final ActorRef pubSubMediator,
+<span class="fc" id="L133">            final ActorRef conciergeForwarder, final ConnectionActorPropsFactory propsFactory) {</span>
+<span class="fc" id="L134">        this.connectionId = connectionId;</span>
+<span class="fc" id="L135">        this.pubSubMediator = pubSubMediator;</span>
+<span class="fc" id="L136">        this.conciergeForwarder = conciergeForwarder;</span>
+<span class="fc" id="L137">        this.propsFactory = propsFactory;</span>
+
+<span class="fc" id="L139">        final Config config = getContext().system().settings().config();</span>
+<span class="fc" id="L140">        snapshotThreshold = config.getLong(ConfigKeys.Connection.SNAPSHOT_THRESHOLD);</span>
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">        if (snapshotThreshold &lt; 0) {</span>
+<span class="nc" id="L142">            throw new ConfigurationException(String.format(&quot;Config setting '%s' must be positive, but is: %d.&quot;,</span>
+<span class="nc" id="L143">                    ConfigKeys.Connection.SNAPSHOT_THRESHOLD, snapshotThreshold));</span>
+        }
+<span class="fc" id="L145">        snapshotAdapter = new ConnectionMongoSnapshotAdapter();</span>
+<span class="fc" id="L146">        connectionCreatedBehaviour = createConnectionCreatedBehaviour();</span>
+<span class="fc" id="L147">    }</span>
+
+    /**
+     * Creates Akka configuration object for this actor.
+     *
+     * @return the Akka configuration Props object
+     */
+    public static Props props(final String connectionId, final ActorRef pubSubMediator,
+            final ActorRef conciergeForwarder, final ConnectionActorPropsFactory propsFactory) {
+<span class="fc" id="L156">        return Props.create(ConnectionActor.class, new Creator&lt;ConnectionActor&gt;() {</span>
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public ConnectionActor create() {
+<span class="fc" id="L161">                return new ConnectionActor(connectionId, pubSubMediator, conciergeForwarder, propsFactory);</span>
+            }
+        });
+    }
+
+    @Override
+    public String persistenceId() {
+<span class="fc" id="L168">        return PERSISTENCE_ID_PREFIX + connectionId;</span>
+    }
+
+    @Override
+    public String journalPluginId() {
+<span class="fc" id="L173">        return JOURNAL_PLUGIN_ID;</span>
+    }
+
+    @Override
+    public String snapshotPluginId() {
+<span class="fc" id="L178">        return SNAPSHOT_PLUGIN_ID;</span>
+    }
+
+    @Override
+    public void postStop() {
+<span class="fc" id="L183">        super.postStop();</span>
+<span class="fc" id="L184">        log.info(&quot;stopped connection &lt;{}&gt;&quot;, connectionId);</span>
+<span class="fc" id="L185">    }</span>
+
+    @Override
+    public Receive createReceiveRecover() {
+<span class="fc" id="L189">        return ReceiveBuilder.create()</span>
+                // # Snapshot handling
+<span class="fc" id="L191">                .match(SnapshotOffer.class, ss -&gt; {</span>
+<span class="nc" id="L192">                    final Connection fromSnapshotStore = snapshotAdapter.fromSnapshotStore(ss);</span>
+<span class="nc" id="L193">                    log.info(&quot;Received SnapshotOffer containing connection: &lt;{}&gt;&quot;, fromSnapshotStore);</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">                    if (fromSnapshotStore != null) {</span>
+<span class="nc" id="L195">                        connection = fromSnapshotStore;</span>
+                    }
+<span class="nc" id="L197">                    lastSnapshotSequenceNr = ss.metadata().sequenceNr();</span>
+<span class="nc" id="L198">                })</span>
+<span class="fc" id="L199">                .match(ConnectionCreated.class, event -&gt; {</span>
+<span class="fc" id="L200">                    connection = event.getConnection();</span>
+<span class="fc" id="L201">                })</span>
+<span class="pc bnc" id="L202" title="All 2 branches missed.">                .match(ConnectionOpened.class, event -&gt; connection = connection != null ? connection.toBuilder()</span>
+<span class="nc" id="L203">                        .connectionStatus(ConnectionStatus.OPEN).build() : null)</span>
+<span class="pc bpc" id="L204" title="1 of 2 branches missed.">                .match(ConnectionClosed.class, event -&gt; connection = connection != null ? connection.toBuilder()</span>
+<span class="pc" id="L205">                        .connectionStatus(ConnectionStatus.CLOSED).build() : null)</span>
+<span class="fc" id="L206">                .match(ConnectionDeleted.class, event -&gt; {</span>
+<span class="fc" id="L207">                    connection = null;</span>
+<span class="fc" id="L208">                })</span>
+<span class="fc" id="L209">                .match(RecoveryCompleted.class, rc -&gt; {</span>
+<span class="fc" id="L210">                    log.info(&quot;Connection '{}' was recovered: {}&quot;, connectionId, connection);</span>
+<span class="fc bfc" id="L211" title="All 2 branches covered.">                    if (connection != null) {</span>
+<span class="fc bfc" id="L212" title="All 2 branches covered.">                        if (ConnectionStatus.OPEN.equals(connection.getConnectionStatus())) {</span>
+<span class="fc" id="L213">                            log.debug(&quot;Opening connection {} after recovery.&quot;, connectionId);</span>
+
+<span class="fc" id="L215">                            final CreateConnection connect = CreateConnection.of(connection, DittoHeaders.empty());</span>
+
+<span class="fc" id="L217">                            final ActorRef origin = getSender();</span>
+<span class="fc" id="L218">                            askClientActor(connect,</span>
+<span class="fc" id="L219">                                    response -&gt; log.info(&quot;CreateConnection result: {}&quot;, response),</span>
+<span class="nc" id="L220">                                    error -&gt; handleException(&quot;recovery-connect&quot;, origin, error)</span>
+                            );
+<span class="fc" id="L222">                            subscribeForEvents();</span>
+                        }
+<span class="fc" id="L224">                        getContext().become(connectionCreatedBehaviour);</span>
+                    }
+
+<span class="fc" id="L227">                    getContext().getParent().tell(ConnectionSupervisorActor.ManualReset.getInstance(), getSelf());</span>
+<span class="fc" id="L228">                })</span>
+<span class="pc" id="L229">                .matchAny(m -&gt; log.warning(&quot;Unknown recover message: {}&quot;, m))</span>
+<span class="fc" id="L230">                .build();</span>
+    }
+
+    @Override
+    public Receive createReceive() {
+<span class="fc" id="L235">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L236">                .match(TestConnection.class, this::testConnection)</span>
+<span class="fc" id="L237">                .match(CreateConnection.class, this::createConnection)</span>
+<span class="fc" id="L238">                .match(ConnectivityCommand.class, this::handleCommandDuringInitialization)</span>
+<span class="pc" id="L239">                .match(Shutdown.class, shutdown -&gt; stopSelf())</span>
+<span class="pc" id="L240">                .match(Status.Failure.class, f -&gt; log.warning(&quot;Got failure in initial behaviour with cause {}: {}&quot;,</span>
+<span class="nc" id="L241">                        f.cause().getClass().getSimpleName(), f.cause().getMessage()))</span>
+<span class="fc" id="L242">                .matchAny(m -&gt; {</span>
+<span class="nc" id="L243">                    log.warning(&quot;Unknown message: {}&quot;, m);</span>
+<span class="nc" id="L244">                    unhandled(m);</span>
+<span class="pc" id="L245">                }).build();</span>
+    }
+
+    private Receive createConnectionCreatedBehaviour() {
+<span class="fc" id="L249">        return ReceiveBuilder.create()</span>
+<span class="fc" id="L250">                .match(TestConnection.class, testConnection -&gt;</span>
+<span class="nc" id="L251">                        getSender().tell(</span>
+<span class="nc" id="L252">                                TestConnectionResponse.alreadyCreated(testConnection.getConnectionId(),</span>
+<span class="nc" id="L253">                                        testConnection.getDittoHeaders()),</span>
+<span class="nc" id="L254">                                getSelf()))</span>
+<span class="fc" id="L255">                .match(CreateConnection.class, createConnection -&gt; {</span>
+<span class="nc" id="L256">                    enhanceLogUtil(createConnection);</span>
+<span class="nc" id="L257">                    log.info(&quot;Connection &lt;{}&gt; already exists, responding with conflict&quot;, createConnection.getId());</span>
+<span class="nc" id="L258">                    final ConnectionConflictException conflictException =</span>
+<span class="nc" id="L259">                            ConnectionConflictException.newBuilder(createConnection.getId())</span>
+<span class="nc" id="L260">                                    .dittoHeaders(createConnection.getDittoHeaders())</span>
+<span class="nc" id="L261">                                    .build();</span>
+<span class="nc" id="L262">                    getSender().tell(conflictException, getSelf());</span>
+<span class="nc" id="L263">                })</span>
+<span class="fc" id="L264">                .match(ModifyConnection.class, this::modifyConnection)</span>
+<span class="fc" id="L265">                .match(OpenConnection.class, this::openConnection)</span>
+<span class="fc" id="L266">                .match(CloseConnection.class, this::closeConnection)</span>
+<span class="fc" id="L267">                .match(DeleteConnection.class, this::deleteConnection)</span>
+<span class="fc" id="L268">                .match(RetrieveConnection.class, this::retrieveConnection)</span>
+<span class="fc" id="L269">                .match(RetrieveConnectionStatus.class, this::retrieveConnectionStatus)</span>
+<span class="fc" id="L270">                .match(RetrieveConnectionMetrics.class, this::retrieveConnectionMetrics)</span>
+<span class="fc" id="L271">                .match(Signal.class, this::handleSignal)</span>
+<span class="fc" id="L272">                .match(DistributedPubSubMediator.SubscribeAck.class, this::handleSubscribeAck)</span>
+<span class="fc" id="L273">                .match(DistributedPubSubMediator.UnsubscribeAck.class, this::handleUnsubscribeAck)</span>
+<span class="fc" id="L274">                .match(SaveSnapshotSuccess.class, this::handleSnapshotSuccess)</span>
+<span class="pc" id="L275">                .match(Shutdown.class, shutdown -&gt; log.debug(&quot;Dropping Shutdown in created behaviour state.&quot;))</span>
+<span class="pc" id="L276">                .match(Status.Failure.class, f -&gt; log.warning(&quot;Got failure in connectionCreated behaviour with &quot; +</span>
+<span class="nc" id="L277">                        &quot;cause {}: {}&quot;, f.cause().getClass().getSimpleName(), f.cause().getMessage()))</span>
+<span class="fc" id="L278">                .matchAny(m -&gt; {</span>
+<span class="nc" id="L279">                    log.warning(&quot;Unknown message: {}&quot;, m);</span>
+<span class="nc" id="L280">                    unhandled(m);</span>
+<span class="pc" id="L281">                }).build();</span>
+    }
+
+    private void enhanceLogUtil(final WithDittoHeaders&lt;?&gt; createConnection) {
+<span class="fc" id="L285">        LogUtil.enhanceLogWithCorrelationId(log, createConnection);</span>
+<span class="fc" id="L286">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId);</span>
+<span class="fc" id="L287">    }</span>
+
+    private void handleSignal(final Signal&lt;?&gt; signal) {
+<span class="fc" id="L290">        enhanceLogUtil(signal);</span>
+<span class="pc bpc" id="L291" title="1 of 2 branches missed.">        if (clientActor == null) {</span>
+<span class="nc" id="L292">            log.debug(&quot;Cannot forward thing event, client actor not ready.&quot;);</span>
+<span class="nc" id="L293">            return;</span>
+        }
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">        if (connection == null) {</span>
+<span class="nc" id="L296">            log.debug(&quot;No Connection configuration available.&quot;);</span>
+<span class="nc" id="L297">            return;</span>
+        }
+<span class="pc bpc" id="L299" title="1 of 2 branches missed.">        if (uniqueTopicPaths.isEmpty()) {</span>
+<span class="nc" id="L300">            log.debug(&quot;Not forwarding anything.&quot;);</span>
+<span class="nc" id="L301">            return;</span>
+        }
+<span class="pc bpc" id="L303" title="1 of 2 branches missed.">        if (connectionId.equals(signal.getDittoHeaders().getOrigin().orElse(null))) {</span>
+<span class="nc" id="L304">            log.debug(&quot;Dropping signal, was sent by myself.&quot;);</span>
+<span class="nc" id="L305">            return;</span>
+        }
+<span class="fc" id="L307">        final String topicPath = TopicPathMapper.mapSignalToTopicPath(signal);</span>
+<span class="pc bpc" id="L308" title="1 of 2 branches missed.">        if (!uniqueTopicPaths.contains(topicPath)) {</span>
+<span class="nc" id="L309">            log.debug(&quot;Dropping signal, topic '{}' is not subscribed.&quot;, topicPath);</span>
+<span class="nc" id="L310">            return;</span>
+        }
+        // forward to client actor if topic was subscribed and connection is authorized to read
+<span class="fc bfc" id="L313" title="All 2 branches covered.">        if (isAuthorized(signal, connection.getAuthorizationContext())) {</span>
+<span class="fc" id="L314">            log.debug(&quot;Forwarding signal &lt;{}&gt; to client actor.&quot;, signal.getType());</span>
+<span class="fc" id="L315">            clientActor.tell(signal, getSelf());</span>
+        }
+<span class="fc" id="L317">    }</span>
+
+    private boolean isAuthorized(final Signal&lt;?&gt; signal, final AuthorizationContext authorizationContext) {
+<span class="fc" id="L320">        final Set&lt;String&gt; authorizedReadSubjects = signal.getDittoHeaders().getReadSubjects();</span>
+<span class="fc" id="L321">        final List&lt;String&gt; connectionSubjects = authorizationContext.getAuthorizationSubjectIds();</span>
+<span class="fc bfc" id="L322" title="All 2 branches covered.">        return !Collections.disjoint(authorizedReadSubjects, connectionSubjects);</span>
+    }
+
+    private void testConnection(final TestConnection command) {
+<span class="nc" id="L326">        final ActorRef origin = getSender();</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        if (!isConnectionConfigurationValid(command.getConnection(), origin)) {</span>
+<span class="nc" id="L328">            return;</span>
+        }
+
+<span class="nc" id="L331">        connection = command.getConnection();</span>
+
+<span class="nc" id="L333">        askClientActor(command, response -&gt; {</span>
+<span class="nc" id="L334">            origin.tell(</span>
+<span class="nc" id="L335">                    TestConnectionResponse.success(command.getConnectionId(), response.toString(),</span>
+<span class="nc" id="L336">                            command.getDittoHeaders()),</span>
+<span class="nc" id="L337">                    getSelf());</span>
+            // terminate this actor's supervisor after a connection test again:
+<span class="nc" id="L339">            stopSelf();</span>
+<span class="nc" id="L340">        }, error -&gt; {</span>
+<span class="nc" id="L341">            handleException(&quot;test&quot;, origin, error);</span>
+            // terminate this actor's supervisor after a connection test again:
+<span class="nc" id="L343">            stopSelf();</span>
+<span class="nc" id="L344">        });</span>
+<span class="nc" id="L345">    }</span>
+
+    private void createConnection(final CreateConnection command) {
+<span class="fc" id="L348">        final ActorRef origin = getSender();</span>
+<span class="fc bfc" id="L349" title="All 2 branches covered.">        if (!isConnectionConfigurationValid(command.getConnection(), origin)) {</span>
+<span class="fc" id="L350">            return;</span>
+        }
+
+<span class="fc" id="L353">        final ConnectionCreated connectionCreated =</span>
+<span class="fc" id="L354">                ConnectionCreated.of(command.getConnection(), command.getDittoHeaders());</span>
+
+<span class="fc" id="L356">        persistEvent(connectionCreated, persistedEvent -&gt; {</span>
+<span class="fc" id="L357">            connection = persistedEvent.getConnection();</span>
+
+<span class="fc" id="L359">            askClientActor(command, response -&gt; {</span>
+<span class="fc" id="L360">                        getContext().become(connectionCreatedBehaviour);</span>
+<span class="fc" id="L361">                        subscribeForEvents();</span>
+<span class="fc" id="L362">                        origin.tell(</span>
+<span class="fc" id="L363">                                CreateConnectionResponse.of(connection, command.getDittoHeaders()),</span>
+<span class="fc" id="L364">                                getSelf());</span>
+<span class="fc" id="L365">                        getContext().getParent().tell(ConnectionSupervisorActor.ManualReset.getInstance(), getSelf());</span>
+<span class="fc" id="L366">                    }, error -&gt; {</span>
+<span class="fc" id="L367">                        getContext().become(connectionCreatedBehaviour);</span>
+<span class="fc" id="L368">                        handleException(&quot;connect&quot;, origin, error);</span>
+<span class="fc" id="L369">                        getContext().getParent().tell(ConnectionSupervisorActor.ManualReset.getInstance(), getSelf());</span>
+<span class="fc" id="L370">                    }</span>
+            );
+<span class="fc" id="L372">        });</span>
+<span class="fc" id="L373">    }</span>
+
+    private boolean isConnectionConfigurationValid(final Connection connection, final ActorRef origin) {
+        try {
+            // try to create actor props before persisting the connection to fail early
+<span class="fc" id="L378">            propsFactory.getActorPropsForType(connection, conciergeForwarder);</span>
+<span class="fc" id="L379">            return true;</span>
+<span class="fc" id="L380">        } catch (final Exception e) {</span>
+<span class="fc" id="L381">            handleException(&quot;connect&quot;, origin, e);</span>
+<span class="fc" id="L382">            stopSelf();</span>
+<span class="fc" id="L383">            return false;</span>
+        }
+    }
+
+    private void modifyConnection(final ModifyConnection command) {
+<span class="nc" id="L388">        final ActorRef origin = getSender();</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">        if (!isConnectionConfigurationValid(command.getConnection(), origin)) {</span>
+<span class="nc" id="L390">            return;</span>
+        }
+
+<span class="nc bnc" id="L393" title="All 4 branches missed.">        if (connection != null &amp;&amp; !connection.getConnectionType().equals(command.getConnection().getConnectionType())) {</span>
+<span class="nc" id="L394">            handleException(&quot;modify&quot;, origin, ConnectionConfigurationInvalidException</span>
+<span class="nc" id="L395">                    .newBuilder(&quot;ConnectionType '&quot; + connection.getConnectionType().getName() +</span>
+                            &quot;' of existing connection '&quot; + connectionId + &quot;' cannot be changed&quot;)
+<span class="nc" id="L397">                    .dittoHeaders(command.getDittoHeaders())</span>
+<span class="nc" id="L398">                    .build()</span>
+            );
+<span class="nc" id="L400">            return;</span>
+        }
+
+<span class="nc" id="L403">        final ConnectionModified connectionModified =</span>
+<span class="nc" id="L404">                ConnectionModified.of(command.getConnection(), command.getDittoHeaders());</span>
+
+<span class="nc" id="L406">        persistEvent(connectionModified, persistedEvent -&gt; {</span>
+<span class="nc" id="L407">            connection = persistedEvent.getConnection();</span>
+
+<span class="nc" id="L409">            askClientActor(command, response -&gt; {</span>
+<span class="nc" id="L410">                        getContext().become(connectionCreatedBehaviour);</span>
+<span class="nc" id="L411">                        subscribeForEvents();</span>
+<span class="nc" id="L412">                        origin.tell(</span>
+<span class="nc" id="L413">                                ModifyConnectionResponse.modified(connectionId, command.getDittoHeaders()),</span>
+<span class="nc" id="L414">                                getSelf());</span>
+<span class="nc" id="L415">                        getContext().getParent().tell(ConnectionSupervisorActor.ManualReset.getInstance(), getSelf());</span>
+<span class="nc" id="L416">                    }, error -&gt;</span>
+<span class="nc" id="L417">                            handleException(&quot;connect-after-modify&quot;, origin, error)</span>
+            );
+<span class="nc" id="L419">        });</span>
+<span class="nc" id="L420">    }</span>
+
+    private void openConnection(final OpenConnection command) {
+<span class="fc" id="L423">        checkNotNull(connection, &quot;Connection&quot;);</span>
+
+<span class="fc" id="L425">        final ConnectionOpened connectionOpened =</span>
+<span class="fc" id="L426">                ConnectionOpened.of(command.getConnectionId(), command.getDittoHeaders());</span>
+<span class="fc" id="L427">        final ActorRef origin = getSender();</span>
+
+<span class="fc" id="L429">        persistEvent(connectionOpened, persistedEvent -&gt; {</span>
+<span class="fc" id="L430">            connection.toBuilder().connectionStatus(ConnectionStatus.OPEN).build();</span>
+<span class="fc" id="L431">            askClientActor(command, response -&gt; {</span>
+<span class="nc" id="L432">                        subscribeForEvents();</span>
+<span class="nc" id="L433">                        origin.tell(OpenConnectionResponse.of(connectionId, command.getDittoHeaders()), getSelf());</span>
+<span class="nc" id="L434">                    }, error -&gt;</span>
+<span class="fc" id="L435">                            handleException(&quot;open-connection&quot;, origin, error)</span>
+            );
+<span class="fc" id="L437">        });</span>
+<span class="fc" id="L438">    }</span>
+
+    private void closeConnection(final CloseConnection command) {
+
+<span class="fc" id="L442">        final ConnectionClosed connectionClosed =</span>
+<span class="fc" id="L443">                ConnectionClosed.of(command.getConnectionId(), command.getDittoHeaders());</span>
+<span class="fc" id="L444">        final ActorRef origin = getSender();</span>
+
+<span class="fc" id="L446">        persistEvent(connectionClosed, persistedEvent -&gt; {</span>
+<span class="pc bpc" id="L447" title="1 of 2 branches missed.">            if (connection != null) {</span>
+<span class="fc" id="L448">                connection = connection.toBuilder().connectionStatus(ConnectionStatus.CLOSED).build();</span>
+            }
+<span class="fc" id="L450">            askClientActor(command, response -&gt; {</span>
+<span class="fc" id="L451">                        origin.tell(CloseConnectionResponse.of(connectionId, command.getDittoHeaders()),</span>
+<span class="fc" id="L452">                                getSelf());</span>
+<span class="fc" id="L453">                        unsubscribeFromEvents();</span>
+<span class="fc" id="L454">                    }, error -&gt;</span>
+<span class="fc" id="L455">                            handleException(&quot;disconnect&quot;, origin, error)</span>
+            );
+<span class="fc" id="L457">        });</span>
+<span class="fc" id="L458">    }</span>
+
+    private void deleteConnection(final DeleteConnection command) {
+
+<span class="fc" id="L462">        final ConnectionDeleted connectionDeleted =</span>
+<span class="fc" id="L463">                ConnectionDeleted.of(command.getConnectionId(), command.getDittoHeaders());</span>
+<span class="fc" id="L464">        final ActorRef origin = getSender();</span>
+
+<span class="fc" id="L466">        persistEvent(connectionDeleted, persistedEvent -&gt;</span>
+<span class="fc" id="L467">                askClientActor(command, response -&gt; {</span>
+<span class="fc" id="L468">                            unsubscribeFromEvents();</span>
+<span class="fc" id="L469">                            stopClientActor();</span>
+<span class="fc" id="L470">                            origin.tell(DeleteConnectionResponse.of(connectionId, command.getDittoHeaders()),</span>
+<span class="fc" id="L471">                                    getSelf());</span>
+<span class="fc" id="L472">                            stopSelf();</span>
+<span class="fc" id="L473">                        }, error -&gt; {</span>
+                            // we can safely ignore this error and do the same as in the &quot;success&quot; case:
+<span class="fc" id="L475">                            unsubscribeFromEvents();</span>
+<span class="fc" id="L476">                            stopClientActor();</span>
+<span class="fc" id="L477">                            origin.tell(DeleteConnectionResponse.of(connectionId, command.getDittoHeaders()),</span>
+<span class="fc" id="L478">                                    getSelf());</span>
+<span class="fc" id="L479">                            stopSelf();</span>
+<span class="fc" id="L480">                        }</span>
+                )
+        );
+<span class="fc" id="L483">    }</span>
+
+    private void askClientActor(final Command&lt;?&gt; cmd, final Consumer&lt;Object&gt; onSuccess,
+            final Consumer&lt;Throwable&gt; onError) {
+
+<span class="fc" id="L488">        startClientActorIfRequired();</span>
+<span class="fc" id="L489">        final long timeout = Optional.ofNullable(cmd.getDittoHeaders().get(&quot;timeout&quot;))</span>
+<span class="fc" id="L490">                .map(Long::parseLong)</span>
+<span class="fc" id="L491">                .orElse(DEFAULT_TIMEOUT_MS);</span>
+        // wrap in Broadcast message because these management messages must be delivered to each client actor
+<span class="pc bpc" id="L493" title="2 of 4 branches missed.">        if (clientActor != null &amp;&amp; connection != null) {</span>
+<span class="fc" id="L494">            final ActorRef aggregationActor = getContext().actorOf(</span>
+<span class="fc" id="L495">                    AggregateActor.props(connectionId, clientActor, connection.getClientCount(), timeout));</span>
+<span class="fc" id="L496">            PatternsCS.ask(aggregationActor, cmd, timeout)</span>
+<span class="fc" id="L497">                    .whenComplete((response, exception) -&gt; {</span>
+<span class="fc bfc" id="L498" title="All 2 branches covered.">                        log.debug(&quot;Got response to {}: {}&quot;, cmd.getType(), exception == null ? response : exception);</span>
+<span class="fc bfc" id="L499" title="All 2 branches covered.">                        if (exception != null) {</span>
+<span class="fc" id="L500">                            onError.accept(exception);</span>
+<span class="pc bpc" id="L501" title="1 of 2 branches missed.">                        } else if (response instanceof Status.Failure) {</span>
+<span class="nc" id="L502">                            final Throwable cause = ((Status.Failure) response).cause();</span>
+<span class="nc" id="L503">                            onError.accept(cause);</span>
+<span class="pc bpc" id="L504" title="1 of 2 branches missed.">                        } else if (response instanceof DittoRuntimeException) {</span>
+<span class="nc" id="L505">                            onError.accept((DittoRuntimeException) response);</span>
+                        } else {
+<span class="fc" id="L507">                            onSuccess.accept(response);</span>
+                        }
+<span class="fc" id="L509">                    });</span>
+        }
+<span class="fc" id="L511">    }</span>
+
+    private void handleException(final String action, final ActorRef origin, final Throwable exception) {
+        final DittoRuntimeException dre;
+<span class="fc bfc" id="L515" title="All 2 branches covered.">        if (exception instanceof DittoRuntimeException) {</span>
+<span class="fc" id="L516">            dre = (DittoRuntimeException) exception;</span>
+        } else {
+<span class="fc" id="L518">            dre = ConnectionFailedException.newBuilder(connectionId)</span>
+<span class="fc" id="L519">                    .description(exception.getMessage())</span>
+<span class="fc" id="L520">                    .cause(exception)</span>
+<span class="fc" id="L521">                    .build();</span>
+        }
+
+<span class="fc" id="L524">        origin.tell(dre, getSelf());</span>
+<span class="fc" id="L525">        log.warning(&quot;Operation &lt;{}&gt; on connection &lt;{}&gt; failed due to {}: {}.&quot;, action, connectionId,</span>
+<span class="fc" id="L526">                dre.getClass().getSimpleName(), dre.getMessage());</span>
+<span class="fc" id="L527">    }</span>
+
+    private void retrieveConnection(final RetrieveConnection command) {
+<span class="nc" id="L530">        checkNotNull(connection, &quot;Connection&quot;);</span>
+<span class="nc" id="L531">        getSender().tell(RetrieveConnectionResponse.of(connection, command.getDittoHeaders()), getSelf());</span>
+<span class="nc" id="L532">    }</span>
+
+    private void retrieveConnectionStatus(final RetrieveConnectionStatus command) {
+<span class="fc" id="L535">        checkNotNull(connection, &quot;Connection&quot;);</span>
+<span class="fc" id="L536">        getSender().tell(RetrieveConnectionStatusResponse.of(connectionId, connection.getConnectionStatus(),</span>
+<span class="fc" id="L537">                command.getDittoHeaders()), getSelf());</span>
+<span class="fc" id="L538">    }</span>
+
+    private void retrieveConnectionMetrics(final RetrieveConnectionMetrics command) {
+<span class="nc" id="L541">        checkNotNull(connection, &quot;Connection&quot;);</span>
+
+<span class="nc" id="L543">        final ActorRef origin = getSender();</span>
+<span class="nc" id="L544">        askClientActor(command,</span>
+<span class="nc" id="L545">                response -&gt; origin.tell(response, getSelf()),</span>
+<span class="nc" id="L546">                error -&gt; handleException(&quot;retrieve-metrics&quot;, origin, error));</span>
+<span class="nc" id="L547">    }</span>
+
+    private void subscribeForEvents() {
+<span class="fc" id="L550">        checkNotNull(connection, &quot;Connection&quot;);</span>
+<span class="fc" id="L551">        uniqueTopicPaths = connection.getTargets().stream()</span>
+<span class="fc" id="L552">                .flatMap(target -&gt; target.getTopics().stream())</span>
+<span class="fc" id="L553">                .collect(Collectors.toSet());</span>
+
+<span class="fc" id="L555">        forEachPubSubTopicDo(pubSubTopic -&gt; {</span>
+<span class="fc" id="L556">            final DistributedPubSubMediator.Subscribe subscribe =</span>
+                    new DistributedPubSubMediator.Subscribe(pubSubTopic, PUB_SUB_GROUP_PREFIX + connectionId,
+<span class="fc" id="L558">                            getSelf());</span>
+<span class="fc" id="L559">            log.debug(&quot;Subscribing to pubsub topic '{}' for connection '{}'.&quot;, pubSubTopic, connectionId);</span>
+<span class="fc" id="L560">            pubSubMediator.tell(subscribe, getSelf());</span>
+<span class="fc" id="L561">        });</span>
+<span class="fc" id="L562">    }</span>
+
+    private void unsubscribeFromEvents() {
+<span class="fc" id="L565">        forEachPubSubTopicDo(pubSubTopic -&gt; {</span>
+<span class="fc" id="L566">            log.debug(&quot;Unsubscribing from pubsub topic '{}' for connection '{}'.&quot;, pubSubTopic, connectionId);</span>
+<span class="fc" id="L567">            final DistributedPubSubMediator.Unsubscribe unsubscribe =</span>
+                    new DistributedPubSubMediator.Unsubscribe(pubSubTopic, PUB_SUB_GROUP_PREFIX + connectionId,
+<span class="fc" id="L569">                            getSelf());</span>
+<span class="fc" id="L570">            pubSubMediator.tell(unsubscribe, getSelf());</span>
+<span class="fc" id="L571">        });</span>
+<span class="fc" id="L572">    }</span>
+
+    private void forEachPubSubTopicDo(final Consumer&lt;String&gt; topicConsumer) {
+<span class="fc" id="L575">        uniqueTopicPaths.stream()</span>
+<span class="fc" id="L576">                .map(TopicPathMapper::mapToPubSubTopic)</span>
+<span class="fc" id="L577">                .filter(Optional::isPresent)</span>
+<span class="fc" id="L578">                .map(Optional::get)</span>
+<span class="fc" id="L579">                .forEach(topicConsumer);</span>
+<span class="fc" id="L580">    }</span>
+
+    private void handleCommandDuringInitialization(final ConnectivityCommand command) {
+<span class="fc" id="L583">        log.debug(&quot;Unexpected command during initialization of actor received: {} - &quot;</span>
+                        + &quot;Terminating this actor and sending 'ConnectionNotAccessibleException' to requester..&quot;,
+<span class="fc" id="L585">                command.getType());</span>
+<span class="fc" id="L586">        getSender().tell(ConnectionNotAccessibleException.newBuilder(command.getId())</span>
+<span class="fc" id="L587">                .dittoHeaders(command.getDittoHeaders())</span>
+<span class="fc" id="L588">                .build(), getSelf());</span>
+<span class="fc" id="L589">    }</span>
+
+    private &lt;E extends Event&gt; void persistEvent(final E event, final Consumer&lt;E&gt; consumer) {
+<span class="fc" id="L592">        persist(event, persistedEvent -&gt; {</span>
+<span class="fc" id="L593">            log.debug(&quot;Successfully persisted Event '{}'&quot;, persistedEvent.getType());</span>
+<span class="fc" id="L594">            consumer.accept(persistedEvent);</span>
+<span class="fc" id="L595">            pubSubMediator.tell(new DistributedPubSubMediator.Publish(event.getType(), event, true), getSelf());</span>
+
+            // save a snapshot if there were too many changes since the last snapshot
+<span class="pc bpc" id="L598" title="1 of 2 branches missed.">            if ((lastSequenceNr() - lastSnapshotSequenceNr) &gt; snapshotThreshold) {</span>
+<span class="nc" id="L599">                doSaveSnapshot();</span>
+            }
+<span class="fc" id="L601">        });</span>
+<span class="fc" id="L602">    }</span>
+
+    private void doSaveSnapshot() {
+<span class="nc bnc" id="L605" title="All 2 branches missed.">        if (snapshotInProgress) {</span>
+<span class="nc" id="L606">            log.debug(&quot;Already requested taking a Snapshot - not doing it again&quot;);</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">        } else if (connection != null) {</span>
+<span class="nc" id="L608">            snapshotInProgress = true;</span>
+<span class="nc" id="L609">            log.info(&quot;Attempting to save Snapshot for Connection: &lt;{}&gt; ..&quot;, connection);</span>
+            // save a snapshot
+<span class="nc" id="L611">            final Object snapshotToStore = snapshotAdapter.toSnapshotStore(connection);</span>
+<span class="nc" id="L612">            saveSnapshot(snapshotToStore);</span>
+<span class="nc" id="L613">        } else {</span>
+<span class="nc" id="L614">            log.warning(&quot;Connection and MappingContext must not be null when taking snapshot.&quot;);</span>
+        }
+<span class="nc" id="L616">    }</span>
+
+    private void startClientActorIfRequired() {
+<span class="fc" id="L619">        checkNotNull(connectionId, &quot;connectionId&quot;);</span>
+<span class="fc" id="L620">        checkNotNull(connection, &quot;connection&quot;);</span>
+<span class="fc bfc" id="L621" title="All 2 branches covered.">        if (clientActor == null) {</span>
+<span class="fc" id="L622">            final int clientCount = connection.getClientCount();</span>
+<span class="fc" id="L623">            log.info(&quot;Starting ClientActor for connection &lt;{}&gt; with &lt;{}&gt; clients.&quot;, connectionId, clientCount);</span>
+<span class="fc" id="L624">            final Props props = propsFactory.getActorPropsForType(connection, conciergeForwarder);</span>
+<span class="fc" id="L625">            final ClusterRouterPoolSettings clusterRouterPoolSettings =</span>
+                    new ClusterRouterPoolSettings(clientCount, 1, true,
+<span class="fc" id="L627">                            Collections.singleton(CLUSTER_ROLE));</span>
+<span class="fc" id="L628">            final RoundRobinPool roundRobinPool = new RoundRobinPool(clientCount);</span>
+<span class="fc" id="L629">            final Props clusterRouterPoolProps =</span>
+<span class="fc" id="L630">                    new ClusterRouterPool(roundRobinPool, clusterRouterPoolSettings).props(props);</span>
+<span class="fc" id="L631">            clientActor = getContext().actorOf(clusterRouterPoolProps, &quot;client-router&quot;);</span>
+<span class="fc" id="L632">        } else {</span>
+<span class="fc" id="L633">            log.debug(&quot;ClientActor already started.&quot;);</span>
+        }
+<span class="fc" id="L635">    }</span>
+
+    private void stopClientActor() {
+<span class="pc bpc" id="L638" title="1 of 2 branches missed.">        if (clientActor != null) {</span>
+<span class="fc" id="L639">            log.debug(&quot;Stopping the client actor.&quot;);</span>
+<span class="fc" id="L640">            stopChildActor(clientActor);</span>
+<span class="fc" id="L641">            clientActor = null;</span>
+        }
+<span class="fc" id="L643">    }</span>
+
+    private void stopChildActor(final ActorRef actor) {
+<span class="fc" id="L646">        log.debug(&quot;Stopping child actor '{}'&quot;, actor.path());</span>
+<span class="fc" id="L647">        getContext().stop(actor);</span>
+<span class="fc" id="L648">    }</span>
+
+    private void stopSelf() {
+<span class="fc" id="L651">        log.debug(&quot;Shutting down&quot;);</span>
+        // stop the supervisor (otherwise it'd restart this actor) which causes this actor to stop, too.
+<span class="fc" id="L653">        getContext().getParent().tell(PoisonPill.getInstance(), getSelf());</span>
+<span class="fc" id="L654">    }</span>
+
+    private void handleSubscribeAck(final DistributedPubSubMediator.SubscribeAck subscribeAck) {
+<span class="fc" id="L657">        log.debug(&quot;Successfully subscribed to distributed pub/sub on topic '{}'&quot;, subscribeAck.subscribe().topic());</span>
+<span class="fc" id="L658">    }</span>
+
+    private void handleUnsubscribeAck(final DistributedPubSubMediator.UnsubscribeAck unsubscribeAck) {
+<span class="fc" id="L661">        log.debug(&quot;Successfully unsubscribed from distributed pub/sub on topic '{}'&quot;,</span>
+<span class="fc" id="L662">                unsubscribeAck.unsubscribe().topic());</span>
+<span class="fc" id="L663">    }</span>
+
+    private void handleSnapshotSuccess(final SaveSnapshotSuccess sss) {
+<span class="nc" id="L666">        log.debug(&quot;Snapshot was saved successfully: {}&quot;, sss);</span>
+<span class="nc" id="L667">    }</span>
+
+    private static class Shutdown {
+
+        private Shutdown() {
+            // no-op
+        }
+
+        private static Shutdown getInstance() {
+<span class="nc" id="L676">            return new Shutdown();</span>
+        }
+
+    }
+
+    /**
+     * Local helper-actor which is started for aggregating several CommandResponses sent back by potentially several
+     * {@code clientActors} (behind a cluster Router running on different cluster nodes).
+     */
+    private static class AggregateActor extends AbstractActor {
+
+<span class="fc" id="L687">        private final DiagnosticLoggingAdapter log = LogUtil.obtain(this);</span>
+
+        private final List&lt;CommandResponse&lt;?&gt;&gt; aggregatedResults;
+        private final Map&lt;String, Status.Status&gt; aggregatedStatus;
+
+        private final String connectionId;
+        private final ActorRef clientActor;
+        private final int expectedResponses;
+        private final long timeout;
+
+<span class="fc" id="L697">        private int responseCount = 0;</span>
+        @Nullable private ActorRef origin;
+        @Nullable private DittoHeaders originHeaders;
+
+        /**
+         * Creates Akka configuration object for this actor.
+         *
+         * @return the Akka configuration Props object
+         */
+        static Props props(final String connectionId, final ActorRef clientActor, final int expectedResponses,
+                final long timeout) {
+<span class="fc" id="L708">            return Props.create(AggregateActor.class, connectionId, clientActor, expectedResponses, timeout);</span>
+        }
+
+        private AggregateActor(final String connectionId, final ActorRef clientActor, final int expectedResponses,
+<span class="fc" id="L712">                final long timeout) {</span>
+<span class="fc" id="L713">            this.connectionId = connectionId;</span>
+<span class="fc" id="L714">            this.clientActor = clientActor;</span>
+<span class="fc" id="L715">            this.expectedResponses = expectedResponses;</span>
+<span class="fc" id="L716">            this.timeout = timeout;</span>
+<span class="fc" id="L717">            aggregatedResults = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L718">            aggregatedStatus = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L719">        }</span>
+
+        @Override
+        public Receive createReceive() {
+<span class="fc" id="L723">            return ReceiveBuilder.create()</span>
+<span class="fc" id="L724">                    .match(Command.class, command -&gt; {</span>
+<span class="fc" id="L725">                        clientActor.tell(new Broadcast(command), getSelf());</span>
+<span class="fc" id="L726">                        originHeaders = command.getDittoHeaders();</span>
+<span class="fc" id="L727">                        origin = getSender();</span>
+<span class="fc" id="L728">                        getContext().setReceiveTimeout(Duration.create(timeout / 2.0, TimeUnit.MILLISECONDS));</span>
+<span class="fc" id="L729">                    })</span>
+<span class="fc" id="L730">                    .match(ReceiveTimeout.class, timeout -&gt; {</span>
+                        // send back (partially) gathered responses
+<span class="nc" id="L732">                        sendBackAggregatedResults();</span>
+<span class="nc" id="L733">                    })</span>
+<span class="fc" id="L734">                    .matchAny(any -&gt; {</span>
+<span class="pc bpc" id="L735" title="1 of 2 branches missed.">                        if (any instanceof CommandResponse) {</span>
+<span class="nc" id="L736">                            aggregatedResults.add((CommandResponse&lt;?&gt;) any);</span>
+<span class="pc bpc" id="L737" title="1 of 2 branches missed.">                        } else if (any instanceof Status.Status) {</span>
+<span class="fc" id="L738">                            aggregatedStatus.put(getSender().path().address().hostPort(), (Status.Status) any);</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">                        } else if (any instanceof DittoRuntimeException) {</span>
+<span class="nc" id="L740">                            aggregatedResults.add(ConnectivityErrorResponse.of((DittoRuntimeException) any));</span>
+                        } else {
+<span class="nc" id="L742">                            log.error(&quot;Could not handle non-Jsonifiable non-Status response: {}&quot;, any);</span>
+                        }
+<span class="fc" id="L744">                        responseCount++;</span>
+<span class="pc bpc" id="L745" title="1 of 2 branches missed.">                        if (expectedResponses == responseCount) {</span>
+                            // send back all gathered responses
+<span class="fc" id="L747">                            sendBackAggregatedResults();</span>
+                        }
+<span class="fc" id="L749">                    })</span>
+<span class="fc" id="L750">                    .build();</span>
+        }
+
+        private void sendBackAggregatedResults() {
+<span class="pc bpc" id="L754" title="3 of 6 branches missed.">            if (origin != null &amp;&amp; originHeaders != null &amp;&amp; !aggregatedResults.isEmpty()) {</span>
+<span class="nc" id="L755">                final String responseType = aggregatedResults.get(0).getType();</span>
+<span class="nc" id="L756">                final AggregatedConnectivityCommandResponse response =</span>
+<span class="nc" id="L757">                        AggregatedConnectivityCommandResponse.of(connectionId, aggregatedResults, responseType,</span>
+                                HttpStatusCode.OK, originHeaders);
+<span class="nc" id="L759">                log.debug(&quot;Aggregated response: {}&quot;, response);</span>
+<span class="nc" id="L760">                origin.tell(response, getSelf());</span>
+<span class="pc bpc" id="L761" title="3 of 6 branches missed.">            } else if (origin != null &amp;&amp; originHeaders != null &amp;&amp; !aggregatedStatus.isEmpty()) {</span>
+<span class="fc" id="L762">                log.debug(&quot;Aggregated stati: {}&quot;, this.aggregatedStatus);</span>
+<span class="fc" id="L763">                final Optional&lt;Status.Status&gt; failure = this.aggregatedStatus.entrySet().stream()</span>
+<span class="fc" id="L764">                        .filter(s -&gt; s.getValue() instanceof Status.Failure)</span>
+<span class="fc" id="L765">                        .map(Map.Entry::getValue)</span>
+<span class="fc" id="L766">                        .findFirst();</span>
+<span class="fc bfc" id="L767" title="All 2 branches covered.">                if (failure.isPresent()) {</span>
+<span class="fc" id="L768">                    origin.tell(failure.get(), getSelf());</span>
+                } else {
+<span class="fc" id="L770">                    final String aggregatedStatusStr = this.aggregatedStatus.entrySet().stream()</span>
+<span class="fc" id="L771">                            .map(Object::toString)</span>
+<span class="fc" id="L772">                            .collect(Collectors.joining(&quot;,&quot;));</span>
+<span class="fc" id="L773">                    origin.tell(new Status.Success(aggregatedStatusStr), getSelf());</span>
+                }
+<span class="fc" id="L775">            } else {</span>
+<span class="nc" id="L776">                log.warning(&quot;No origin was present or results were empty in order to send back aggregated results to&quot;);</span>
+            }
+<span class="fc" id="L778">            getContext().stop(getSelf());</span>
+<span class="fc" id="L779">        }</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

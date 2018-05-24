@@ -1,0 +1,384 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DittoProtocolAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Protocol Adapter</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.protocoladapter</a> &gt; <span class="el_source">DittoProtocolAdapter.java</span></div><h1>DittoProtocolAdapter.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.protocoladapter;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonMissingFieldException;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.signals.base.AbstractErrorRegistry;
+import org.eclipse.ditto.signals.base.JsonParsable;
+import org.eclipse.ditto.signals.base.Signal;
+import org.eclipse.ditto.signals.commands.base.Command;
+import org.eclipse.ditto.signals.commands.base.CommandResponse;
+import org.eclipse.ditto.signals.commands.messages.MessageCommand;
+import org.eclipse.ditto.signals.commands.messages.MessageCommandResponse;
+import org.eclipse.ditto.signals.commands.things.ThingCommandResponse;
+import org.eclipse.ditto.signals.commands.things.ThingErrorResponse;
+import org.eclipse.ditto.signals.commands.things.exceptions.ThingErrorRegistry;
+import org.eclipse.ditto.signals.commands.things.modify.ThingModifyCommand;
+import org.eclipse.ditto.signals.commands.things.modify.ThingModifyCommandResponse;
+import org.eclipse.ditto.signals.commands.things.query.ThingQueryCommand;
+import org.eclipse.ditto.signals.commands.things.query.ThingQueryCommandResponse;
+import org.eclipse.ditto.signals.events.base.Event;
+import org.eclipse.ditto.signals.events.things.ThingEvent;
+
+/**
+ * Abstract base implementation of a protocol adapter.
+ */
+public class DittoProtocolAdapter implements ProtocolAdapter {
+
+    private final MessageCommandAdapter messageCommandAdapter;
+    private final MessageCommandResponseAdapter messageCommandResponseAdapter;
+    private final ThingModifyCommandAdapter thingModifyCommandAdapter;
+    private final ThingModifyCommandResponseAdapter thingModifyCommandResponseAdapter;
+    private final ThingQueryCommandAdapter thingQueryCommandAdapter;
+    private final ThingQueryCommandResponseAdapter thingQueryCommandResponseAdapter;
+    private final ThingEventAdapter thingEventAdapter;
+
+    private final AbstractErrorRegistry&lt;DittoRuntimeException&gt; errorRegistry;
+
+    private DittoProtocolAdapter() {
+<span class="fc" id="L56">        this(ProtocolAdapterErrorRegistry.newInstance());</span>
+<span class="fc" id="L57">    }</span>
+
+<span class="fc" id="L59">    protected DittoProtocolAdapter(final AbstractErrorRegistry&lt;DittoRuntimeException&gt; errorRegistry) {</span>
+<span class="fc" id="L60">        this.errorRegistry = errorRegistry;</span>
+<span class="fc" id="L61">        this.messageCommandAdapter = MessageCommandAdapter.newInstance();</span>
+<span class="fc" id="L62">        this.messageCommandResponseAdapter = MessageCommandResponseAdapter.newInstance();</span>
+<span class="fc" id="L63">        this.thingModifyCommandAdapter = ThingModifyCommandAdapter.newInstance();</span>
+<span class="fc" id="L64">        this.thingModifyCommandResponseAdapter = ThingModifyCommandResponseAdapter.newInstance();</span>
+<span class="fc" id="L65">        this.thingQueryCommandAdapter = ThingQueryCommandAdapter.newInstance();</span>
+<span class="fc" id="L66">        this.thingQueryCommandResponseAdapter = ThingQueryCommandResponseAdapter.newInstance();</span>
+<span class="fc" id="L67">        this.thingEventAdapter = ThingEventAdapter.newInstance();</span>
+<span class="fc" id="L68">    }</span>
+
+    /**
+     * Creates a new {@code DittoProtocolAdapter} instance.
+     *
+     * @return the instance.
+     */
+    public static DittoProtocolAdapter newInstance() {
+<span class="fc" id="L76">        return new DittoProtocolAdapter();</span>
+    }
+
+    @Override
+    public Signal&lt;?&gt; fromAdaptable(final Adaptable adaptable) {
+<span class="fc" id="L81">        final TopicPath topicPath = adaptable.getTopicPath();</span>
+
+<span class="pc bpc" id="L83" title="1 of 2 branches missed.">        if (TopicPath.Group.THINGS.equals(topicPath.getGroup())) { // /things</span>
+<span class="fc" id="L84">            final TopicPath.Channel channel = topicPath.getChannel();</span>
+
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">            if (channel.equals(TopicPath.Channel.LIVE)) { // /things/live</span>
+<span class="nc" id="L87">                return fromLiveAdaptable(adaptable);</span>
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">            } else if (channel.equals(TopicPath.Channel.TWIN)) { // /things/twin</span>
+<span class="fc" id="L89">                return fromTwinAdaptable(adaptable);</span>
+            }
+        }
+
+<span class="nc" id="L93">        throw UnknownTopicPathException.newBuilder(topicPath).build();</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final Signal&lt;?&gt; signal) {
+<span class="nc" id="L98">        final boolean isLive = isLiveSignal(signal);</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        final TopicPath.Channel channel = isLive ? TopicPath.Channel.LIVE : TopicPath.Channel.TWIN;</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (signal instanceof MessageCommand) {</span>
+<span class="nc" id="L101">            return toAdaptable((MessageCommand&lt;?, ?&gt;) signal);</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        } else if (signal instanceof MessageCommandResponse) {</span>
+<span class="nc" id="L103">            return toAdaptable((MessageCommandResponse&lt;?, ?&gt;) signal);</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        } else if (signal instanceof Command) {</span>
+<span class="nc" id="L105">            return toAdaptable((Command&lt;?&gt;) signal, channel);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        } else if (signal instanceof CommandResponse) {</span>
+<span class="nc" id="L107">            return toAdaptable((CommandResponse&lt;?&gt;) signal, channel);</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        } else if (signal instanceof Event) {</span>
+<span class="nc" id="L109">            return toAdaptable((Event&lt;?&gt;) signal, channel);</span>
+        }
+<span class="nc" id="L111">        throw UnknownSignalException.newBuilder(signal.getName()).dittoHeaders(signal.getDittoHeaders()).build();</span>
+    }
+
+    private static boolean isLiveSignal(final Signal&lt;?&gt; signal) {
+<span class="nc" id="L115">        return signal.getDittoHeaders().getChannel().filter(TopicPath.Channel.LIVE.getName()::equals).isPresent();</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final CommandResponse&lt;?&gt; commandResponse) {
+<span class="nc" id="L120">        return toAdaptable(commandResponse, TopicPath.Channel.TWIN);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final CommandResponse&lt;?&gt; commandResponse, final TopicPath.Channel channel) {
+<span class="nc bnc" id="L125" title="All 4 branches missed.">        if (commandResponse instanceof MessageCommandResponse &amp;&amp; channel == TopicPath.Channel.LIVE) {</span>
+<span class="nc" id="L126">            return toAdaptable((MessageCommandResponse) commandResponse);</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        } else if (commandResponse instanceof ThingCommandResponse) {</span>
+<span class="nc" id="L128">            return toAdaptable((ThingCommandResponse) commandResponse, channel);</span>
+        } else {
+<span class="nc" id="L130">            throw UnknownCommandResponseException.newBuilder(commandResponse.getName()).build();</span>
+        }
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingCommandResponse&lt;?&gt; thingCommandResponse) {
+<span class="nc" id="L136">        return toAdaptable(thingCommandResponse, TopicPath.Channel.TWIN);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingCommandResponse&lt;?&gt; thingCommandResponse, final TopicPath.Channel channel) {
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        if (thingCommandResponse instanceof ThingQueryCommandResponse) {</span>
+<span class="nc" id="L142">            return toAdaptable((ThingQueryCommandResponse) thingCommandResponse, channel);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        } else if (thingCommandResponse instanceof ThingModifyCommandResponse) {</span>
+<span class="nc" id="L144">            return toAdaptable((ThingModifyCommandResponse) thingCommandResponse, channel);</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        } else if (thingCommandResponse instanceof ThingErrorResponse) {</span>
+<span class="nc" id="L146">            return toAdaptable((ThingErrorResponse) thingCommandResponse, channel);</span>
+        } else {
+<span class="nc" id="L148">            throw UnknownCommandResponseException.newBuilder(thingCommandResponse.getName()).build();</span>
+        }
+    }
+
+    @Override
+    public Adaptable toAdaptable(final MessageCommand&lt;?, ?&gt; messageCommand) {
+<span class="nc" id="L154">        return messageCommandAdapter.toAdaptable(messageCommand, TopicPath.Channel.LIVE);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final MessageCommandResponse&lt;?, ?&gt; messageCommandResponse) {
+<span class="nc" id="L159">        return messageCommandResponseAdapter.toAdaptable(messageCommandResponse, TopicPath.Channel.LIVE);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final Command&lt;?&gt; command) {
+<span class="nc" id="L164">        return toAdaptable(command, TopicPath.Channel.TWIN);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final Command&lt;?&gt; command, final TopicPath.Channel channel) {
+<span class="nc bnc" id="L169" title="All 4 branches missed.">        if (command instanceof MessageCommand &amp;&amp; channel == TopicPath.Channel.LIVE) {</span>
+<span class="nc" id="L170">            return toAdaptable((MessageCommand) command);</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        } else if (command instanceof ThingModifyCommand) {</span>
+<span class="nc" id="L172">            return toAdaptable((ThingModifyCommand) command, channel);</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">        } else if (command instanceof ThingQueryCommand) {</span>
+<span class="nc" id="L174">            return toAdaptable((ThingQueryCommand) command, channel);</span>
+        } else {
+<span class="nc" id="L176">            throw UnknownCommandException.newBuilder(command.getName()).build();</span>
+        }
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingModifyCommand&lt;?&gt; thingModifyCommand) {
+<span class="nc" id="L182">        return toAdaptable(thingModifyCommand, TopicPath.Channel.TWIN);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingModifyCommand&lt;?&gt; thingModifyCommand, final TopicPath.Channel channel) {
+<span class="nc" id="L187">        return thingModifyCommandAdapter.toAdaptable(thingModifyCommand, channel);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingModifyCommandResponse&lt;?&gt; thingModifyCommandResponse) {
+<span class="nc" id="L192">        return toAdaptable(thingModifyCommandResponse, TopicPath.Channel.TWIN);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingModifyCommandResponse&lt;?&gt; thingModifyCommandResponse,
+            final TopicPath.Channel channel) {
+<span class="nc" id="L198">        return thingModifyCommandResponseAdapter.toAdaptable(thingModifyCommandResponse, channel);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingQueryCommand&lt;?&gt; thingQueryCommand) {
+<span class="nc" id="L203">        return toAdaptable(thingQueryCommand, TopicPath.Channel.TWIN);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingQueryCommand&lt;?&gt; thingQueryCommand, final TopicPath.Channel channel) {
+<span class="nc" id="L208">        return thingQueryCommandAdapter.toAdaptable(thingQueryCommand, channel);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingQueryCommandResponse&lt;?&gt; thingQueryCommandResponse) {
+<span class="nc" id="L213">        return toAdaptable(thingQueryCommandResponse, TopicPath.Channel.TWIN);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingQueryCommandResponse&lt;?&gt; thingQueryCommandResponse,
+            final TopicPath.Channel channel) {
+<span class="nc" id="L219">        return thingQueryCommandResponseAdapter.toAdaptable(thingQueryCommandResponse, channel);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingErrorResponse thingErrorResponse, final TopicPath.Channel channel) {
+<span class="nc" id="L224">        final Payload payload = Payload.newBuilder(thingErrorResponse.getResourcePath()) //</span>
+<span class="nc" id="L225">                .withStatus(thingErrorResponse.getStatusCode()) //</span>
+<span class="nc" id="L226">                .withValue(thingErrorResponse.toJson(thingErrorResponse.getImplementedSchemaVersion()) //</span>
+<span class="nc" id="L227">                        .getValue(CommandResponse.JsonFields.PAYLOAD)</span>
+<span class="nc" id="L228">                        .orElse(JsonFactory.nullObject())) // only use the error payload</span>
+<span class="nc" id="L229">                .build();</span>
+
+<span class="nc" id="L231">        final TopicPathBuilder topicPathBuilder = ProtocolFactory.newTopicPathBuilder(thingErrorResponse.getId());</span>
+        final TopicPathBuildable topicPathBuildable;
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (channel == TopicPath.Channel.TWIN) {</span>
+<span class="nc" id="L234">            topicPathBuildable = topicPathBuilder.twin().errors();</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        } else if (channel == TopicPath.Channel.LIVE) {</span>
+<span class="nc" id="L236">            topicPathBuildable = topicPathBuilder.live().errors();</span>
+        } else {
+<span class="nc" id="L238">            throw new IllegalArgumentException(&quot;Unknown Channel '&quot; + channel + &quot;'&quot;);</span>
+        }
+
+<span class="nc" id="L241">        return Adaptable.newBuilder(topicPathBuildable.build())</span>
+<span class="nc" id="L242">                .withPayload(payload) //</span>
+<span class="nc" id="L243">                .withHeaders(ProtocolFactory.newHeadersWithDittoContentType(thingErrorResponse.getDittoHeaders())) //</span>
+<span class="nc" id="L244">                .build();</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final Event&lt;?&gt; event) {
+<span class="nc" id="L249">        return toAdaptable(event, TopicPath.Channel.TWIN);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final Event&lt;?&gt; event, final TopicPath.Channel channel) {
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        if (event instanceof ThingEvent) {</span>
+<span class="nc" id="L255">            return toAdaptable((ThingEvent) event, channel);</span>
+        } else {
+<span class="nc" id="L257">            throw UnknownEventException.newBuilder(event.getName()).build();</span>
+        }
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingEvent&lt;?&gt; thingEvent) {
+<span class="nc" id="L263">        return toAdaptable(thingEvent, TopicPath.Channel.TWIN);</span>
+    }
+
+    @Override
+    public Adaptable toAdaptable(final ThingEvent&lt;?&gt; thingEvent, final TopicPath.Channel channel) {
+<span class="nc" id="L268">        return thingEventAdapter.toAdaptable(thingEvent, channel);</span>
+    }
+
+    private Signal&lt;?&gt; fromLiveAdaptable(final Adaptable adaptable) {
+<span class="nc" id="L272">        final TopicPath topicPath = adaptable.getTopicPath();</span>
+
+        final Signal&lt;?&gt; liveSignal;
+<span class="nc bnc" id="L275" title="All 2 branches missed.">        if (TopicPath.Criterion.MESSAGES.equals(topicPath.getCriterion())) { // /things/live/messages</span>
+<span class="nc" id="L276">            final boolean isResponse = adaptable.getPayload().getStatus().isPresent();</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (isResponse) {</span>
+<span class="nc" id="L278">                liveSignal = messageCommandResponseAdapter.fromAdaptable(adaptable);</span>
+            } else {
+<span class="nc" id="L280">                liveSignal = messageCommandAdapter.fromAdaptable(adaptable);</span>
+            }
+<span class="nc" id="L282">        } else {</span>
+<span class="nc" id="L283">            liveSignal = signalFromAdaptable(adaptable, topicPath); // /things/live/(commands|events)</span>
+        }
+
+<span class="nc bnc" id="L286" title="All 2 branches missed.">        if (liveSignal != null) {</span>
+<span class="nc" id="L287">            final DittoHeadersBuilder enhancedHeadersBuilder = liveSignal.getDittoHeaders()</span>
+<span class="nc" id="L288">                    .toBuilder()</span>
+<span class="nc" id="L289">                    .channel(TopicPath.Channel.LIVE.getName());</span>
+
+<span class="nc" id="L291">            return liveSignal.setDittoHeaders(enhancedHeadersBuilder.build());</span>
+        } else {
+<span class="nc" id="L293">            throw UnknownTopicPathException.newBuilder(topicPath).build();</span>
+        }
+    }
+
+    private Signal&lt;?&gt; fromTwinAdaptable(final Adaptable adaptable) {
+<span class="fc" id="L298">        final TopicPath topicPath = adaptable.getTopicPath();</span>
+
+<span class="fc" id="L300">        final Signal&lt;?&gt; signal =</span>
+<span class="fc" id="L301">                signalFromAdaptable(adaptable, topicPath); // /things/twin/(commands|events)</span>
+<span class="pc bpc" id="L302" title="1 of 2 branches missed.">        if (signal != null) {</span>
+<span class="fc" id="L303">            return signal;</span>
+        } else {
+<span class="nc" id="L305">            throw UnknownTopicPathException.newBuilder(topicPath).build();</span>
+        }
+    }
+
+    private Signal&lt;?&gt; signalFromAdaptable(final Adaptable adaptable, final TopicPath topicPath) {
+<span class="fc bfc" id="L310" title="All 2 branches covered.">        if (TopicPath.Criterion.COMMANDS.equals(topicPath.getCriterion())) {</span>
+<span class="fc" id="L311">            final boolean isResponse = adaptable.getPayload().getStatus().isPresent();</span>
+
+<span class="fc bfc" id="L313" title="All 2 branches covered.">            if (TopicPath.Action.RETRIEVE.equals(topicPath.getAction().orElse(null))) {</span>
+<span class="fc bfc" id="L314" title="All 2 branches covered.">                return isResponse ? thingQueryCommandResponseAdapter.fromAdaptable(adaptable) :</span>
+<span class="fc" id="L315">                        thingQueryCommandAdapter.fromAdaptable(adaptable);</span>
+            } else {
+<span class="fc bfc" id="L317" title="All 2 branches covered.">                return isResponse ? thingModifyCommandResponseAdapter.fromAdaptable(adaptable) :</span>
+<span class="fc" id="L318">                        thingModifyCommandAdapter.fromAdaptable(adaptable);</span>
+            }
+<span class="fc bfc" id="L320" title="All 2 branches covered.">        } else if (TopicPath.Criterion.EVENTS.equals(topicPath.getCriterion())) {</span>
+<span class="fc" id="L321">            return thingEventAdapter.fromAdaptable(adaptable);</span>
+<span class="pc bpc" id="L322" title="1 of 2 branches missed.">        } else if (TopicPath.Criterion.ERRORS.equals(topicPath.getCriterion())) {</span>
+<span class="fc" id="L323">            return thingErrorResponseFromAdaptable(adaptable);</span>
+        }
+<span class="nc" id="L325">        return null;</span>
+    }
+
+    /**
+     * Creates a {@code ThingErrorResponse} from the given {@code adaptable}.
+     *
+     * @param adaptable the adaptable to convert.
+     * @return the ThingErrorResponse.
+     */
+    private ThingErrorResponse thingErrorResponseFromAdaptable(final Adaptable adaptable) {
+<span class="fc" id="L335">        final DittoHeaders dittoHeaders = adaptable.getHeaders().orElse(DittoHeaders.empty());</span>
+<span class="fc" id="L336">        final TopicPath topicPath = adaptable.getTopicPath();</span>
+<span class="fc" id="L337">        final DittoHeaders adjustedHeaders = dittoHeaders.toBuilder()</span>
+<span class="fc" id="L338">                .channel(topicPath.getChannel().getName())</span>
+<span class="fc" id="L339">                .build();</span>
+
+<span class="fc" id="L341">        final DittoRuntimeException dittoRuntimeException = adaptable.getPayload()</span>
+<span class="fc" id="L342">                .getValue()</span>
+<span class="fc" id="L343">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L344">                .map(jsonObject -&gt; errorRegistry.parse(jsonObject, adjustedHeaders))</span>
+<span class="pc" id="L345">                .orElseThrow(() -&gt; new JsonMissingFieldException(ThingCommandResponse.JsonFields.PAYLOAD));</span>
+
+<span class="fc" id="L347">        final String thingId = topicPath.getNamespace() + &quot;:&quot; + topicPath.getId();</span>
+<span class="fc" id="L348">        return ThingErrorResponse.of(thingId, dittoRuntimeException, dittoRuntimeException.getDittoHeaders());</span>
+    }
+
+    /**
+     * ErrorRegistry for DittoProtocolAdapter.
+     */
+    public static final class ProtocolAdapterErrorRegistry extends AbstractErrorRegistry&lt;DittoRuntimeException&gt; {
+
+        private ProtocolAdapterErrorRegistry(final Map&lt;String, JsonParsable&lt;DittoRuntimeException&gt;&gt; parseStrategies) {
+<span class="fc" id="L357">            super(parseStrategies);</span>
+<span class="fc" id="L358">        }</span>
+
+        /**
+         * Returns a new {@code ProtocolAdapterErrorRegistry}.
+         *
+         * @return the error registry.
+         */
+        public static ProtocolAdapterErrorRegistry newInstance() {
+<span class="fc" id="L366">            final Map&lt;String, JsonParsable&lt;DittoRuntimeException&gt;&gt; parseStrategies = new HashMap&lt;&gt;();</span>
+
+<span class="fc" id="L368">            final ThingErrorRegistry thingErrorRegistry = ThingErrorRegistry.newInstance();</span>
+<span class="fc" id="L369">            thingErrorRegistry.getTypes()</span>
+<span class="fc" id="L370">                    .forEach(type -&gt; parseStrategies.put(type, thingErrorRegistry));</span>
+
+            // Protocol Adapter exceptions:
+<span class="fc" id="L373">            parseStrategies.put(UnknownSignalException.ERROR_CODE, UnknownSignalException::fromJson);</span>
+<span class="fc" id="L374">            parseStrategies.put(UnknownCommandException.ERROR_CODE, UnknownCommandException::fromJson);</span>
+<span class="fc" id="L375">            parseStrategies.put(UnknownCommandResponseException.ERROR_CODE, UnknownCommandResponseException::fromJson);</span>
+<span class="fc" id="L376">            parseStrategies.put(UnknownEventException.ERROR_CODE, UnknownEventException::fromJson);</span>
+<span class="fc" id="L377">            parseStrategies.put(UnknownPathException.ERROR_CODE, UnknownPathException::fromJson);</span>
+<span class="fc" id="L378">            parseStrategies.put(UnknownTopicPathException.ERROR_CODE, UnknownTopicPathException::fromJson);</span>
+
+<span class="fc" id="L380">            return new ProtocolAdapterErrorRegistry(parseStrategies);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

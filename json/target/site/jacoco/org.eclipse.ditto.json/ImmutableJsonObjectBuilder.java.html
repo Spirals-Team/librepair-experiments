@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ImmutableJsonObjectBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: JSON</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.json</a> &gt; <span class="el_source">ImmutableJsonObjectBuilder.java</span></div><h1>ImmutableJsonObjectBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.json;
+
+import static java.util.Objects.requireNonNull;
+
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
+
+/**
+ * Builder for creating instances of {@link ImmutableJsonObject}. This builder does not allow duplicate JSON fields; i.
+ * e. there is at most one association per JSON key in the resulting JSON object.
+ */
+@NotThreadSafe
+final class ImmutableJsonObjectBuilder implements JsonObjectBuilder {
+
+<span class="fc" id="L34">    private static final JsonKey ROOT_KEY = JsonFactory.newKey(&quot;/&quot;);</span>
+
+    private final Map&lt;String, JsonField&gt; fields;
+
+<span class="fc" id="L38">    private ImmutableJsonObjectBuilder() {</span>
+<span class="fc" id="L39">        fields = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L40">    }</span>
+
+    /**
+     * Returns a new instance of {@code ImmutableJsonObjectBuilder}.
+     *
+     * @return a new builder for an immutable {@link JsonObject}.
+     */
+    public static ImmutableJsonObjectBuilder newInstance() {
+<span class="fc" id="L48">        return new ImmutableJsonObjectBuilder();</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder set(final CharSequence key, final int value,
+            final Predicate&lt;JsonField&gt; predicate) {
+
+<span class="fc" id="L55">        return set(key, JsonFactory.newValue(value), predicate);</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder set(final CharSequence key, final long value,
+            final Predicate&lt;JsonField&gt; predicate) {
+
+<span class="nc" id="L62">        return set(key, JsonFactory.newValue(value), predicate);</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder set(final CharSequence key, final double value,
+            final Predicate&lt;JsonField&gt; predicate) {
+
+<span class="nc" id="L69">        return set(key, JsonFactory.newValue(value), predicate);</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder set(final CharSequence key, final boolean value,
+            final Predicate&lt;JsonField&gt; predicate) {
+
+<span class="fc" id="L76">        return set(key, JsonFactory.newValue(value), predicate);</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder set(final CharSequence key, final String value,
+            final Predicate&lt;JsonField&gt; predicate) {
+
+<span class="fc" id="L83">        return set(key, JsonFactory.newValue(value), predicate);</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder set(final CharSequence key, final JsonValue value,
+            final Predicate&lt;JsonField&gt; predicate) {
+
+<span class="fc" id="L90">        final JsonPointer pointer = JsonFactory.getNonEmptyPointer(key);</span>
+<span class="fc" id="L91">        checkValue(value);</span>
+<span class="fc" id="L92">        checkPredicate(predicate);</span>
+
+<span class="fc" id="L94">        pointer.getLeaf()</span>
+<span class="fc" id="L95">                .map(leafKey -&gt; JsonFactory.newField(leafKey, value))</span>
+<span class="fc" id="L96">                .filter(predicate)</span>
+<span class="fc" id="L97">                .ifPresent(jsonField -&gt; setFieldInHierarchy(this, pointer, jsonField));</span>
+
+<span class="fc" id="L99">        return this;</span>
+    }
+
+    @Override
+    public &lt;T&gt; JsonObjectBuilder set(final JsonFieldDefinition&lt;T&gt; fieldDefinition, @Nullable final T value,
+            final Predicate&lt;JsonField&gt; predicate) {
+
+<span class="fc" id="L106">        requireNonNull(fieldDefinition, &quot;The definition of the JSON field to set the value for must not be null!&quot;);</span>
+<span class="fc" id="L107">        checkPredicate(predicate);</span>
+
+<span class="fc" id="L109">        final JsonPointer pointer = fieldDefinition.getPointer();</span>
+<span class="fc" id="L110">        pointer.getLeaf()</span>
+<span class="fc" id="L111">                .map(leafKey -&gt; JsonFactory.newField(leafKey, JsonFactory.getAppropriateValue(value), fieldDefinition))</span>
+<span class="fc" id="L112">                .filter(predicate)</span>
+<span class="fc" id="L113">                .ifPresent(jsonField -&gt; setFieldInHierarchy(this, pointer, jsonField));</span>
+
+<span class="fc" id="L115">        return this;</span>
+    }
+
+    private static void checkValue(final Object value) {
+<span class="fc" id="L119">        requireNonNull(value, &quot;The value must not be null!&quot;);</span>
+<span class="fc" id="L120">    }</span>
+
+    private static void checkPredicate(final Predicate&lt;JsonField&gt; predicate) {
+<span class="fc" id="L123">        requireNonNull(predicate, &quot;The predicate must not be null!&quot;);</span>
+<span class="fc" id="L124">    }</span>
+
+    private static JsonObjectBuilder setFieldInHierarchy(final ImmutableJsonObjectBuilder target,
+            final JsonPointer pointer, final JsonField field) {
+
+<span class="fc bfc" id="L129" title="All 2 branches covered.">        if (1 &gt;= pointer.getLevelCount()) {</span>
+<span class="fc" id="L130">            return target.set(field);</span>
+        }
+
+<span class="fc" id="L133">        final JsonKey rootKey = pointer.getRoot().orElse(ROOT_KEY);</span>
+
+<span class="fc" id="L135">        final ImmutableJsonObjectBuilder newTarget = newInstance();</span>
+<span class="fc" id="L136">        final JsonField rootJsonField = target.fields.get(rootKey.toString());</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">        if (null != rootJsonField) {</span>
+<span class="fc" id="L138">            final JsonValue rootValue = rootJsonField.getValue();</span>
+<span class="pc bpc" id="L139" title="1 of 4 branches missed.">            if (rootValue.isObject() &amp;&amp; !rootValue.isNull()) {</span>
+<span class="fc" id="L140">                newTarget.setAll(rootValue.asObject());</span>
+            }
+        }
+
+        // let the recursion begin &gt;:-(
+<span class="fc" id="L145">        final JsonObject jsonObject = setFieldInHierarchy(newTarget, pointer.nextLevel(), field).build();</span>
+<span class="fc" id="L146">        return target.set(rootKey, jsonObject);</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder set(final JsonField field, final Predicate&lt;JsonField&gt; predicate) {
+<span class="fc" id="L151">        requireNonNull(field, &quot;The field to be set must not be null!&quot;);</span>
+
+<span class="fc bfc" id="L153" title="All 2 branches covered.">        if (predicate.test(field)) {</span>
+<span class="fc" id="L154">            fields.put(field.getKeyName(), field);</span>
+        }
+<span class="fc" id="L156">        return this;</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder remove(final CharSequence key) {
+<span class="fc" id="L161">        return remove(JsonFactory.newPointer(key));</span>
+    }
+
+    private ImmutableJsonObjectBuilder remove(final JsonPointer pointer) {
+<span class="fc" id="L165">        pointer.getRoot()</span>
+<span class="fc" id="L166">                .map(JsonKey::toString)</span>
+<span class="fc" id="L167">                .map(fields::get)</span>
+<span class="fc" id="L168">                .ifPresent(jsonField -&gt; {</span>
+<span class="fc" id="L169">                    final JsonValue rootValue = jsonField.getValue();</span>
+<span class="fc" id="L170">                    final JsonPointer nextPointerLevel = pointer.nextLevel();</span>
+<span class="pc bpc" id="L171" title="1 of 4 branches missed.">                    if (rootValue.isObject() &amp;&amp; !nextPointerLevel.isEmpty()) {</span>
+<span class="fc" id="L172">                        JsonObject rootObject = rootValue.asObject();</span>
+<span class="fc" id="L173">                        rootObject = rootObject.remove(nextPointerLevel);</span>
+<span class="fc" id="L174">                        set(JsonFactory.newField(jsonField.getKey(), rootObject,</span>
+<span class="fc" id="L175">                                jsonField.getDefinition().orElse(null)));</span>
+<span class="fc" id="L176">                    } else {</span>
+<span class="fc" id="L177">                        fields.remove(jsonField.getKeyName());</span>
+                    }
+<span class="fc" id="L179">                });</span>
+
+<span class="fc" id="L181">        return this;</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder remove(final JsonFieldDefinition fieldDefinition) {
+<span class="nc" id="L186">        requireNonNull(fieldDefinition, &quot;The field definition must not be null!&quot;);</span>
+<span class="nc" id="L187">        return remove(fieldDefinition.getPointer());</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder setAll(final Iterable&lt;JsonField&gt; fields, final Predicate&lt;JsonField&gt; predicate) {
+<span class="nc" id="L192">        requireNonNull(fields, &quot;The JSON fields to be set must not be null!&quot;);</span>
+<span class="nc" id="L193">        checkPredicate(predicate);</span>
+
+<span class="nc" id="L195">        StreamSupport.stream(fields.spliterator(), false)</span>
+<span class="nc bnc" id="L196" title="All 4 branches missed.">                .filter(field -&gt; !field.getDefinition().isPresent() || predicate.test(field))</span>
+<span class="nc" id="L197">                .forEach(fieldToBeSet -&gt; this.fields.put(fieldToBeSet.getKeyName(), fieldToBeSet));</span>
+
+<span class="nc" id="L199">        return this;</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder setAll(final Iterable&lt;JsonField&gt; fields) {
+<span class="fc" id="L204">        requireNonNull(fields, &quot;The JSON fields to be set must not be null!&quot;);</span>
+
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        for (final JsonField jsonField : fields) {</span>
+<span class="fc" id="L207">            this.fields.put(jsonField.getKeyName(), jsonField);</span>
+<span class="fc" id="L208">        }</span>
+
+<span class="fc" id="L210">        return this;</span>
+    }
+
+    @Override
+    public ImmutableJsonObjectBuilder removeAll() {
+<span class="fc" id="L215">        fields.clear();</span>
+<span class="fc" id="L216">        return this;</span>
+    }
+
+    @Override
+    public Iterator&lt;JsonField&gt; iterator() {
+<span class="fc" id="L221">        return fields.values().iterator();</span>
+    }
+
+    @Override
+    public boolean isEmpty() {
+<span class="nc" id="L226">        return fields.isEmpty();</span>
+    }
+
+    @Override
+    public int getSize() {
+<span class="nc" id="L231">        return fields.size();</span>
+    }
+
+    @Override
+    public Stream&lt;JsonField&gt; stream() {
+<span class="nc" id="L236">        return fields.values().stream();</span>
+    }
+
+    @Override
+    public JsonObject build() {
+<span class="fc" id="L241">        return ImmutableJsonObject.of(fields);</span>
+    }
+
+    @Override
+    public boolean equals(final Object o) {
+<span class="fc bfc" id="L246" title="All 2 branches covered.">        if (this == o) {</span>
+<span class="fc" id="L247">            return true;</span>
+        }
+<span class="fc bfc" id="L249" title="All 4 branches covered.">        if (o == null || getClass() != o.getClass()) {</span>
+<span class="fc" id="L250">            return false;</span>
+        }
+<span class="fc" id="L252">        final ImmutableJsonObjectBuilder that = (ImmutableJsonObjectBuilder) o;</span>
+<span class="fc" id="L253">        return Objects.equals(fields, that.fields);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L258">        return Objects.hash(fields);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L263">        return getClass().getSimpleName() + &quot; [&quot; + &quot;fields=&quot; + fields.values() + &quot;]&quot;;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

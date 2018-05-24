@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DirectivesLoggingUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.utils</a> &gt; <span class="el_source">DirectivesLoggingUtils.java</span></div><h1>DirectivesLoggingUtils.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.utils;
+
+import static java.util.Objects.requireNonNull;
+
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Supplier;
+
+import org.eclipse.ditto.services.gateway.security.HttpHeader;
+import org.slf4j.MDC;
+
+/**
+ * Utility class which provides wrappers for adding a setting a correlation id to slf4j's {@link org.slf4j.MDC} and
+ * restoring the original {@link org.slf4j.MDC} when the wrapped call is finished.
+ */
+public final class DirectivesLoggingUtils {
+
+<span class="fc" id="L29">    private static final String X_CR_CORRELATION_ID = HttpHeader.X_CORRELATION_ID.getName();</span>
+
+<span class="nc" id="L31">    private DirectivesLoggingUtils() {</span>
+<span class="nc" id="L32">        throw new AssertionError();</span>
+    }
+
+    /**
+     * Enhances the passed {@link Supplier} with an &quot;MDC&quot; map entry for the passed {@code correlationId}.
+     *
+     * @param correlationId the correlationId to set.
+     * @param supplier the Supplier to set the &quot;MDC&quot; on.
+     */
+    public static &lt;T&gt; T enhanceLogWithCorrelationId(final String correlationId, final Supplier&lt;T&gt; supplier) {
+<span class="fc" id="L42">        return new CorrelationIdLoggingSupplier&lt;&gt;(correlationId, supplier).get();</span>
+    }
+
+    /**
+     * Enhances the passed {@link Runnable} with an &quot;MDC&quot; map entry for the passed {@code correlationId}.
+     *
+     * @param correlationId the correlationId to set.
+     * @param runnable the Runnable to set the &quot;MDC&quot; on.
+     */
+    public static void enhanceLogWithCorrelationId(final String correlationId, final Runnable runnable) {
+<span class="nc" id="L52">        new CorrelationIdLoggingSupplier&lt;Void&gt;(correlationId, () -&gt; {</span>
+<span class="nc" id="L53">            runnable.run();</span>
+<span class="nc" id="L54">            return null;</span>
+<span class="nc" id="L55">        }).get();</span>
+<span class="nc" id="L56">    }</span>
+
+    /**
+     * Enhances the passed {@link Supplier} with an &quot;MDC&quot; map entry for the passed {@code correlationIdOpt}, if it is
+     * present.
+     *
+     * @param correlationIdOpt the optional correlationId to set.
+     * @param supplier the Supplier to set the &quot;MDC&quot; on.
+     */
+    public static &lt;T&gt; T enhanceLogWithCorrelationId(final Optional&lt;String&gt; correlationIdOpt, final Supplier&lt;T&gt;
+            supplier) {
+<span class="nc" id="L67">        return correlationIdOpt.map(correlationId -&gt; enhanceLogWithCorrelationId(correlationId, supplier))</span>
+<span class="nc" id="L68">                .orElse(supplier.get());</span>
+    }
+
+    /**
+     * Enhances the passed {@link Runnable} with an &quot;MDC&quot; map entry for the passed {@code correlationIdOpt}, if it is
+     * present.
+     *
+     * @param correlationIdOpt the optional correlationId to set.
+     * @param runnable the Runnable to set the &quot;MDC&quot; on.
+     */
+    public static void enhanceLogWithCorrelationId(final Optional&lt;String&gt; correlationIdOpt, final Runnable runnable) {
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (correlationIdOpt.isPresent()) {</span>
+<span class="nc" id="L80">            enhanceLogWithCorrelationId(correlationIdOpt.get(), runnable);</span>
+        } else {
+<span class="nc" id="L82">            runnable.run();</span>
+        }
+<span class="nc" id="L84">    }</span>
+
+    private static final class CorrelationIdLoggingSupplier&lt;T&gt; implements Supplier&lt;T&gt; {
+
+        private final String correlationId;
+        private final Supplier&lt;T&gt; wrapped;
+
+<span class="fc" id="L91">        private CorrelationIdLoggingSupplier(final String correlationId, final Supplier&lt;T&gt; wrapped) {</span>
+<span class="fc" id="L92">            this.correlationId = requireNonNull(correlationId);</span>
+<span class="fc" id="L93">            this.wrapped = requireNonNull(wrapped);</span>
+<span class="fc" id="L94">        }</span>
+
+        @Override
+        public T get() {
+<span class="fc" id="L98">            final Map&lt;String, String&gt; originalContext = MDC.getCopyOfContextMap();</span>
+<span class="fc" id="L99">            MDC.put(X_CR_CORRELATION_ID, correlationId);</span>
+            try {
+<span class="fc" id="L101">                return wrapped.get();</span>
+            } finally {
+<span class="fc bfc" id="L103" title="All 2 branches covered.">                if (originalContext != null) {</span>
+<span class="fc" id="L104">                    MDC.setContextMap(originalContext);</span>
+                } else {
+<span class="fc" id="L106">                    MDC.clear();</span>
+                }
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

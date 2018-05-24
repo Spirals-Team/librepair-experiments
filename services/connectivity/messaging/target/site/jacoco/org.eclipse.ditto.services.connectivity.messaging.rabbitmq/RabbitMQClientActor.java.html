@@ -1,0 +1,556 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RabbitMQClientActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Messaging</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.messaging.rabbitmq</a> &gt; <span class="el_source">RabbitMQClientActor.java</span></div><h1>RabbitMQClientActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.messaging.rabbitmq;
+
+import java.io.IOException;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.connectivity.AddressMetric;
+import org.eclipse.ditto.model.connectivity.Connection;
+import org.eclipse.ditto.model.connectivity.ConnectionStatus;
+import org.eclipse.ditto.model.connectivity.ConnectivityModelFactory;
+import org.eclipse.ditto.model.connectivity.Source;
+import org.eclipse.ditto.model.connectivity.Target;
+import org.eclipse.ditto.services.connectivity.messaging.BaseClientActor;
+import org.eclipse.ditto.services.connectivity.messaging.BaseClientData;
+import org.eclipse.ditto.services.connectivity.messaging.BaseClientState;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ClientConnected;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ClientDisconnected;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ConnectionFailure;
+import org.eclipse.ditto.services.connectivity.messaging.internal.ImmutableConnectionFailure;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.signals.commands.connectivity.exceptions.ConnectionFailedException;
+
+import com.newmotion.akka.rabbitmq.ChannelActor;
+import com.newmotion.akka.rabbitmq.ChannelCreated;
+import com.newmotion.akka.rabbitmq.CreateChannel;
+import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.DefaultConsumer;
+import com.rabbitmq.client.Delivery;
+import com.rabbitmq.client.Envelope;
+import com.rabbitmq.client.ShutdownSignalException;
+import com.rabbitmq.client.impl.DefaultExceptionHandler;
+
+import akka.actor.ActorRef;
+import akka.actor.Props;
+import akka.actor.Status;
+import akka.japi.Pair;
+import akka.japi.pf.FSMStateFunctionBuilder;
+import scala.Option;
+import scala.concurrent.duration.FiniteDuration;
+
+/**
+ * Actor which handles connection to AMQP 0.9.1 server.
+ */
+public final class RabbitMQClientActor extends BaseClientActor {
+
+    private static final String RMQ_CONNECTION_ACTOR_NAME = &quot;rmq-connection&quot;;
+    private static final String CONSUMER_CHANNEL = &quot;consumer-channel&quot;;
+    private static final String PUBLISHER_CHANNEL = &quot;publisher-channel&quot;;
+    private static final String CONSUMER_ACTOR_PREFIX = &quot;consumer-&quot;;
+
+    private final RabbitConnectionFactoryFactory rabbitConnectionFactoryFactory;
+    @Nullable private ActorRef rmqConnectionActor;
+    @Nullable private ActorRef consumerChannelActor;
+    @Nullable private ActorRef rmqPublisherActor;
+    @Nullable private ActorRef createConnectionSender;
+
+    private final Map&lt;String, String&gt; consumedTagsToAddresses;
+
+    private RabbitMQClientActor(final Connection connection, final ConnectionStatus connectionStatus,
+             final RabbitConnectionFactoryFactory rabbitConnectionFactoryFactory,
+             final ActorRef conciergeForwarder) {
+<span class="fc" id="L91">        super(connection, connectionStatus, conciergeForwarder);</span>
+
+<span class="fc" id="L93">        this.rabbitConnectionFactoryFactory = rabbitConnectionFactoryFactory;</span>
+<span class="fc" id="L94">        consumedTagsToAddresses = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L95">    }</span>
+
+    /**
+     * Creates Akka configuration object for this actor.
+     *
+     * @param connection the connection.
+     * @param conciergeForwarder the actor used to send signals to the concierge service.
+     * @return the Akka configuration Props object.
+     */
+    public static Props props(final Connection connection, final ActorRef conciergeForwarder) {
+<span class="nc" id="L105">        return Props.create(RabbitMQClientActor.class, validateConnection(connection), connection.getConnectionStatus(),</span>
+<span class="nc" id="L106">                ConnectionBasedRabbitConnectionFactoryFactory.getInstance(), conciergeForwarder);</span>
+    }
+
+    /**
+     * Creates Akka configuration object for this actor.
+     *
+     * @param connection the connection.
+     * @param connectionStatus the desired status of the.
+     * @param conciergeForwarder the actor used to send signals to the concierge service.
+     * @param rabbitConnectionFactoryFactory the ConnectionFactory Factory to use.
+     * @return the Akka configuration Props object.
+     */
+    public static Props propsForTests(final Connection connection, final ConnectionStatus connectionStatus,
+            final ActorRef conciergeForwarder, final RabbitConnectionFactoryFactory rabbitConnectionFactoryFactory) {
+<span class="fc" id="L120">        return Props.create(RabbitMQClientActor.class, validateConnection(connection), connectionStatus,</span>
+                rabbitConnectionFactoryFactory, conciergeForwarder);
+    }
+
+    private static Connection validateConnection(final Connection connection) {
+        // the target addresses must have the format exchange/routingKey for RabbitMQ
+<span class="fc" id="L126">        connection.getTargets()</span>
+<span class="fc" id="L127">                .stream()</span>
+<span class="fc" id="L128">                .map(Target::getAddress)</span>
+<span class="fc" id="L129">                .forEach(RabbitMQTarget::fromTargetAddress);</span>
+<span class="fc" id="L130">        return connection;</span>
+    }
+
+    @Override
+    protected FSMStateFunctionBuilder&lt;BaseClientState, BaseClientData&gt; unhandledHandler(final String connectionId) {
+<span class="fc" id="L135">        return super.unhandledHandler(connectionId)</span>
+<span class="fc" id="L136">                .event(ChannelCreated.class, BaseClientData.class, (channelCreated, data) -&gt; {</span>
+<span class="fc" id="L137">                    handleChannelCreated(channelCreated);</span>
+<span class="fc" id="L138">                    return stay();</span>
+                });
+    }
+
+    @Override
+    protected CompletionStage&lt;Status.Status&gt; doTestConnection(final Connection connection) {
+<span class="nc" id="L144">        createConnectionSender = getSender();</span>
+<span class="nc" id="L145">        return connect(connection, getSender());</span>
+    }
+
+    @Override
+    protected void doConnectClient(final Connection connection, @Nullable final ActorRef origin) {
+<span class="fc" id="L150">        createConnectionSender = origin;</span>
+<span class="fc" id="L151">        connect(connection, origin)</span>
+<span class="fc" id="L152">                .thenAccept(status -&gt; log.info(&quot;Status of connecting in doConnectClient: {}&quot;, status));</span>
+<span class="fc" id="L153">    }</span>
+
+    @Override
+    protected void doReconnectClient(final Connection connection, @Nullable final ActorRef origin) {
+<span class="fc" id="L157">        stopCommandConsumers();</span>
+<span class="fc" id="L158">        stopCommandPublisher();</span>
+
+<span class="fc" id="L160">        onClientDisconnected(Optional::empty, stateData());</span>
+
+<span class="fc" id="L162">        createConnectionSender = origin;</span>
+
+        // wait a little until connecting again:
+<span class="fc" id="L165">        getContext().getSystem().scheduler().scheduleOnce(FiniteDuration.apply(500, TimeUnit.MILLISECONDS),</span>
+<span class="fc" id="L166">                () -&gt; connect(connection, origin)</span>
+<span class="fc" id="L167">                        .thenAccept(status -&gt; {</span>
+<span class="fc" id="L168">                            log.info(&quot;Reconnected successfully&quot;);</span>
+<span class="fc" id="L169">                        }), getContext().getSystem().dispatcher());</span>
+<span class="fc" id="L170">    }</span>
+
+    @Override
+    protected void doDisconnectClient(final Connection connection, @Nullable final ActorRef origin) {
+<span class="fc" id="L174">        stopCommandConsumers();</span>
+<span class="fc" id="L175">        stopCommandPublisher();</span>
+<span class="pc" id="L176">        getSelf().tell((ClientDisconnected) () -&gt; Optional.ofNullable(origin), origin);</span>
+<span class="fc" id="L177">    }</span>
+
+    @Override
+    protected void onClientConnected(final ClientConnected clientConnected, final BaseClientData data) {
+<span class="fc" id="L181">        log.info(&quot;Received ClientConnected&quot;);</span>
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">        if (rmqConnectionActor != null) {</span>
+<span class="pc bpc" id="L183" title="1 of 2 branches missed.">            if (consumerChannelActor == null) {</span>
+                // create a consumer channel - if source is configured
+<span class="pc bpc" id="L185" title="1 of 2 branches missed.">                if (isConsuming()) {</span>
+<span class="fc" id="L186">                    rmqConnectionActor.tell(</span>
+<span class="fc" id="L187">                            CreateChannel.apply(</span>
+<span class="fc" id="L188">                                    ChannelActor.props((channel, actorRef) -&gt; {</span>
+<span class="fc" id="L189">                                        log.info(&quot;Did set up consumer channel: {}&quot;, channel);</span>
+<span class="fc" id="L190">                                        startCommandConsumers(channel);</span>
+<span class="fc" id="L191">                                        consumerChannelActor = actorRef;</span>
+<span class="fc" id="L192">                                        return null;</span>
+                                    }),
+<span class="fc" id="L194">                                    Option.apply(CONSUMER_CHANNEL)), getSelf());</span>
+                } else {
+<span class="nc" id="L196">                    log.info(&quot;Not starting channels, no sources were configured&quot;);</span>
+                }
+            } else {
+<span class="nc" id="L199">                log.info(&quot;Consumer is already created, didn't create it again..&quot;);</span>
+            }
+<span class="fc" id="L201">            log.debug(&quot;Connection '{}' opened.&quot;, connectionId());</span>
+        }
+<span class="fc" id="L203">    }</span>
+
+    @Override
+    protected void onClientDisconnected(final ClientDisconnected clientDisconnected, final BaseClientData data) {
+<span class="fc" id="L207">        log.info(&quot;Received ClientDisconnected&quot;);</span>
+<span class="pc bpc" id="L208" title="1 of 2 branches missed.">        if (consumerChannelActor != null) {</span>
+<span class="nc" id="L209">            stopChildActor(consumerChannelActor);</span>
+<span class="nc" id="L210">            consumerChannelActor = null;</span>
+        }
+<span class="pc bpc" id="L212" title="1 of 2 branches missed.">        if (rmqConnectionActor != null) {</span>
+<span class="fc" id="L213">            stopChildActor(rmqConnectionActor);</span>
+<span class="fc" id="L214">            rmqConnectionActor = null;</span>
+        }
+<span class="pc bpc" id="L216" title="1 of 2 branches missed.">        if (rmqPublisherActor != null) {</span>
+<span class="fc" id="L217">            stopChildActor(rmqPublisherActor);</span>
+<span class="fc" id="L218">            rmqPublisherActor = null;</span>
+        }
+<span class="fc" id="L220">    }</span>
+
+    @Override
+    protected Optional&lt;ActorRef&gt; getPublisherActor() {
+<span class="nc" id="L224">        return Optional.ofNullable(rmqPublisherActor);</span>
+    }
+
+    @Override
+    protected void onConnectionFailure(final ConnectionFailure connectionFailure, final BaseClientData data) {
+<span class="fc" id="L229">        super.onConnectionFailure(connectionFailure, data);</span>
+
+<span class="fc" id="L231">        final Throwable exception = connectionFailure.getFailure().cause();</span>
+<span class="fc" id="L232">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+<span class="fc" id="L233">        log.warning(&quot;Got unexpected ConnectionDriver exception on connection &lt;{}&gt; {}: {}&quot;, connectionId(),</span>
+<span class="fc" id="L234">                exception.getClass().getSimpleName(), exception.getMessage());</span>
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">        if (createConnectionSender != null) {</span>
+<span class="fc" id="L236">            createConnectionSender.tell(</span>
+<span class="fc" id="L237">                    ConnectionFailedException.newBuilder(connectionId())</span>
+<span class="fc" id="L238">                            .description(&quot;The requested Connection could not be connected due to '&quot; +</span>
+<span class="fc" id="L239">                                    exception.getClass().getSimpleName() + &quot;: &quot; + exception.getMessage() + &quot;'&quot;)</span>
+<span class="fc" id="L240">                            .cause(exception)</span>
+<span class="fc" id="L241">                            .build(), null);</span>
+<span class="fc" id="L242">            createConnectionSender = null;</span>
+        }
+<span class="fc" id="L244">    }</span>
+
+    @Override
+    protected Map&lt;String, AddressMetric&gt; getSourceConnectionStatus(final Source source) {
+        try {
+<span class="nc" id="L249">            return collectAsList(source.getAddresses().stream()</span>
+<span class="nc" id="L250">                    .flatMap(address -&gt; IntStream.range(0, source.getConsumerCount())</span>
+<span class="nc" id="L251">                            .mapToObj(idx -&gt; {</span>
+<span class="nc" id="L252">                                final String addressWithIndex = address + &quot;-&quot; + idx;</span>
+<span class="nc" id="L253">                                final String actorName = escapeActorName(CONSUMER_ACTOR_PREFIX + addressWithIndex);</span>
+<span class="nc" id="L254">                                return retrieveAddressMetric(addressWithIndex, actorName);</span>
+                            })
+<span class="nc" id="L256">                    ).collect(Collectors.toList()))</span>
+<span class="nc" id="L257">                    .thenApply((entries) -&gt;</span>
+<span class="nc" id="L258">                            entries.stream().collect(Collectors.toMap(Pair::first, Pair::second)))</span>
+<span class="nc" id="L259">                    .get(RETRIEVE_METRICS_TIMEOUT, TimeUnit.SECONDS);</span>
+<span class="nc" id="L260">        } catch (final InterruptedException | ExecutionException | TimeoutException e) {</span>
+<span class="nc" id="L261">            log.error(e, &quot;Error while aggregating sources ConnectionStatus: {}&quot;, e.getMessage());</span>
+<span class="nc" id="L262">            return Collections.emptyMap();</span>
+        }
+    }
+
+    @Override
+    protected Map&lt;String, AddressMetric&gt; getTargetConnectionStatus(final Target target) {
+<span class="nc" id="L268">        final HashMap&lt;String, AddressMetric&gt; targetStatus = new HashMap&lt;&gt;();</span>
+        try {
+<span class="nc" id="L270">            final Pair&lt;String, AddressMetric&gt; targetEntry =</span>
+<span class="nc" id="L271">                    retrieveAddressMetric(target.getAddress(), RabbitMQPublisherActor.ACTOR_NAME)</span>
+<span class="nc" id="L272">                            .get(RETRIEVE_METRICS_TIMEOUT, TimeUnit.SECONDS);</span>
+<span class="nc" id="L273">            targetStatus.put(targetEntry.first(), targetEntry.second());</span>
+<span class="nc" id="L274">            return targetStatus;</span>
+<span class="nc" id="L275">        } catch (final InterruptedException | ExecutionException | TimeoutException e) {</span>
+<span class="nc" id="L276">            log.error(e, &quot;Error while aggregating target ConnectionStatus: {}&quot;, e.getMessage());</span>
+<span class="nc" id="L277">            return Collections.emptyMap();</span>
+        }
+    }
+
+    private void handleChannelCreated(final ChannelCreated channelCreated) {
+<span class="fc" id="L282">        consumerChannelActor = channelCreated.channel();</span>
+<span class="fc" id="L283">    }</span>
+
+    private CompletionStage&lt;Status.Status&gt; connect(final Connection connection, @Nullable final ActorRef origin) {
+<span class="fc" id="L286">        final CompletableFuture&lt;Status.Status&gt; future = new CompletableFuture&lt;&gt;();</span>
+<span class="pc bpc" id="L287" title="1 of 2 branches missed.">        if (rmqConnectionActor == null) {</span>
+<span class="fc" id="L288">            final ActorRef self = getSelf();</span>
+            try {
+<span class="fc" id="L290">                final ConnectionFactory connectionFactory = rabbitConnectionFactoryFactory</span>
+<span class="fc" id="L291">                        .createConnectionFactory(connection, new RabbitMQExceptionHandler(throwable -&gt; {</span>
+<span class="nc" id="L292">                            self.tell(new ImmutableConnectionFailure(origin, throwable, null), self);</span>
+<span class="nc" id="L293">                            future.complete(new Status.Failure(throwable));</span>
+<span class="nc" id="L294">                        }));</span>
+
+<span class="fc" id="L296">                final Props props = com.newmotion.akka.rabbitmq.ConnectionActor.props(connectionFactory,</span>
+<span class="fc" id="L297">                        FiniteDuration.apply(10, TimeUnit.SECONDS), (rmqConnection, connectionActorRef) -&gt; {</span>
+<span class="fc" id="L298">                            log.info(&quot;Established RMQ connection: {}&quot;, rmqConnection);</span>
+<span class="pc" id="L299">                            self.tell((ClientConnected) () -&gt; Optional.ofNullable(createConnectionSender), origin);</span>
+<span class="fc" id="L300">                            return null;</span>
+                        });
+<span class="fc" id="L302">                rmqConnectionActor = startChildActor(RMQ_CONNECTION_ACTOR_NAME, props);</span>
+
+<span class="fc" id="L304">                rmqPublisherActor = startRmqPublisherActor().orElse(null);</span>
+
+                // create publisher channel
+<span class="fc" id="L307">                rmqConnectionActor.tell(</span>
+<span class="fc" id="L308">                        CreateChannel.apply(</span>
+<span class="fc" id="L309">                                ChannelActor.props((channel, s) -&gt; {</span>
+<span class="fc" id="L310">                                    log.info(&quot;Did set up publisher channel: {}&quot;, channel);</span>
+<span class="fc" id="L311">                                    future.complete(new Status.Success(&quot;channel created&quot;));</span>
+<span class="fc" id="L312">                                    return null;</span>
+                                }),
+<span class="fc" id="L314">                                Option.apply(PUBLISHER_CHANNEL)), rmqPublisherActor);</span>
+<span class="fc" id="L315">            } catch (final Exception exception) {</span>
+<span class="fc" id="L316">                self.tell(new ImmutableConnectionFailure(origin, exception, null), self);</span>
+<span class="fc" id="L317">                future.complete(new Status.Failure(exception));</span>
+<span class="fc" id="L318">            }</span>
+<span class="fc" id="L319">        } else {</span>
+<span class="nc" id="L320">            log.debug(&quot;Connection '{}' is already open.&quot;, connectionId());</span>
+<span class="nc" id="L321">            future.complete(new Status.Success(&quot;already connected&quot;));</span>
+        }
+<span class="fc" id="L323">        return future;</span>
+    }
+
+    private Optional&lt;ActorRef&gt; startRmqPublisherActor() {
+<span class="pc bpc" id="L327" title="1 of 2 branches missed.">        if (isPublishing()) {</span>
+<span class="fc" id="L328">            return Optional.of(getContext().findChild(RabbitMQPublisherActor.ACTOR_NAME).orElseGet(() -&gt; {</span>
+<span class="fc" id="L329">                final Props publisherProps = RabbitMQPublisherActor.props(getTargetsOrEmptySet());</span>
+<span class="fc" id="L330">                return startChildActor(RabbitMQPublisherActor.ACTOR_NAME, publisherProps);</span>
+            }));
+        } else {
+<span class="nc" id="L333">            return Optional.empty();</span>
+        }
+    }
+
+    private void stopCommandPublisher() {
+<span class="fc" id="L338">        stopChildActor(RabbitMQPublisherActor.ACTOR_NAME);</span>
+<span class="fc" id="L339">    }</span>
+
+    private void stopCommandConsumers() {
+<span class="fc" id="L342">        getContext().getChildren().forEach(child -&gt; {</span>
+<span class="fc" id="L343">            final String actorName = child.path().name();</span>
+<span class="pc bpc" id="L344" title="1 of 2 branches missed.">            if (actorName.startsWith(CONSUMER_ACTOR_PREFIX)) {</span>
+<span class="nc" id="L345">                stopChildActor(child);</span>
+            }
+<span class="fc" id="L347">        });</span>
+
+        // block until all were stopped:
+<span class="fc" id="L350">        getContext().getChildren().forEach(child -&gt; {</span>
+<span class="fc" id="L351">            final String actorName = child.path().name();</span>
+<span class="pc bpc" id="L352" title="1 of 2 branches missed.">            if (actorName.startsWith(CONSUMER_ACTOR_PREFIX)) {</span>
+<span class="nc" id="L353">                int counter = 5;</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">                while (getContext().findChild(actorName).isPresent()) {</span>
+                    try {
+<span class="nc" id="L356">                        Thread.sleep(10);</span>
+<span class="nc" id="L357">                    } catch (final InterruptedException e) {</span>
+<span class="nc" id="L358">                        Thread.currentThread().interrupt();</span>
+<span class="nc" id="L359">                    }</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">                    if (--counter == 0) {</span>
+<span class="nc" id="L361">                        break;</span>
+                    }
+                }
+                ;
+            }
+<span class="fc" id="L366">        });</span>
+<span class="fc" id="L367">    }</span>
+
+    private void startCommandConsumers(final Channel channel) {
+<span class="fc" id="L370">        log.info(&quot;Starting to consume queues...&quot;);</span>
+        try {
+<span class="fc" id="L372">            ensureQueuesExist(channel);</span>
+<span class="fc" id="L373">            stopCommandConsumers();</span>
+<span class="fc" id="L374">            startConsumers(channel);</span>
+<span class="nc" id="L375">        } catch (final DittoRuntimeException dre) {</span>
+<span class="nc bnc" id="L376" title="All 2 branches missed.">            if (createConnectionSender != null) {</span>
+<span class="nc" id="L377">                createConnectionSender.tell(new Status.Failure(dre), getSelf());</span>
+<span class="nc" id="L378">                createConnectionSender = null;</span>
+            }
+<span class="nc bnc" id="L380" title="All 2 branches missed.">            if (consumerChannelActor != null) {</span>
+                // stop consumer channel actor
+<span class="nc" id="L382">                stopChildActor(consumerChannelActor);</span>
+<span class="nc" id="L383">                consumerChannelActor = null;</span>
+            }
+<span class="fc" id="L385">        }</span>
+<span class="pc bpc" id="L386" title="1 of 2 branches missed.">        if (createConnectionSender != null) {</span>
+<span class="fc" id="L387">            createConnectionSender.tell(new Status.Success(BaseClientState.CONNECTED), getSelf());</span>
+<span class="fc" id="L388">            createConnectionSender = null;</span>
+        }
+<span class="fc" id="L390">    }</span>
+
+    private void startConsumers(final Channel channel) {
+<span class="fc" id="L393">        final Optional&lt;ActorRef&gt; messageMappingProcessor = getMessageMappingProcessorActor();</span>
+<span class="fc bfc" id="L394" title="All 2 branches covered.">        if (messageMappingProcessor.isPresent()) {</span>
+<span class="fc" id="L395">            getSourcesOrEmptySet().forEach(source -&gt;</span>
+<span class="fc" id="L396">                    source.getAddresses().forEach(sourceAddress -&gt; {</span>
+<span class="fc bfc" id="L397" title="All 2 branches covered.">                        for (int i = 0; i &lt; source.getConsumerCount(); i++) {</span>
+<span class="fc" id="L398">                            final String addressWithIndex = sourceAddress + &quot;-&quot; + i;</span>
+<span class="fc" id="L399">                            final String childName = CONSUMER_ACTOR_PREFIX + addressWithIndex;</span>
+<span class="fc" id="L400">                            final ActorRef consumer = startChildActor(childName,</span>
+<span class="fc" id="L401">                                    RabbitMQConsumerActor.props(sourceAddress, messageMappingProcessor.get()));</span>
+                            try {
+<span class="fc" id="L403">                                final String consumerTag = channel.basicConsume(sourceAddress, false,</span>
+                                        new RabbitMQMessageConsumer(consumer, channel));
+<span class="fc" id="L405">                                log.debug(&quot;Consuming queue &lt;{}&gt;, consumer tag is &lt;{}&gt;&quot;, addressWithIndex, consumerTag);</span>
+<span class="fc" id="L406">                                consumedTagsToAddresses.put(consumerTag, addressWithIndex);</span>
+<span class="nc" id="L407">                            } catch (final IOException e) {</span>
+<span class="nc" id="L408">                                log.warning(&quot;Failed to consume queue &lt;{}&gt;: &lt;{}&gt;&quot;, addressWithIndex, e.getMessage());</span>
+<span class="fc" id="L409">                            }</span>
+                        }
+<span class="fc" id="L411">                    })</span>
+            );
+        } else {
+<span class="fc" id="L414">            log.warning(&quot;The MessageMappingProcessor was not available and therefore no consumers were started!&quot;);</span>
+        }
+<span class="fc" id="L416">    }</span>
+
+    private void ensureQueuesExist(final Channel channel) {
+<span class="fc" id="L419">        final List&lt;String&gt; missingQueues = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L420">        getSourcesOrEmptySet().forEach(consumer -&gt;</span>
+<span class="fc" id="L421">                consumer.getAddresses().forEach(address -&gt; {</span>
+                    try {
+<span class="fc" id="L423">                        channel.queueDeclarePassive(address);</span>
+<span class="nc" id="L424">                    } catch (final IOException e) {</span>
+<span class="nc" id="L425">                        missingQueues.add(address);</span>
+<span class="nc" id="L426">                        log.warning(&quot;The queue &lt;{}&gt; does not exist.&quot;, address);</span>
+<span class="fc" id="L427">                    }</span>
+<span class="fc" id="L428">                })</span>
+        );
+<span class="pc bpc" id="L430" title="1 of 2 branches missed.">        if (!missingQueues.isEmpty()) {</span>
+<span class="nc" id="L431">            log.warning(&quot;Stopping RMQ client actor for connection &lt;{}&gt; as queues to connect to are missing: &lt;{}&gt;&quot;,</span>
+<span class="nc" id="L432">                    connectionId(), missingQueues);</span>
+<span class="nc" id="L433">            throw ConnectionFailedException.newBuilder(connectionId())</span>
+<span class="nc" id="L434">                    .description(&quot;The queues &quot; + missingQueues + &quot; to connect to are missing.&quot;)</span>
+<span class="nc" id="L435">                    .build();</span>
+        }
+<span class="fc" id="L437">    }</span>
+
+    private Optional&lt;String&gt; consumingQueueByTag(final String consumerTag) {
+<span class="nc" id="L440">        return Optional.ofNullable(consumedTagsToAddresses.get(consumerTag));</span>
+    }
+
+    /**
+     * Custom exception handler which handles exception during connection.
+     */
+    private class RabbitMQExceptionHandler extends DefaultExceptionHandler {
+
+        private final Consumer&lt;Throwable&gt; exceptionHandler;
+
+<span class="fc" id="L450">        private RabbitMQExceptionHandler(final Consumer&lt;Throwable&gt; exceptionHandler) {</span>
+<span class="fc" id="L451">            this.exceptionHandler = exceptionHandler;</span>
+<span class="fc" id="L452">        }</span>
+
+        @Override
+        public void handleUnexpectedConnectionDriverException(final com.rabbitmq.client.Connection conn,
+                final Throwable exception) {
+
+            // establishing the connection was not possible (maybe wrong host, port, credentials, ...)
+<span class="nc" id="L459">            exceptionHandler.accept(exception);</span>
+<span class="nc" id="L460">        }</span>
+    }
+
+    /**
+     * Custom consumer which is notified about different events related to the connection in order to track
+     * connectivity status.
+     */
+    private class RabbitMQMessageConsumer extends DefaultConsumer {
+
+        private final ActorRef consumerActor;
+
+        /**
+         * Constructs a new instance and records its association to the passed-in channel.
+         *
+         * @param channel the channel to which this consumer is attached
+         */
+<span class="fc" id="L476">        private RabbitMQMessageConsumer(final ActorRef consumerActor, final Channel channel) {</span>
+<span class="fc" id="L477">            super(channel);</span>
+<span class="fc" id="L478">            this.consumerActor = consumerActor;</span>
+<span class="fc" id="L479">            consumerActor.tell(ConnectivityModelFactory.newAddressMetric(ConnectionStatus.OPEN,</span>
+<span class="fc" id="L480">                    &quot;Consumer initialized at &quot; + Instant.now(), 0, null), null);</span>
+<span class="fc" id="L481">        }</span>
+
+        @Override
+        public void handleDelivery(final String consumerTag, final Envelope envelope,
+                final AMQP.BasicProperties properties, final byte[] body) {
+
+<span class="nc" id="L487">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+            try {
+<span class="nc" id="L489">                consumerActor.tell(new Delivery(envelope, properties, body), RabbitMQClientActor.this.getSelf());</span>
+<span class="nc" id="L490">            } catch (final Exception e) {</span>
+<span class="nc" id="L491">                log.info(&quot;Failed to process delivery &lt;{}&gt;: {}&quot;, envelope.getDeliveryTag(), e.getMessage());</span>
+            } finally {
+<span class="nc" id="L493">                incrementConsumedMessageCounter();</span>
+                try {
+<span class="nc" id="L495">                    getChannel().basicAck(envelope.getDeliveryTag(), false);</span>
+<span class="nc" id="L496">                } catch (final IOException e) {</span>
+<span class="nc" id="L497">                    log.info(&quot;Failed to ack delivery &lt;{}&gt;: {}&quot;, envelope.getDeliveryTag(), e.getMessage());</span>
+<span class="nc" id="L498">                }</span>
+            }
+<span class="nc" id="L500">        }</span>
+
+        @Override
+        public void handleConsumeOk(final String consumerTag) {
+<span class="nc" id="L504">            super.handleConsumeOk(consumerTag);</span>
+<span class="nc" id="L505">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+
+<span class="nc" id="L507">            consumingQueueByTag(consumerTag).ifPresent(queueName -&gt; {</span>
+<span class="nc" id="L508">                log.info(&quot;consume OK for consumer queue &lt;{}&gt; &quot; + &quot;on connection &lt;{}&gt;&quot;, queueName, connectionId());</span>
+<span class="nc" id="L509">            });</span>
+
+<span class="nc" id="L511">            consumerActor.tell(ConnectivityModelFactory.newAddressMetric(ConnectionStatus.OPEN,</span>
+<span class="nc" id="L512">                    &quot;Consumer started at &quot; + Instant.now(), 0, null), null);</span>
+<span class="nc" id="L513">        }</span>
+
+        @Override
+        public void handleCancel(final String consumerTag) throws IOException {
+<span class="nc" id="L517">            super.handleCancel(consumerTag);</span>
+<span class="nc" id="L518">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+
+<span class="nc" id="L520">            consumingQueueByTag(consumerTag).ifPresent(queueName -&gt; {</span>
+<span class="nc" id="L521">                log.warning(&quot;Consumer with queue &lt;{}&gt; was cancelled on connection &lt;{}&gt; - this can happen for &quot; +</span>
+<span class="nc" id="L522">                        &quot;example when the queue was deleted&quot;, queueName, connectionId());</span>
+<span class="nc" id="L523">            });</span>
+
+<span class="nc" id="L525">            consumerActor.tell(ConnectivityModelFactory.newAddressMetric(ConnectionStatus.FAILED,</span>
+<span class="nc" id="L526">                    &quot;Consumer for queue cancelled at &quot; + Instant.now(), 0, null), null);</span>
+<span class="nc" id="L527">        }</span>
+
+        @Override
+        public void handleShutdownSignal(final String consumerTag, final ShutdownSignalException sig) {
+<span class="nc" id="L531">            super.handleShutdownSignal(consumerTag, sig);</span>
+<span class="nc" id="L532">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+
+<span class="nc" id="L534">            consumingQueueByTag(consumerTag).ifPresent(queueName -&gt; {</span>
+<span class="nc" id="L535">                log.warning(&quot;Consumer with queue &lt;{}&gt; shutdown as the channel or the underlying connection has &quot; +</span>
+<span class="nc" id="L536">                        &quot;been shut down on connection &lt;{}&gt;&quot;, queueName, connectionId());</span>
+<span class="nc" id="L537">            });</span>
+
+<span class="nc" id="L539">            consumerActor.tell(ConnectivityModelFactory.newAddressMetric(ConnectionStatus.FAILED,</span>
+<span class="nc" id="L540">                    &quot;Channel or the underlying connection has been shut down at &quot; + Instant.now(), 0, null), null);</span>
+<span class="nc" id="L541">        }</span>
+
+        @Override
+        public void handleRecoverOk(final String consumerTag) {
+<span class="nc" id="L545">            super.handleRecoverOk(consumerTag);</span>
+<span class="nc" id="L546">            LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId());</span>
+
+<span class="nc" id="L548">            log.info(&quot;recovered OK for consumer with tag &lt;{}&gt; &quot; + &quot;on connection &lt;{}&gt;&quot;, consumerTag, connectionId());</span>
+
+<span class="nc" id="L550">            getSelf().tell((ClientConnected) Optional::empty, getSelf());</span>
+<span class="nc" id="L551">        }</span>
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

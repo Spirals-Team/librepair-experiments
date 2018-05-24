@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MessageMappingProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Messaging</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.messaging</a> &gt; <span class="el_source">MessageMappingProcessor.java</span></div><h1>MessageMappingProcessor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.messaging;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotEmpty;
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.model.connectivity.ExternalMessage;
+import org.eclipse.ditto.model.connectivity.MappingContext;
+import org.eclipse.ditto.model.connectivity.MessageMappingFailedException;
+import org.eclipse.ditto.protocoladapter.Adaptable;
+import org.eclipse.ditto.protocoladapter.DittoProtocolAdapter;
+import org.eclipse.ditto.services.connectivity.mapping.DefaultMessageMapperFactory;
+import org.eclipse.ditto.services.connectivity.mapping.DittoMessageMapper;
+import org.eclipse.ditto.services.connectivity.mapping.MessageMapper;
+import org.eclipse.ditto.services.connectivity.mapping.MessageMapperRegistry;
+import org.eclipse.ditto.services.connectivity.mapping.MessageMappers;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.signals.base.Signal;
+
+import akka.actor.ActorSystem;
+import akka.event.DiagnosticLoggingAdapter;
+import kamon.Kamon;
+import kamon.trace.Segment;
+import kamon.trace.TraceContext;
+import scala.Option;
+
+/**
+ * Processes incoming {@link ExternalMessage}s to {@link Signal}s and {@link Signal}s back to {@link ExternalMessage}s.
+ * Encapsulates the message processing logic from the message mapping processor actor.
+ */
+public final class MessageMappingProcessor {
+
+    private static final String INBOUND_MAPPING_TRACE_SUFFIX = &quot;.inbound&quot;;
+    private static final String OUTBOUND_MAPPING_TRACE_SUFFIX = &quot;.outbound&quot;;
+    private static final String SEGMENT_CATEGORY = &quot;payload-mapping&quot;;
+    private static final String MAPPING_SEGMENT_NAME = &quot;mapping&quot;;
+    private static final String PROTOCOL_SEGMENT_NAME = &quot;protocol&quot;;
+<span class="fc" id="L58">    private static final DittoProtocolAdapter PROTOCOL_ADAPTER = DittoProtocolAdapter.newInstance();</span>
+
+    private final String connectionId;
+    private final MessageMapperRegistry registry;
+    private final DiagnosticLoggingAdapter log;
+
+    private MessageMappingProcessor(final String connectionId, final MessageMapperRegistry registry,
+<span class="fc" id="L65">            final DiagnosticLoggingAdapter log) {</span>
+<span class="fc" id="L66">        this.connectionId = connectionId;</span>
+<span class="fc" id="L67">        this.registry = registry;</span>
+<span class="fc" id="L68">        this.log = log;</span>
+<span class="fc" id="L69">    }</span>
+
+    /**
+     * Initializes a new command processor with mappers defined in mapping mappingContext. The dynamic access is needed
+     * to instantiate message mappers for an actor system
+     *
+     * @param mappingContext the mapping Context
+     * @param actorSystem the dynamic access used for message mapper instantiation
+     * @param log the log adapter
+     * @return the processor instance
+     * @throws org.eclipse.ditto.model.connectivity.MessageMapperConfigurationInvalidException if the configuration of
+     * one of the {@code mappingContext} is invalid
+     * @throws org.eclipse.ditto.model.connectivity.MessageMapperConfigurationFailedException if the configuration of
+     * one of the {@code mappingContext} failed for a mapper specific reason
+     */
+    public static MessageMappingProcessor of(final String connectionId, @Nullable final MappingContext mappingContext,
+            final ActorSystem actorSystem, final DiagnosticLoggingAdapter log) {
+<span class="fc" id="L86">        final MessageMapperRegistry registry = DefaultMessageMapperFactory.of(actorSystem, MessageMappers.class, log)</span>
+<span class="fc" id="L87">                .registryOf(DittoMessageMapper.CONTEXT, mappingContext);</span>
+<span class="fc" id="L88">        return new MessageMappingProcessor(connectionId, registry, log);</span>
+    }
+
+    /**
+     * @return the message mapper registry to use for mapping messages.
+     */
+    MessageMapperRegistry getRegistry() {
+<span class="fc" id="L95">        return registry;</span>
+    }
+
+    /**
+     * Processes an ExternalMessage to a Signal.
+     *
+     * @param message the message
+     * @return the signal
+     * @throws RuntimeException if something went wrong
+     */
+    public Optional&lt;Signal&lt;?&gt;&gt; process(final ExternalMessage message) {
+
+<span class="fc" id="L107">        final String correlationId = DittoHeaders.of(message.getHeaders()).getCorrelationId()</span>
+<span class="fc" id="L108">                .orElse(&quot;no-correlation-id&quot;);</span>
+<span class="fc" id="L109">        return doApplyTraced(</span>
+<span class="fc" id="L110">                () -&gt; createProcessingContext(connectionId + INBOUND_MAPPING_TRACE_SUFFIX, correlationId),</span>
+<span class="fc" id="L111">                ctx -&gt; convertMessage(message, ctx));</span>
+    }
+
+    /**
+     * Processes a Signal to an ExternalMessage.
+     *
+     * @param signal the signal
+     * @return the message
+     * @throws RuntimeException if something went wrong
+     */
+    public Optional&lt;ExternalMessage&gt; process(final Signal&lt;?&gt; signal) {
+
+<span class="fc" id="L123">        final String correlationId = signal.getDittoHeaders().getCorrelationId().orElse(&quot;no-correlation-id&quot;);</span>
+<span class="fc" id="L124">        return doApplyTraced(</span>
+<span class="fc" id="L125">                () -&gt; createProcessingContext(connectionId + OUTBOUND_MAPPING_TRACE_SUFFIX, correlationId),</span>
+<span class="fc" id="L126">                ctx -&gt; convertToExternalMessage(() -&gt; PROTOCOL_ADAPTER.toAdaptable(signal), ctx));</span>
+    }
+
+    private Optional&lt;Signal&lt;?&gt;&gt; convertMessage(final ExternalMessage message, final TraceContext ctx) {
+<span class="fc" id="L130">        checkNotNull(message);</span>
+<span class="fc" id="L131">        checkNotNull(ctx);</span>
+
+        try {
+<span class="fc" id="L134">            final Optional&lt;Adaptable&gt; adaptableOpt = doApplyTracedSegment(</span>
+<span class="fc" id="L135">                    () -&gt; createSegment(ctx, MAPPING_SEGMENT_NAME),</span>
+<span class="fc" id="L136">                    () -&gt; getMapper(message).map(message)</span>
+            );
+
+<span class="fc" id="L139">            return adaptableOpt.map(adaptable -&gt; {</span>
+<span class="fc" id="L140">                doUpdateCorrelationId(adaptable);</span>
+
+<span class="fc" id="L142">                return doApplyTracedSegment(</span>
+<span class="fc" id="L143">                        () -&gt; createSegment(ctx, PROTOCOL_SEGMENT_NAME),</span>
+                        () -&gt; {
+<span class="fc" id="L145">                            final Signal&lt;?&gt; signal = PROTOCOL_ADAPTER.fromAdaptable(adaptable);</span>
+<span class="fc" id="L146">                            final DittoHeadersBuilder dittoHeadersBuilder =</span>
+<span class="fc" id="L147">                                    DittoHeaders.newBuilder(message.getHeaders());</span>
+<span class="fc" id="L148">                            dittoHeadersBuilder.putHeaders(signal.getDittoHeaders());</span>
+<span class="fc" id="L149">                            return signal.setDittoHeaders(dittoHeadersBuilder.build());</span>
+                        }
+                );
+            });
+<span class="fc" id="L153">        } catch (final DittoRuntimeException e) {</span>
+<span class="fc" id="L154">            throw e;</span>
+<span class="nc" id="L155">        } catch (final Exception e) {</span>
+<span class="nc" id="L156">            throw MessageMappingFailedException.newBuilder(message.findContentType().orElse(&quot;&quot;))</span>
+<span class="nc" id="L157">                    .description(&quot;Could not map ExternalMessage due to unknown problem: &quot; +</span>
+<span class="nc" id="L158">                            e.getClass().getSimpleName() + &quot; &quot; + e.getMessage())</span>
+<span class="nc" id="L159">                    .dittoHeaders(DittoHeaders.of(message.getHeaders()))</span>
+<span class="nc" id="L160">                    .cause(e)</span>
+<span class="nc" id="L161">                    .build();</span>
+        }
+    }
+
+    private Optional&lt;ExternalMessage&gt; convertToExternalMessage(final Supplier&lt;Adaptable&gt; adaptableSupplier,
+            final TraceContext ctx) {
+<span class="fc" id="L167">        checkNotNull(adaptableSupplier);</span>
+<span class="fc" id="L168">        checkNotNull(ctx);</span>
+
+        try {
+<span class="fc" id="L171">            final Adaptable adaptable = doApplyTracedSegment(</span>
+<span class="fc" id="L172">                    () -&gt; createSegment(ctx, PROTOCOL_SEGMENT_NAME), adaptableSupplier);</span>
+
+<span class="fc" id="L174">            doUpdateCorrelationId(adaptable);</span>
+
+<span class="fc" id="L176">            return doApplyTracedSegment(</span>
+<span class="fc" id="L177">                    () -&gt; createSegment(ctx, MAPPING_SEGMENT_NAME),</span>
+<span class="fc" id="L178">                    () -&gt; getMapper(adaptable).map(adaptable)</span>
+            );
+<span class="nc" id="L180">        } catch (final DittoRuntimeException e) {</span>
+<span class="nc" id="L181">            throw e;</span>
+<span class="nc" id="L182">        } catch (final Exception e) {</span>
+<span class="nc" id="L183">            final Optional&lt;DittoHeaders&gt; headers = adaptableSupplier.get()</span>
+<span class="nc" id="L184">                    .getHeaders();</span>
+<span class="nc" id="L185">            final String contentType = headers</span>
+<span class="nc" id="L186">                    .map(h -&gt; h.get(ExternalMessage.CONTENT_TYPE_HEADER))</span>
+<span class="nc" id="L187">                    .orElse(&quot;&quot;);</span>
+<span class="nc" id="L188">            throw MessageMappingFailedException.newBuilder(contentType)</span>
+<span class="nc" id="L189">                    .description(&quot;Could not map Adaptable due to unknown problem: &quot; + e.getMessage())</span>
+<span class="nc" id="L190">                    .dittoHeaders(headers.orElseGet(DittoHeaders::empty))</span>
+<span class="nc" id="L191">                    .cause(e)</span>
+<span class="nc" id="L192">                    .build();</span>
+        }
+    }
+
+    private MessageMapper getMapper(final ExternalMessage message) {
+
+<span class="fc" id="L198">        LogUtil.enhanceLogWithCorrelationId(log, message.getHeaders().get(&quot;correlation-id&quot;));</span>
+<span class="fc" id="L199">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId);</span>
+
+<span class="fc" id="L201">        final Optional&lt;String&gt; contentTypeOpt = message.findContentType();</span>
+<span class="fc bfc" id="L202" title="All 2 branches covered.">        if (contentTypeOpt.isPresent()) {</span>
+<span class="fc" id="L203">            final String contentType = contentTypeOpt.get();</span>
+<span class="pc bpc" id="L204" title="1 of 2 branches missed.">            if (registry.getDefaultMapper().getContentType().filter(contentType::equals).isPresent()) {</span>
+<span class="nc" id="L205">                log.info(&quot;Selected Default MessageMapper for mapping ExternalMessage as content-type matched &lt;{}&gt;&quot;,</span>
+                        contentType);
+<span class="nc" id="L207">                return registry.getDefaultMapper();</span>
+            }
+        }
+
+<span class="fc" id="L211">        return registry.getMapper().orElseGet(() -&gt; {</span>
+<span class="fc" id="L212">            log.debug(&quot;Falling back to Default MessageMapper for mapping ExternalMessage &quot; +</span>
+                    &quot;as no MessageMapper was present: {}&quot;, message);
+<span class="fc" id="L214">            return registry.getDefaultMapper();</span>
+        });
+
+    }
+
+    private MessageMapper getMapper(final Adaptable adaptable) {
+
+<span class="fc" id="L221">        doUpdateCorrelationId(adaptable);</span>
+<span class="fc" id="L222">        return registry.getMapper().orElseGet(() -&gt; {</span>
+<span class="fc" id="L223">            log.debug(&quot;Falling back to Default MessageMapper for mapping Adaptable as no MessageMapper was present: {}&quot;,</span>
+                    adaptable);
+<span class="fc" id="L225">            return registry.getDefaultMapper();</span>
+        });
+    }
+
+    private void doUpdateCorrelationId(final Adaptable adaptable) {
+<span class="fc" id="L230">        adaptable.getHeaders().flatMap(DittoHeaders::getCorrelationId)</span>
+<span class="fc" id="L231">                .ifPresent(s -&gt; LogUtil.enhanceLogWithCorrelationId(log, s));</span>
+<span class="fc" id="L232">        LogUtil.enhanceLogWithCustomField(log, BaseClientData.MDC_CONNECTION_ID, connectionId);</span>
+<span class="fc" id="L233">    }</span>
+
+    private Segment createSegment(final TraceContext ctx, final String segmentName) {
+<span class="fc" id="L236">        return ctx.startSegment(segmentName, SEGMENT_CATEGORY, SEGMENT_CATEGORY);</span>
+    }
+
+    private static TraceContext createProcessingContext(final String name, @Nullable final String correlationId) {
+<span class="fc" id="L240">        checkNotEmpty(name, &quot;name&quot;);</span>
+<span class="pc bpc" id="L241" title="2 of 4 branches missed.">        return Objects.isNull(correlationId) || correlationId.isEmpty() ?</span>
+<span class="nc" id="L242">                Kamon.tracer().newContext(name) :</span>
+<span class="fc" id="L243">                Kamon.tracer().newContext(name, Option.apply(correlationId));</span>
+    }
+
+    private static &lt;T&gt; T doApplyTraced(final Supplier&lt;TraceContext&gt; traceContextSupplier,
+            final Function&lt;TraceContext, T&gt; function) {
+<span class="fc" id="L248">        final TraceContext ctx = traceContextSupplier.get();</span>
+        try {
+<span class="fc" id="L250">            final T t = function.apply(ctx);</span>
+<span class="fc" id="L251">            ctx.finish();</span>
+<span class="fc" id="L252">            return t;</span>
+<span class="fc" id="L253">        } catch (final Exception e) {</span>
+<span class="fc" id="L254">            ctx.finishWithError(e);</span>
+<span class="fc" id="L255">            throw e;</span>
+        }
+    }
+
+    private static &lt;T&gt; T doApplyTracedSegment(final Supplier&lt;Segment&gt; segmentSupplier,
+            final Supplier&lt;T&gt; supplier) {
+<span class="fc" id="L261">        final Segment segment = segmentSupplier.get();</span>
+        try {
+<span class="fc" id="L263">            final T t = supplier.get();</span>
+<span class="fc" id="L264">            segment.finish();</span>
+<span class="fc" id="L265">            return t;</span>
+<span class="fc" id="L266">        } catch (final Exception e) {</span>
+<span class="fc" id="L267">            segment.finishWithError(e);</span>
+<span class="fc" id="L268">            throw e;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

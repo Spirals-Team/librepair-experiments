@@ -1,0 +1,568 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StatusInfo.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Health Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.health</a> &gt; <span class="el_source">StatusInfo.java</span></div><h1>StatusInfo.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.health;
+
+import static java.util.Objects.requireNonNull;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.Immutable;
+
+import org.eclipse.ditto.json.JsonArray;
+import org.eclipse.ditto.json.JsonArrayBuilder;
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonFieldDefinition;
+import org.eclipse.ditto.json.JsonMissingFieldException;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonObjectBuilder;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.json.Jsonifiable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Contains the {@code status} and a {@code detail} in case the Status was not {@link StatusInfo.Status#UP} of a
+ * single health &quot;entry&quot;.
+ */
+@Immutable
+public final class StatusInfo implements Jsonifiable&lt;JsonObject&gt; {
+
+    /**
+     * An enumeration of status codes for the health status in the style of spring boot actuator.
+     */
+<span class="fc" id="L56">    public enum Status {</span>
+        /**
+         * Signals the application is in an unknown state.
+         */
+<span class="fc" id="L60">        UNKNOWN,</span>
+
+        /**
+         * Signals the application is up and running.
+         */
+<span class="fc" id="L65">        UP,</span>
+
+        /**
+         * Signals the application is down.
+         */
+<span class="fc" id="L70">        DOWN;</span>
+
+        /**
+         * Merges this status with another status.
+         *
+         * @param otherStatus the other status to merge this status with.
+         * @return the merged status.
+         */
+        public Status mergeWith(final Status otherStatus) {
+<span class="fc" id="L79">            return mergeStatuses(this, otherStatus);</span>
+        }
+
+        private static Status mergeStatuses(final Status firstStatus, final Status secondStatus) {
+<span class="fc" id="L83">            requireNonNull(firstStatus);</span>
+<span class="fc" id="L84">            requireNonNull(secondStatus);</span>
+
+<span class="fc bfc" id="L86" title="All 4 branches covered.">            if (firstStatus == Status.UP &amp;&amp; secondStatus == Status.UP) {</span>
+<span class="fc" id="L87">                return Status.UP;</span>
+            }
+
+<span class="fc bfc" id="L90" title="All 4 branches covered.">            if (firstStatus == Status.UNKNOWN &amp;&amp; secondStatus == Status.UNKNOWN) {</span>
+<span class="fc" id="L91">                return Status.UNKNOWN;</span>
+            }
+
+<span class="fc bfc" id="L94" title="All 8 branches covered.">            if ((firstStatus == Status.UP &amp;&amp; secondStatus == Status.UNKNOWN) ||</span>
+                    (secondStatus == Status.UP &amp;&amp; firstStatus == Status.UNKNOWN)) {
+<span class="fc" id="L96">                return Status.UP;</span>
+            }
+
+<span class="fc" id="L99">            return Status.DOWN;</span>
+        }
+    }
+
+    /**
+     * JSON field of the label.
+     */
+<span class="fc" id="L106">    public static final JsonFieldDefinition&lt;String&gt; JSON_KEY_LABEL =</span>
+<span class="fc" id="L107">            JsonFactory.newStringFieldDefinition(&quot;label&quot;);</span>
+
+    /**
+     * JSON field of the status.
+     */
+<span class="fc" id="L112">    public static final JsonFieldDefinition&lt;String&gt; JSON_KEY_STATUS =</span>
+<span class="fc" id="L113">            JsonFactory.newStringFieldDefinition(&quot;status&quot;);</span>
+
+    /**
+     * JSON field of the detailed status messages.
+     */
+<span class="fc" id="L118">    public static final JsonFieldDefinition&lt;JsonArray&gt; JSON_KEY_DETAILS =</span>
+<span class="fc" id="L119">            JsonFactory.newJsonArrayFieldDefinition(&quot;details&quot;);</span>
+
+    /**
+     * JSON field of the children (sub-statuses).
+     */
+<span class="fc" id="L124">    public static final JsonFieldDefinition&lt;JsonArray&gt; JSON_KEY_CHILDREN =</span>
+<span class="fc" id="L125">            JsonFactory.newJsonArrayFieldDefinition(&quot;children&quot;);</span>
+
+<span class="fc" id="L127">    private static final Set&lt;StatusDetailMessage.Level&gt; COMPOSITE_DETAILS_INCLUDE_LEVELS =</span>
+<span class="fc" id="L128">            Collections.unmodifiableSet(new HashSet&lt;&gt;(Arrays.asList(StatusDetailMessage.Level.ERROR,</span>
+                    StatusDetailMessage.Level.WARN)));
+
+    /**
+     * The default empty status: This defines the state of a composite without children.
+     */
+<span class="fc" id="L134">    private static final Status DEFAULT_EMPTY_STATUS = Status.UP;</span>
+
+<span class="fc" id="L136">    private static final StatusInfo UNKNOWN_INSTANCE = fromStatus(Status.UNKNOWN);</span>
+
+<span class="fc" id="L138">    private static final Logger LOGGER = LoggerFactory.getLogger(StatusInfo.class);</span>
+
+    private final Status status;
+    private final List&lt;StatusDetailMessage&gt; details;
+    private final List&lt;StatusInfo&gt; children;
+    @Nullable
+    private final String label;
+
+    private StatusInfo(final Status status, final Collection&lt;StatusDetailMessage&gt; details,
+<span class="fc" id="L147">            final Collection&lt;StatusInfo&gt; children, @Nullable final String label) {</span>
+<span class="fc" id="L148">        this.status = status;</span>
+<span class="fc" id="L149">        this.details = Collections.unmodifiableList(new ArrayList&lt;&gt;(details));</span>
+<span class="fc" id="L150">        this.children = Collections.unmodifiableList(new ArrayList&lt;&gt;(children));</span>
+<span class="fc" id="L151">        this.label = label;</span>
+<span class="fc" id="L152">    }</span>
+
+    static StatusInfo of(final Status status, final Collection&lt;StatusDetailMessage&gt; details,
+            final Collection&lt;StatusInfo&gt; children, @Nullable final String label) {
+<span class="fc" id="L156">        return new StatusInfo(status, details, children, label);</span>
+    }
+
+    /**
+     * Returns a {@code StatusInfo} with {@code status} {@link Status#UNKNOWN}.
+     *
+     * @return the StatusInfo instance.
+     */
+    public static StatusInfo unknown() {
+<span class="fc" id="L165">        return UNKNOWN_INSTANCE;</span>
+    }
+
+    /**
+     * Returns a new {@code StatusInfo} instance with the specified {@code status}.
+     *
+     * @param status the status.
+     * @return the StatusInfo instance.
+     */
+    public static StatusInfo fromStatus(final Status status) {
+<span class="fc" id="L175">        return fromStatus(status, Collections.emptyList());</span>
+    }
+
+    /**
+     * Returns a new {@code StatusInfo} instance with the specified {@code status} and {@code message}.
+     *
+     * @param status the status.
+     * @param message the message.
+     * @return the StatusInfo instance.
+     */
+    public static StatusInfo fromStatus(final Status status, @Nullable final String message) {
+<span class="fc" id="L186">        requireNonNull(status, &quot;The Status must not be null!&quot;);</span>
+
+<span class="fc" id="L188">        return mapToStatusInfo(status, message);</span>
+    }
+
+    /**
+     * Returns a new {@code StatusInfo} instance with the specified {@code status} and {@code details}.
+     *
+     * @param status the status.
+     * @param details the details.
+     * @return the StatusInfo instance.
+     */
+    public static StatusInfo fromStatus(final Status status, final Collection&lt;StatusDetailMessage&gt; details) {
+<span class="fc" id="L199">        requireNonNull(status, &quot;The Status must not be null!&quot;);</span>
+<span class="fc" id="L200">        requireNonNull(details, &quot;The Details must not be null!&quot;);</span>
+
+<span class="fc" id="L202">        return of(status, details, Collections.emptyList(), null);</span>
+    }
+
+    /**
+     * Returns a new {@code StatusInfo} instance with the specified {@code detail}. The status will be computed.
+     *
+     * @param detail the detail.
+     * @return the StatusInfo instance.
+     */
+    public static StatusInfo fromDetail(final StatusDetailMessage detail) {
+<span class="fc" id="L212">        requireNonNull(detail, &quot;The Detail must not be null!&quot;);</span>
+
+<span class="fc" id="L214">        final Status status = mapToStatusInfo(detail);</span>
+<span class="fc" id="L215">        return of(status, Collections.singletonList(detail), Collections.emptyList(), null);</span>
+    }
+
+    /**
+     * Returns a new {@code StatusInfo} instance with the specified {@code details}. The status will be computed.
+     *
+     * @param details the detail.
+     * @return the StatusInfo instance.
+     */
+    public static StatusInfo fromDetails(final Collection&lt;StatusDetailMessage&gt; details) {
+<span class="fc" id="L225">        requireNonNull(details, &quot;The Details must not be null!&quot;);</span>
+
+<span class="fc" id="L227">        final Status status = mapToStatusInfo(details);</span>
+<span class="fc" id="L228">        return of(status, details, Collections.emptyList(), null);</span>
+    }
+
+    /**
+     * Returns a new {@code StatusInfo} instance with the specified {@code children}. The composite status will be
+     * computed based on the children's statuses.
+     *
+     * @param children the children.
+     * @return the StatusInfo instance.
+     */
+    public static StatusInfo composite(final List&lt;StatusInfo&gt; children) {
+<span class="nc" id="L239">        requireNonNull(children, &quot;The Children must not be null!&quot;);</span>
+
+<span class="nc" id="L241">        return createCompositeStatusInfo(children);</span>
+    }
+
+    /**
+     * Returns a new {@code StatusInfo} instance with the specified {@code labeledChildren}. The map's key will label
+     * the {@link StatusInfo} values. The composite status will be computed based on the children's statuses.
+     *
+     * @param labeledChildren the children.
+     * @return the StatusInfo instance.
+     */
+    public static StatusInfo composite(final Map&lt;String, StatusInfo&gt; labeledChildren) {
+<span class="fc" id="L252">        requireNonNull(labeledChildren, &quot;The Children must not be null!&quot;);</span>
+
+<span class="fc" id="L254">        final List&lt;StatusInfo&gt; labeledChildrenList = labelStatuses(labeledChildren);</span>
+<span class="fc" id="L255">        return createCompositeStatusInfo(labeledChildrenList);</span>
+    }
+
+    /**
+     * Creates a new {@link StatusInfo} from a JSON string.
+     *
+     * @param jsonString the JSON string.
+     * @return the created instance.
+     * @throws NullPointerException if {@code jsonString} is {@code null}.
+     * @throws IllegalArgumentException if {@code jsonString} is empty.
+     * @throws org.eclipse.ditto.json.JsonParseException if the passed in {@code jsonString} does not contain a JSON
+     * object or if it is not valid JSON.
+     * @throws JsonMissingFieldException if the passed in {@code jsonObject} was not in the expected format.
+     */
+    public static StatusInfo fromJson(final String jsonString) {
+<span class="fc" id="L270">        return fromJson(JsonFactory.newObject(jsonString));</span>
+    }
+
+    /**
+     * Creates a new {@link StatusInfo} from a JSON object.
+     *
+     * @param jsonObject the JSON object.
+     * @return the created instance.
+     * @throws NullPointerException if {@code jsonObject} is {@code null}.
+     * @throws IllegalArgumentException if {@code jsonObject} is empty.
+     * @throws JsonMissingFieldException if the passed in {@code jsonObject} was not in the expected format.
+     */
+    public static StatusInfo fromJson(final JsonObject jsonObject) {
+<span class="fc" id="L283">        final String label = jsonObject.getValue(JSON_KEY_LABEL).orElse(null);</span>
+<span class="fc" id="L284">        final Status status = Status.valueOf(jsonObject.getValueOrThrow(JSON_KEY_STATUS));</span>
+
+<span class="fc" id="L286">        final JsonArray detailsArray = jsonObject.getValue(JSON_KEY_DETAILS).orElse(JsonFactory.newArray());</span>
+<span class="fc" id="L287">        final List&lt;StatusDetailMessage&gt; details = detailsArray.stream()</span>
+<span class="fc" id="L288">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L289">                .map(StatusDetailMessage::fromJson)</span>
+<span class="fc" id="L290">                .collect(Collectors.toList());</span>
+
+<span class="fc" id="L292">        final JsonArray childrenArray = jsonObject.getValue(JSON_KEY_CHILDREN).orElse(JsonFactory.newArray());</span>
+<span class="fc" id="L293">        final List&lt;StatusInfo&gt; children = childrenArray.stream()</span>
+<span class="fc" id="L294">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L295">                .map(StatusInfo::fromJson)</span>
+<span class="fc" id="L296">                .collect(Collectors.toList());</span>
+
+<span class="fc" id="L298">        return of(status, details, children, label);</span>
+    }
+
+    /**
+     * Returns the {@code Status}.
+     *
+     * @return the status.
+     */
+    public Status getStatus() {
+<span class="fc" id="L307">        return status;</span>
+    }
+
+    /**
+     * Returns the details.
+     *
+     * @return the details, which may be empty.
+     */
+    public List&lt;StatusDetailMessage&gt; getDetails() {
+<span class="fc" id="L316">        return details;</span>
+    }
+
+    /**
+     * Returns the children.
+     *
+     * @return the children, which may be empty.
+     * @see #isComposite()
+     */
+    public List&lt;StatusInfo&gt; getChildren() {
+<span class="fc" id="L326">        return children;</span>
+    }
+
+    /**
+     * Returns the (optional) label.
+     *
+     * @return the (optional) label.
+     */
+    public Optional&lt;String&gt; getLabel() {
+<span class="fc" id="L335">        return Optional.ofNullable(label);</span>
+    }
+
+    /**
+     * Creates a copy of this instance with the given {@code label} as label.
+     * @param label the label, may be {@code null}.
+     *
+     * @return the labeled copy.
+     */
+    public StatusInfo label(@Nullable final String label) {
+<span class="fc" id="L345">        return of(status, details, children, label);</span>
+    }
+
+    /**
+     * Returns whether this instance is a composite, i.e. whether it has children.
+     *
+     * @return whether this instance is a composite.
+     * @see #getChildren()
+     */
+    public boolean isComposite() {
+<span class="fc bfc" id="L355" title="All 2 branches covered.">        return !children.isEmpty();</span>
+    }
+
+    /**
+     * Creates a new {@link StatusInfo} from this {@code StatusInfo}, extended with the specified {@code detail}. Note
+     * that adding an error detail might change the {@link StatusInfo}'s status.
+     *
+     * @param detail the detail.
+     * @return the StatusInfo instance.
+     */
+    public StatusInfo addDetail(final StatusDetailMessage detail) {
+<span class="nc" id="L366">        requireNonNull(detail, &quot;The Detail must not be null!&quot;);</span>
+
+<span class="nc" id="L368">        final List&lt;StatusDetailMessage&gt; newDetails = new ArrayList&lt;&gt;(details.size() + 1);</span>
+<span class="nc" id="L369">        newDetails.addAll(details);</span>
+<span class="nc" id="L370">        newDetails.add(detail);</span>
+
+<span class="nc" id="L372">        final Status newStatus = mapToStatusInfo(newDetails);</span>
+
+<span class="nc" id="L374">        return of(newStatus, newDetails, children, label);</span>
+    }
+
+    /**
+     * Returns whether this status is considered as healthy.
+     *
+     * @return {@code true}, when healthy; {@code false}, otherwise.
+     */
+    public boolean isHealthy() {
+<span class="nc bnc" id="L383" title="All 2 branches missed.">        return status != Status.DOWN;</span>
+    }
+
+    @Override
+    public JsonObject toJson() {
+<span class="fc" id="L388">        final JsonObjectBuilder jsonObjectBuilder = JsonFactory.newObjectBuilder();</span>
+
+<span class="fc bfc" id="L390" title="All 2 branches covered.">        if (label != null) {</span>
+<span class="fc" id="L391">            jsonObjectBuilder.set(JSON_KEY_LABEL, label);</span>
+        }
+
+<span class="fc" id="L394">        jsonObjectBuilder.set(JSON_KEY_STATUS, status.toString());</span>
+
+<span class="fc" id="L396">        final JsonArray detailsArray = getDetailsAsArray();</span>
+<span class="pc bpc" id="L397" title="1 of 2 branches missed.">        if (!detailsArray.isEmpty()) {</span>
+<span class="fc" id="L398">            jsonObjectBuilder.set(JSON_KEY_DETAILS, detailsArray);</span>
+        }
+
+<span class="fc" id="L401">        final JsonArray childrenArray = getChildrenAsArray();</span>
+<span class="fc bfc" id="L402" title="All 2 branches covered.">        if (!childrenArray.isEmpty()) {</span>
+<span class="fc" id="L403">            jsonObjectBuilder.set(JSON_KEY_CHILDREN, childrenArray);</span>
+        }
+
+<span class="fc" id="L406">        return jsonObjectBuilder.build();</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L411">        return Objects.hash(status, details, children, label);</span>
+    }
+
+    @Override
+    public boolean equals(final Object obj) {
+<span class="fc bfc" id="L416" title="All 2 branches covered.">        if (this == obj) {</span>
+<span class="fc" id="L417">            return true;</span>
+        }
+<span class="fc bfc" id="L419" title="All 4 branches covered.">        if (obj == null || getClass() != obj.getClass()) {</span>
+<span class="fc" id="L420">            return false;</span>
+        }
+<span class="fc" id="L422">        final StatusInfo that = (StatusInfo) obj;</span>
+<span class="fc bfc" id="L423" title="All 4 branches covered.">        return Objects.equals(status, that.status) &amp;&amp; Objects.equals(details, that.details) &amp;&amp;</span>
+<span class="fc bfc" id="L424" title="All 4 branches covered.">                Objects.equals(children, that.children) &amp;&amp; Objects.equals(label, that.label);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L429">        return getClass().getSimpleName() + &quot; [&quot; + &quot;status=&quot; + status + &quot;, details=&quot; + details + &quot;, children=&quot; +</span>
+                children + &quot;, label=&quot; + label + &quot;]&quot;;
+    }
+
+    private JsonArray getDetailsAsArray() {
+        // performance shortcut
+<span class="pc bpc" id="L435" title="1 of 2 branches missed.">        if (details.isEmpty()) {</span>
+<span class="nc" id="L436">            return JsonFactory.newArray();</span>
+        }
+
+<span class="fc" id="L439">        final JsonArrayBuilder arrayBuilder = JsonArray.newBuilder();</span>
+<span class="fc" id="L440">        details.forEach(detailMessage -&gt; arrayBuilder.add(detailMessage.toJson()));</span>
+<span class="fc" id="L441">        return arrayBuilder.build();</span>
+    }
+
+    private JsonArray getChildrenAsArray() {
+        // performance shortcut
+<span class="fc bfc" id="L446" title="All 2 branches covered.">        if (children.isEmpty()) {</span>
+<span class="fc" id="L447">            return JsonFactory.newArray();</span>
+        }
+
+<span class="fc" id="L450">        final JsonArrayBuilder arrayBuilder = JsonArray.newBuilder();</span>
+<span class="fc" id="L451">        children.forEach(child -&gt; arrayBuilder.add(child.toJson()));</span>
+<span class="fc" id="L452">        return arrayBuilder.build();</span>
+    }
+
+    private String getLabelOrIndexInfo(final int index) {
+<span class="pc bpc" id="L456" title="1 of 2 branches missed.">        return (label != null) ? label : &quot;[&quot; + index + &quot;]&quot;;</span>
+    }
+
+
+    private static StatusInfo mapToStatusInfo(final Status status, final @Nullable String message) {
+        final List&lt;StatusDetailMessage&gt; details;
+<span class="pc bpc" id="L462" title="1 of 2 branches missed.">        if (message == null) {</span>
+<span class="nc" id="L463">            details = Collections.emptyList();</span>
+        } else {
+<span class="fc" id="L465">            final StatusDetailMessage.Level level = mapToMessageLevel(status);</span>
+<span class="fc" id="L466">            final StatusDetailMessage detailMessage = StatusDetailMessage.of(level, JsonValue.of(message));</span>
+<span class="fc" id="L467">            details = Collections.singletonList(detailMessage);</span>
+        }
+
+<span class="fc" id="L470">        return of(status, details, Collections.emptyList(), null);</span>
+    }
+
+    private static StatusDetailMessage.Level mapToMessageLevel(final Status status) {
+<span class="pc bpc" id="L474" title="1 of 3 branches missed.">        switch (status) {</span>
+            case UP:
+            case UNKNOWN:
+<span class="fc" id="L477">                return StatusDetailMessage.Level.INFO;</span>
+            case DOWN:
+<span class="fc" id="L479">                return StatusDetailMessage.Level.ERROR;</span>
+            default:
+                // defensive code in case Status enum will be extended and mapping is not adjusted
+<span class="nc" id="L482">                final StatusDetailMessage.Level fallbackLevel = StatusDetailMessage.Level.WARN;</span>
+<span class="nc" id="L483">                LOGGER.warn(&quot;Unknown status &lt;{}&gt;, mapping to message level &lt;{}&gt;.&quot;, status, fallbackLevel);</span>
+<span class="nc" id="L484">                return fallbackLevel;</span>
+        }
+    }
+
+    private static Status mapToStatusInfo(final StatusDetailMessage detail) {
+<span class="fc" id="L489">        final StatusDetailMessage.Level level = detail.getLevel();</span>
+<span class="fc" id="L490">        return mapToStatusInfo(level);</span>
+    }
+
+    private static Status mapToStatusInfo(final StatusDetailMessage.Level level) {
+<span class="pc bpc" id="L494" title="1 of 3 branches missed.">        switch (level) {</span>
+            case INFO:
+            case WARN:
+<span class="fc" id="L497">                return Status.UP;</span>
+            case ERROR:
+<span class="fc" id="L499">                return Status.DOWN;</span>
+            default:
+                // defensive code in case Level enum will be extended and mapping is not adjusted
+<span class="nc" id="L502">                final Status fallbackStatus = Status.UNKNOWN;</span>
+<span class="nc" id="L503">                LOGGER.warn(&quot;Unknown message level &lt;{}&gt;, mapping to status &lt;{}&gt;.&quot;, level, fallbackStatus);</span>
+<span class="nc" id="L504">                return fallbackStatus;</span>
+        }
+    }
+
+    private static Status mapToStatusInfo(final Collection&lt;StatusDetailMessage&gt; details) {
+<span class="fc" id="L509">        Status resultingStatus = Status.UP;</span>
+
+<span class="fc bfc" id="L511" title="All 2 branches covered.">        for (final StatusDetailMessage detail : details) {</span>
+<span class="fc" id="L512">            final Status currentStatus = mapToStatusInfo(detail);</span>
+<span class="fc" id="L513">            resultingStatus = resultingStatus.mergeWith(currentStatus);</span>
+<span class="fc" id="L514">        }</span>
+
+<span class="fc" id="L516">        return resultingStatus;</span>
+    }
+
+    private static List&lt;StatusInfo&gt; labelStatuses(final Map&lt;String, StatusInfo&gt; statuses) {
+<span class="fc" id="L520">        return statuses.entrySet().stream()</span>
+<span class="fc" id="L521">                .map(entry -&gt; entry.getValue().label(entry.getKey()))</span>
+<span class="fc" id="L522">                .collect(Collectors.toList());</span>
+    }
+
+    private static StatusInfo createCompositeStatusInfo(final List&lt;StatusInfo&gt; children) {
+<span class="fc" id="L526">        Status resultingStatus = DEFAULT_EMPTY_STATUS;</span>
+<span class="fc" id="L527">        final Map&lt;StatusDetailMessage.Level, List&lt;String&gt;&gt; pathsPerLevel = new EnumMap&lt;&gt;</span>
+                (StatusDetailMessage.Level.class);
+
+<span class="fc" id="L530">        final Iterator&lt;StatusInfo&gt; childrenIterator = children.iterator();</span>
+<span class="fc bfc" id="L531" title="All 2 branches covered.">        if (childrenIterator.hasNext()) {</span>
+<span class="fc" id="L532">            final int childrenSize = children.size();</span>
+<span class="fc bfc" id="L533" title="All 2 branches covered.">            for (int i = 0; i &lt; childrenSize; i++) {</span>
+<span class="fc" id="L534">                final StatusInfo child = childrenIterator.next();</span>
+
+<span class="fc bfc" id="L536" title="All 2 branches covered.">                if (i == 0) {</span>
+                    // for the first child we do not yet have a valid status to merge with
+<span class="fc" id="L538">                    resultingStatus = child.status;</span>
+                } else {
+<span class="fc" id="L540">                    resultingStatus = resultingStatus.mergeWith(child.status);</span>
+                }
+
+<span class="fc bfc" id="L543" title="All 2 branches covered.">                for (StatusDetailMessage detail : child.details) {</span>
+<span class="fc bfc" id="L544" title="All 2 branches covered.">                    if (COMPOSITE_DETAILS_INCLUDE_LEVELS.contains(detail.getLevel())) {</span>
+<span class="fc" id="L545">                        final String path = child.getLabelOrIndexInfo(i);</span>
+
+<span class="fc" id="L547">                        final List&lt;String&gt; pathsForLevel = pathsPerLevel.computeIfAbsent(detail.getLevel(),</span>
+<span class="fc" id="L548">                                unused -&gt; new ArrayList&lt;&gt;());</span>
+<span class="fc" id="L549">                        pathsForLevel.add(path);</span>
+                    }
+<span class="fc" id="L551">                }</span>
+            }
+        }
+
+<span class="fc" id="L555">        final List&lt;StatusDetailMessage&gt; details = pathsPerLevel.entrySet()</span>
+<span class="fc" id="L556">                .stream()</span>
+<span class="fc" id="L557">                .map(entry -&gt; StatusDetailMessage.of(entry.getKey(), JsonValue.of(</span>
+<span class="fc" id="L558">                        &quot;See detailed messages for: &quot; + String.join(&quot;, &quot;, entry.getValue()) + &quot;.&quot;)))</span>
+                // order by level ascending, e.g. (&quot;ERROR&quot;, &quot;WARN&quot;, ...)
+<span class="fc" id="L560">                .sorted(Comparator.comparing(StatusDetailMessage::getLevel).reversed())</span>
+<span class="fc" id="L561">                .collect(Collectors.toList());</span>
+
+
+<span class="fc" id="L564">        return of(resultingStatus, details, children, null);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

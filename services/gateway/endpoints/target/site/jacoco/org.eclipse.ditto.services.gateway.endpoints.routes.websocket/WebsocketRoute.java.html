@@ -1,0 +1,384 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WebsocketRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes.websocket</a> &gt; <span class="el_source">WebsocketRoute.java</span></div><h1>WebsocketRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes.websocket;
+
+import static akka.http.javadsl.server.Directives.complete;
+import static akka.http.javadsl.server.Directives.extractUpgradeToWebSocket;
+import static org.eclipse.ditto.model.base.exceptions.DittoJsonException.wrapJsonRuntimeException;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonField;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonPointer;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.auth.AuthorizationContext;
+import org.eclipse.ditto.model.base.exceptions.DittoJsonException;
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaderDefinition;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.model.base.headers.WithDittoHeaders;
+import org.eclipse.ditto.model.base.json.JsonSchemaVersion;
+import org.eclipse.ditto.model.base.json.Jsonifiable;
+import org.eclipse.ditto.protocoladapter.Adaptable;
+import org.eclipse.ditto.protocoladapter.AdaptableBuilder;
+import org.eclipse.ditto.protocoladapter.JsonifiableAdaptable;
+import org.eclipse.ditto.protocoladapter.ProtocolAdapter;
+import org.eclipse.ditto.protocoladapter.ProtocolFactory;
+import org.eclipse.ditto.protocoladapter.TopicPath;
+import org.eclipse.ditto.services.gateway.streaming.Connect;
+import org.eclipse.ditto.services.gateway.streaming.ResponsePublished;
+import org.eclipse.ditto.services.gateway.streaming.StartStreaming;
+import org.eclipse.ditto.services.gateway.streaming.StopStreaming;
+import org.eclipse.ditto.services.gateway.streaming.StreamingAck;
+import org.eclipse.ditto.services.models.concierge.streaming.StreamingType;
+import org.eclipse.ditto.services.gateway.streaming.actors.CommandSubscriber;
+import org.eclipse.ditto.services.gateway.streaming.actors.EventAndResponsePublisher;
+import org.eclipse.ditto.signals.base.Signal;
+import org.eclipse.ditto.signals.commands.base.Command;
+import org.eclipse.ditto.signals.commands.base.CommandNotSupportedException;
+import org.eclipse.ditto.signals.commands.base.CommandResponse;
+import org.eclipse.ditto.signals.commands.things.ThingErrorResponse;
+import org.eclipse.ditto.signals.events.base.Event;
+
+import akka.NotUsed;
+import akka.actor.ActorRef;
+import akka.event.EventStream;
+import akka.event.Logging;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.model.ws.Message;
+import akka.http.javadsl.model.ws.TextMessage;
+import akka.http.javadsl.model.ws.UpgradeToWebSocket;
+import akka.http.javadsl.server.Route;
+import akka.japi.function.Function;
+import akka.stream.Attributes;
+import akka.stream.javadsl.Flow;
+import akka.stream.javadsl.Sink;
+import akka.stream.javadsl.Source;
+
+/**
+ * Builder for creating Akka HTTP routes for {@code /ws}.
+ */
+public final class WebsocketRoute {
+
+    private static final String START_SEND_EVENTS = &quot;START-SEND-EVENTS&quot;;
+    private static final String STOP_SEND_EVENTS = &quot;STOP-SEND-EVENTS&quot;;
+
+    private static final String START_SEND_MESSAGES = &quot;START-SEND-MESSAGES&quot;;
+    private static final String STOP_SEND_MESSAGES = &quot;STOP-SEND-MESSAGES&quot;;
+
+    private static final String START_SEND_LIVE_COMMANDS = &quot;START-SEND-LIVE-COMMANDS&quot;;
+    private static final String STOP_SEND_LIVE_COMMANDS = &quot;STOP-SEND-LIVE-COMMANDS&quot;;
+
+    private static final String START_SEND_LIVE_EVENTS = &quot;START-SEND-LIVE-EVENTS&quot;;
+    private static final String STOP_SEND_LIVE_EVENTS = &quot;STOP-SEND-LIVE-EVENTS&quot;;
+
+    /**
+     * The backend sends the protocol message above suffixed by &quot;:ACK&quot; when the subscription was created. E.g.: {@code
+     * START-SEND-EVENTS:ACK}
+     */
+    private static final String PROTOCOL_CMD_ACK_SUFFIX = &quot;:ACK&quot;;
+
+    private static final String STREAMING_TYPE_WS = &quot;WS&quot;;
+
+    private final ActorRef streamingActor;
+    private final int subscriberBackpressureQueueSize;
+    private final int publisherBackpressureBufferSize;
+
+    private final ProtocolAdapter protocolAdapter;
+    private final EventStream eventStream;
+
+    /**
+     * Constructs the {@code /ws} route builder.
+     *  @param streamingActor the {@link org.eclipse.ditto.services.gateway.streaming.actors.StreamingActor} reference.
+     * @param subscriberBackpressureQueueSize the max queue size of how many inflight Commands a single Websocket client
+     * can have.
+     * @param publisherBackpressureBufferSize the max buffer size of how many outstanding CommandResponses and Events a
+     * single Websocket client can have - additionally incoming CommandResponses and Events are dropped if this size is
+     * @param eventStream eventStream used to publish events within the actor system
+     */
+    public WebsocketRoute(final ActorRef streamingActor, final int subscriberBackpressureQueueSize,
+            final int publisherBackpressureBufferSize, final ProtocolAdapter protocolAdapter,
+<span class="fc" id="L115">            final EventStream eventStream) {</span>
+<span class="fc" id="L116">        this.streamingActor = streamingActor;</span>
+<span class="fc" id="L117">        this.subscriberBackpressureQueueSize = subscriberBackpressureQueueSize;</span>
+<span class="fc" id="L118">        this.publisherBackpressureBufferSize = publisherBackpressureBufferSize;</span>
+<span class="fc" id="L119">        this.protocolAdapter = protocolAdapter;</span>
+<span class="fc" id="L120">        this.eventStream = eventStream;</span>
+<span class="fc" id="L121">    }</span>
+
+    /**
+     * Builds the {@code /ws} route.
+     *
+     * @return the {@code /ws} route.
+     */
+    public Route buildWebsocketRoute(final Integer version, final String correlationId,
+            final AuthorizationContext connectionAuthContext) {
+<span class="fc" id="L130">        return buildWebsocketRoute(version, correlationId, connectionAuthContext, DittoHeaders.empty());</span>
+    }
+
+    /**
+     * Builds the {@code /ws} route.
+     *
+     * @return the {@code /ws} route.
+     */
+    public Route buildWebsocketRoute(final Integer version, final String correlationId,
+            final AuthorizationContext connectionAuthContext, final DittoHeaders additionalHeaders) {
+<span class="fc" id="L140">        return extractUpgradeToWebSocket(upgradeToWebSocket -&gt;</span>
+<span class="nc" id="L141">                complete(</span>
+<span class="nc" id="L142">                        createWebsocket(upgradeToWebSocket, version, correlationId, connectionAuthContext,</span>
+                                additionalHeaders)
+                )
+        );
+    }
+
+    private HttpResponse createWebsocket(final UpgradeToWebSocket upgradeToWebSocket, final Integer version,
+            final String connectionCorrelationId, final AuthorizationContext connectionAuthContext,
+            final DittoHeaders additionalHeaders) {
+        // build Sink and Source in order to support rpc style patterns as well as server push:
+<span class="nc" id="L152">        return upgradeToWebSocket.handleMessagesWith(</span>
+<span class="nc" id="L153">                createSink(version, connectionCorrelationId, connectionAuthContext, additionalHeaders),</span>
+<span class="nc" id="L154">                createSource(connectionCorrelationId));</span>
+    }
+
+    private Sink&lt;Message, NotUsed&gt; createSink(final Integer version, final String connectionCorrelationId,
+            final AuthorizationContext connectionAuthContext, final DittoHeaders additionalHeaders) {
+<span class="nc" id="L159">        return Flow.&lt;Message&gt;create()</span>
+<span class="nc" id="L160">                .filter(Message::isText)</span>
+<span class="nc" id="L161">                .map(Message::asTextMessage)</span>
+<span class="nc" id="L162">                .map(textMsg -&gt; {</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                    if (textMsg.isStrict()) {</span>
+<span class="nc" id="L164">                        return Source.single(textMsg.getStrictText());</span>
+                    } else {
+<span class="nc" id="L166">                        return textMsg.getStreamedText();</span>
+                    }
+                })
+<span class="nc" id="L169">                .flatMapConcat(textMsg -&gt; textMsg.fold(&quot;&quot;, (str1, str2) -&gt; str1 + str2))</span>
+<span class="nc" id="L170">                .log(&quot;ws-incoming-msg&quot;)</span>
+<span class="nc" id="L171">                .withAttributes(Attributes.createLogLevels(Logging.DebugLevel(), Logging.DebugLevel(),</span>
+<span class="nc" id="L172">                        Logging.WarningLevel()))</span>
+<span class="nc" id="L173">                .filter(strictText -&gt; processProtocolMessage(connectionAuthContext, connectionCorrelationId,</span>
+                        strictText))
+<span class="nc" id="L175">                .map(buildSignal(version, connectionCorrelationId, connectionAuthContext, additionalHeaders))</span>
+<span class="nc" id="L176">                .to(Sink.actorSubscriber(</span>
+<span class="nc" id="L177">                        CommandSubscriber.props(streamingActor, subscriberBackpressureQueueSize, eventStream)));</span>
+
+    }
+
+    private boolean processProtocolMessage(final AuthorizationContext authContext, final String connectionCorrelationId,
+            final String protocolMessage) {
+        final Object messageToTellStreamingActor;
+<span class="nc bnc" id="L184" title="All 9 branches missed.">        switch (protocolMessage) {</span>
+            case START_SEND_EVENTS:
+<span class="nc" id="L186">                messageToTellStreamingActor =</span>
+                        new StartStreaming(StreamingType.EVENTS, connectionCorrelationId, authContext);
+<span class="nc" id="L188">                break;</span>
+            case STOP_SEND_EVENTS:
+<span class="nc" id="L190">                messageToTellStreamingActor = new StopStreaming(StreamingType.EVENTS, connectionCorrelationId);</span>
+<span class="nc" id="L191">                break;</span>
+            case START_SEND_MESSAGES:
+<span class="nc" id="L193">                messageToTellStreamingActor =</span>
+                        new StartStreaming(StreamingType.MESSAGES, connectionCorrelationId, authContext);
+<span class="nc" id="L195">                break;</span>
+            case STOP_SEND_MESSAGES:
+<span class="nc" id="L197">                messageToTellStreamingActor = new StopStreaming(StreamingType.MESSAGES, connectionCorrelationId);</span>
+<span class="nc" id="L198">                break;</span>
+            case START_SEND_LIVE_COMMANDS:
+<span class="nc" id="L200">                messageToTellStreamingActor = new StartStreaming(StreamingType.LIVE_COMMANDS, connectionCorrelationId,</span>
+                        authContext);
+<span class="nc" id="L202">                break;</span>
+            case STOP_SEND_LIVE_COMMANDS:
+<span class="nc" id="L204">                messageToTellStreamingActor = new StopStreaming(StreamingType.LIVE_COMMANDS, connectionCorrelationId);</span>
+<span class="nc" id="L205">                break;</span>
+            case START_SEND_LIVE_EVENTS:
+<span class="nc" id="L207">                messageToTellStreamingActor =</span>
+                        new StartStreaming(StreamingType.LIVE_EVENTS, connectionCorrelationId, authContext);
+<span class="nc" id="L209">                break;</span>
+            case STOP_SEND_LIVE_EVENTS:
+<span class="nc" id="L211">                messageToTellStreamingActor = new StopStreaming(StreamingType.LIVE_EVENTS, connectionCorrelationId);</span>
+<span class="nc" id="L212">                break;</span>
+            default:
+<span class="nc" id="L214">                messageToTellStreamingActor = null;</span>
+        }
+
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (messageToTellStreamingActor != null) {</span>
+<span class="nc" id="L218">            streamingActor.tell(messageToTellStreamingActor, null);</span>
+<span class="nc" id="L219">            return false;</span>
+        }
+        // let all other messages pass:
+<span class="nc" id="L222">        return true;</span>
+    }
+
+    private Source&lt;Message, NotUsed&gt; createSource(final String connectionCorrelationId) {
+<span class="nc" id="L226">        return Source.&lt;Jsonifiable.WithPredicate&lt;JsonObject, JsonField&gt;&gt;actorPublisher(</span>
+<span class="nc" id="L227">                EventAndResponsePublisher.props(publisherBackpressureBufferSize))</span>
+<span class="nc" id="L228">                .mapMaterializedValue(actorRef -&gt; {</span>
+<span class="nc" id="L229">                    streamingActor.tell(new Connect(actorRef, connectionCorrelationId, STREAMING_TYPE_WS), null);</span>
+<span class="nc" id="L230">                    return NotUsed.getInstance();</span>
+                })
+<span class="nc" id="L232">                .map(this::publishResponsePublishedEvent)</span>
+<span class="nc" id="L233">                .map(this::jsonifiableToString)</span>
+<span class="nc" id="L234">                .map(TextMessage::create);</span>
+    }
+
+    private Jsonifiable.WithPredicate&lt;JsonObject, JsonField&gt; publishResponsePublishedEvent(
+            final Jsonifiable.WithPredicate&lt;JsonObject, JsonField&gt; jsonifiable) {
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        if (jsonifiable instanceof WithDittoHeaders) {</span>
+<span class="nc" id="L240">            ((WithDittoHeaders) jsonifiable).getDittoHeaders()</span>
+<span class="nc" id="L241">                    .getCorrelationId()</span>
+<span class="nc" id="L242">                    .map(ResponsePublished::new)</span>
+<span class="nc" id="L243">                    .ifPresent(eventStream::publish);</span>
+        }
+<span class="nc" id="L245">        return jsonifiable;</span>
+    }
+
+    private Function&lt;String, Signal&gt; buildSignal(final Integer version, final String connectionCorrelationId,
+            final AuthorizationContext connectionAuthContext, final DittoHeaders additionalHeaders) {
+<span class="nc" id="L250">        return cmdString -&gt; {</span>
+<span class="nc" id="L251">            final DittoHeadersBuilder dittoHeadersBuilder = DittoHeaders.newBuilder()</span>
+<span class="nc" id="L252">                    .schemaVersion(JsonSchemaVersion.forInt(version).orElse(JsonSchemaVersion.LATEST))</span>
+<span class="nc" id="L253">                    .authorizationContext(connectionAuthContext)</span>
+<span class="nc" id="L254">                    .correlationId(connectionCorrelationId)</span>
+<span class="nc" id="L255">                    .origin(connectionCorrelationId);</span>
+
+<span class="nc bnc" id="L257" title="All 2 branches missed.">            if (cmdString.isEmpty()) {</span>
+<span class="nc" id="L258">                throw new DittoJsonException(new IllegalArgumentException(&quot;Empty json.&quot;), dittoHeadersBuilder.build());</span>
+            }
+
+<span class="nc" id="L261">            final JsonObject jsonObject = wrapJsonRuntimeException(cmdString, dittoHeadersBuilder.build(),</span>
+<span class="nc" id="L262">                    (str, headers) -&gt; JsonFactory.readFrom(str).asObject());</span>
+<span class="nc" id="L263">            final JsonifiableAdaptable jsonifiableAdaptable = wrapJsonRuntimeException(jsonObject,</span>
+<span class="nc" id="L264">                    DittoHeaders.newBuilder()</span>
+<span class="nc" id="L265">                            .schemaVersion(JsonSchemaVersion.forInt(version).orElse(JsonSchemaVersion.LATEST))</span>
+<span class="nc" id="L266">                            .authorizationContext(connectionAuthContext)</span>
+<span class="nc" id="L267">                            .correlationId(jsonObject.getValue(JsonifiableAdaptable.JsonFields.HEADERS.getPointer()</span>
+<span class="nc" id="L268">                                    .append(JsonPointer.of(DittoHeaderDefinition.CORRELATION_ID.getKey())))</span>
+<span class="nc" id="L269">                                    .filter(JsonValue::isString)</span>
+<span class="nc" id="L270">                                    .map(JsonValue::asString)</span>
+<span class="nc" id="L271">                                    .orElse(connectionCorrelationId)</span>
+                            )
+<span class="nc" id="L273">                            .build(),</span>
+<span class="nc" id="L274">                    (jo, cmdHeaders) -&gt; ProtocolFactory.jsonifiableAdaptableFromJson(jo));</span>
+
+<span class="nc" id="L276">            final DittoHeaders headers = jsonifiableAdaptable.getHeaders().orElse(ProtocolFactory.emptyHeaders());</span>
+<span class="nc" id="L277">            final String wsCorrelationId = headers.getCorrelationId()</span>
+<span class="nc" id="L278">                    .orElseGet(() -&gt; UUID.randomUUID().toString());</span>
+
+<span class="nc" id="L280">            final JsonSchemaVersion jsonSchemaVersion = JsonSchemaVersion.forInt(version)</span>
+<span class="nc" id="L281">                    .orElseThrow(() -&gt; CommandNotSupportedException.newBuilder(version).build());</span>
+
+<span class="nc" id="L283">            final Map&lt;String, String&gt; allHeaders = new HashMap&lt;&gt;(headers);</span>
+
+<span class="nc" id="L285">            final DittoHeaders adjustedHeaders = DittoHeaders.newBuilder()</span>
+<span class="nc" id="L286">                    .authorizationContext(connectionAuthContext)</span>
+<span class="nc" id="L287">                    .schemaVersion(jsonSchemaVersion)</span>
+<span class="nc" id="L288">                    .correlationId(wsCorrelationId)</span>
+<span class="nc" id="L289">                    .origin(connectionCorrelationId)</span>
+<span class="nc" id="L290">                    .build();</span>
+
+<span class="nc" id="L292">            allHeaders.putAll(DittoHeaders.of(adjustedHeaders));</span>
+<span class="nc" id="L293">            allHeaders.putAll(additionalHeaders);</span>
+
+<span class="nc" id="L295">            final AdaptableBuilder adaptableBuilder = ProtocolFactory.newAdaptableBuilder(jsonifiableAdaptable)</span>
+<span class="nc" id="L296">                    .withHeaders(DittoHeaders.of(allHeaders))</span>
+<span class="nc" id="L297">                    .withPayload(jsonifiableAdaptable.getPayload());</span>
+
+<span class="nc" id="L299">            return protocolAdapter.fromAdaptable(adaptableBuilder.build());</span>
+        };
+    }
+
+    private String jsonifiableToString(final Jsonifiable.WithPredicate&lt;JsonObject, JsonField&gt; jsonifiable) {
+<span class="nc bnc" id="L304" title="All 2 branches missed.">        if (jsonifiable instanceof StreamingAck) {</span>
+<span class="nc" id="L305">            return streamingAckToString((StreamingAck) jsonifiable);</span>
+        }
+
+        final Adaptable adaptable;
+<span class="nc bnc" id="L309" title="All 4 branches missed.">        if (jsonifiable instanceof Signal &amp;&amp; isLiveSignal((Signal&lt;?&gt;) jsonifiable)) {</span>
+<span class="nc" id="L310">            adaptable = jsonifiableToAdaptable(jsonifiable, TopicPath.Channel.LIVE);</span>
+        } else {
+<span class="nc" id="L312">            adaptable = jsonifiableToAdaptable(jsonifiable, TopicPath.Channel.TWIN);</span>
+        }
+
+<span class="nc" id="L315">        final DittoHeaders dittoHeaders = ((WithDittoHeaders) jsonifiable).getDittoHeaders();</span>
+        // only choose relevant dittoHeaders for responses/events:
+<span class="nc" id="L317">        final DittoHeadersBuilder dittoHeadersBuilder = DittoHeaders.newBuilder();</span>
+        // schemaVersion
+<span class="nc" id="L319">        dittoHeaders.getSchemaVersion().ifPresent(dittoHeadersBuilder::schemaVersion);</span>
+        // source
+<span class="nc" id="L321">        dittoHeaders.getSource().ifPresent(dittoHeadersBuilder::source);</span>
+<span class="nc" id="L322">        final DittoHeaders adjustedHeaders = dittoHeadersBuilder.build();</span>
+
+<span class="nc" id="L324">        final Map&lt;String, String&gt; allHeaders = new HashMap&lt;&gt;(adaptable.getHeaders().orElse(DittoHeaders.empty()));</span>
+<span class="nc" id="L325">        allHeaders.remove(DittoHeaderDefinition.ORIGIN.getKey());</span>
+<span class="nc" id="L326">        allHeaders.putAll(DittoHeaders.of(adjustedHeaders));</span>
+
+<span class="nc" id="L328">        final JsonifiableAdaptable jsonifiableAdaptable = ProtocolFactory.wrapAsJsonifiableAdaptable(adaptable);</span>
+<span class="nc" id="L329">        final JsonObject jsonObject = jsonifiableAdaptable.toJson(DittoHeaders.of(allHeaders));</span>
+<span class="nc" id="L330">        return jsonObject.toString();</span>
+    }
+
+    private static String streamingAckToString(final StreamingAck streamingAck) {
+<span class="nc" id="L334">        final StreamingType streamingType = streamingAck.getStreamingType();</span>
+<span class="nc" id="L335">        final boolean subscribed = streamingAck.isSubscribed();</span>
+        final String protocolMessage;
+<span class="nc bnc" id="L337" title="All 5 branches missed.">        switch (streamingType) {</span>
+            case EVENTS:
+<span class="nc bnc" id="L339" title="All 2 branches missed.">                protocolMessage = subscribed ? START_SEND_EVENTS : STOP_SEND_EVENTS;</span>
+<span class="nc" id="L340">                break;</span>
+            case MESSAGES:
+<span class="nc bnc" id="L342" title="All 2 branches missed.">                protocolMessage = subscribed ? START_SEND_MESSAGES : STOP_SEND_MESSAGES;</span>
+<span class="nc" id="L343">                break;</span>
+            case LIVE_COMMANDS:
+<span class="nc bnc" id="L345" title="All 2 branches missed.">                protocolMessage = subscribed ? START_SEND_LIVE_COMMANDS : STOP_SEND_LIVE_COMMANDS;</span>
+<span class="nc" id="L346">                break;</span>
+            case LIVE_EVENTS:
+<span class="nc bnc" id="L348" title="All 2 branches missed.">                protocolMessage = subscribed ? START_SEND_LIVE_EVENTS : STOP_SEND_LIVE_EVENTS;</span>
+<span class="nc" id="L349">                break;</span>
+            default:
+<span class="nc" id="L351">                throw new IllegalArgumentException(&quot;Unknown streamingType: &quot; + streamingType);</span>
+        }
+<span class="nc" id="L353">        return protocolMessage + PROTOCOL_CMD_ACK_SUFFIX;</span>
+    }
+
+    private static boolean isLiveSignal(final Signal&lt;?&gt; signal) {
+<span class="nc" id="L357">        return signal.getDittoHeaders().getChannel().filter(TopicPath.Channel.LIVE.getName()::equals).isPresent();</span>
+    }
+
+    private Adaptable jsonifiableToAdaptable(final Jsonifiable.WithPredicate&lt;JsonObject, JsonField&gt; jsonifiable,
+            final TopicPath.Channel channel) {
+        final Adaptable adaptable;
+<span class="nc bnc" id="L363" title="All 2 branches missed.">        if (jsonifiable instanceof Command) {</span>
+<span class="nc" id="L364">            adaptable = protocolAdapter.toAdaptable((Command) jsonifiable, channel);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        } else if (jsonifiable instanceof Event) {</span>
+<span class="nc" id="L366">            adaptable = protocolAdapter.toAdaptable((Event) jsonifiable, channel);</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">        } else if (jsonifiable instanceof CommandResponse) {</span>
+<span class="nc" id="L368">            adaptable = protocolAdapter.toAdaptable((CommandResponse) jsonifiable, channel);</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">        } else if (jsonifiable instanceof DittoRuntimeException) {</span>
+<span class="nc" id="L370">            final DittoHeaders enhancedHeaders = ((DittoRuntimeException) jsonifiable).getDittoHeaders().toBuilder()</span>
+<span class="nc" id="L371">                    .channel(channel.getName())</span>
+<span class="nc" id="L372">                    .build();</span>
+<span class="nc" id="L373">            final ThingErrorResponse errorResponse =</span>
+<span class="nc" id="L374">                    ThingErrorResponse.of((DittoRuntimeException) jsonifiable, enhancedHeaders);</span>
+<span class="nc" id="L375">            adaptable = protocolAdapter.toAdaptable(errorResponse, channel);</span>
+<span class="nc" id="L376">        } else {</span>
+<span class="nc" id="L377">            throw new IllegalArgumentException(&quot;Jsonifiable was neither Command nor CommandResponse nor&quot;</span>
+<span class="nc" id="L378">                    + &quot; Event nor DittoRuntimeException: &quot; + jsonifiable.getClass().getSimpleName());</span>
+        }
+<span class="nc" id="L380">        return adaptable;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

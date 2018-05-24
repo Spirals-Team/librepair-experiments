@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CaffeineCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Cache Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.cache</a> &gt; <span class="el_source">CaffeineCache.java</span></div><h1>CaffeineCache.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.cache;
+
+import static java.util.Objects.requireNonNull;
+
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentMap;
+
+import javax.annotation.Nullable;
+
+import com.codahale.metrics.MetricRegistry;
+import com.github.benmanes.caffeine.cache.AsyncCacheLoader;
+import com.github.benmanes.caffeine.cache.AsyncLoadingCache;
+import com.github.benmanes.caffeine.cache.CacheLoader;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.LoadingCache;
+
+/**
+ * A caffeine-backed cache implementation.
+ *
+ * @param &lt;K&gt; the type of the key.
+ * @param &lt;V&gt; the type of the value.
+ */
+public class CaffeineCache&lt;K, V&gt; implements Cache&lt;K, V&gt; {
+
+<span class="fc" id="L38">    private static final AsyncCacheLoader&lt;?, ?&gt; NULL_CACHE_LOADER =</span>
+<span class="nc" id="L39">            (k, executor) -&gt; CompletableFuture.completedFuture(null);</span>
+    @Nullable
+    private final MetricsStatsCounter metricStatsCounter;
+    private AsyncLoadingCache&lt;K, V&gt; asyncLoadingCache;
+    private LoadingCache&lt;K, V&gt; synchronousCacheView;
+
+
+    private CaffeineCache(final Caffeine&lt;?, ?&gt; caffeine,
+            final AsyncCacheLoader&lt;K, V&gt; loader,
+<span class="fc" id="L48">            @Nullable final Map.Entry&lt;String, MetricRegistry&gt; namedMetricRegistry) {</span>
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="fc" id="L51">        final Caffeine&lt;K, V&gt; typedCaffeine = (Caffeine&lt;K, V&gt;) caffeine;</span>
+<span class="pc bpc" id="L52" title="1 of 2 branches missed.">        if (namedMetricRegistry != null) {</span>
+<span class="fc" id="L53">            final String metricsPrefix = namedMetricRegistry.getKey();</span>
+<span class="fc" id="L54">            final MetricRegistry metricRegistry = namedMetricRegistry.getValue();</span>
+<span class="fc" id="L55">            this.metricStatsCounter = MetricsStatsCounter.of(metricsPrefix, metricRegistry);</span>
+<span class="fc" id="L56">            caffeine.recordStats(() -&gt; metricStatsCounter);</span>
+<span class="fc" id="L57">            this.asyncLoadingCache = typedCaffeine.buildAsync(loader);</span>
+<span class="fc" id="L58">            this.synchronousCacheView = asyncLoadingCache.synchronous();</span>
+<span class="fc" id="L59">            metricStatsCounter.configureCache(this.synchronousCacheView);</span>
+<span class="fc" id="L60">        } else {</span>
+<span class="nc" id="L61">            this.asyncLoadingCache = typedCaffeine.buildAsync(loader);</span>
+<span class="nc" id="L62">            this.synchronousCacheView = asyncLoadingCache.synchronous();</span>
+<span class="nc" id="L63">            this.metricStatsCounter = null;</span>
+        }
+<span class="fc" id="L65">    }</span>
+
+    /**
+     * Creates a new instance based on a {@link AsyncCacheLoader}.
+     *
+     * @param caffeine a (pre-configured) caffeine instance.
+     * @param asyncLoader the algorithm used for loading values asynchronously.
+     * @param &lt;K&gt; the type of the key.
+     * @param &lt;V&gt; the type of the value.
+     * @return the created instance
+     */
+    public static &lt;K, V&gt; CaffeineCache&lt;K, V&gt; of(final Caffeine&lt;?, ?&gt; caffeine, final AsyncCacheLoader&lt;K, V&gt; asyncLoader) {
+<span class="nc" id="L77">        requireNonNull(caffeine);</span>
+<span class="nc" id="L78">        requireNonNull(asyncLoader);</span>
+
+<span class="nc" id="L80">        return new CaffeineCache&lt;&gt;(caffeine, asyncLoader, null);</span>
+    }
+
+    /**
+     * Creates a new instance based on a {@link CacheLoader}.
+     *
+     * @param caffeine a (pre-configured) caffeine instance.
+     * @param loader the algorithm used for loading values.
+     * @param &lt;K&gt; the type of the key.
+     * @param &lt;V&gt; the type of the value.
+     * @return the created instance
+     */
+    public static &lt;K, V&gt; CaffeineCache&lt;K, V&gt; of(final Caffeine&lt;?, ?&gt; caffeine, final CacheLoader&lt;K, V&gt; loader) {
+<span class="nc" id="L93">        requireNonNull(caffeine);</span>
+<span class="nc" id="L94">        requireNonNull(loader);</span>
+
+<span class="nc" id="L96">        return new CaffeineCache&lt;&gt;(caffeine, loader, null);</span>
+    }
+
+    /**
+     * Creates a new instance based with a Null-Cache-Loader. This is useful if the cache is populated manually.
+     *
+     * @param caffeine a (pre-configured) caffeine instance.
+     * @param &lt;K&gt; the type of the key.
+     * @param &lt;V&gt; the type of the value.
+     * @return the created instance
+     */
+    public static &lt;K, V&gt; CaffeineCache&lt;K, V&gt; of(final Caffeine&lt;?, ?&gt; caffeine) {
+<span class="nc" id="L108">        requireNonNull(caffeine);</span>
+
+<span class="nc" id="L110">        final AsyncCacheLoader&lt;K, V&gt; cacheLoader = getTypedNullCacheLoader();</span>
+<span class="nc" id="L111">        return new CaffeineCache&lt;&gt;(caffeine, cacheLoader, null);</span>
+    }
+
+    /**
+     * Creates a new instance based with a Null-Cache-Loader. This is useful if the cache is populated manually.
+     *
+     * @param caffeine a (pre-configured) caffeine instance.
+     * @param namedMetricRegistry a named {@link MetricRegistry} for cache statistics, may be {@code null}.
+     * @param &lt;K&gt; the type of the key.
+     * @param &lt;V&gt; the type of the value.
+     * @return the created instance
+     */
+    public static &lt;K, V&gt; CaffeineCache&lt;K, V&gt; of(final Caffeine&lt;?, ?&gt; caffeine,
+            @Nullable final Map.Entry&lt;String, MetricRegistry&gt; namedMetricRegistry) {
+<span class="nc" id="L125">        requireNonNull(caffeine);</span>
+
+<span class="nc" id="L127">        final AsyncCacheLoader&lt;K, V&gt; cacheLoader = getTypedNullCacheLoader();</span>
+<span class="nc" id="L128">        return new CaffeineCache&lt;&gt;(caffeine, cacheLoader, namedMetricRegistry);</span>
+    }
+
+    /**
+     * Creates a new instance based on a {@link AsyncCacheLoader} which may report metrics for cache statistics.
+     *
+     * @param caffeine a (pre-configured) caffeine instance.
+     * @param loader the algorithm used for loading values asynchronously.
+     * @param namedMetricRegistry a named {@link MetricRegistry} for cache statistics, may be {@code null}.
+     * @param &lt;K&gt; the type of the key.
+     * @param &lt;V&gt; the type of the value.
+     * @return the created instance
+     */
+    public static &lt;K, V&gt; CaffeineCache&lt;K, V&gt; of(final Caffeine&lt;?, ?&gt; caffeine, final AsyncCacheLoader&lt;K, V&gt; loader,
+            @Nullable final Map.Entry&lt;String, MetricRegistry&gt; namedMetricRegistry) {
+<span class="fc" id="L143">        requireNonNull(caffeine);</span>
+<span class="fc" id="L144">        requireNonNull(loader);</span>
+
+<span class="fc" id="L146">        return new CaffeineCache&lt;&gt;(caffeine, loader, namedMetricRegistry);</span>
+    }
+
+    /**
+     * Creates a new instance based on a {@link CacheLoader} which may report metrics for cache statistics.
+     *
+     * @param caffeine a (pre-configured) caffeine instance.
+     * @param loader the algorithm used for loading values.
+     * @param namedMetricRegistry a named {@link MetricRegistry} for cache statistics, may be {@code null}.
+     * @param &lt;K&gt; the type of the key.
+     * @param &lt;V&gt; the type of the value.
+     * @return the created instance
+     */
+    public static &lt;K, V&gt; CaffeineCache&lt;K, V&gt; of(final Caffeine&lt;?, ?&gt; caffeine, final CacheLoader&lt;K, V&gt; loader,
+            @Nullable final Map.Entry&lt;String, MetricRegistry&gt; namedMetricRegistry) {
+<span class="nc" id="L161">        requireNonNull(caffeine);</span>
+<span class="nc" id="L162">        requireNonNull(loader);</span>
+
+<span class="nc" id="L164">        return new CaffeineCache&lt;&gt;(caffeine, loader, namedMetricRegistry);</span>
+    }
+
+    @Override
+    public CompletableFuture&lt;Optional&lt;V&gt;&gt; get(final K key) {
+<span class="fc" id="L169">        requireNonNull(key);</span>
+
+<span class="fc" id="L171">        return asyncLoadingCache.get(key).thenApply(Optional::ofNullable);</span>
+    }
+
+    @Override
+    public Optional&lt;V&gt; getBlocking(final K key) {
+<span class="nc" id="L176">        requireNonNull(key);</span>
+
+<span class="nc" id="L178">        final V value = synchronousCacheView.get(key);</span>
+<span class="nc" id="L179">        return Optional.ofNullable(value);</span>
+    }
+
+    @Override
+    public boolean invalidate(final K key) {
+<span class="fc" id="L184">        requireNonNull(key);</span>
+
+<span class="fc bfc" id="L186" title="All 2 branches covered.">        final boolean currentlyExisting = asyncLoadingCache.getIfPresent(key) != null;</span>
+<span class="pc bpc" id="L187" title="1 of 4 branches missed.">        final boolean reportInvalidation =</span>
+                (metricStatsCounter != null) &amp;&amp; currentlyExisting;
+<span class="fc" id="L189">        synchronousCacheView.invalidate(key);</span>
+
+<span class="fc bfc" id="L191" title="All 2 branches covered.">        if (reportInvalidation) {</span>
+<span class="fc" id="L192">            metricStatsCounter.recordInvalidation();</span>
+        }
+<span class="fc" id="L194">        return currentlyExisting;</span>
+    }
+
+    @Override
+    public void put(final K key, final V value) {
+<span class="nc" id="L199">        requireNonNull(key);</span>
+<span class="nc" id="L200">        requireNonNull(value);</span>
+
+<span class="nc" id="L202">        synchronousCacheView.put(key, value);</span>
+<span class="nc" id="L203">    }</span>
+
+    @Override
+    public ConcurrentMap&lt;K, V&gt; asMap() {
+<span class="nc" id="L207">        return synchronousCacheView.asMap();</span>
+    }
+
+    private static &lt;K, V&gt; AsyncCacheLoader&lt;K, V&gt; getTypedNullCacheLoader() {
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L212">        final AsyncCacheLoader&lt;K, V&gt; nullCacheLoader = (AsyncCacheLoader&lt;K, V&gt;) NULL_CACHE_LOADER;</span>
+<span class="nc" id="L213">        return nullCacheLoader;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

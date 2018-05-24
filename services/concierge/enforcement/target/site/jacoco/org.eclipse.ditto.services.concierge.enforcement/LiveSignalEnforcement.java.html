@@ -1,0 +1,314 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LiveSignalEnforcement.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Concierge :: Enforcement</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.concierge.enforcement</a> &gt; <span class="el_source">LiveSignalEnforcement.java</span></div><h1>LiveSignalEnforcement.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.concierge.enforcement;
+
+import static java.util.Objects.requireNonNull;
+import static org.eclipse.ditto.services.models.policies.Permission.WRITE;
+
+import java.time.Duration;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.enforcers.AclEnforcer;
+import org.eclipse.ditto.model.enforcers.Enforcer;
+import org.eclipse.ditto.model.messages.MessageSendNotAllowedException;
+import org.eclipse.ditto.model.policies.PoliciesResourceType;
+import org.eclipse.ditto.model.policies.ResourceKey;
+import org.eclipse.ditto.protocoladapter.TopicPath;
+import org.eclipse.ditto.services.models.concierge.EntityId;
+import org.eclipse.ditto.services.models.concierge.cache.Entry;
+import org.eclipse.ditto.services.models.concierge.streaming.StreamingType;
+import org.eclipse.ditto.services.models.policies.Permission;
+import org.eclipse.ditto.services.utils.cache.Cache;
+import org.eclipse.ditto.services.utils.cache.CaffeineCache;
+import org.eclipse.ditto.signals.base.Signal;
+import org.eclipse.ditto.signals.commands.base.Command;
+import org.eclipse.ditto.signals.commands.base.CommandResponse;
+import org.eclipse.ditto.signals.commands.messages.MessageCommand;
+import org.eclipse.ditto.signals.commands.messages.SendClaimMessage;
+import org.eclipse.ditto.signals.commands.messages.SendMessageAcceptedResponse;
+import org.eclipse.ditto.signals.commands.things.ThingCommand;
+import org.eclipse.ditto.signals.commands.things.exceptions.EventSendNotAllowedException;
+import org.eclipse.ditto.signals.commands.things.exceptions.ThingNotAccessibleException;
+import org.eclipse.ditto.signals.events.base.Event;
+import org.eclipse.ditto.signals.events.things.ThingEvent;
+
+import com.github.benmanes.caffeine.cache.Caffeine;
+
+import akka.actor.ActorRef;
+import akka.cluster.pubsub.DistributedPubSubMediator;
+import akka.event.DiagnosticLoggingAdapter;
+
+/**
+ * Enforces live commands (including message commands) and live events.
+ */
+public final class LiveSignalEnforcement extends AbstractEnforcement&lt;Signal&gt; {
+
+    private static final int CACHE_TIMEOUT_SECONDS = 2 * 60;
+
+    private final EnforcerRetriever enforcerRetriever;
+
+    private final Cache&lt;String, ActorRef&gt; responseReceivers;
+
+    private LiveSignalEnforcement(final Context context, final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; thingIdCache,
+            final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; policyEnforcerCache,
+            final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; aclEnforcerCache) {
+
+<span class="fc" id="L68">        super(context);</span>
+<span class="fc" id="L69">        requireNonNull(thingIdCache);</span>
+<span class="fc" id="L70">        requireNonNull(policyEnforcerCache);</span>
+<span class="fc" id="L71">        requireNonNull(aclEnforcerCache);</span>
+<span class="fc" id="L72">        enforcerRetriever =</span>
+<span class="fc" id="L73">                PolicyOrAclEnforcerRetrieverFactory.create(thingIdCache, policyEnforcerCache, aclEnforcerCache);</span>
+<span class="fc" id="L74">        final Caffeine caffeine = Caffeine.newBuilder()</span>
+<span class="fc" id="L75">                .expireAfterWrite(CACHE_TIMEOUT_SECONDS, TimeUnit.SECONDS);</span>
+<span class="fc" id="L76">        responseReceivers = CaffeineCache.of(caffeine);</span>
+<span class="fc" id="L77">    }</span>
+
+    /**
+     * {@link EnforcementProvider} for {@link LiveSignalEnforcement}.
+     */
+    public static final class Provider implements EnforcementProvider&lt;Signal&gt; {
+
+        private final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; thingIdCache;
+        private final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; policyEnforcerCache;
+        private final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; aclEnforcerCache;
+
+        /**
+         * Constructor.
+         *
+         * @param thingIdCache the thing-id-cache.
+         * @param policyEnforcerCache the policy-enforcer cache.
+         * @param aclEnforcerCache the acl-enforcer cache.
+         */
+        public Provider(final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; thingIdCache,
+                final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; policyEnforcerCache,
+<span class="fc" id="L97">                final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; aclEnforcerCache) {</span>
+
+<span class="fc" id="L99">            this.thingIdCache = requireNonNull(thingIdCache);</span>
+<span class="fc" id="L100">            this.policyEnforcerCache = requireNonNull(policyEnforcerCache);</span>
+<span class="fc" id="L101">            this.aclEnforcerCache = requireNonNull(aclEnforcerCache);</span>
+<span class="fc" id="L102">        }</span>
+
+        @Override
+        public Class&lt;Signal&gt; getCommandClass() {
+<span class="fc" id="L106">            return Signal.class;</span>
+        }
+
+        @Override
+        public boolean isApplicable(final Signal signal) {
+<span class="fc" id="L111">            return LiveSignalEnforcement.isLiveSignal(signal);</span>
+        }
+
+        @Override
+        public AbstractEnforcement&lt;Signal&gt; createEnforcement(final Context context) {
+<span class="fc" id="L116">            return new LiveSignalEnforcement(context, thingIdCache, policyEnforcerCache, aclEnforcerCache);</span>
+        }
+    }
+
+    @Override
+    public void enforce(final Signal signal, final ActorRef sender, final DiagnosticLoggingAdapter log) {
+<span class="fc" id="L122">        enforcerRetriever.retrieve(entityId(), (enforcerKeyEntry, enforcerEntry) -&gt; {</span>
+<span class="pc bpc" id="L123" title="1 of 2 branches missed.">            if (enforcerEntry.exists()) {</span>
+<span class="fc" id="L124">                final Enforcer enforcer = enforcerEntry.getValue();</span>
+
+<span class="fc" id="L126">                final String correlationId = signal.getDittoHeaders().getCorrelationId().get();</span>
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">                if (signal instanceof SendClaimMessage) {</span>
+                    // claim messages require no enforcement, publish them right away:
+<span class="nc" id="L129">                    publishMessageCommand((SendClaimMessage) signal, enforcer, sender);</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">                    if (signal.getDittoHeaders().isResponseRequired()) {</span>
+<span class="nc" id="L131">                        responseReceivers.put(correlationId, sender);</span>
+                    }
+<span class="pc bpc" id="L133" title="1 of 2 branches missed.">                } else if (signal instanceof CommandResponse) {</span>
+                    // no enforcement for responses required - the original sender will get the answer:
+<span class="nc" id="L135">                    final Optional&lt;ActorRef&gt; responseReceiver = responseReceivers.getBlocking(correlationId);</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">                    if (responseReceiver.isPresent()) {</span>
+<span class="nc" id="L137">                        responseReceiver.get().tell(signal, sender);</span>
+<span class="nc" id="L138">                        responseReceivers.invalidate(correlationId);</span>
+                    } else {
+<span class="nc" id="L140">                        log(signal).warning(&quot;No outstanding responses receiver for CommandResponse &lt;{}&gt;&quot;,</span>
+<span class="nc" id="L141">                                signal.getType());</span>
+                    }
+<span class="pc bfc" id="L143" title="All 2 branches covered.">                } else if (signal instanceof Command) {</span>
+                    // enforce both Live Commands and MessageCommands
+<span class="fc bfc" id="L145" title="All 2 branches covered.">                    if (signal instanceof MessageCommand) {</span>
+
+<span class="fc" id="L147">                        final boolean wasPublished = enforceMessageCommand((MessageCommand) signal, enforcer, sender);</span>
+<span class="pc bpc" id="L148" title="1 of 4 branches missed.">                        if (wasPublished &amp;&amp; signal.getDittoHeaders().isResponseRequired()) {</span>
+<span class="fc" id="L149">                            responseReceivers.put(correlationId, sender);</span>
+                        }
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">                    } else if (signal instanceof ThingCommand) {</span>
+                        // enforce Live Thing Commands
+                        final boolean authorized;
+<span class="fc bfc" id="L154" title="All 2 branches covered.">                        if (enforcer instanceof AclEnforcer) {</span>
+<span class="fc" id="L155">                            authorized = ThingCommandEnforcement.authorizeByAcl(enforcer, (ThingCommand&lt;?&gt;) signal)</span>
+<span class="fc" id="L156">                                    .isPresent();</span>
+                        } else {
+<span class="fc" id="L158">                            authorized = ThingCommandEnforcement.authorizeByPolicy(enforcer, (ThingCommand&lt;?&gt;) signal)</span>
+<span class="fc" id="L159">                                    .isPresent();</span>
+                        }
+
+<span class="fc bfc" id="L162" title="All 2 branches covered.">                        if (authorized) {</span>
+<span class="fc" id="L163">                            final Command&lt;?&gt; withReadSubjects =</span>
+<span class="fc" id="L164">                                    addReadSubjectsToThingSignal((Command&lt;?&gt;) signal, enforcer);</span>
+<span class="fc" id="L165">                            log(withReadSubjects).info(&quot;Live Command was authorized: &lt;{}&gt;&quot;, withReadSubjects);</span>
+<span class="fc" id="L166">                            publishToMediator(withReadSubjects, StreamingType.LIVE_COMMANDS.getDistributedPubSubTopic(),</span>
+                                    sender);
+<span class="pc bpc" id="L168" title="1 of 2 branches missed.">                            if (signal.getDittoHeaders().isResponseRequired()) {</span>
+<span class="fc" id="L169">                                responseReceivers.put(correlationId, sender);</span>
+                            }
+<span class="fc" id="L171">                        } else {</span>
+<span class="fc" id="L172">                            log(signal).info(&quot;Live Command was NOT authorized: &lt;{}&gt;&quot;, signal);</span>
+<span class="fc" id="L173">                            ThingCommandEnforcement.respondWithError((ThingCommand) signal, sender, self());</span>
+                        }
+<span class="fc" id="L175">                    } else {</span>
+<span class="nc" id="L176">                        log(signal).error(&quot;Ignoring unsupported live signal: &lt;{}&gt;&quot;, signal);</span>
+                    }
+
+<span class="pc bpc" id="L179" title="1 of 2 branches missed.">                } else if (signal instanceof ThingEvent) {</span>
+                    // enforce Live Events
+<span class="fc" id="L181">                    final boolean authorized = enforcer.hasUnrestrictedPermissions(</span>
+                            // only check access to root resource for now
+<span class="fc" id="L183">                            PoliciesResourceType.thingResource(&quot;/&quot;),</span>
+<span class="fc" id="L184">                            signal.getDittoHeaders().getAuthorizationContext(),</span>
+                            WRITE);
+<span class="fc bfc" id="L186" title="All 2 branches covered.">                    if (authorized) {</span>
+<span class="fc" id="L187">                        log(signal).info(&quot;Live Event was authorized: &lt;{}&gt;&quot;, signal);</span>
+<span class="fc" id="L188">                        final Event&lt;?&gt; withReadSubjects = addReadSubjectsToThingSignal((Event&lt;?&gt;) signal, enforcer);</span>
+<span class="fc" id="L189">                        publishToMediator(withReadSubjects, StreamingType.LIVE_EVENTS.getDistributedPubSubTopic(),</span>
+                                sender);
+<span class="fc" id="L191">                    } else {</span>
+<span class="fc" id="L192">                        final EventSendNotAllowedException eventSendNotAllowedException =</span>
+<span class="fc" id="L193">                                EventSendNotAllowedException.newBuilder(((ThingEvent) signal).getThingId())</span>
+<span class="fc" id="L194">                                        .dittoHeaders(signal.getDittoHeaders())</span>
+<span class="fc" id="L195">                                        .build();</span>
+<span class="fc" id="L196">                        log(signal).info(&quot;Live Event was NOT authorized: &lt;{}&gt;&quot;, signal);</span>
+<span class="fc" id="L197">                        replyToSender(eventSendNotAllowedException, sender);</span>
+                    }
+                }
+<span class="fc" id="L200">            } else {</span>
+                // drop live command to nonexistent things and respond with error.
+<span class="nc" id="L202">                log(signal).info(&quot;Command of type &lt;{}&gt; with ID &lt;{}&gt; could not be dispatched as no enforcer could be&quot; +</span>
+<span class="nc" id="L203">                                &quot; looked up! Answering with ThingNotAccessibleException.&quot;, signal.getType(),</span>
+<span class="nc" id="L204">                        signal.getId());</span>
+<span class="nc" id="L205">                final ThingNotAccessibleException error = ThingNotAccessibleException.newBuilder(entityId().getId())</span>
+<span class="nc" id="L206">                        .dittoHeaders(signal.getDittoHeaders())</span>
+<span class="nc" id="L207">                        .build();</span>
+<span class="nc" id="L208">                replyToSender(error, sender);</span>
+            }
+<span class="fc" id="L210">        });</span>
+<span class="fc" id="L211">    }</span>
+
+    /**
+     * Tests whether a signal is applicable for live signal enforcement.
+     *
+     * @param signal the signal to test.
+     * @return whether the signal belongs to the live channel.
+     */
+    static boolean isLiveSignal(final Signal signal) {
+<span class="fc" id="L220">        return signal.getDittoHeaders().getChannel().filter(TopicPath.Channel.LIVE.getName()::equals).isPresent();</span>
+    }
+
+    private boolean enforceMessageCommand(final MessageCommand command, final Enforcer enforcer,
+            final ActorRef sender) {
+<span class="fc bfc" id="L225" title="All 2 branches covered.">        if (isAuthorized(command, enforcer)) {</span>
+<span class="fc" id="L226">            publishMessageCommand(command, enforcer, sender);</span>
+<span class="fc" id="L227">            return true;</span>
+        } else {
+<span class="fc" id="L229">            rejectMessageCommand(command, sender);</span>
+<span class="fc" id="L230">            return false;</span>
+        }
+    }
+
+    private void publishMessageCommand(final MessageCommand command, final Enforcer enforcer, final ActorRef sender) {
+
+<span class="fc" id="L236">        final ResourceKey resourceKey =</span>
+<span class="fc" id="L237">                ResourceKey.newInstance(MessageCommand.RESOURCE_TYPE, command.getResourcePath());</span>
+<span class="fc" id="L238">        final Set&lt;String&gt; messageReaders = enforcer.getSubjectIdsWithPermission(resourceKey, Permission.READ)</span>
+<span class="fc" id="L239">                .getGranted();</span>
+
+<span class="fc" id="L241">        final DittoHeaders headersWithReadSubjects = command.getDittoHeaders()</span>
+<span class="fc" id="L242">                .toBuilder()</span>
+<span class="fc" id="L243">                .readSubjects(messageReaders)</span>
+<span class="fc" id="L244">                .build();</span>
+
+<span class="fc" id="L246">        final MessageCommand commandWithReadSubjects = command.setDittoHeaders(headersWithReadSubjects);</span>
+
+<span class="fc" id="L248">        publishToMediator(commandWithReadSubjects, commandWithReadSubjects.getTypePrefix(), sender);</span>
+
+        // answer the sender immediately for fire-and-forget message commands.
+<span class="fc" id="L251">        getResponseForFireAndForgetMessage(commandWithReadSubjects)</span>
+<span class="pc" id="L252">                .ifPresent(response -&gt; replyToSender(response, sender));</span>
+<span class="fc" id="L253">    }</span>
+
+    private void rejectMessageCommand(final MessageCommand command, final ActorRef sender) {
+<span class="fc" id="L256">        final MessageSendNotAllowedException error =</span>
+<span class="fc" id="L257">                MessageSendNotAllowedException.newBuilder(command.getThingId())</span>
+<span class="fc" id="L258">                        .dittoHeaders(command.getDittoHeaders())</span>
+<span class="fc" id="L259">                        .build();</span>
+
+<span class="fc" id="L261">        log(command).info(&quot;The command &lt;{}&gt; was not forwarded due to insufficient rights {}: {} - AuthorizationSubjects: {}&quot;,</span>
+<span class="fc" id="L262">                command.getType(), error.getClass().getSimpleName(), error.getMessage(),</span>
+<span class="fc" id="L263">                command.getDittoHeaders().getAuthorizationSubjects());</span>
+<span class="fc" id="L264">        replyToSender(error, sender);</span>
+<span class="fc" id="L265">    }</span>
+
+    private void publishToMediator(final Signal&lt;?&gt; command, final String pubSubTopic, final ActorRef sender) {
+        // using pub/sub to publish the command to any interested parties (e.g. a Websocket):
+<span class="fc" id="L269">        log(command).debug(&quot;Publish message to pub-sub: &lt;{}&gt;&quot;, pubSubTopic);</span>
+
+<span class="fc" id="L271">        final DistributedPubSubMediator.Publish publishMessage =</span>
+                new DistributedPubSubMediator.Publish(pubSubTopic, command, true);
+<span class="fc" id="L273">        pubSubMediator().tell(publishMessage, sender);</span>
+<span class="fc" id="L274">    }</span>
+
+    private static boolean isAuthorized(final MessageCommand command, final Enforcer enforcer) {
+<span class="fc" id="L277">        return enforcer.hasUnrestrictedPermissions(</span>
+<span class="fc" id="L278">                PoliciesResourceType.messageResource(command.getResourcePath()),</span>
+<span class="fc" id="L279">                command.getDittoHeaders().getAuthorizationContext(),</span>
+                WRITE);
+    }
+
+    /**
+     * Creates an @{SendMessageAcceptedResponse} for a message command if it is fire-and-forget.
+     *
+     * @param command The message command.
+     * @return The HTTP response if the message command is fire-and-forget, {@code Optional.empty()} otherwise.
+     */
+    private static Optional&lt;SendMessageAcceptedResponse&gt; getResponseForFireAndForgetMessage(
+            final MessageCommand&lt;?, ?&gt; command) {
+<span class="pc bpc" id="L291" title="1 of 2 branches missed.">        if (isFireAndForgetMessage(command)) {</span>
+<span class="nc" id="L292">            return Optional.of(</span>
+<span class="nc" id="L293">                    SendMessageAcceptedResponse.newInstance(command.getThingId(), command.getMessage().getHeaders(),</span>
+<span class="nc" id="L294">                            command.getDittoHeaders()));</span>
+        } else {
+<span class="fc" id="L296">            return Optional.empty();</span>
+        }
+    }
+
+    /**
+     * Tests whether a message command is fire-and-forget.
+     *
+     * @param command The message command.
+     * @return {@code true} if the message's timeout header is 0 or if the message is flagged not to require a response,
+     * {@code false} otherwise.
+     */
+    private static boolean isFireAndForgetMessage(final MessageCommand&lt;?, ?&gt; command) {
+<span class="fc" id="L308">        return command.getMessage()</span>
+<span class="fc" id="L309">                .getTimeout()</span>
+<span class="fc" id="L310">                .map(Duration::isZero)</span>
+<span class="pc bpc" id="L311" title="1 of 2 branches missed.">                .orElseGet(() -&gt; !command.getDittoHeaders().isResponseRequired());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

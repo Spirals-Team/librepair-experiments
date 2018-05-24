@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MongoClientWrapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Persistence Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.persistence.mongo</a> &gt; <span class="el_source">MongoClientWrapper.java</span></div><h1>MongoClientWrapper.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.persistence.mongo;
+
+import java.io.Closeable;
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
+import java.util.Collections;
+import java.util.concurrent.TimeUnit;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.services.utils.config.MongoConfig;
+
+import com.mongodb.ConnectionString;
+import com.mongodb.ReadPreference;
+import com.mongodb.ServerAddress;
+import com.mongodb.async.client.MongoClientSettings;
+import com.mongodb.connection.ClusterSettings;
+import com.mongodb.connection.ConnectionPoolSettings;
+import com.mongodb.connection.SslSettings;
+import com.mongodb.event.CommandListener;
+import com.mongodb.event.ConnectionPoolListener;
+import com.mongodb.management.JMXConnectionPoolListener;
+import com.mongodb.reactivestreams.client.MongoClient;
+import com.mongodb.reactivestreams.client.MongoClients;
+import com.mongodb.reactivestreams.client.MongoDatabase;
+import com.typesafe.config.Config;
+
+/**
+ * MongoDB Client Wrapper.
+ */
+public class MongoClientWrapper implements Closeable {
+    // not final to test with Mockito
+
+    private final MongoClient mongoClient;
+    private final MongoDatabase mongoDatabase;
+
+    /**
+     * Initializes the persistence with a passed in {@code database} and {@code clientSettings}.
+     *
+     * @param database the host name of the mongoDB database.
+     * @param mongoClientSettings the settings to use.
+     */
+<span class="fc" id="L54">    private MongoClientWrapper(final String database, final MongoClientSettings mongoClientSettings) {</span>
+<span class="fc" id="L55">        mongoClient = MongoClients.create(mongoClientSettings);</span>
+<span class="fc" id="L56">        mongoDatabase = mongoClient.getDatabase(database);</span>
+<span class="fc" id="L57">    }</span>
+
+    /**
+     * Initializes the persistence with a passed in {@code config} containing the {@code uri}.
+     *
+     * @param config Config containing mongoDB settings including the URI.
+     * @param customCommandListener the custom {@link CommandListener}
+     * @param customConnectionPoolListener the custom {@link ConnectionPoolListener}
+     * @return a new {@code MongoClientWrapper} object.
+     */
+    public static MongoClientWrapper newInstance(final Config config,
+            @Nullable final CommandListener customCommandListener,
+            @Nullable final ConnectionPoolListener customConnectionPoolListener) {
+<span class="fc" id="L70">        final int maxPoolSize = MongoConfig.getPoolMaxSize(config);</span>
+<span class="fc" id="L71">        final int maxPoolWaitQueueSize = MongoConfig.getPoolMaxWaitQueueSize(config);</span>
+<span class="fc" id="L72">        final Duration maxPoolWaitTime = MongoConfig.getPoolMaxWaitTime(config);</span>
+<span class="fc" id="L73">        final boolean jmxListenerEnabled = MongoConfig.getJmxListenerEnabled(config);</span>
+<span class="fc" id="L74">        final String uri = MongoConfig.getMongoUri(config);</span>
+<span class="fc" id="L75">        final ConnectionString connectionString = new ConnectionString(uri);</span>
+<span class="fc" id="L76">        final String database = connectionString.getDatabase();</span>
+        final MongoClientSettings.Builder builder =
+<span class="fc" id="L78">                MongoClientSettings.builder()</span>
+<span class="fc" id="L79">                        .readPreference(ReadPreference.secondaryPreferred())</span>
+<span class="fc" id="L80">                        .clusterSettings(ClusterSettings.builder().applyConnectionString(connectionString).build())</span>
+<span class="fc" id="L81">                        .credentialList(connectionString.getCredentialList())</span>
+<span class="fc" id="L82">                        .sslSettings(SslSettings.builder().applyConnectionString(connectionString).build());</span>
+
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">        if (customCommandListener != null) {</span>
+<span class="nc" id="L85">            builder.addCommandListener(customCommandListener);</span>
+        }
+
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">        if (connectionString.getWriteConcern() != null) {</span>
+<span class="nc" id="L89">            builder.writeConcern(connectionString.getWriteConcern());</span>
+        }
+<span class="fc" id="L91">        final MongoClientSettings mongoClientSettings = buildClientSettings(builder, maxPoolSize,</span>
+                maxPoolWaitQueueSize, maxPoolWaitTime, jmxListenerEnabled, customConnectionPoolListener);
+
+<span class="fc" id="L94">        return new MongoClientWrapper(database, mongoClientSettings);</span>
+    }
+
+    /**
+     * Initializes the persistence with a passed in {@code config} containing the {@code uri}.
+     *
+     * @param config Config containing mongoDB settings including the URI.
+     * @return a new {@code MongoClientWrapper} object.
+     */
+    public static MongoClientWrapper newInstance(final Config config) {
+<span class="fc" id="L104">        return newInstance(config, null, null);</span>
+    }
+
+    /**
+     * Initializes the persistence with a passed in parameters. Does NOT allow to specify credentials, is useful for
+     * testing purposes.
+     *
+     * @param host the host name of the mongoDB
+     * @param port the port of the mongoDB
+     * @param dbName the database of the mongoDB
+     * @param maxPoolSize the max pool size of the db.
+     * @param maxPoolWaitQueueSize the max queue size of the pool.
+     * @param maxPoolWaitTimeSecs the max wait time in the pool.
+     * @return a new {@code MongoClientWrapper} object.
+     *
+     * @see #newInstance(Config) for production purposes
+     */
+    public static MongoClientWrapper newInstance(final String host, final int port, final String dbName,
+            final int maxPoolSize, final int maxPoolWaitQueueSize, final long maxPoolWaitTimeSecs) {
+
+<span class="fc" id="L124">        final MongoClientSettings.Builder builder = MongoClientSettings.builder()</span>
+<span class="fc" id="L125">                .readPreference(ReadPreference.secondaryPreferred())</span>
+<span class="fc" id="L126">                .clusterSettings(ClusterSettings.builder()</span>
+<span class="fc" id="L127">                        .hosts(Collections.singletonList(new ServerAddress(host, port)))</span>
+<span class="fc" id="L128">                        .build());</span>
+
+<span class="fc" id="L130">        final MongoClientSettings mongoClientSettings = buildClientSettings(builder, maxPoolSize,</span>
+<span class="fc" id="L131">                maxPoolWaitQueueSize, Duration.of(maxPoolWaitTimeSecs, ChronoUnit.SECONDS), false, null);</span>
+<span class="fc" id="L132">        return new MongoClientWrapper(dbName, mongoClientSettings);</span>
+    }
+
+
+    private static MongoClientSettings buildClientSettings(final MongoClientSettings.Builder builder,
+            final int maxPoolSize,
+            final int maxPoolWaitQueueSize,
+            final Duration maxPoolWaitTime,
+            final boolean jmxListenerEnabled,
+            @Nullable final ConnectionPoolListener customConnectionPoolListener) {
+
+        final ConnectionPoolSettings.Builder connectionPoolSettingsBuilder =
+<span class="fc" id="L144">                ConnectionPoolSettings.builder().maxSize(maxPoolSize).maxWaitQueueSize(maxPoolWaitQueueSize)</span>
+<span class="fc" id="L145">                        .maxWaitTime(maxPoolWaitTime.toMillis(), TimeUnit.MILLISECONDS);</span>
+
+<span class="pc bpc" id="L147" title="1 of 2 branches missed.">        if (jmxListenerEnabled) {</span>
+<span class="nc" id="L148">            connectionPoolSettingsBuilder.addConnectionPoolListener(new JMXConnectionPoolListener());</span>
+        }
+
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">        if (customConnectionPoolListener != null) {</span>
+<span class="nc" id="L152">            connectionPoolSettingsBuilder.addConnectionPoolListener(customConnectionPoolListener);</span>
+        }
+
+<span class="fc" id="L155">        builder.connectionPoolSettings(connectionPoolSettingsBuilder.build());</span>
+
+<span class="fc" id="L157">        return builder.build();</span>
+    }
+
+    /**
+     * @return the MongoDB client.
+     */
+    public MongoClient getMongoClient() {
+<span class="fc" id="L164">        return mongoClient;</span>
+    }
+
+    /**
+     * @return the database.
+     */
+    public MongoDatabase getDatabase() {
+<span class="fc" id="L171">        return mongoDatabase;</span>
+    }
+
+    @Override
+    public void close() {
+<span class="nc" id="L176">        mongoClient.close();</span>
+<span class="nc" id="L177">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

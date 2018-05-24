@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MetricsStatsCounter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Cache Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.cache</a> &gt; <span class="el_source">MetricsStatsCounter.java</span></div><h1>MetricsStatsCounter.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.cache;
+
+import static com.codahale.metrics.MetricRegistry.name;
+import static java.util.Objects.requireNonNull;
+
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+
+import javax.annotation.Nullable;
+
+import com.codahale.metrics.Gauge;
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.Timer;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Policy;
+import com.github.benmanes.caffeine.cache.stats.CacheStats;
+import com.github.benmanes.caffeine.cache.stats.StatsCounter;
+
+/**
+ * &lt;p&gt;
+ * A caffeine {@link StatsCounter} implementation for Dropwizard Metrics.
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * Inspired by &lt;a href=&quot;https://github.com/ben-manes/caffeine/blob/master/examples/stats-metrics&quot;&gt;Caffeine examples&lt;/a&gt;.
+ * &lt;/p&gt;
+ *
+ * @see CacheStats for details on how the statistics are calculated.
+ */
+public final class MetricsStatsCounter implements StatsCounter {
+
+    /**
+     * The names of the Metrics provided by this counter.
+     */
+<span class="fc" id="L46">    public enum MetricName {</span>
+        /**
+         * Cache hits.
+         */
+<span class="fc" id="L50">        HITS(&quot;hits&quot;),</span>
+        /**
+         * Cache misses.
+         */
+<span class="fc" id="L54">        MISSES(&quot;misses&quot;),</span>
+        /**
+         * The total load time in nanoseconds.
+         */
+<span class="fc" id="L58">        TOTAL_LOAD_TIME(&quot;loads&quot;),</span>
+        /**
+         * Number of successful loads.
+         */
+<span class="fc" id="L62">        LOADS_SUCCESS(&quot;loads-success&quot;),</span>
+        /**
+         * Number of failed loads.
+         */
+<span class="fc" id="L66">        LOADS_FAILURE(&quot;loads-failure&quot;),</span>
+        /**
+         * Number of cache evictions, e.g. when the cache grows to large. Manual cache invalidation is NOT included,
+         * it is counted by {@link #ESTIMATED_INVALIDATIONS}.
+         */
+<span class="fc" id="L71">        EVICTIONS(&quot;evictions&quot;),</span>
+        /**
+         * Sum of the weights of the cache evictions.
+         */
+<span class="fc" id="L75">        EVICTIONS_WEIGHT(&quot;evictions-weight&quot;),</span>
+        /**
+         * The estimated size of the cache.
+         */
+<span class="fc" id="L79">        ESTIMATED_SIZE(&quot;estimated-size&quot;),</span>
+        /**
+         * The maximum size of the cache.
+         */
+<span class="fc" id="L83">        MAX_SIZE(&quot;max-size&quot;),</span>
+        /**
+         * Estimated cache invalidations (manual, in contrast to {@link #EVICTIONS}). The value is estimated, it may
+         * be not completely correct in case of parallel loads or evictions.
+         */
+<span class="fc" id="L88">        ESTIMATED_INVALIDATIONS(&quot;estimated-invalidations&quot;);</span>
+
+        private final String name;
+
+<span class="fc" id="L92">        MetricName(final String name) {</span>
+<span class="fc" id="L93">            this.name = name;</span>
+<span class="fc" id="L94">        }</span>
+
+        /**
+         * Returns the String value of this metric name, i.e. &quot;just the name&quot;.
+         *
+         * @return the String value.
+         */
+        public String getValue() {
+<span class="fc" id="L102">            return name;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L107">            return name;</span>
+        }
+    }
+
+    private static final int DEFAULT_EVICTION_WEIGHT = 1;
+
+    private final Meter hitCount;
+    private final Meter missCount;
+    private final Meter loadSuccessCount;
+    private final Meter loadFailureCount;
+    private final Timer totalLoadTime;
+    private final Meter evictionCount;
+    private final Meter evictionWeight;
+    private final SimpleGauge&lt;Long&gt; estimatedSize;
+    private final SimpleGauge&lt;Long&gt; maxSize;
+    private final Meter estimatedInvalidations;
+
+    private volatile @Nullable Cache cache;
+
+<span class="fc" id="L126">    private MetricsStatsCounter(final MetricRegistry registry, final String metricsPrefix) {</span>
+<span class="fc" id="L127">        hitCount = registry.meter(createMetricName(metricsPrefix, MetricName.HITS));</span>
+<span class="fc" id="L128">        missCount = registry.meter(createMetricName(metricsPrefix, MetricName.MISSES));</span>
+<span class="fc" id="L129">        totalLoadTime = registry.timer(createMetricName(metricsPrefix, MetricName.TOTAL_LOAD_TIME));</span>
+<span class="fc" id="L130">        loadSuccessCount = registry.meter(createMetricName(metricsPrefix, MetricName.LOADS_SUCCESS));</span>
+<span class="fc" id="L131">        loadFailureCount = registry.meter(createMetricName(metricsPrefix, MetricName.LOADS_FAILURE));</span>
+<span class="fc" id="L132">        evictionCount = registry.meter(createMetricName(metricsPrefix, MetricName.EVICTIONS));</span>
+<span class="fc" id="L133">        evictionWeight = registry.meter(createMetricName(metricsPrefix, MetricName.EVICTIONS_WEIGHT));</span>
+<span class="fc" id="L134">        estimatedSize = registry.register(createMetricName(metricsPrefix, MetricName.ESTIMATED_SIZE),</span>
+                new SimpleGauge&lt;&gt;(null));
+<span class="fc" id="L136">        maxSize = registry.register(createMetricName(metricsPrefix, MetricName.MAX_SIZE),</span>
+                new SimpleGauge&lt;&gt;(null));
+<span class="fc" id="L138">        estimatedInvalidations = registry.meter(createMetricName(metricsPrefix, MetricName.ESTIMATED_INVALIDATIONS));</span>
+<span class="fc" id="L139">    }</span>
+
+    private String createMetricName(final String metricsPrefix, final MetricName metricName) {
+<span class="fc" id="L142">        return name(metricsPrefix, metricName.getValue());</span>
+    }
+
+    /**
+     * Creates an instance to be used by a single cache.
+     *
+     * @param metricsPrefix the prefix name for the metrics.
+     * @param registry the {@link MetricRegistry}.
+     * @return the instance.
+     */
+    static MetricsStatsCounter of(final String metricsPrefix, final MetricRegistry registry) {
+<span class="fc" id="L153">        requireNonNull(metricsPrefix);</span>
+<span class="fc" id="L154">        requireNonNull(registry);</span>
+
+<span class="fc" id="L156">        return new MetricsStatsCounter(registry, metricsPrefix);</span>
+    }
+
+    /**
+     * Configures the given cache, which allows reporting of estimated and maximum size.
+     *
+     * @param cache the cache.
+     */
+    public void configureCache(final Cache cache) {
+<span class="pc bpc" id="L165" title="1 of 2 branches missed.">        if (this.cache != null) {</span>
+<span class="nc" id="L166">            throw new IllegalStateException(&quot;Cache has already been configured!&quot;);</span>
+        }
+<span class="fc" id="L168">        this.cache = requireNonNull(cache);</span>
+<span class="fc" id="L169">    }</span>
+
+    @Override
+    public void recordHits(int count) {
+<span class="fc" id="L173">        hitCount.mark(count);</span>
+<span class="fc" id="L174">    }</span>
+
+    @Override
+    public void recordMisses(int count) {
+<span class="fc" id="L178">        missCount.mark(count);</span>
+<span class="fc" id="L179">    }</span>
+
+    @Override
+    public void recordLoadSuccess(long loadTime) {
+<span class="fc" id="L183">        loadSuccessCount.mark();</span>
+<span class="fc" id="L184">        totalLoadTime.update(loadTime, TimeUnit.NANOSECONDS);</span>
+<span class="fc" id="L185">        updateCacheSizeMetrics();</span>
+<span class="fc" id="L186">    }</span>
+
+    @Override
+    public void recordLoadFailure(long loadTime) {
+<span class="nc" id="L190">        loadFailureCount.mark();</span>
+<span class="nc" id="L191">        totalLoadTime.update(loadTime, TimeUnit.NANOSECONDS);</span>
+<span class="nc" id="L192">    }</span>
+
+    @Override
+    public void recordEviction() {
+<span class="nc" id="L196">        recordEviction(DEFAULT_EVICTION_WEIGHT);</span>
+<span class="nc" id="L197">        updateCacheSizeMetrics();</span>
+<span class="nc" id="L198">    }</span>
+
+    @Override
+    public void recordEviction(int weight) {
+<span class="fc" id="L202">        evictionCount.mark();</span>
+<span class="fc" id="L203">        evictionWeight.mark(weight);</span>
+<span class="fc" id="L204">        updateCacheSizeMetrics();</span>
+<span class="fc" id="L205">    }</span>
+
+    /**
+     * Records the invalidation of an entry in the cache.
+     */
+    public void recordInvalidation() {
+<span class="fc" id="L211">        estimatedInvalidations.mark();</span>
+<span class="fc" id="L212">        updateCacheSizeMetrics();</span>
+<span class="fc" id="L213">    }</span>
+
+    @Override
+    public CacheStats snapshot() {
+<span class="nc" id="L217">        return new CacheStats(</span>
+<span class="nc" id="L218">                hitCount.getCount(),</span>
+<span class="nc" id="L219">                missCount.getCount(),</span>
+<span class="nc" id="L220">                loadSuccessCount.getCount(),</span>
+<span class="nc" id="L221">                loadFailureCount.getCount(),</span>
+<span class="nc" id="L222">                totalLoadTime.getCount(),</span>
+<span class="nc" id="L223">                evictionCount.getCount(),</span>
+<span class="nc" id="L224">                evictionWeight.getCount());</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L229">        return getClass().getSimpleName() + &quot; [&quot;</span>
+<span class="nc" id="L230">                + &quot;snapshot=&quot; + snapshot()</span>
+                + ']';
+    }
+
+    private void updateCacheSizeMetrics() {
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">        if (cache != null) {</span>
+<span class="fc" id="L236">            estimatedSize.setValue(getRequiredCache().estimatedSize());</span>
+<span class="fc" id="L237">            final Long currentMaxCacheSize = getMaxSize();</span>
+<span class="pc bpc" id="L238" title="1 of 2 branches missed.">            if (currentMaxCacheSize != null) {</span>
+<span class="fc" id="L239">                maxSize.setValue(currentMaxCacheSize);</span>
+            }
+        }
+<span class="fc" id="L242">    }</span>
+
+    @Nullable
+    private Long getMaxSize() {
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="fc" id="L247">        final Optional&lt;Policy.Eviction&gt; evictionOptional = getRequiredCache().policy().eviction();</span>
+<span class="fc" id="L248">        return evictionOptional.map(Policy.Eviction::getMaximum).orElse(null);</span>
+    }
+
+    private Cache getRequiredCache() {
+<span class="fc" id="L252">        return requireNonNull(cache);</span>
+    }
+
+    /**
+     * Simple {@link Gauge} implementation.
+     */
+    private static final class SimpleGauge&lt;T&gt; implements Gauge&lt;T&gt; {
+
+        @Nullable
+        private volatile T value;
+
+<span class="fc" id="L263">        private SimpleGauge(@Nullable T value) {</span>
+<span class="fc" id="L264">            this.value = value;</span>
+<span class="fc" id="L265">        }</span>
+
+        @Nullable
+        @Override
+        public T getValue() {
+<span class="fc" id="L270">            return this.value;</span>
+        }
+
+        public void setValue(T value) {
+<span class="fc" id="L274">            this.value = value;</span>
+<span class="fc" id="L275">        }</span>
+
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

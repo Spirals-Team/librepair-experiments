@@ -1,0 +1,322 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractEnforcement.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Concierge :: Enforcement</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.concierge.enforcement</a> &gt; <span class="el_source">AbstractEnforcement.java</span></div><h1>AbstractEnforcement.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.concierge.enforcement;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Set;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.WithDittoHeaders;
+import org.eclipse.ditto.model.enforcers.Enforcer;
+import org.eclipse.ditto.model.policies.ResourceKey;
+import org.eclipse.ditto.services.models.concierge.EntityId;
+import org.eclipse.ditto.services.models.policies.Permission;
+import org.eclipse.ditto.services.utils.akka.LogUtil;
+import org.eclipse.ditto.services.utils.akka.controlflow.Consume;
+import org.eclipse.ditto.services.utils.akka.controlflow.WithSender;
+import org.eclipse.ditto.signals.base.Signal;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayInternalErrorException;
+import org.eclipse.ditto.signals.commands.things.ThingCommand;
+
+import akka.NotUsed;
+import akka.actor.AbstractActor;
+import akka.actor.ActorRef;
+import akka.event.DiagnosticLoggingAdapter;
+import akka.pattern.AskTimeoutException;
+import akka.stream.Graph;
+import akka.stream.SinkShape;
+
+/**
+ * Contains self-type requirements for aspects of enforcer actor dealing with specific commands.
+ * Implementations only need to implement {@link #enforce(Signal, ActorRef, DiagnosticLoggingAdapter)} in which they
+ * check if the passed in {@link Signal} is authorized and forward it accordingly or respond with an error to the passed
+ * in {@code sender}.
+ * &lt;p&gt;
+ * Do NOT call the methods outside this package.
+ * &lt;/p&gt;
+ */
+public abstract class AbstractEnforcement&lt;T extends Signal&gt; {
+
+    private final Context context;
+
+<span class="fc" id="L57">    protected AbstractEnforcement(final Context context) {</span>
+<span class="fc" id="L58">        this.context = context;</span>
+<span class="fc" id="L59">    }</span>
+
+    /**
+     * Performs authorization enforcement for the passed {@code signal}.
+     * If the signal is authorized, the implementation chooses to which target to forward. If it is not authorized, the
+     * passed {@code sender} will get an authorization error response.
+     *
+     * @param signal the signal to authorize.
+     * @param sender sender of the signal.
+     * @param log the logger to use for logging.
+     */
+    public abstract void enforce(T signal, ActorRef sender, DiagnosticLoggingAdapter log);
+
+    Graph&lt;SinkShape&lt;WithSender&lt;T&gt;&gt;, NotUsed&gt; toGraph() {
+<span class="fc" id="L73">        return Consume.of((signal, sender) -&gt; enforce(signal, sender, context.log));</span>
+    }
+
+    /**
+     * Reply a message to sender.
+     *
+     * @param message message to forward.
+     * @param sender whom to reply to.
+     * @return true.
+     */
+    protected boolean replyToSender(final Object message, final ActorRef sender) {
+<span class="fc" id="L84">        sender.tell(message, self());</span>
+<span class="fc" id="L85">        return true;</span>
+    }
+
+    /**
+     * Report unexpected error or unknown response.
+     */
+    protected void reportUnexpectedErrorOrResponse(final String hint,
+            final ActorRef sender,
+            final Object response,
+            final Throwable error,
+            final DittoHeaders dittoHeaders) {
+
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        if (error != null) {</span>
+<span class="nc" id="L98">            reportUnexpectedError(hint, sender, error, dittoHeaders);</span>
+        } else {
+<span class="nc" id="L100">            reportUnknownResponse(hint, sender, response, dittoHeaders);</span>
+        }
+<span class="nc" id="L102">    }</span>
+
+    /**
+     * Reports an error differently based on type of the error. If the error is of type
+     * {@link org.eclipse.ditto.model.base.exceptions.DittoRuntimeException}, it is send to the {@code sender}
+     * without modification, otherwise it is wrapped inside a {@link GatewayInternalErrorException}.
+     */
+    protected void reportError(final String hint, final ActorRef sender, final Throwable error,
+            final DittoHeaders dittoHeaders) {
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (error instanceof DittoRuntimeException) {</span>
+<span class="nc" id="L112">            log(dittoHeaders).error(error, hint);</span>
+<span class="nc" id="L113">            sender.tell(error, self());</span>
+        } else {
+<span class="nc" id="L115">            reportUnexpectedError(hint, sender, error, dittoHeaders);</span>
+        }
+<span class="nc" id="L117">    }</span>
+
+    /**
+     * Report unexpected error.
+     */
+    protected void reportUnexpectedError(final String hint, final ActorRef sender, final Throwable error,
+            final DittoHeaders dittoHeaders) {
+<span class="nc" id="L124">        log(dittoHeaders).error(error, &quot;Unexpected error {}&quot;, hint);</span>
+
+<span class="nc" id="L126">        sender.tell(mapToExternalException(error, dittoHeaders), self());</span>
+<span class="nc" id="L127">    }</span>
+
+    /**
+     * Report unknown response.
+     */
+    protected void reportUnknownResponse(final String hint, final ActorRef sender, final Object response,
+            final DittoHeaders dittoHeaders) {
+<span class="nc" id="L134">        log(dittoHeaders).error(&quot;Unexpected response {}: &lt;{}&gt;&quot;, hint, response);</span>
+
+<span class="nc" id="L136">        sender.tell(GatewayInternalErrorException.newBuilder().dittoHeaders(dittoHeaders).build(), self());</span>
+<span class="nc" id="L137">    }</span>
+
+    private DittoRuntimeException mapToExternalException(final Throwable error,
+            final DittoHeaders dittoHeaders) {
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        if (error instanceof GatewayInternalErrorException) {</span>
+<span class="nc" id="L142">            return (GatewayInternalErrorException) error;</span>
+        } else {
+<span class="nc" id="L144">            log(dittoHeaders).error(error,&quot;Unexpected non-DittoRuntimeException error - responding with &quot; +</span>
+<span class="nc" id="L145">                    &quot;GatewayInternalErrorException: {} {}&quot;, error.getClass().getSimpleName(), error.getMessage());</span>
+<span class="nc" id="L146">            return GatewayInternalErrorException.newBuilder()</span>
+<span class="nc" id="L147">                    .cause(error)</span>
+<span class="nc" id="L148">                    .dittoHeaders(dittoHeaders)</span>
+<span class="nc" id="L149">                    .build();</span>
+        }
+    }
+
+    /**
+     * Extend a signal by read-subjects header given by an enforcer for the resource type {@code things}.
+     *
+     * @param signal the signal to extend.
+     * @param enforcer the enforcer.
+     * @return the extended signal.
+     */
+    protected static &lt;T extends Signal&gt; T addReadSubjectsToThingSignal(final Signal&lt;T&gt; signal,
+            final Enforcer enforcer) {
+
+<span class="fc" id="L163">        return addReadSubjectsToSignal(signal, getThingsReadSubjects(signal, enforcer));</span>
+    }
+
+    /**
+     * Extend a signal by read-subjects header given explicitly.
+     *
+     * @param &lt;T&gt; type of the signal.
+     * @param signal the signal to extend.
+     * @param readSubjects explicitly-given read subjects.
+     * @return the extended signal.
+     */
+    protected static &lt;T extends Signal&gt; T addReadSubjectsToSignal(final Signal&lt;T&gt; signal,
+            final Set&lt;String&gt; readSubjects) {
+
+<span class="fc" id="L177">        final DittoHeaders newHeaders = signal.getDittoHeaders()</span>
+<span class="fc" id="L178">                .toBuilder()</span>
+<span class="fc" id="L179">                .readSubjects(readSubjects)</span>
+<span class="fc" id="L180">                .build();</span>
+
+<span class="fc" id="L182">        return signal.setDittoHeaders(newHeaders);</span>
+    }
+
+    /**
+     * Get read subjects from an enforcer for the resource type {@code things}.
+     *
+     * @param signal the signal to get read subjects for.
+     * @param enforcer the enforcer.
+     * @return read subjects of the signal.
+     */
+    protected static Set&lt;String&gt; getThingsReadSubjects(final Signal&lt;?&gt; signal, final Enforcer enforcer) {
+<span class="fc" id="L193">        final ResourceKey resourceKey =</span>
+<span class="fc" id="L194">                ResourceKey.newInstance(ThingCommand.RESOURCE_TYPE, signal.getResourcePath());</span>
+<span class="fc" id="L195">        return enforcer.getSubjectIdsWithPermission(resourceKey, Permission.READ).getGranted();</span>
+    }
+
+    /**
+     * Check whether response or error from a future is {@code AskTimeoutException}.
+     *
+     * @param response response from a future.
+     * @param error error thrown in a future.
+     * @return whether either is {@code AskTimeoutException}.
+     */
+    protected static boolean isAskTimeoutException(final Object response, final Throwable error) {
+<span class="pc bpc" id="L206" title="2 of 4 branches missed.">        return error instanceof AskTimeoutException || response instanceof AskTimeoutException;</span>
+    }
+
+    /**
+     * @return Timeout duration for asking entity shard regions.
+     */
+    protected Duration getAskTimeout() {
+<span class="fc" id="L213">        return context.askTimeout;</span>
+    }
+
+    /**
+     * @return the entity ID.
+     */
+    protected EntityId entityId() {
+<span class="fc" id="L220">        return context.entityId;</span>
+    }
+
+    /**
+     * @param withPotentialDittoHeaders the object which potentially contains DittoHeaders from which a
+     * {@code correlation-id} can be extracted in order to enhance the returned DiagnosticLoggingAdapter
+     * @return the diagnostic logging adapter.
+     */
+    protected DiagnosticLoggingAdapter log(final Object withPotentialDittoHeaders) {
+<span class="fc bfc" id="L229" title="All 2 branches covered.">        if (withPotentialDittoHeaders instanceof WithDittoHeaders) {</span>
+<span class="fc" id="L230">            return log(((WithDittoHeaders&lt;?&gt;) withPotentialDittoHeaders).getDittoHeaders());</span>
+        }
+<span class="fc" id="L232">        return context.log;</span>
+    }
+
+    /**
+     * @param dittoHeaders the DittoHeaders from which a {@code correlation-id} can be extracted in order to enhance
+     * the returned DiagnosticLoggingAdapter.
+     * @return the diagnostic logging adapter.
+     */
+    protected DiagnosticLoggingAdapter log(final DittoHeaders dittoHeaders) {
+<span class="pc bpc" id="L241" title="1 of 2 branches missed.">        if (context.log != null) {</span>
+<span class="fc" id="L242">            LogUtil.enhanceLogWithCorrelationId(context.log, dittoHeaders);</span>
+        }
+<span class="fc" id="L244">        return context.log;</span>
+    }
+
+    /**
+     * @return Akka pubsub mediator.
+     */
+    protected ActorRef pubSubMediator() {
+<span class="fc" id="L251">        return context.pubSubMediator;</span>
+    }
+
+    /**
+     * @return actor reference of the enforcer actor this object belongs to.
+     */
+    protected ActorRef self() {
+<span class="fc" id="L258">        return context.self;</span>
+    }
+
+    /**
+     * Holds context information required by implementations of {@link AbstractEnforcement}.
+     */
+    public static final class Context {
+
+        private final ActorRef pubSubMediator;
+        private final Duration askTimeout;
+
+        @Nullable
+        private final EntityId entityId;
+
+        @Nullable
+        private final DiagnosticLoggingAdapter log;
+
+        @Nullable
+        private final ActorRef self;
+
+        Context(
+                final ActorRef pubSubMediator,
+                final Duration askTimeout) {
+
+<span class="fc" id="L282">            this(pubSubMediator, askTimeout, null, null, null);</span>
+<span class="fc" id="L283">        }</span>
+
+        Context(
+                final ActorRef pubSubMediator,
+                final Duration askTimeout,
+                @Nullable final EntityId entityId,
+                @Nullable final DiagnosticLoggingAdapter log,
+<span class="fc" id="L290">                @Nullable final ActorRef self) {</span>
+
+<span class="fc" id="L292">            this.pubSubMediator = pubSubMediator;</span>
+<span class="fc" id="L293">            this.askTimeout = askTimeout;</span>
+<span class="fc" id="L294">            this.entityId = entityId;</span>
+<span class="fc" id="L295">            this.log = log;</span>
+<span class="fc" id="L296">            this.self = self;</span>
+<span class="fc" id="L297">        }</span>
+
+        /**
+         * Creates a new {@link Context} from this instance with the given parameters.
+         *
+         * @param actorContext the actor context.
+         * @param log the logger.
+         * @return the created instance.
+         */
+        public Context with(final AbstractActor.ActorContext actorContext, final DiagnosticLoggingAdapter log) {
+<span class="fc" id="L307">            final ActorRef contextSelf = actorContext.self();</span>
+<span class="fc" id="L308">            return new Context(pubSubMediator, askTimeout, decodeEntityId(contextSelf), log, contextSelf);</span>
+        }
+
+        private static EntityId decodeEntityId(final ActorRef self) {
+<span class="fc" id="L312">            final String name = self.path().name();</span>
+            try {
+<span class="fc" id="L314">                final String typeWithPath = URLDecoder.decode(name, StandardCharsets.UTF_8.name());</span>
+<span class="fc" id="L315">                return EntityId.readFrom(typeWithPath);</span>
+<span class="nc" id="L316">            } catch (final UnsupportedEncodingException e) {</span>
+<span class="nc" id="L317">                throw new IllegalStateException(&quot;Unsupported encoding&quot;, e);</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

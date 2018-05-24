@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EnforcerRetriever.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Concierge :: Enforcement</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.concierge.enforcement</a> &gt; <span class="el_source">EnforcerRetriever.java</span></div><h1>EnforcerRetriever.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.concierge.enforcement;
+
+import static java.util.Objects.requireNonNull;
+
+import java.util.Map;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+import org.eclipse.ditto.model.enforcers.Enforcer;
+import org.eclipse.ditto.services.models.concierge.EntityId;
+import org.eclipse.ditto.services.models.concierge.cache.Entry;
+import org.eclipse.ditto.services.utils.cache.Cache;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Retrieves an enforcer by using an ID Cache and Enforcer Cache.
+ */
+public final class EnforcerRetriever {
+
+<span class="fc" id="L33">    private static final Logger LOGGER = LoggerFactory.getLogger(EnforcerRetriever.class);</span>
+
+    private final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; idCache;
+    private final Function&lt;String, Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt;&gt; enforcerCacheFunction;
+
+    /**
+     * Constructor.
+     *
+     * @param idCache the ID Cache.
+     * @param enforcerCache the Enforcer Cache.
+     */
+    public EnforcerRetriever(
+            final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; idCache,
+            final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; enforcerCache) {
+<span class="fc" id="L47">        this(idCache, resourceType -&gt; requireNonNull(enforcerCache));</span>
+<span class="fc" id="L48">    }</span>
+
+    /**
+     * Constructor.
+     *
+     * @param idCache the ID Cache.
+     * @param enforcerCacheFunction a function to determine a Enforcer Cache for a resource type.
+     */
+    private EnforcerRetriever(
+            final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; idCache,
+<span class="fc" id="L58">            final Function&lt;String, Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt;&gt; enforcerCacheFunction) {</span>
+<span class="fc" id="L59">        this.idCache = requireNonNull(idCache);</span>
+<span class="fc" id="L60">        this.enforcerCacheFunction = requireNonNull(enforcerCacheFunction);</span>
+<span class="fc" id="L61">    }</span>
+
+    /**
+     * Constructor.
+     *
+     * @param idCache the ID Cache.
+     * @param enforcerCaches the Enforcer Caches per resource type.
+     */
+    EnforcerRetriever(
+            final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; idCache,
+            final Map&lt;String, Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt;&gt; enforcerCaches) {
+<span class="fc" id="L72">        this(idCache, enforcerCaches::get);</span>
+<span class="fc" id="L73">    }</span>
+
+    /**
+     * By an entity cache key, look up the enforcer cache key and the enforcer itself.
+     *
+     * @param entityKey cache key of an entity.
+     * @param consumer handler of cache lookup results.
+     */
+    public void retrieve(final EntityId entityKey, final BiConsumer&lt;Entry&lt;EntityId&gt;, Entry&lt;Enforcer&gt;&gt; consumer) {
+<span class="fc" id="L82">        idCache.get(entityKey).thenAccept(enforcerKeyEntryOptional -&gt; {</span>
+<span class="pc bpc" id="L83" title="1 of 2 branches missed.">            if (!enforcerKeyEntryOptional.isPresent()) {</span>
+                // must not happen
+<span class="nc" id="L85">                LOGGER.error(&quot;Did not get id-cache value for entityKey &lt;{}&gt;.&quot;, entityKey);</span>
+            } else {
+<span class="fc" id="L87">                final Entry&lt;EntityId&gt; enforcerKeyEntry = enforcerKeyEntryOptional.get();</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">                if (enforcerKeyEntry.exists()) {</span>
+<span class="fc" id="L89">                    final EntityId enforcerKey = enforcerKeyEntry.getValue();</span>
+<span class="fc" id="L90">                    final String resourceType = enforcerKey.getResourceType();</span>
+<span class="fc" id="L91">                    final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; enforcerCache =</span>
+<span class="fc" id="L92">                            enforcerCacheFunction.apply(resourceType);</span>
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">                    if (enforcerCache == null) {</span>
+<span class="nc" id="L94">                        throw new IllegalStateException(&quot;No enforcerCache for resource type: &quot; + resourceType);</span>
+                    }
+<span class="fc" id="L96">                    retrieveByEnforcerKey(enforcerKey, enforcerEntry -&gt;</span>
+<span class="fc" id="L97">                            consumer.accept(enforcerKeyEntry, enforcerEntry));</span>
+<span class="fc" id="L98">                } else {</span>
+<span class="fc" id="L99">                    consumer.accept(enforcerKeyEntry, Entry.nonexistent());</span>
+                }
+            }
+<span class="fc" id="L102">        });</span>
+<span class="fc" id="L103">    }</span>
+
+    /**
+     * Lookup the enforcer by its own key (as opposed to the key of an entity it governs).
+     *
+     * @param enforcerKey key of the enforcer.
+     * @param consumer what to do with the enforcer.
+     */
+    public void retrieveByEnforcerKey(final EntityId enforcerKey, final Consumer&lt;Entry&lt;Enforcer&gt;&gt; consumer) {
+<span class="fc" id="L112">        final String resourceType = enforcerKey.getResourceType();</span>
+<span class="fc" id="L113">        final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; enforcerCache =</span>
+<span class="fc" id="L114">                enforcerCacheFunction.apply(resourceType);</span>
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">        if (enforcerCache == null) {</span>
+<span class="nc" id="L116">            throw new IllegalStateException(&quot;No enforcerCache for resource type: &quot; + resourceType);</span>
+        }
+<span class="fc" id="L118">        enforcerCache.get(enforcerKey)</span>
+<span class="fc" id="L119">                .thenAccept(enforcerEntryOptional -&gt; {</span>
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">                    if (!enforcerEntryOptional.isPresent()) {</span>
+                        // must not happen
+<span class="nc" id="L122">                        LOGGER.error(&quot;Did not get enforcer-cache value for entityKey &lt;{}&gt;.&quot;,</span>
+                                enforcerKey);
+                    } else {
+<span class="fc" id="L125">                        final Entry&lt;Enforcer&gt; enforcerEntry = enforcerEntryOptional.get();</span>
+<span class="fc" id="L126">                        consumer.accept(enforcerEntry);</span>
+                    }
+<span class="fc" id="L128">                });</span>
+
+<span class="fc" id="L130">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

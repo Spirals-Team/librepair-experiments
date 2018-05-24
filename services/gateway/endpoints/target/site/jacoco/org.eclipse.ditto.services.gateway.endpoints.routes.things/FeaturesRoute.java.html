@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FeaturesRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes.things</a> &gt; <span class="el_source">FeaturesRoute.java</span></div><h1>FeaturesRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes.things;
+
+import static akka.http.javadsl.server.Directives.delete;
+import static akka.http.javadsl.server.Directives.extractDataBytes;
+import static akka.http.javadsl.server.Directives.extractUnmatchedPath;
+import static akka.http.javadsl.server.Directives.get;
+import static akka.http.javadsl.server.Directives.parameterOptional;
+import static akka.http.javadsl.server.Directives.pathEndOrSingleSlash;
+import static akka.http.javadsl.server.Directives.put;
+import static akka.http.javadsl.server.Directives.rawPathPrefix;
+import static akka.http.javadsl.server.Directives.route;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.CustomPathMatchers.mergeDoubleSlashes;
+
+import java.time.Duration;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.things.ThingsModelFactory;
+import org.eclipse.ditto.services.gateway.endpoints.routes.AbstractRoute;
+import org.eclipse.ditto.services.gateway.endpoints.utils.UriEncoding;
+import org.eclipse.ditto.signals.commands.things.modify.DeleteFeature;
+import org.eclipse.ditto.signals.commands.things.modify.DeleteFeatureDefinition;
+import org.eclipse.ditto.signals.commands.things.modify.DeleteFeatureProperties;
+import org.eclipse.ditto.signals.commands.things.modify.DeleteFeatureProperty;
+import org.eclipse.ditto.signals.commands.things.modify.DeleteFeatures;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyFeature;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyFeatureDefinition;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyFeatureProperties;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyFeatureProperty;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyFeatures;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveFeature;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveFeatureDefinition;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveFeatureProperties;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveFeatureProperty;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveFeatures;
+
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.http.javadsl.server.Directives;
+import akka.http.javadsl.server.PathMatchers;
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+
+/**
+ * Builder for creating Akka HTTP routes for {@code /features}.
+ */
+final class FeaturesRoute extends AbstractRoute {
+
+    static final String PATH_PREFIX = &quot;features&quot;;
+    static final String PATH_PROPERTIES = &quot;properties&quot;;
+    static final String PATH_DEFINITION = &quot;definition&quot;;
+
+    private final MessagesRoute messagesRoute;
+
+    /**
+     * Constructs the {@code /features} route builder.
+     *
+     * @param proxyActor an actor selection of the command delegating actor.
+     * @param actorSystem the ActorSystem to use.
+     * @param messagesDefaultTimeout the duration of the default message timeout.
+     * @param messagesMaxTimeout the max duration of the message timeout.
+     * @param messagesDefaultClaimTimeout the duration of the default claim timeout.
+     * @param messagesMaxClaimTimeout the max duration of the claim timeout.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    FeaturesRoute(final ActorRef proxyActor, final ActorSystem actorSystem,
+            final Duration messagesDefaultTimeout, final Duration messagesMaxTimeout,
+            final Duration messagesDefaultClaimTimeout, final Duration messagesMaxClaimTimeout) {
+<span class="fc" id="L80">        super(proxyActor, actorSystem);</span>
+
+<span class="fc" id="L82">        messagesRoute = new MessagesRoute(proxyActor, actorSystem,</span>
+                messagesDefaultTimeout, messagesMaxTimeout, messagesDefaultClaimTimeout, messagesMaxClaimTimeout);
+<span class="fc" id="L84">    }</span>
+
+    private static String decodePath(final String attributePointerStr) {
+<span class="fc" id="L87">        final String duplicateSlashesEliminated = attributePointerStr.replace(&quot;//&quot;, &quot;/&quot;);</span>
+<span class="fc" id="L88">        return UriEncoding.decode(duplicateSlashesEliminated, UriEncoding.EncodingType.RFC3986);</span>
+    }
+
+    /**
+     * Builds the {@code /features} route.
+     *
+     * @return the {@code /features} route.
+     */
+    public Route buildFeaturesRoute(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L98">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_PREFIX), () -&gt;</span>
+<span class="fc" id="L99">                Directives.route(</span>
+<span class="fc" id="L100">                        features(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L101">                        featuresEntry(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L102">                        featuresEntryDefinition(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L103">                        featuresEntryProperties(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L104">                        featuresEntryPropertiesEntry(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L105">                        featuresEntryInboxOutbox(ctx, dittoHeaders, thingId)</span>
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /features} route.
+     *
+     * @return {@code /features} route.
+     */
+    private Route features(final RequestContext ctx, final DittoHeaders dittoHeaders, final String thingId) {
+<span class="fc" id="L116">        return pathEndOrSingleSlash(() -&gt;</span>
+<span class="fc" id="L117">                Directives.route(</span>
+<span class="fc" id="L118">                        get(() -&gt; // GET /features?fields=&lt;fieldsString&gt;</span>
+<span class="fc" id="L119">                                parameterOptional(ThingsParameter.FIELDS.toString(), fieldsString -&gt;</span>
+<span class="fc" id="L120">                                        handlePerRequest(ctx, RetrieveFeatures</span>
+<span class="fc" id="L121">                                                .of(thingId,</span>
+<span class="fc" id="L122">                                                        calculateSelectedFields(fieldsString).orElse(</span>
+                                                                null), dittoHeaders))
+                                )
+                        ),
+<span class="fc" id="L126">                        put(() -&gt; // PUT /features</span>
+<span class="fc" id="L127">                                extractDataBytes(payloadSource -&gt;</span>
+<span class="fc" id="L128">                                        handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+<span class="fc" id="L129">                                                featuresJson -&gt; ModifyFeatures</span>
+<span class="fc" id="L130">                                                        .of(thingId, ThingsModelFactory.newFeatures(</span>
+                                                                featuresJson), dittoHeaders))
+                                )
+                        ),
+<span class="fc" id="L134">                        delete(() -&gt; // DELETE /features</span>
+<span class="fc" id="L135">                                handlePerRequest(ctx, DeleteFeatures.of(thingId, dittoHeaders))</span>
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /features/&lt;featureId&gt;} route.
+     *
+     * @return {@code /features/&lt;featureId&gt;} route.
+     */
+    private Route featuresEntry(final RequestContext ctx, final DittoHeaders dittoHeaders, final String thingId) {
+<span class="fc" id="L147">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()), featureId -&gt;</span>
+<span class="fc" id="L148">                pathEndOrSingleSlash(() -&gt;</span>
+<span class="fc" id="L149">                        route(</span>
+<span class="fc" id="L150">                                get(() -&gt; // GET /features/{featureId}?fields=&lt;fieldsString&gt;</span>
+<span class="fc" id="L151">                                        parameterOptional(ThingsParameter.FIELDS.toString(),</span>
+                                                fieldsString -&gt;
+<span class="fc" id="L153">                                                        handlePerRequest(ctx,</span>
+<span class="fc" id="L154">                                                                RetrieveFeature.of(thingId, featureId,</span>
+<span class="fc" id="L155">                                                                        calculateSelectedFields(</span>
+<span class="fc" id="L156">                                                                                fieldsString).orElse(</span>
+                                                                                null), dittoHeaders))
+                                        )
+                                ),
+<span class="fc" id="L160">                                put(() -&gt; // PUT /features/&lt;featureId&gt;</span>
+<span class="fc" id="L161">                                        extractDataBytes(payloadSource -&gt;</span>
+<span class="fc" id="L162">                                                handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+                                                        featureJson -&gt;
+<span class="fc" id="L164">                                                                ModifyFeature.of(thingId,</span>
+                                                                        ThingsModelFactory
+<span class="fc" id="L166">                                                                                .newFeatureBuilder(</span>
+                                                                                        featureJson)
+<span class="fc" id="L168">                                                                                .useId(featureId)</span>
+<span class="fc" id="L169">                                                                                .build(),</span>
+                                                                        dittoHeaders))
+                                        )
+                                ),
+<span class="fc" id="L173">                                delete(() -&gt; // DELETE /features/&lt;featureId&gt;</span>
+<span class="fc" id="L174">                                        handlePerRequest(ctx,</span>
+<span class="fc" id="L175">                                                DeleteFeature.of(thingId, featureId, dittoHeaders))</span>
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /features/&lt;featureId&gt;/definition} route.
+     *
+     * @return {@code /features/&lt;featureId&gt;/definition} route.
+     */
+    private Route featuresEntryDefinition(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L189">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()), featureId -&gt;</span>
+<span class="fc" id="L190">                rawPathPrefix(mergeDoubleSlashes().concat(PATH_DEFINITION), () -&gt;</span>
+<span class="fc" id="L191">                        pathEndOrSingleSlash(() -&gt;</span>
+<span class="fc" id="L192">                                route(</span>
+<span class="fc" id="L193">                                        get(() -&gt; // GET /features/{featureId}/definition</span>
+<span class="fc" id="L194">                                                handlePerRequest(ctx,</span>
+<span class="fc" id="L195">                                                        RetrieveFeatureDefinition.of(thingId, featureId, dittoHeaders))</span>
+                                        ),
+<span class="fc" id="L197">                                        put(() -&gt; // PUT /features/{featureId}/definition</span>
+<span class="fc" id="L198">                                                extractDataBytes(payloadSource -&gt;</span>
+<span class="fc" id="L199">                                                        handlePerRequest(ctx, dittoHeaders,</span>
+                                                                payloadSource, definitionJson -&gt;
+<span class="fc" id="L201">                                                                        ModifyFeatureDefinition.of(thingId, featureId,</span>
+                                                                                ThingsModelFactory.
+<span class="fc" id="L203">                                                                                        newFeatureDefinition(</span>
+                                                                                                definitionJson),
+                                                                                dittoHeaders))
+                                                )
+                                        ),
+<span class="fc" id="L208">                                        delete(() -&gt; // DELETE /features/{featureId}/definition</span>
+<span class="fc" id="L209">                                                handlePerRequest(ctx,</span>
+<span class="fc" id="L210">                                                        DeleteFeatureDefinition.of(thingId, featureId, dittoHeaders))</span>
+                                        )
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /features/&lt;featureId&gt;/properties} route.
+     *
+     * @return {@code /features/&lt;featureId&gt;/properties} route.
+     */
+    private Route featuresEntryProperties(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L225">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()), featureId -&gt;</span>
+<span class="fc" id="L226">                rawPathPrefix(mergeDoubleSlashes().concat(PATH_PROPERTIES), () -&gt;</span>
+<span class="fc" id="L227">                        pathEndOrSingleSlash(() -&gt;</span>
+<span class="fc" id="L228">                                route(</span>
+<span class="fc" id="L229">                                        get(() -&gt; // GET /features/{featureId}/properties?fields=&lt;fieldsString&gt;</span>
+<span class="fc" id="L230">                                                parameterOptional(ThingsParameter.FIELDS.toString(),</span>
+                                                        fieldsString -&gt;
+<span class="fc" id="L232">                                                                handlePerRequest(ctx,</span>
+                                                                        RetrieveFeatureProperties
+<span class="fc" id="L234">                                                                                .of(thingId, featureId,</span>
+<span class="fc" id="L235">                                                                                        calculateSelectedFields(</span>
+                                                                                                fieldsString)
+<span class="fc" id="L237">                                                                                                .orElse(null),</span>
+                                                                                        dittoHeaders))
+                                                )
+                                        ),
+<span class="fc" id="L241">                                        put(() -&gt; // PUT /features/{featureId}/properties</span>
+<span class="fc" id="L242">                                                extractDataBytes(payloadSource -&gt;</span>
+<span class="fc" id="L243">                                                        handlePerRequest(ctx, dittoHeaders,</span>
+                                                                payloadSource, propertiesJson -&gt;
+<span class="fc" id="L245">                                                                        ModifyFeatureProperties.of(</span>
+                                                                                thingId, featureId,
+                                                                                ThingsModelFactory.
+<span class="fc" id="L248">                                                                                        newFeatureProperties(</span>
+                                                                                                propertiesJson),
+                                                                                dittoHeaders))
+                                                )
+                                        ),
+<span class="fc" id="L253">                                        delete(() -&gt; // DELETE /features/{featureId}/properties</span>
+<span class="fc" id="L254">                                                handlePerRequest(ctx,</span>
+<span class="fc" id="L255">                                                        DeleteFeatureProperties.of(thingId, featureId,</span>
+                                                                dittoHeaders))
+                                        )
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /features/&lt;featureId&gt;/properties/&lt;propertyJsonPointer&gt;} route.
+     *
+     * @return {@code /features/&lt;featureId&gt;/properties/&lt;propertyJsonPointer&gt;} route.
+     */
+    private Route featuresEntryPropertiesEntry(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L271">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()), featureId -&gt;</span>
+<span class="fc" id="L272">                rawPathPrefix(mergeDoubleSlashes().concat(PATH_PROPERTIES), () -&gt;</span>
+<span class="fc" id="L273">                        route(</span>
+<span class="fc" id="L274">                                get(() -&gt; // GET /features/{featureId}/properties/&lt;propertyJsonPointerStr&gt;</span>
+<span class="fc" id="L275">                                        extractUnmatchedPath(propertyJsonPointerStr -&gt;</span>
+<span class="fc" id="L276">                                                handlePerRequest(ctx, RetrieveFeatureProperty</span>
+<span class="fc" id="L277">                                                        .of(thingId, featureId,</span>
+<span class="fc" id="L278">                                                                JsonFactory.newPointer(</span>
+<span class="fc" id="L279">                                                                        decodePath(propertyJsonPointerStr)),</span>
+                                                                dittoHeaders))
+                                        )
+                                ),
+<span class="fc" id="L283">                                put(() -&gt;</span>
+<span class="fc" id="L284">                                        extractDataBytes(payloadSource -&gt;</span>
+                                                // PUT /features/{featureId}/properties/&lt;propertyJsonPointerStr&gt;
+<span class="fc" id="L286">                                                extractUnmatchedPath(propertyJsonPointerStr -&gt;</span>
+<span class="fc" id="L287">                                                        handlePerRequest(ctx, dittoHeaders,</span>
+                                                                payloadSource, propertyJson -&gt;
+<span class="fc" id="L289">                                                                        ModifyFeatureProperty.of(</span>
+                                                                                thingId,
+                                                                                featureId,
+<span class="fc" id="L292">                                                                                JsonFactory.newPointer(</span>
+<span class="fc" id="L293">                                                                                        decodePath(</span>
+                                                                                                propertyJsonPointerStr)),
+<span class="fc" id="L295">                                                                                JsonFactory.readFrom(</span>
+                                                                                        propertyJson),
+                                                                                dittoHeaders))
+                                                )
+                                        )
+                                ),
+<span class="fc" id="L301">                                delete(() -&gt;</span>
+                                        // DELETE /features/{featureId}/properties/&lt;propertyJsonPointerStr&gt;
+<span class="fc" id="L303">                                        extractUnmatchedPath(propertyJsonPointerStr -&gt;</span>
+<span class="fc" id="L304">                                                handlePerRequest(ctx, DeleteFeatureProperty</span>
+<span class="fc" id="L305">                                                        .of(thingId, featureId,</span>
+<span class="fc" id="L306">                                                                JsonFactory.newPointer(</span>
+<span class="fc" id="L307">                                                                        decodePath(</span>
+                                                                                propertyJsonPointerStr)),
+                                                                dittoHeaders))
+                                        )
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /features/{featureId}/{inbox|outbox}} route.
+     *
+     * @return {@code /features/{featureId}/{inbox|outbox}} route.
+     */
+    private Route featuresEntryInboxOutbox(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L324">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()), featureId -&gt;</span>
+                // POST /features/{featureId}/&lt;inbox|outbox&gt;
+<span class="fc" id="L326">                messagesRoute.buildFeaturesInboxOutboxRoute(ctx, dittoHeaders, thingId, featureId)</span>
+        );
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

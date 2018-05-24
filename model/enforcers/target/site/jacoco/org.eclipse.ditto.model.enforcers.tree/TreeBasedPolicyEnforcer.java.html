@@ -1,0 +1,502 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TreeBasedPolicyEnforcer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Model :: Enforcers</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.model.enforcers.tree</a> &gt; <span class="el_source">TreeBasedPolicyEnforcer.java</span></div><h1>TreeBasedPolicyEnforcer.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.model.enforcers.tree;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.Immutable;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonField;
+import org.eclipse.ditto.json.JsonKey;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonObjectBuilder;
+import org.eclipse.ditto.json.JsonPointer;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.auth.AuthorizationContext;
+import org.eclipse.ditto.model.base.auth.AuthorizationSubject;
+import org.eclipse.ditto.model.enforcers.Enforcer;
+import org.eclipse.ditto.model.policies.EffectedPermissions;
+import org.eclipse.ditto.model.policies.Permissions;
+import org.eclipse.ditto.model.policies.Policy;
+import org.eclipse.ditto.model.policies.Resource;
+import org.eclipse.ditto.model.policies.ResourceKey;
+import org.eclipse.ditto.model.enforcers.EffectedSubjectIds;
+
+/**
+ * Holds Algorithms to create a policy tree and to perform different policy checks on this tree.
+ */
+public final class TreeBasedPolicyEnforcer implements Enforcer {
+
+    private static final String ROOT_RESOURCE = &quot;/&quot;;
+
+<span class="fc" id="L56">    private static final JsonKey THING_ID_FIELD = JsonFactory.newKey(&quot;thingId&quot;);</span>
+
+    /**
+     * Maps subject ID to {@link SubjectNode} whose children are {@link ResourceNode} for which the subject is granted
+     * or revoked access. The child-set of each {@link SubjectNode} is effectively a map from resources to permissions.
+     */
+    private final Map&lt;String, PolicyTreeNode&gt; tree;
+
+<span class="fc" id="L64">    private TreeBasedPolicyEnforcer(final Map&lt;String, PolicyTreeNode&gt; tree) {</span>
+<span class="fc" id="L65">        this.tree = tree;</span>
+<span class="fc" id="L66">    }</span>
+
+    /**
+     * Creates a new policy tree for execution of policy checks.
+     *
+     * @param policy the policy to create a tree for
+     * @return the generated {@code TreeBasedPolicyEnforcer}
+     * @throws NullPointerException if {@code policy} is {@code null}.
+     */
+    public static TreeBasedPolicyEnforcer createInstance(final Policy policy) {
+<span class="fc" id="L76">        checkNotNull(policy, &quot;policy&quot;);</span>
+<span class="fc" id="L77">        final Map&lt;String, PolicyTreeNode&gt; tree = new HashMap&lt;&gt;();</span>
+
+<span class="fc" id="L79">        policy.getEntriesSet().forEach(policyEntry -&gt;</span>
+<span class="fc" id="L80">                policyEntry.getSubjects().forEach(subject -&gt; {</span>
+<span class="fc" id="L81">                    final PolicyTreeNode parentNode = Optional.ofNullable(tree.get(subject.getId().toString())).</span>
+<span class="fc" id="L82">                            orElseGet(() -&gt; {</span>
+<span class="fc" id="L83">                                final PolicyTreeNode subjectNode = SubjectNode.of(subject.getId().toString());</span>
+<span class="fc" id="L84">                                tree.put(subject.getId().toString(), subjectNode);</span>
+<span class="fc" id="L85">                                return subjectNode;</span>
+                            });
+
+<span class="fc" id="L88">                    policyEntry.getResources().forEach(resource -&gt; {</span>
+<span class="fc" id="L89">                                final ResourceNode rootChild = (ResourceNode) parentNode.getChild(resource.getType())</span>
+<span class="fc" id="L90">                                        .orElseGet(() -&gt; {</span>
+<span class="fc" id="L91">                                            final ResourceNode child = ResourceNode.of(parentNode, resource.getType(),</span>
+<span class="fc" id="L92">                                                    EffectedPermissions.newInstance(new ArrayList&lt;&gt;(), new ArrayList&lt;&gt;()));</span>
+<span class="fc" id="L93">                                            parentNode.addChild(child);</span>
+<span class="fc" id="L94">                                            return child;</span>
+                                        });
+<span class="fc" id="L96">                                addResourceSubTree(rootChild, resource, resource.getPath());</span>
+<span class="fc" id="L97">                            }</span>
+                    );
+<span class="fc" id="L99">                })</span>
+        );
+
+<span class="fc" id="L102">        return new TreeBasedPolicyEnforcer(tree);</span>
+    }
+
+    private static void addResourceSubTree(final ResourceNode parentNode, final Resource resource,
+            final JsonPointer path) {
+
+<span class="fc bfc" id="L108" title="All 4 branches covered.">        if (path.getLevelCount() == 1 || ROOT_RESOURCE.equals(path.toString())) {</span>
+<span class="fc bfc" id="L109" title="All 2 branches covered.">            final String usedPath = ROOT_RESOURCE.equals(path.toString()) ? ROOT_RESOURCE : path.getRoot()</span>
+<span class="fc" id="L110">                    .map(JsonKey::toString)</span>
+<span class="pc" id="L111">                    .orElseThrow(() -&gt; new NullPointerException(&quot;Path did not contain a root!&quot;));</span>
+
+<span class="fc bfc" id="L113" title="All 2 branches covered.">            if (usedPath.equals(ROOT_RESOURCE)) {</span>
+<span class="fc" id="L114">                parentNode.getParent().ifPresent(p -&gt; mergePermissions(resource, parentNode));</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">            } else if (!parentNode.getChild(usedPath).isPresent()) {</span>
+<span class="fc" id="L116">                parentNode.addChild(ResourceNode.of(parentNode, usedPath, resource.getEffectedPermissions()));</span>
+            } else {
+<span class="fc" id="L118">                final ResourceNode existingChild = parentNode.getChild(usedPath)</span>
+<span class="fc" id="L119">                        .map(ResourceNode.class::cast)</span>
+<span class="fc" id="L120">                        .orElseThrow(() -&gt; {</span>
+<span class="nc" id="L121">                            final String msgPattern = &quot;Parent node did not contain a child for path &lt;{}&gt;!&quot;;</span>
+<span class="nc" id="L122">                            return new NullPointerException(MessageFormat.format(msgPattern, usedPath));</span>
+                        });
+
+<span class="fc" id="L125">                mergePermissions(resource, existingChild);</span>
+            }
+<span class="fc" id="L127">        } else {</span>
+<span class="fc" id="L128">            final String pathRootAsString = path.getRoot()</span>
+<span class="fc" id="L129">                    .map(JsonKey::toString)</span>
+<span class="fc" id="L130">                    .orElse(&quot;&quot;);</span>
+<span class="fc" id="L131">            final ResourceNode node = (ResourceNode) parentNode.getChild(pathRootAsString).orElseGet(() -&gt; {</span>
+<span class="fc" id="L132">                final PolicyTreeNode newChild = ResourceNode.of(parentNode, pathRootAsString);</span>
+<span class="fc" id="L133">                parentNode.addChild(newChild);</span>
+<span class="fc" id="L134">                return newChild;</span>
+            });
+<span class="fc" id="L136">            addResourceSubTree(node, resource, path.nextLevel());</span>
+        }
+<span class="fc" id="L138">    }</span>
+
+    private static void mergePermissions(final Resource resource, final ResourceNode existingChild) {
+<span class="fc" id="L141">        final EffectedPermissions existingChildPermissions = existingChild.getPermissions();</span>
+<span class="fc" id="L142">        final Collection&lt;String&gt; mergedGrantedPermissions =</span>
+<span class="fc" id="L143">                new HashSet&lt;&gt;(existingChildPermissions.getGrantedPermissions());</span>
+<span class="fc" id="L144">        final Collection&lt;String&gt; mergedRevokedPermissions =</span>
+<span class="fc" id="L145">                new HashSet&lt;&gt;(existingChildPermissions.getRevokedPermissions());</span>
+
+<span class="fc bfc" id="L147" title="All 2 branches covered.">        if (!resource.getEffectedPermissions().getRevokedPermissions().isEmpty()) {</span>
+<span class="fc" id="L148">            mergedRevokedPermissions.addAll(resource.getEffectedPermissions().getRevokedPermissions());</span>
+        }
+<span class="fc bfc" id="L150" title="All 2 branches covered.">        if (!resource.getEffectedPermissions().getGrantedPermissions().isEmpty()) {</span>
+<span class="fc" id="L151">            mergedGrantedPermissions.addAll(resource.getEffectedPermissions().getGrantedPermissions());</span>
+        }
+
+<span class="fc" id="L154">        existingChild.setPermissions(</span>
+<span class="fc" id="L155">                EffectedPermissions.newInstance(mergedGrantedPermissions, mergedRevokedPermissions));</span>
+<span class="fc" id="L156">    }</span>
+
+    @Override
+    public boolean hasUnrestrictedPermissions(final ResourceKey resourceKey,
+            final AuthorizationContext authorizationContext, final Permissions permissions) {
+
+<span class="fc" id="L162">        checkPermissions(permissions);</span>
+<span class="fc" id="L163">        final JsonPointer resourcePointer = createAbsoluteResourcePointer(resourceKey);</span>
+<span class="fc" id="L164">        final Collection&lt;String&gt; authSubjectIds = getAuthorizationSubjectIds(authorizationContext);</span>
+<span class="fc" id="L165">        return visitTree(new CheckUnrestrictedPermissionsVisitor(resourcePointer, authSubjectIds, permissions));</span>
+    }
+
+    private static void checkPermissions(final Permissions permissions) {
+<span class="fc" id="L169">        checkNotNull(permissions, &quot;permissions to check&quot;);</span>
+<span class="fc" id="L170">    }</span>
+
+    private static JsonPointer createAbsoluteResourcePointer(final ResourceKey resourceKey) {
+<span class="fc" id="L173">        return JsonFactory.newPointer(resourceKey.getResourceType()).append(resourceKey.getResourcePath());</span>
+    }
+
+    private static Collection&lt;String&gt; getAuthorizationSubjectIds(final AuthorizationContext authorizationContext) {
+<span class="fc" id="L177">        checkNotNull(authorizationContext, &quot;Authorization Context&quot;);</span>
+
+<span class="fc" id="L179">        return authorizationContext.stream()</span>
+<span class="fc" id="L180">                .map(AuthorizationSubject::getId)</span>
+<span class="fc" id="L181">                .collect(Collectors.toSet());</span>
+    }
+
+    private &lt;T&gt; T visitTree(final Visitor&lt;T&gt; visitor) {
+<span class="fc" id="L185">        tree.values().forEach(policyTreeNode -&gt; policyTreeNode.accept(visitor));</span>
+<span class="fc" id="L186">        return visitor.get();</span>
+    }
+
+    @Override
+    public EffectedSubjectIds getSubjectIdsWithPermission(final ResourceKey resourceKey,
+            final Permissions permissions) {
+
+<span class="fc" id="L193">        checkResourceKey(resourceKey);</span>
+<span class="fc" id="L194">        checkPermissions(permissions);</span>
+<span class="fc" id="L195">        final JsonPointer resourcePointer = createAbsoluteResourcePointer(resourceKey);</span>
+<span class="fc" id="L196">        return visitTree(new CollectEffectedSubjectIdsVisitor(resourcePointer, permissions));</span>
+    }
+
+    private static void checkResourceKey(final ResourceKey resourceKey) {
+<span class="fc" id="L200">        checkNotNull(resourceKey, &quot;resource key&quot;);</span>
+<span class="fc" id="L201">    }</span>
+
+    @Override
+    public Set&lt;String&gt; getSubjectIdsWithPartialPermission(final ResourceKey resourceKey,
+            final Permissions permissions) {
+
+<span class="fc" id="L207">        checkResourceKey(resourceKey);</span>
+<span class="fc" id="L208">        checkPermissions(permissions);</span>
+<span class="fc" id="L209">        final JsonPointer resourcePointer = createAbsoluteResourcePointer(resourceKey);</span>
+<span class="fc" id="L210">        return visitTree(new CollectPartialGrantedSubjectIdsVisitor(resourcePointer, permissions));</span>
+    }
+
+    @Override
+    public boolean hasPartialPermissions(final ResourceKey resourceKey, final AuthorizationContext authorizationContext,
+            final Permissions permissions) {
+
+<span class="fc" id="L217">        checkResourceKey(resourceKey);</span>
+<span class="fc" id="L218">        checkPermissions(permissions);</span>
+<span class="fc" id="L219">        final Collection&lt;String&gt; authSubjectIds = getAuthorizationSubjectIds(authorizationContext);</span>
+<span class="fc" id="L220">        final JsonPointer resourcePointer = createAbsoluteResourcePointer(resourceKey);</span>
+<span class="fc" id="L221">        return visitTree(new CheckPartialPermissionsVisitor(resourcePointer, authSubjectIds, permissions));</span>
+    }
+
+    @Override
+    public JsonObject buildJsonView(
+            final ResourceKey resourceKey,
+            final Iterable&lt;JsonField&gt; jsonFields,
+            final AuthorizationContext authorizationContext,
+            final Permissions permissions) {
+
+<span class="fc" id="L231">        checkResourceKey(resourceKey);</span>
+<span class="fc" id="L232">        checkNotNull(jsonFields, &quot;JSON fields&quot;);</span>
+<span class="fc" id="L233">        checkPermissions(permissions);</span>
+<span class="fc" id="L234">        final Collection&lt;String&gt; authorizationSubjectIds = getAuthorizationSubjectIds(authorizationContext);</span>
+
+<span class="fc" id="L236">        final EffectedResources effectedResources = getGrantedAndRevokedSubResource(</span>
+<span class="fc" id="L237">                JsonFactory.newPointer(ROOT_RESOURCE), resourceKey.getResourceType(), authorizationSubjectIds,</span>
+                permissions);
+<span class="fc" id="L239">        final List&lt;PointerAndValue&gt; flatPointers = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L240">        jsonFields.forEach(jsonField -&gt; collectFlatPointers(jsonField.getKey().asPointer(), jsonField, flatPointers));</span>
+<span class="fc" id="L241">        final Set&lt;JsonPointer&gt; grantedResources = extractJsonPointers(effectedResources.getGrantedResources());</span>
+<span class="fc" id="L242">        final Set&lt;JsonPointer&gt; revokedResources = extractJsonPointers(effectedResources.getRevokedResources());</span>
+
+<span class="fc" id="L244">        final JsonPointer resourcePath = resourceKey.getResourcePath();</span>
+<span class="fc" id="L245">        final List&lt;PointerAndValue&gt; prefixedPointers = flatPointers.stream()</span>
+<span class="fc" id="L246">                .map(pv -&gt; new PointerAndValue(resourcePath.append(pv.pointer), pv.value))</span>
+<span class="fc" id="L247">                .collect(Collectors.toList());</span>
+<span class="fc" id="L248">        return filterEntries(prefixedPointers, grantedResources, revokedResources, resourcePath);</span>
+    }
+
+    private static Set&lt;JsonPointer&gt; extractJsonPointers(final Collection&lt;PointerAndPermission&gt; resources) {
+<span class="fc" id="L252">        return resources.stream()</span>
+<span class="fc" id="L253">                .map(pointerAndPermission -&gt; pointerAndPermission.pointer)</span>
+<span class="fc" id="L254">                .collect(Collectors.toSet());</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L259">        return getClass().getSimpleName() + &quot; [&quot; + &quot;tree=&quot; + tree + &quot;]&quot;;</span>
+    }
+
+    private static List&lt;PointerAndValue&gt; collectFlatPointers(final JsonPointer createdPointer, final JsonField field,
+            final List&lt;PointerAndValue&gt; flattenedFields) {
+
+<span class="fc" id="L265">        final JsonValue fieldValue = field.getValue();</span>
+<span class="fc bfc" id="L266" title="All 2 branches covered.">        if (fieldValue.isObject()) {</span>
+<span class="fc" id="L267">            final JsonObject jsonObject = fieldValue.asObject();</span>
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">            if (!jsonObject.isEmpty()) {</span>
+<span class="fc" id="L269">                jsonObject.forEach(jsonField -&gt; collectFlatPointers(createdPointer.addLeaf(jsonField.getKey()),</span>
+                        jsonField, flattenedFields));
+            } else {
+<span class="nc" id="L272">                flattenedFields.add(new PointerAndValue(createdPointer, fieldValue));</span>
+            }
+<span class="fc" id="L274">        } else {</span>
+<span class="fc" id="L275">            flattenedFields.add(new PointerAndValue(createdPointer, fieldValue));</span>
+        }
+
+<span class="fc" id="L278">        return flattenedFields;</span>
+    }
+
+    private static JsonObject filterEntries(
+            final Collection&lt;PointerAndValue&gt; candidates,
+            final Collection&lt;JsonPointer&gt; grantedResources,
+            final Collection&lt;JsonPointer&gt; revokedResources,
+            final JsonPointer resourcePath) {
+
+<span class="fc" id="L287">        final int levelCount = resourcePath.getLevelCount();</span>
+<span class="fc" id="L288">        final JsonObjectBuilder builder = JsonFactory.newObjectBuilder();</span>
+<span class="fc" id="L289">        candidates.stream()</span>
+<span class="fc" id="L290">                .filter(pointerAndValue -&gt; pointerAndValue.pointer.toString().startsWith(resourcePath.toString()))</span>
+<span class="fc" id="L291">                .filter(pointerAndValue -&gt; {</span>
+<span class="fc" id="L292">                    final JsonPointer rootResourcePointer = JsonFactory.newPointer(ROOT_RESOURCE);</span>
+<span class="fc bfc" id="L293" title="All 2 branches covered.">                    boolean accessible = grantedResources.contains(rootResourcePointer) &amp;&amp;</span>
+<span class="pc bpc" id="L294" title="1 of 2 branches missed.">                            !revokedResources.contains(rootResourcePointer);</span>
+
+<span class="fc" id="L296">                    final JsonPointer pointer = pointerAndValue.pointer;</span>
+
+<span class="fc bfc" id="L298" title="All 2 branches covered.">                    for (int i = 1; i &lt;= pointer.getLevelCount(); i++) {</span>
+<span class="fc bfc" id="L299" title="All 2 branches covered.">                        if (containsPrefixPointer(getPrefixPointerOrThrow(pointer, i), grantedResources)) {</span>
+<span class="fc" id="L300">                            accessible = true;</span>
+                        }
+                        // no else if -&gt; revoked counts more on the same level.
+<span class="fc bfc" id="L303" title="All 2 branches covered.">                        if (containsPrefixPointer(getPrefixPointerOrThrow(pointer, i), revokedResources)) {</span>
+<span class="fc" id="L304">                            accessible = false;</span>
+                        }
+                    }
+<span class="fc" id="L307">                    return accessible;</span>
+                })
+<span class="fc" id="L309">                .forEach(pointerAndValue -&gt; {</span>
+<span class="fc" id="L310">                    final JsonPointer subPointer = pointerAndValue.pointer.getSubPointer(levelCount).orElseThrow(() -&gt; {</span>
+<span class="nc" id="L311">                        final String msgPattern = &quot;JsonPointer did not contain a sub-pointer for level &lt;{0}&gt;!&quot;;</span>
+<span class="nc" id="L312">                        return new NullPointerException(MessageFormat.format(msgPattern, levelCount));</span>
+                    });
+<span class="fc" id="L314">                    builder.set(resourcePath.append(subPointer), pointerAndValue.value);</span>
+<span class="fc" id="L315">                });</span>
+
+<span class="fc" id="L317">        return builder.build()</span>
+<span class="fc" id="L318">                .getValue(resourcePath)</span>
+<span class="fc" id="L319">                .filter(JsonValue::isObject)</span>
+<span class="fc" id="L320">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L321">                .orElseGet(JsonFactory::newObject);</span>
+    }
+
+    private static JsonPointer getPrefixPointerOrThrow(final JsonPointer pointer, final int level) {
+<span class="fc" id="L325">        return pointer.getPrefixPointer(level).orElseThrow(() -&gt; {</span>
+<span class="nc" id="L326">            final String msgPatten = &quot;JsonPointer did not contain a prefix pointer for level &lt;{0}&gt;!&quot;;</span>
+<span class="nc" id="L327">            return new NullPointerException(MessageFormat.format(msgPatten, level));</span>
+        });
+    }
+
+    private static boolean containsPrefixPointer(final JsonPointer prefix, final Collection&lt;JsonPointer&gt; resources) {
+<span class="fc" id="L332">        return resources.stream().anyMatch(p -&gt; p.equals(prefix));</span>
+    }
+
+    private EffectedResources getGrantedAndRevokedSubResource(final JsonPointer resource,
+            final String type,
+            final Iterable&lt;String&gt; subjectIds,
+            final Permissions permissions) {
+
+<span class="fc" id="L340">        final Set&lt;PointerAndPermission&gt; revokedResources = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L341">        final Set&lt;PointerAndPermission&gt; grantedResources = permissions.stream()</span>
+<span class="fc" id="L342">                .map(permission -&gt; {</span>
+<span class="fc" id="L343">                    final EffectedResources result =</span>
+<span class="fc" id="L344">                            checkPermissionOnAnySubResource(resource, type, subjectIds, permission);</span>
+<span class="fc" id="L345">                    revokedResources.addAll(result.getRevokedResources());</span>
+<span class="fc" id="L346">                    return result.getGrantedResources();</span>
+                })
+<span class="fc" id="L348">                .reduce(TreeBasedPolicyEnforcer::retainElements)</span>
+<span class="fc" id="L349">                .orElseGet(Collections::emptySet);</span>
+
+<span class="fc" id="L351">        final Set&lt;PointerAndPermission&gt; clearedGrantedResources =</span>
+<span class="fc" id="L352">                removeDeeperRevokes(resource, grantedResources, revokedResources);</span>
+
+<span class="fc" id="L354">        return EffectedResources.of(clearedGrantedResources, revokedResources);</span>
+    }
+
+    private static Set&lt;PointerAndPermission&gt; removeDeeperRevokes(final JsonPointer resource,
+            final Iterable&lt;PointerAndPermission&gt; grantedResources,
+            final Collection&lt;PointerAndPermission&gt; revokedResources) {
+
+<span class="fc" id="L361">        final Set&lt;PointerAndPermission&gt; cleared = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L362">        grantedResources.forEach(pp -&gt; {</span>
+<span class="fc" id="L363">                    final JsonPointer pointer = pp.pointer;</span>
+
+<span class="pc bpc" id="L365" title="2 of 4 branches missed.">                    if (revokedResources.stream().noneMatch(rp -&gt; resource.getLevelCount() &gt; pointer.getLevelCount()</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">                            &amp;&amp; rp.permission.equals(pp.permission)</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">                            &amp;&amp; rp.pointer.getLevelCount() &gt;= pointer.getLevelCount()</span>
+<span class="pc bnc" id="L368" title="All 2 branches missed.">                            &amp;&amp; Objects.equals(getPrefixPointerOrThrow(rp.pointer, pointer.getLevelCount()), pointer)</span>
+                    )) {
+<span class="fc" id="L370">                        cleared.add(pp);</span>
+                    }
+<span class="fc" id="L372">                }</span>
+        );
+
+<span class="fc" id="L375">        return cleared;</span>
+    }
+
+    private static Set&lt;PointerAndPermission&gt; retainElements(final Collection&lt;PointerAndPermission&gt; grans1,
+            final Collection&lt;PointerAndPermission&gt; grans2) {
+
+<span class="fc" id="L381">        final Set&lt;JsonPointer&gt; grans2Pointers = grans2.stream().map(pp -&gt; pp.pointer).collect(Collectors.toSet());</span>
+<span class="fc" id="L382">        return grans1.stream().filter(pp -&gt; grans2Pointers.contains(pp.pointer)).collect(Collectors.toSet());</span>
+    }
+
+    /**
+     * Checks the read permissions on a given resourcePath
+     * and returns a wrapper which holds all resourcePath the user is allowed to see and all revoked resources.
+     *
+     * @param resourcePath the path of the Resource to check the permission on.
+     * @param resourceType the type of the Resource to check the permission on.
+     * @param subjectIds the subjectIds to check for.
+     * @param permission the permission to check for.
+     * @return the EffectedResources.
+     */
+    private EffectedResources checkPermissionOnAnySubResource(final JsonPointer resourcePath,
+            final String resourceType,
+            final Iterable&lt;String&gt; subjectIds,
+            final String permission) {
+
+<span class="fc" id="L400">        final Set&lt;PointerAndPermission&gt; grantedResources = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L401">        final Set&lt;PointerAndPermission&gt; revokedResources = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L402">        subjectIds.forEach(s -&gt; traverseSubtreeForPermissionAccess(permission, resourcePath, resourceType, tree.get(s),</span>
+                grantedResources, revokedResources, 0, true));
+<span class="fc" id="L404">        return EffectedResources.of(grantedResources, revokedResources);</span>
+    }
+
+    private static void traverseSubtreeForPermissionAccess(final String permission,
+            final JsonPointer resource,
+            final String type,
+            @Nullable final PolicyTreeNode policyTreeNode,
+            final Set&lt;PointerAndPermission&gt; grantedResources,
+            final Set&lt;PointerAndPermission&gt; revokedResources,
+            final int level,
+            final boolean followingResource) {
+
+<span class="pc bpc" id="L416" title="1 of 2 branches missed.">        if (policyTreeNode == null) {</span>
+<span class="nc" id="L417">            return;</span>
+        }
+<span class="fc bfc" id="L419" title="All 2 branches covered.">        if (policyTreeNode instanceof SubjectNode) {</span>
+<span class="fc" id="L420">            final Optional&lt;PolicyTreeNode&gt; nodeChildOptional = policyTreeNode.getChild(type);</span>
+<span class="pc bpc" id="L421" title="1 of 2 branches missed.">            if (ROOT_RESOURCE.equals(resource.toString())) {</span>
+<span class="fc" id="L422">                nodeChildOptional.ifPresent(</span>
+<span class="fc" id="L423">                        policyTreeNode1 -&gt; traverseSubtreeForPermissionAccess(permission, resource, type,</span>
+                                policyTreeNode1, grantedResources, revokedResources, level, false));
+<span class="nc bnc" id="L425" title="All 2 branches missed.">            } else if (nodeChildOptional.isPresent()) {</span>
+<span class="nc" id="L426">                traverseSubtreeForPermissionAccess(permission, resource, type, nodeChildOptional.get(),</span>
+                        grantedResources, revokedResources, level, true);
+            } else {
+<span class="nc" id="L429">                resource.get(level).ifPresent(jsonKey -&gt; policyTreeNode.getChild(jsonKey.toString())</span>
+<span class="nc" id="L430">                        .ifPresent(child -&gt; traverseSubtreeForPermissionAccess(permission, resource, type, child,</span>
+                                grantedResources, revokedResources, level + 1, true)));
+            }
+<span class="fc" id="L433">        } else {</span>
+<span class="fc" id="L434">            final ResourceNode resourceNode = (ResourceNode) policyTreeNode;</span>
+
+<span class="fc" id="L436">            addPermission(permission, resource, grantedResources, revokedResources, level, resourceNode);</span>
+
+<span class="fc" id="L438">            final Optional&lt;JsonKey&gt; jsonKeyOptional = resource.get(level);</span>
+<span class="pc bpc" id="L439" title="3 of 4 branches missed.">            if (followingResource &amp;&amp; jsonKeyOptional.isPresent()) {</span>
+<span class="nc" id="L440">                policyTreeNode.getChild(jsonKeyOptional.get().toString())</span>
+<span class="nc" id="L441">                        .ifPresent(child -&gt; traverseSubtreeForPermissionAccess(permission, resource, type, child,</span>
+                                grantedResources, revokedResources, level + 1, true));
+            } else {
+<span class="fc" id="L444">                policyTreeNode.getChildren()</span>
+<span class="fc" id="L445">                        .forEach((s, child) -&gt; traverseSubtreeForPermissionAccess(permission,</span>
+<span class="fc" id="L446">                                resource.addLeaf(JsonKey.of(s)), type, child, grantedResources,</span>
+                                revokedResources, level + 1, false));
+            }
+        }
+<span class="fc" id="L450">    }</span>
+
+    private static void addPermission(final String permission,
+            final JsonPointer resource,
+            final Collection&lt;PointerAndPermission&gt; grantedResources,
+            final Collection&lt;PointerAndPermission&gt; revokedResources,
+            final int level,
+            final ResourceNode resourceNode) {
+
+<span class="fc bfc" id="L459" title="All 2 branches covered.">        final JsonPointer resourceToAdd = ROOT_RESOURCE.equals(resource.toString())</span>
+<span class="fc" id="L460">                ? JsonFactory.newPointer(ROOT_RESOURCE)</span>
+<span class="fc" id="L461">                : getPrefixPointerOrThrow(resource, level);</span>
+<span class="fc" id="L462">        final EffectedPermissions effectedPermissions = resourceNode.getPermissions();</span>
+<span class="fc bfc" id="L463" title="All 2 branches covered.">        if (effectedPermissions.getGrantedPermissions().contains(permission)) {</span>
+<span class="fc" id="L464">            grantedResources.add(new PointerAndPermission(resourceToAdd, permission));</span>
+        }
+<span class="fc bfc" id="L466" title="All 2 branches covered.">        if (effectedPermissions.getRevokedPermissions().contains(permission)) {</span>
+<span class="fc" id="L467">            revokedResources.add(new PointerAndPermission(resourceToAdd, permission));</span>
+        }
+<span class="fc" id="L469">    }</span>
+
+    /**
+     * Wrapper to holds a JsonPointer and a JsonValue.
+     */
+    @Immutable
+    private static final class PointerAndValue {
+
+        private final JsonPointer pointer;
+        private final JsonValue value;
+
+<span class="fc" id="L480">        PointerAndValue(final JsonPointer pointer, final JsonValue value) {</span>
+<span class="fc" id="L481">            this.pointer = pointer;</span>
+<span class="fc" id="L482">            this.value = value;</span>
+<span class="fc" id="L483">        }</span>
+    }
+
+    /**
+     * Wrapper for JsonPointer with its according permission.
+     */
+    @Immutable
+    static final class PointerAndPermission {
+
+        private final JsonPointer pointer;
+        private final String permission;
+
+<span class="fc" id="L495">        PointerAndPermission(final JsonPointer pointer, final String permission) {</span>
+<span class="fc" id="L496">            this.pointer = pointer;</span>
+<span class="fc" id="L497">            this.permission = permission;</span>
+<span class="fc" id="L498">        }</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

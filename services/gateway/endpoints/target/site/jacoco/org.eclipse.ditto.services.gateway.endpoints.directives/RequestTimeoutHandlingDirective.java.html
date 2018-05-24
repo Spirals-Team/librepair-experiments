@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RequestTimeoutHandlingDirective.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.directives</a> &gt; <span class="el_source">RequestTimeoutHandlingDirective.java</span></div><h1>RequestTimeoutHandlingDirective.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.directives;
+
+import static akka.http.javadsl.server.Directives.extractRequestContext;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.SecurityResponseHeadersDirective.createSecurityResponseHeaders;
+import static org.eclipse.ditto.services.gateway.endpoints.utils.DirectivesLoggingUtils.enhanceLogWithCorrelationId;
+import static org.eclipse.ditto.services.gateway.endpoints.utils.HttpUtils.getRawRequestUri;
+
+import java.time.Duration;
+import java.util.function.Supplier;
+
+import org.eclipse.ditto.model.base.exceptions.DittoRuntimeException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.services.gateway.endpoints.utils.TraceUtils;
+import org.eclipse.ditto.services.gateway.starter.service.util.ConfigKeys;
+import org.eclipse.ditto.signals.commands.base.exceptions.GatewayServiceUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.typesafe.config.Config;
+
+import akka.http.javadsl.model.ContentTypes;
+import akka.http.javadsl.model.HttpHeader;
+import akka.http.javadsl.model.HttpRequest;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.server.Directives;
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+import akka.util.ByteString;
+
+/**
+ * Custom Akka Http directive which handles a request timeout.
+ */
+public final class RequestTimeoutHandlingDirective {
+
+<span class="fc" id="L46">    private static final Logger LOGGER = LoggerFactory.getLogger(RequestTimeoutHandlingDirective.class);</span>
+
+    private RequestTimeoutHandlingDirective() {
+        // no op
+    }
+
+    /**
+     * Handles a request timeout.
+     *
+     * @param correlationId the correlationId which will be added to the log
+     * @param inner the inner Route to wrap with the response headers
+     * @return the new Route wrapping {@code inner} with the response headers
+     */
+    public static Route handleRequestTimeout(final String correlationId, final Supplier&lt;Route&gt; inner) {
+<span class="fc" id="L60">        return Directives.extractActorSystem(actorSystem -&gt; {</span>
+<span class="fc" id="L61">            final Config config = actorSystem.settings().config();</span>
+
+<span class="fc" id="L63">            return extractRequestContext(requestContext -&gt; Directives.withRequestTimeoutResponse(</span>
+<span class="nc" id="L64">                    request -&gt; enhanceLogWithCorrelationId(correlationId,</span>
+<span class="nc" id="L65">                            () -&gt; doHandleRequestTimeout(correlationId, config, requestContext)), inner));</span>
+        });
+    }
+
+    private static HttpResponse doHandleRequestTimeout(final String correlationId, final Config config,
+            final RequestContext requestContext) {
+<span class="nc" id="L71">        final Duration duration = config.getDuration(ConfigKeys.AKKA_HTTP_SERVER_REQUEST_TIMEOUT);</span>
+
+        final DittoRuntimeException cre = GatewayServiceUnavailableException
+<span class="nc" id="L74">                .newBuilder()</span>
+<span class="nc" id="L75">                .dittoHeaders(</span>
+                        DittoHeaders
+<span class="nc" id="L77">                                .newBuilder()</span>
+<span class="nc" id="L78">                                .correlationId(correlationId)</span>
+<span class="nc" id="L79">                                .build())</span>
+<span class="nc" id="L80">                .build();</span>
+
+<span class="nc" id="L82">        final HttpRequest request = requestContext.getRequest();</span>
+
+        /* We have to log and create a trace here because the RequestResultLoggingDirective won't be called by akka
+           in case of a timeout */
+<span class="nc" id="L86">        final int statusCode = cre.getStatusCode().toInt();</span>
+<span class="nc" id="L87">        final long startTs = System.nanoTime() - duration.toNanos();</span>
+<span class="nc" id="L88">        final String requestMethod = request.method().name();</span>
+<span class="nc" id="L89">        final String requestUri = request.getUri().toRelative().toString();</span>
+<span class="nc" id="L90">        LOGGER.warn(&quot;Request {} '{}' timed out after {}&quot;, requestMethod, requestUri, duration);</span>
+<span class="nc" id="L91">        LOGGER.info(&quot;StatusCode of request {} '{}' was: {}&quot;, requestMethod, requestUri, statusCode);</span>
+<span class="nc" id="L92">        final String rawRequestUri = getRawRequestUri(request);</span>
+<span class="nc" id="L93">        LOGGER.debug(&quot;Raw request URI was: {}&quot;, rawRequestUri);</span>
+
+<span class="nc" id="L95">        TraceUtils.createTrace(correlationId, startTs, requestContext, statusCode);</span>
+
+        /* We have to add security response headers explicitly here because SecurityResponseHeadersDirective won't be
+           called by akka in case of a timeout */
+<span class="nc" id="L99">        final Iterable&lt;HttpHeader&gt; securityResponseHeaders = createSecurityResponseHeaders(config);</span>
+<span class="nc" id="L100">        return HttpResponse.create()</span>
+<span class="nc" id="L101">                .withStatus(statusCode)</span>
+<span class="nc" id="L102">                .withEntity(ContentTypes.APPLICATION_JSON, ByteString.fromString(cre.toJsonString()))</span>
+<span class="nc" id="L103">                .addHeaders(securityResponseHeaders);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

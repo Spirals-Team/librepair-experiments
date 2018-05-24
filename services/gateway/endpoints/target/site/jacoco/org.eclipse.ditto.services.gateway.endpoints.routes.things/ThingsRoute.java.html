@@ -1,0 +1,480 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ThingsRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes.things</a> &gt; <span class="el_source">ThingsRoute.java</span></div><h1>ThingsRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes.things;
+
+import static akka.http.javadsl.server.Directives.delete;
+import static akka.http.javadsl.server.Directives.extractDataBytes;
+import static akka.http.javadsl.server.Directives.extractUnmatchedPath;
+import static akka.http.javadsl.server.Directives.get;
+import static akka.http.javadsl.server.Directives.parameter;
+import static akka.http.javadsl.server.Directives.parameterOptional;
+import static akka.http.javadsl.server.Directives.path;
+import static akka.http.javadsl.server.Directives.pathEnd;
+import static akka.http.javadsl.server.Directives.pathEndOrSingleSlash;
+import static akka.http.javadsl.server.Directives.post;
+import static akka.http.javadsl.server.Directives.put;
+import static akka.http.javadsl.server.Directives.rawPathPrefix;
+import static akka.http.javadsl.server.Directives.route;
+import static org.eclipse.ditto.model.base.exceptions.DittoJsonException.wrapJsonRuntimeException;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.CustomPathMatchers.mergeDoubleSlashes;
+
+import java.time.Duration;
+import java.util.Optional;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonObjectBuilder;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.auth.AuthorizationModelFactory;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.policies.PoliciesModelFactory;
+import org.eclipse.ditto.model.policies.Policy;
+import org.eclipse.ditto.model.things.Thing;
+import org.eclipse.ditto.model.things.ThingBuilder;
+import org.eclipse.ditto.model.things.ThingsModelFactory;
+import org.eclipse.ditto.services.gateway.endpoints.routes.AbstractRoute;
+import org.eclipse.ditto.services.gateway.endpoints.utils.UriEncoding;
+import org.eclipse.ditto.signals.commands.things.exceptions.ThingIdNotExplicitlySettableException;
+import org.eclipse.ditto.signals.commands.things.modify.CreateThing;
+import org.eclipse.ditto.signals.commands.things.modify.DeleteAclEntry;
+import org.eclipse.ditto.signals.commands.things.modify.DeleteAttribute;
+import org.eclipse.ditto.signals.commands.things.modify.DeleteAttributes;
+import org.eclipse.ditto.signals.commands.things.modify.DeleteThing;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyAcl;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyAclEntry;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyAttribute;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyAttributes;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyPolicyId;
+import org.eclipse.ditto.signals.commands.things.modify.ModifyThing;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveAcl;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveAclEntry;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveAttribute;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveAttributes;
+import org.eclipse.ditto.signals.commands.things.query.RetrievePolicyId;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveThing;
+import org.eclipse.ditto.signals.commands.things.query.RetrieveThings;
+
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.http.javadsl.server.PathMatchers;
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+import akka.stream.javadsl.Source;
+
+/**
+ * Builder for creating Akka HTTP routes for {@code /things}.
+ */
+public final class ThingsRoute extends AbstractRoute {
+
+    public static final String PATH_THINGS = &quot;things&quot;;
+    private static final String PATH_POLICY_ID = &quot;policyId&quot;;
+    private static final String PATH_ATTRIBUTES = &quot;attributes&quot;;
+    private static final String PATH_ACL = &quot;acl&quot;;
+
+    private final FeaturesRoute featuresRoute;
+    private final MessagesRoute messagesRoute;
+
+    /**
+     * Constructs the {@code /things} route builder.
+     *
+     * @param proxyActor an actor selection of the command delegating actor.
+     * @param actorSystem the ActorSystem to use.
+     * @param messagesDefaultTimeout the duration of the default message timeout.
+     * @param messagesMaxTimeout the max duration of the message timeout.
+     * @param messagesDefaultClaimTimeout the duration of the default claim timeout.
+     * @param messagesMaxClaimTimeout the max duration of the claim timeout.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public ThingsRoute(final ActorRef proxyActor, final ActorSystem actorSystem,
+            final Duration messagesDefaultTimeout, final Duration messagesMaxTimeout,
+            final Duration messagesDefaultClaimTimeout, final Duration messagesMaxClaimTimeout) {
+<span class="fc" id="L100">        super(proxyActor, actorSystem);</span>
+
+<span class="fc" id="L102">        featuresRoute = new FeaturesRoute(proxyActor, actorSystem,</span>
+                messagesDefaultTimeout, messagesMaxTimeout, messagesDefaultClaimTimeout, messagesMaxClaimTimeout);
+<span class="fc" id="L104">        messagesRoute = new MessagesRoute(proxyActor, actorSystem,</span>
+                messagesDefaultTimeout, messagesMaxTimeout, messagesDefaultClaimTimeout, messagesMaxClaimTimeout);
+<span class="fc" id="L106">    }</span>
+
+    private static String decodePath(final String attributePointerStr) {
+<span class="nc" id="L109">        final String duplicateSlashesEliminated = attributePointerStr.replace(&quot;//&quot;, &quot;/&quot;);</span>
+<span class="nc" id="L110">        return UriEncoding.decode(duplicateSlashesEliminated, UriEncoding.EncodingType.RFC3986);</span>
+    }
+
+    /**
+     * Builds the {@code /things} route.
+     *
+     * @return the {@code /things} route.
+     */
+    public Route buildThingsRoute(final RequestContext ctx, final DittoHeaders dittoHeaders) {
+<span class="fc" id="L119">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_THINGS), () -&gt;</span>
+<span class="fc" id="L120">                route(</span>
+<span class="fc" id="L121">                        things(ctx, dittoHeaders),</span>
+<span class="fc" id="L122">                        rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()),</span>
+                                thingId -&gt; // /things/&lt;thingId&gt;
+<span class="fc" id="L124">                                        route(</span>
+<span class="fc" id="L125">                                                thingsEntry(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L126">                                                thingsEntryPolicyId(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L127">                                                thingsEntryAcl(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L128">                                                thingsEntryAclEntry(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L129">                                                thingsEntryAttributes(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L130">                                                thingsEntryAttributesEntry(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L131">                                                thingsEntryFeatures(ctx, dittoHeaders, thingId),</span>
+<span class="fc" id="L132">                                                thingsEntryInboxOutbox(ctx, dittoHeaders, thingId)</span>
+                                        )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /things} route.
+     *
+     * @return {@code /things} route.
+     */
+    private Route things(final RequestContext ctx, final DittoHeaders dittoHeaders) {
+<span class="fc" id="L145">        return pathEndOrSingleSlash(() -&gt;</span>
+<span class="fc" id="L146">                route( //</span>
+<span class="fc" id="L147">                        get(() -&gt; // GET /things?ids=&lt;idsString&gt;&amp;fields=&lt;fieldsString&gt;</span>
+<span class="fc" id="L148">                                buildRetrieveThingsRoute(ctx, dittoHeaders)</span>
+                        ),
+<span class="fc" id="L150">                        post(() -&gt; // POST /things</span>
+<span class="nc" id="L151">                                extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L152">                                        handlePerRequest(ctx, dittoHeaders, payloadSource, thingJson -&gt;</span>
+<span class="nc" id="L153">                                                CreateThing.of(createThingForPost(thingJson),</span>
+<span class="nc" id="L154">                                                        createInlinePolicyJson(thingJson), dittoHeaders))</span>
+                                )
+                        )
+                )
+        );
+    }
+
+
+    private Route buildRetrieveThingsRoute(final RequestContext ctx, final DittoHeaders dittoHeaders) {
+<span class="fc" id="L163">        return parameter(ThingsParameter.IDS.toString(), idsString -&gt;</span>
+<span class="fc" id="L164">                parameterOptional(ThingsParameter.FIELDS.toString(), fieldsString -&gt;</span>
+<span class="fc" id="L165">                        handlePerRequest(ctx, dittoHeaders, Source.empty(), emptyRequestBody -&gt; RetrieveThings</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">                                .getBuilder((idsString).isEmpty() ? new String[0] : idsString.split(&quot;,&quot;))</span>
+<span class="fc" id="L167">                                .selectedFields(calculateSelectedFields(fieldsString))</span>
+<span class="fc" id="L168">                                .dittoHeaders(dittoHeaders).build())</span>
+                )
+
+        );
+    }
+
+    private static Thing createThingForPost(final String jsonString) {
+<span class="nc" id="L175">        final JsonObject inputJson = wrapJsonRuntimeException(() -&gt; JsonFactory.newObject(jsonString));</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">        if (inputJson.contains(Thing.JsonFields.ID.getPointer())) {</span>
+<span class="nc" id="L177">            throw ThingIdNotExplicitlySettableException.newBuilder(true).build();</span>
+        }
+
+<span class="nc" id="L180">        final String thingId = ThingBuilder.generateRandomThingId();</span>
+
+<span class="nc" id="L182">        final JsonObjectBuilder outputJsonBuilder = inputJson.toBuilder();</span>
+<span class="nc" id="L183">        outputJsonBuilder.set(Thing.JsonFields.ID.getPointer(), thingId);</span>
+
+<span class="nc" id="L185">        return ThingsModelFactory.newThingBuilder(outputJsonBuilder.build())</span>
+<span class="nc" id="L186">                .setId(ThingBuilder.generateRandomThingId())</span>
+<span class="nc" id="L187">                .build();</span>
+    }
+
+    private static JsonObject createInlinePolicyJson(final String jsonString) {
+<span class="nc" id="L191">        final JsonObject inputJson = wrapJsonRuntimeException(() -&gt; JsonFactory.newObject(jsonString));</span>
+<span class="nc" id="L192">        return inputJson.getValue(Policy.INLINED_FIELD_NAME)</span>
+<span class="nc" id="L193">                .filter(JsonValue::isObject)</span>
+<span class="nc" id="L194">                .map(JsonValue::asObject)</span>
+<span class="nc" id="L195">                .filter(obj -&gt; {</span>
+                    try {
+<span class="nc" id="L197">                        PoliciesModelFactory.newPolicy(obj.set(Thing.JsonFields.POLICY_ID, &quot;empty:empty&quot;));</span>
+                        // only accept valid inline policies
+<span class="nc" id="L199">                        return true;</span>
+<span class="nc" id="L200">                    } catch (final RuntimeException e) {</span>
+<span class="nc" id="L201">                        return false;</span>
+                    }
+                })
+<span class="nc" id="L204">                .orElse(null);</span>
+    }
+
+    /*
+     * Describes {@code /things/&lt;thingId&gt;} route.
+     * @return {@code /things/&lt;thingId&gt;} route.
+     */
+    private Route thingsEntry(final RequestContext ctx, final DittoHeaders dittoHeaders, final String thingId) {
+<span class="fc" id="L212">        return pathEndOrSingleSlash(() -&gt;</span>
+<span class="fc" id="L213">                route(</span>
+<span class="fc" id="L214">                        get(() -&gt; // GET /things/things/&lt;thingId&gt;?fields=&lt;fieldsString&gt;</span>
+<span class="fc" id="L215">                                parameterOptional(ThingsParameter.FIELDS.toString(), fieldsString -&gt;</span>
+<span class="nc" id="L216">                                        handlePerRequest(ctx, RetrieveThing.getBuilder(thingId, dittoHeaders)</span>
+<span class="nc" id="L217">                                                .withSelectedFields(calculateSelectedFields(fieldsString).orElse(null))</span>
+<span class="nc" id="L218">                                                .build())</span>
+                                )
+                        ),
+<span class="fc" id="L221">                        put(() -&gt; // PUT /things/things/&lt;thingId&gt;</span>
+<span class="nc" id="L222">                                extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L223">                                        handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+<span class="nc" id="L224">                                                thingJson -&gt; ModifyThing.of(thingId, ThingsModelFactory.newThing(</span>
+<span class="nc" id="L225">                                                        createThingJsonObjectForPut(thingJson, thingId)),</span>
+<span class="nc" id="L226">                                                        createInlinePolicyJson(thingJson),</span>
+                                                        dittoHeaders))
+                                )
+                        ),
+<span class="fc" id="L230">                        delete(() -&gt; // DELETE /things/things/&lt;thingId&gt;</span>
+<span class="nc" id="L231">                                handlePerRequest(ctx, DeleteThing.of(thingId, dittoHeaders))</span>
+                        )
+                )
+        );
+    }
+
+    private JsonObject createThingJsonObjectForPut(final String jsonString, final String thingId) {
+<span class="nc" id="L238">        final JsonObject inputJson = wrapJsonRuntimeException(() -&gt; JsonFactory.newObject(jsonString));</span>
+<span class="nc" id="L239">        final JsonObjectBuilder outputJsonBuilder = inputJson.toBuilder();</span>
+<span class="nc" id="L240">        final Optional&lt;JsonValue&gt; optThingId = inputJson.getValue(Thing.JsonFields.ID.getPointer());</span>
+
+        // verifies that thing ID agrees with ID from route
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        if (optThingId.isPresent()) {</span>
+<span class="nc" id="L244">            final JsonValue thingIdFromBody = optThingId.get();</span>
+<span class="nc bnc" id="L245" title="All 4 branches missed.">            if (!thingIdFromBody.isString() || !thingId.equals(thingIdFromBody.asString())) {</span>
+<span class="nc" id="L246">                throw ThingIdNotExplicitlySettableException.newBuilder(false).build();</span>
+            }
+<span class="nc" id="L248">        } else {</span>
+<span class="nc" id="L249">            outputJsonBuilder.set(Thing.JsonFields.ID, thingId).build();</span>
+        }
+
+<span class="nc" id="L252">        return outputJsonBuilder.build();</span>
+    }
+
+    /*
+     * Describes {@code /things/&lt;thingId&gt;/policyId} route.
+     *
+     * @return {@code /things/&lt;thingId&gt;/policyId} route.
+     */
+    private Route thingsEntryPolicyId(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L262">        return path(PATH_POLICY_ID, () -&gt; // /things/&lt;thingId&gt;/policyId</span>
+<span class="nc" id="L263">                route(</span>
+<span class="nc" id="L264">                        get(() -&gt; // GET /things/&lt;thingId&gt;/policyId</span>
+<span class="nc" id="L265">                                handlePerRequest(ctx, RetrievePolicyId.of(thingId, dittoHeaders))</span>
+                        ),
+<span class="nc" id="L267">                        put(() -&gt; // GET /things/&lt;thingId&gt;/policyId</span>
+<span class="nc" id="L268">                                extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L269">                                        handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+<span class="nc" id="L270">                                                policyIdJson -&gt; ModifyPolicyId.of(thingId,</span>
+<span class="nc" id="L271">                                                        Optional.of(JsonFactory.readFrom(policyIdJson))</span>
+<span class="nc" id="L272">                                                                .filter(JsonValue::isString)</span>
+<span class="nc" id="L273">                                                                .map(JsonValue::asString)</span>
+<span class="nc" id="L274">                                                                .orElse(policyIdJson), dittoHeaders)</span>
+                                        )
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /things/&lt;thingId&gt;/acl} route.
+     *
+     * @return {@code /things/&lt;thingId&gt;/acl} route.
+     */
+    private Route thingsEntryAcl(final RequestContext ctx, final DittoHeaders dittoHeaders, final String thingId) {
+<span class="fc" id="L288">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_ACL), () -&gt; // /things/&lt;thingId&gt;/acl</span>
+<span class="nc" id="L289">                pathEndOrSingleSlash(() -&gt;</span>
+<span class="nc" id="L290">                        route(</span>
+<span class="nc" id="L291">                                get(() -&gt; // GET /things/&lt;thingId&gt;/acl</span>
+<span class="nc" id="L292">                                        handlePerRequest(ctx, RetrieveAcl.of(thingId, dittoHeaders))</span>
+                                ),
+<span class="nc" id="L294">                                put(() -&gt; // PUT /things/&lt;thingId&gt;/acl</span>
+<span class="nc" id="L295">                                        extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L296">                                                handlePerRequest(ctx, dittoHeaders, payloadSource, aclJson -&gt;</span>
+<span class="nc" id="L297">                                                        ModifyAcl.of(thingId,</span>
+<span class="nc" id="L298">                                                                ThingsModelFactory.newAcl(aclJson),</span>
+                                                                dittoHeaders))
+                                        )
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /things/&lt;thingId&gt;/acl/&lt;authorizationSubject&gt;} route.
+     *
+     * @return {@code /things/&lt;thingId&gt;/acl/&lt;authorizationSubject&gt;} route.
+     */
+    private Route thingsEntryAclEntry(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L314">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_ACL), () -&gt;</span>
+<span class="nc" id="L315">                rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()), subject -&gt;</span>
+<span class="nc" id="L316">                        pathEndOrSingleSlash(() -&gt;</span>
+<span class="nc" id="L317">                                route(</span>
+<span class="nc" id="L318">                                        get(() -&gt; // GET</span>
+                                                // /things/&lt;thingId&gt;/acl/&lt;authorizationSubject&gt;?fields=&lt;fieldsString&gt;
+<span class="nc" id="L320">                                                parameterOptional(ThingsParameter.FIELDS.toString(),</span>
+                                                        fieldsString -&gt;
+<span class="nc" id="L322">                                                                handlePerRequest(ctx, RetrieveAclEntry</span>
+<span class="nc" id="L323">                                                                        .of(thingId,</span>
+<span class="nc" id="L324">                                                                                AuthorizationModelFactory.newAuthSubject(</span>
+                                                                                        subject),
+<span class="nc" id="L326">                                                                                calculateSelectedFields(</span>
+<span class="nc" id="L327">                                                                                        fieldsString).orElse(</span>
+                                                                                        null), dittoHeaders))
+                                                )
+                                        ),
+<span class="nc" id="L331">                                        put(() -&gt; // PUT /things/&lt;thingId&gt;/acl/&lt;authorizationSubject&gt;</span>
+<span class="nc" id="L332">                                                extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L333">                                                        handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+                                                                aclEntryJson -&gt;
+<span class="nc" id="L335">                                                                        ModifyAclEntry.of(thingId,</span>
+                                                                                ThingsModelFactory
+<span class="nc" id="L337">                                                                                        .newAclEntry(subject,</span>
+<span class="nc" id="L338">                                                                                                JsonFactory.readFrom(</span>
+                                                                                                        aclEntryJson)),
+                                                                                dittoHeaders))
+                                                )
+                                        ),
+<span class="nc" id="L343">                                        delete(() -&gt; // DELETE /things/&lt;thingId&gt;/acl/&lt;authorizationSubject&gt;</span>
+<span class="nc" id="L344">                                                handlePerRequest(ctx, DeleteAclEntry</span>
+<span class="nc" id="L345">                                                        .of(thingId, AuthorizationModelFactory.newAuthSubject(</span>
+                                                                subject), dittoHeaders))
+                                        )
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /things/&lt;thingId&gt;/attributes} route.
+     *
+     * @return {@code /things/&lt;thingId&gt;/attributes} route.
+     */
+    private Route thingsEntryAttributes(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L361">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_ATTRIBUTES), () -&gt;</span>
+<span class="nc" id="L362">                pathEndOrSingleSlash(() -&gt;</span>
+<span class="nc" id="L363">                        route(</span>
+<span class="nc" id="L364">                                get(() -&gt; // GET /things/&lt;thingId&gt;/attributes?fields=&lt;fieldsString&gt;</span>
+<span class="nc" id="L365">                                        parameterOptional(ThingsParameter.FIELDS.toString(), fieldsString -&gt;</span>
+<span class="nc" id="L366">                                                handlePerRequest(ctx, RetrieveAttributes</span>
+<span class="nc" id="L367">                                                        .of(thingId,</span>
+<span class="nc" id="L368">                                                                calculateSelectedFields(fieldsString).orElse(</span>
+                                                                        null), dittoHeaders))
+                                        )
+                                ),
+<span class="nc" id="L372">                                put(() -&gt; // PUT /things/&lt;thingId&gt;/attributes</span>
+<span class="nc" id="L373">                                        extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L374">                                                handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+                                                        attributesJson -&gt;
+<span class="nc" id="L376">                                                                ModifyAttributes.of(thingId,</span>
+<span class="nc" id="L377">                                                                        ThingsModelFactory.newAttributes(</span>
+                                                                                attributesJson),
+                                                                        dittoHeaders))
+                                        )
+                                ),
+<span class="nc" id="L382">                                delete(() -&gt; // DELETE /things/&lt;thingId&gt;/attributes</span>
+<span class="nc" id="L383">                                        handlePerRequest(ctx, DeleteAttributes.of(thingId, dittoHeaders))</span>
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /things/&lt;thingId&gt;/attributes/&lt;attributesSelector&gt;} route.
+     *
+     * {@code attributeJsonPointer} JSON pointer to GET/UPDATE/DELETE. E.g.:
+     * &lt;pre&gt;
+     *    GET /things/fancy-car-1/attributes/model
+     *    PUT /things/fancy-car-1/attributes/someProp
+     *    DELETE /things/fancy-car-1/attributes/foo/bar
+     * &lt;/pre&gt;
+     *
+     * @return {@code /things/&lt;thingId&gt;/attributes/&lt;attributeJsonPointer&gt;} route.
+     */
+    private Route thingsEntryAttributesEntry(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L404">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_ATTRIBUTES), () -&gt;</span>
+<span class="nc" id="L405">                route(</span>
+<span class="nc" id="L406">                        get(() -&gt; // GET /things/&lt;thingId&gt;/attributes</span>
+<span class="nc" id="L407">                                pathEnd(() -&gt; // GET /things/&lt;thingId&gt;/attributes/</span>
+<span class="nc" id="L408">                                        handlePerRequest(ctx, RetrieveAttributes.of(thingId, dittoHeaders))</span>
+<span class="nc" id="L409">                                ).orElse( // GET /things/&lt;thingId&gt;/attributes/&lt;attributePointerStr&gt;</span>
+<span class="nc" id="L410">                                        extractUnmatchedPath(attributePointerStr -&gt;</span>
+<span class="nc" id="L411">                                                handlePerRequest(ctx, RetrieveAttribute</span>
+<span class="nc" id="L412">                                                        .of(thingId, JsonFactory.newPointer(</span>
+<span class="nc" id="L413">                                                                decodePath(attributePointerStr)),</span>
+                                                                dittoHeaders))
+                                        )
+                                )
+                        ),
+<span class="nc" id="L418">                        put(() -&gt; // PUT /things/&lt;thingId&gt;/attributes</span>
+<span class="nc" id="L419">                                extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L420">                                        pathEnd(() -&gt; // PUT /things/&lt;thingId&gt;/attributes/</span>
+<span class="nc" id="L421">                                                handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+                                                        attributesJson -&gt;
+<span class="nc" id="L423">                                                                ModifyAttributes.of(thingId,</span>
+<span class="nc" id="L424">                                                                        ThingsModelFactory.newAttributes(</span>
+                                                                                attributesJson),
+                                                                        dittoHeaders))
+<span class="nc" id="L427">                                        ).orElse( // PUT /things/&lt;thingId&gt;/attributes/&lt;attributePointerStr&gt;</span>
+<span class="nc" id="L428">                                                extractUnmatchedPath(attributePointerStr -&gt;</span>
+<span class="nc" id="L429">                                                        handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+                                                                attributeValueJson -&gt;
+<span class="nc" id="L431">                                                                        ModifyAttribute.of(thingId,</span>
+<span class="nc" id="L432">                                                                                JsonFactory.newPointer(</span>
+<span class="nc" id="L433">                                                                                        decodePath(</span>
+                                                                                                attributePointerStr)),
+<span class="nc" id="L435">                                                                                JsonFactory.readFrom(</span>
+                                                                                        attributeValueJson),
+                                                                                dittoHeaders))
+                                                )
+                                        )
+                                )
+                        ),
+<span class="nc" id="L442">                        delete(() -&gt; // DELETE /things/&lt;thingId&gt;/attributes</span>
+<span class="nc" id="L443">                                pathEnd(() -&gt; // DELETE /things/&lt;thingId&gt;/attributes/</span>
+<span class="nc" id="L444">                                        handlePerRequest(ctx, DeleteAttributes.of(thingId, dittoHeaders))</span>
+<span class="nc" id="L445">                                ).orElse( // DELETE /things/&lt;thingId&gt;/attributes/&lt;attributePointerStr&gt;</span>
+<span class="nc" id="L446">                                        extractUnmatchedPath(attributePointerStr -&gt;</span>
+<span class="nc" id="L447">                                                handlePerRequest(ctx, DeleteAttribute</span>
+<span class="nc" id="L448">                                                        .of(thingId, JsonFactory.newPointer(</span>
+<span class="nc" id="L449">                                                                decodePath(attributePointerStr)),</span>
+                                                                dittoHeaders))
+                                        )
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /things/&lt;thingId&gt;/features} route.
+     *
+     * @return {@code /things/&lt;thingId&gt;/features} route.
+     */
+    private Route thingsEntryFeatures(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L465">        return featuresRoute.buildFeaturesRoute(ctx, dittoHeaders, thingId); // /things/&lt;thingId&gt;/features</span>
+    }
+
+    /*
+     * Describes {@code /things/&lt;thingId&gt;/{inbox|outbox}} route.
+     *
+     * @return {@code /things/&lt;thingId&gt;/{inbox|outbox}} route.
+     */
+    private Route thingsEntryInboxOutbox(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String thingId) {
+<span class="fc" id="L475">        return messagesRoute.buildThingsInboxOutboxRoute(ctx, dittoHeaders,</span>
+                thingId); // /things/&lt;thingId&gt;/&lt;inbox|outbox&gt;
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

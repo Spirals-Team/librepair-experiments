@@ -1,0 +1,923 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JsonFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: JSON</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.json</a> &gt; <span class="el_source">JsonFactory.java</span></div><h1>JsonFactory.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.json;
+
+import static java.util.Objects.requireNonNull;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
+
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.Immutable;
+
+import com.eclipsesource.json.Json;
+import com.eclipsesource.json.ParseException;
+
+/**
+ * The main entry point for the Eclipse Ditto JSON API. It provides a lot of convenience methods. Apart from
+ * {@link #newArrayBuilder()} and {@link #newObjectBuilder()} all methods of this class return
+ * &lt;em&gt;immutable objects.&lt;/em&gt;
+ */
+@Immutable
+public final class JsonFactory {
+
+<span class="fc" id="L43">    private static final JsonObject EMPTY_JSON_OBJECT = ImmutableJsonObject.empty();</span>
+<span class="fc" id="L44">    private static final JsonArray EMPTY_JSON_ARRAY = ImmutableJsonArray.empty();</span>
+<span class="fc" id="L45">    private static final JsonObject NULL_JSON_OBJECT = ImmutableJsonObjectNull.newInstance();</span>
+<span class="fc" id="L46">    private static final JsonArray NULL_JSON_ARRAY = ImmutableJsonArrayNull.newInstance();</span>
+<span class="fc" id="L47">    private static final JsonValue NULL_LITERAL = ImmutableJsonNull.newInstance();</span>
+
+    /*
+     * This utility class is not meant to be instantiated.
+     */
+<span class="nc" id="L52">    private JsonFactory() {</span>
+<span class="nc" id="L53">        throw new AssertionError();</span>
+    }
+
+    /**
+     * Returns JSON key for the given character sequence. If the given key value is already a JSON key, this is
+     * immediately properly cast and returned.
+     *
+     * @param keyValue the character sequence value of the JSON key to be created.
+     * @return a new JSON key with {@code keyValue} as its value.
+     * @throws NullPointerException if {@code keyValue} is {@code null}.
+     * @throws IllegalArgumentException if {@code keyValue} is empty.
+     */
+    public static JsonKey newKey(final CharSequence keyValue) {
+<span class="fc" id="L66">        return ImmutableJsonKey.of(keyValue);</span>
+    }
+
+    /**
+     * Returns a JSON literal which represents {@code null}.
+     *
+     * @return the {@code null} JSON literal.
+     */
+    public static JsonValue nullLiteral() {
+<span class="fc" id="L75">        return NULL_LITERAL;</span>
+    }
+
+    /**
+     * Tries to guess the associated JsonValue for the specified object.
+     *
+     * @param value the value to be converted.
+     * @param &lt;T&gt; the type of {@code value}.
+     * @return a JsonValue representation of {@code value}.
+     * @throws JsonParseException if {@code value} is not defined for JSON.
+     */
+    static &lt;T&gt; JsonValue getAppropriateValue(@Nullable final T value) {
+        final JsonValue result;
+
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        if (null == value) {</span>
+<span class="fc" id="L90">            result = nullLiteral();</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        } else if (value instanceof JsonValue) {</span>
+<span class="fc" id="L92">            result = ((JsonValue) value);</span>
+<span class="fc bfc" id="L93" title="All 4 branches covered.">        } else if (value instanceof String || value instanceof CharSequence) {</span>
+<span class="fc" id="L94">            result = newValue(String.valueOf(value));</span>
+        } else {
+<span class="fc" id="L96">            result = convert(tryToRead(String.valueOf(value)));</span>
+        }
+
+<span class="fc" id="L99">        return result;</span>
+    }
+
+    /**
+     * Returns a JSON literal that represents the given {@code boolean} value.
+     *
+     * @param value the value to get a JSON literal for.
+     * @return a JSON literal that represents the given boolean value.
+     */
+    public static JsonValue newValue(final boolean value) {
+<span class="fc bfc" id="L109" title="All 2 branches covered.">        return value ? ImmutableJsonLiteral.TRUE : ImmutableJsonLiteral.FALSE;</span>
+    }
+
+    /**
+     * Returns a JSON number that represents the given {@code int} value.
+     *
+     * @param value the value to get a JSON number for.
+     * @return a JSON number that represents the given value.
+     */
+    public static JsonValue newValue(final int value) {
+<span class="fc" id="L119">        return ImmutableJsonNumber.of(Json.value(value));</span>
+    }
+
+    /**
+     * Returns a JSON number that represents the given {@code long} value.
+     *
+     * @param value the value to get a JSON number for.
+     * @return a JSON number that represents the given value.
+     */
+    public static JsonValue newValue(final long value) {
+<span class="fc" id="L129">        return ImmutableJsonNumber.of(Json.value(value));</span>
+    }
+
+    /**
+     * Returns a JSON number that represents the given {@code double} value.
+     *
+     * @param value the value to get a JSON number for.
+     * @return a JSON number that represents the given value.
+     */
+    public static JsonValue newValue(final double value) {
+<span class="fc" id="L139">        return ImmutableJsonNumber.of(Json.value(value));</span>
+    }
+
+    /**
+     * Returns a JsonValue that represents the given Java string as JSON string. For example the Java string
+     * {@code &quot;foo&quot;} would be {@code &quot;\&quot;foo\&quot;&quot;} as JSON string.
+     *
+     * @param jsonString the string to get a JSON representation for.
+     * @return a JSON value that represents the given string. If {@code jsonString} is {@code null}, a &quot;null&quot; object is
+     * returned.
+     * @throws IllegalArgumentException if {@code jsonString} is empty.
+     * @see #nullLiteral()
+     */
+    public static JsonValue newValue(@Nullable final String jsonString) {
+        final JsonValue result;
+
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        if (null != jsonString) {</span>
+<span class="fc" id="L156">            result = ImmutableJsonString.of(Json.value(jsonString));</span>
+        } else {
+<span class="fc" id="L158">            result = NULL_LITERAL;</span>
+        }
+
+<span class="fc" id="L161">        return result;</span>
+    }
+
+    /**
+     * Reads the given string and creates a JSON value based on the read data. The actual type of this JSON value is
+     * unknown but can be obtained by invoking the {@code is...} methods.
+     *
+     * @param json the JSON document to read.
+     * @return a JSON value representing the read document. This value can be a JSON literal, a JSON object and so on.
+     * @throws NullPointerException if {@code json} is empty.
+     * @throws JsonParseException if {@code json} is empty or if it is no valid JSON.
+     */
+    public static JsonValue readFrom(final String json) {
+<span class="fc" id="L174">        requireNonNull(json, &quot;The JSON to read from must not be null!&quot;);</span>
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">        if (json.isEmpty()) {</span>
+<span class="nc" id="L176">            throw new JsonParseException(&quot;The JSON to read from must not be empty!&quot;);</span>
+        }
+
+<span class="fc" id="L179">        final com.eclipsesource.json.JsonValue minimalJsonValue = tryToRead(json);</span>
+<span class="fc" id="L180">        return convert(minimalJsonValue);</span>
+    }
+
+    private static com.eclipsesource.json.JsonValue tryToRead(final String json) {
+        try {
+<span class="fc" id="L185">            return Json.parse(json);</span>
+        }
+<span class="fc" id="L187">        catch (final ParseException | StackOverflowError e) {</span>
+<span class="fc" id="L188">            throw JsonParseException.newBuilder()</span>
+<span class="fc" id="L189">                    .message(MessageFormat.format(&quot;Failed to parse ''{0}''!&quot;, json))</span>
+<span class="fc" id="L190">                    .cause(e)</span>
+<span class="fc" id="L191">                    .build();</span>
+        }
+    }
+
+    /**
+     * Reads the entire input stream from the specified reader and parses it as JSON value. The input stream is expected
+     * to contain a valid JSON value with optional whitespace padding.
+     * &lt;p&gt;
+     * As characters are read in chunks and buffered internally it does &lt;em&gt;not&lt;/em&gt; improve reading performance to wrap
+     * an existing reader in a {@code BufferedReader}.
+     * &lt;/p&gt;
+     *
+     * @param reader the reader to read the JSON value from.
+     * @return a JSON value which represents the read stream.
+     * @throws NullPointerException if {@code reader} is {@code null}.
+     * @throws JsonParseException if an I/O error occurred or if the input is no valid JSON.
+     */
+    public static JsonValue readFrom(final Reader reader) {
+<span class="fc" id="L209">        requireNonNull(reader, &quot;The reader must not be null!&quot;);</span>
+<span class="fc" id="L210">        final com.eclipsesource.json.JsonValue minimalJsonValue = tryToRead(reader);</span>
+<span class="fc" id="L211">        return convert(minimalJsonValue);</span>
+    }
+
+    private static com.eclipsesource.json.JsonValue tryToRead(final Reader reader) {
+        try {
+<span class="fc" id="L216">            return Json.parse(reader);</span>
+        }
+<span class="nc" id="L218">        catch (final ParseException | IOException | StackOverflowError e) {</span>
+<span class="nc" id="L219">            throw JsonParseException.newBuilder()</span>
+<span class="nc" id="L220">                    .message(&quot;Failed to parse JSON from reader!&quot;)</span>
+<span class="nc" id="L221">                    .cause(e)</span>
+<span class="nc" id="L222">                    .build();</span>
+        }
+    }
+
+    /**
+     * Returns a new mutable builder for a {@code JsonObject}.
+     *
+     * @return a new JSON object builder.
+     */
+    public static JsonObjectBuilder newObjectBuilder() {
+<span class="fc" id="L232">        return ImmutableJsonObjectBuilder.newInstance();</span>
+    }
+
+    /**
+     * Returns a new mutable builder for the specified {@code JsonField}s. The returned builder is already initialised
+     * with the data of the provided JSON object. This method is useful if an existing JSON object should be strongly
+     * modified but the amount of creating objects should be kept low at the same time.
+     *
+     * @param jsonFields are the initial data of the returned builder.
+     * @return a new JSON object builder with pre-filled data of {@code jsonFields}.
+     * @throws NullPointerException if {@code jsonFields} is {@code null}.
+     */
+    public static JsonObjectBuilder newObjectBuilder(final Iterable&lt;JsonField&gt; jsonFields) {
+<span class="nc" id="L245">        requireNonNull(jsonFields, &quot;The initial JSON fields must not be null!&quot;);</span>
+
+<span class="nc" id="L247">        final JsonObjectBuilder result = ImmutableJsonObjectBuilder.newInstance();</span>
+<span class="nc" id="L248">        result.setAll(jsonFields);</span>
+<span class="nc" id="L249">        return result;</span>
+    }
+
+    /**
+     * Returns an empty JSON object.
+     *
+     * @return an empty JSON object.
+     */
+    public static JsonObject newObject() {
+<span class="fc" id="L258">        return EMPTY_JSON_OBJECT;</span>
+    }
+
+    /**
+     * Creates a JSON object from the given string.
+     *
+     * @param jsonString the string that represents the JSON object.
+     * @return the JSON object that has been created from the string.
+     * @throws NullPointerException if {@code jsonString} is {@code null}.
+     * @throws IllegalArgumentException if {@code jsonString} is empty.
+     * @throws JsonParseException if {@code jsonString} does not contain a valid JSON object.
+     */
+    public static JsonObject newObject(final String jsonString) {
+<span class="fc" id="L271">        requireNonNull(jsonString, &quot;The JSON string to create a JSON object from must not be null!&quot;);</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">        if (jsonString.isEmpty()) {</span>
+<span class="fc" id="L273">            throw new IllegalArgumentException(&quot;The JSON string to create a JSON object from must not be empty!&quot;);</span>
+        }
+
+<span class="pc bpc" id="L276" title="1 of 2 branches missed.">        if (Objects.equals(Json.NULL.toString(), jsonString)) {</span>
+<span class="nc" id="L277">            return NULL_JSON_OBJECT;</span>
+        } else {
+<span class="fc" id="L279">            final com.eclipsesource.json.JsonObject jsonObject = tryToReadJsonObjectFrom(jsonString);</span>
+<span class="fc" id="L280">            return ImmutableJsonObject.of(toMap(jsonObject));</span>
+        }
+    }
+
+    /**
+     * Creates a JSON object from the given key-value pairs aka fields.
+     *
+     * @param fields the fields of the JSON object to be created.
+     * @return a new JSON object based on the provided fields.
+     * @throws NullPointerException if {@code fields} is {@code null}.
+     */
+    public static JsonObject newObject(final Map&lt;JsonKey, JsonValue&gt; fields) {
+<span class="fc" id="L292">        final Map&lt;String, JsonField&gt; jsonFields = new LinkedHashMap&lt;&gt;(fields.size());</span>
+<span class="fc" id="L293">        fields.forEach(((jsonKey, jsonValue) -&gt; jsonFields.put(jsonKey.toString(), newField(jsonKey, jsonValue))));</span>
+<span class="fc" id="L294">        return ImmutableJsonObject.of(jsonFields);</span>
+    }
+
+    /**
+     * Returns a JSON NULL literal which is typed as JSON object.
+     *
+     * @return an object typed JSON NULL literal.
+     */
+    public static JsonObject nullObject() {
+<span class="fc" id="L303">        return NULL_JSON_OBJECT;</span>
+    }
+
+    private static com.eclipsesource.json.JsonObject tryToReadJsonObjectFrom(final String jsonString) {
+        try {
+<span class="fc" id="L308">            final com.eclipsesource.json.JsonValue parsedJsonString = Json.parse(jsonString);</span>
+<span class="fc" id="L309">            return parsedJsonString.asObject();</span>
+        }
+<span class="fc" id="L311">        catch (final ParseException | UnsupportedOperationException | StackOverflowError e) {</span>
+<span class="fc" id="L312">            throw JsonParseException.newBuilder()</span>
+<span class="fc" id="L313">                    .message(&quot;Failed to create JSON object from string!&quot;)</span>
+<span class="fc" id="L314">                    .cause(e)</span>
+<span class="fc" id="L315">                    .build();</span>
+        }
+    }
+
+    private static Map&lt;String, JsonField&gt; toMap(final com.eclipsesource.json.JsonObject minimalJsonObject) {
+<span class="fc" id="L320">        final Map&lt;String, JsonField&gt; result = new LinkedHashMap&lt;&gt;(minimalJsonObject.size());</span>
+
+<span class="fc bfc" id="L322" title="All 2 branches covered.">        for (final com.eclipsesource.json.JsonObject.Member member : minimalJsonObject) {</span>
+<span class="fc" id="L323">            final JsonKey key = newKey(member.getName());</span>
+<span class="fc" id="L324">            final JsonValue value = convert(member.getValue());</span>
+<span class="fc" id="L325">            result.put(key.toString(), newField(key, value));</span>
+<span class="fc" id="L326">        }</span>
+
+<span class="fc" id="L328">        return result;</span>
+    }
+
+    /**
+     * Returns a new mutable builder for a {@code JsonArray}.
+     *
+     * @return a new JSON array builder.
+     */
+    public static JsonArrayBuilder newArrayBuilder() {
+<span class="fc" id="L337">        return ImmutableJsonArrayBuilder.newInstance();</span>
+    }
+
+    /**
+     * Returns a new mutable builder for a {@code JsonArray} which is already initialised with the given values.
+     *
+     * @param values the values of the JSON array to be created. This might be an existing JSON array as well.
+     * @return a new JSON array builder.
+     * @throws NullPointerException if {@code values} is {@code null}.
+     */
+    public static JsonArrayBuilder newArrayBuilder(final Iterable&lt;? extends JsonValue&gt; values) {
+<span class="fc" id="L348">        final JsonArrayBuilder result = ImmutableJsonArrayBuilder.newInstance();</span>
+<span class="nc" id="L349">        result.addAll(values);</span>
+<span class="nc" id="L350">        return result;</span>
+    }
+
+    /**
+     * Returns a new empty JSON array.
+     *
+     * @return a new empty JSON array.
+     */
+    public static JsonArray newArray() {
+<span class="fc" id="L359">        return EMPTY_JSON_ARRAY;</span>
+    }
+
+    /**
+     * Creates a new JSON array from the given string.
+     *
+     * @param jsonString the string that represents the JSON array.
+     * @return the JSON array that has been created from the string.
+     * @throws NullPointerException if {@code jsonString} is {@code null}.
+     * @throws IllegalArgumentException if {@code jsonString} is empty.
+     * @throws JsonParseException if {@code jsonString} does not contain a valid JSON array.
+     */
+    public static JsonArray newArray(final String jsonString) {
+<span class="fc" id="L372">        requireNonNull(jsonString, &quot;The JSON string to create JSON array from must not be null!&quot;);</span>
+<span class="fc bfc" id="L373" title="All 2 branches covered.">        if (jsonString.isEmpty()) {</span>
+<span class="fc" id="L374">            throw new IllegalArgumentException(&quot;The JSON string to create a JSON array from must not be empty!&quot;);</span>
+        }
+<span class="pc bpc" id="L376" title="1 of 2 branches missed.">        if (jsonString.equals(Json.NULL.toString())) {</span>
+<span class="nc" id="L377">            return NULL_JSON_ARRAY;</span>
+        } else {
+<span class="fc" id="L379">            final com.eclipsesource.json.JsonArray jsonArray = tryToReadMinimalJsonArrayFrom(jsonString);</span>
+<span class="fc" id="L380">            return ImmutableJsonArray.of(toList(jsonArray));</span>
+        }
+    }
+
+    private static com.eclipsesource.json.JsonArray tryToReadMinimalJsonArrayFrom(final String jsonString) {
+        try {
+<span class="fc" id="L386">            final com.eclipsesource.json.JsonValue parsedJsonString = Json.parse(jsonString);</span>
+<span class="fc" id="L387">            return parsedJsonString.asArray();</span>
+        }
+<span class="fc" id="L389">        catch (final ParseException | UnsupportedOperationException | StackOverflowError e) {</span>
+<span class="fc" id="L390">            throw JsonParseException.newBuilder()</span>
+<span class="fc" id="L391">                    .message(&quot;Failed to create JSON array from string!&quot;)</span>
+<span class="fc" id="L392">                    .cause(e)</span>
+<span class="fc" id="L393">                    .build();</span>
+        }
+    }
+
+    private static List&lt;JsonValue&gt; toList(final com.eclipsesource.json.JsonArray minimalJsonArray) {
+<span class="fc" id="L398">        final List&lt;JsonValue&gt; result = new ArrayList&lt;&gt;(minimalJsonArray.size());</span>
+
+<span class="fc bfc" id="L400" title="All 2 branches covered.">        for (final com.eclipsesource.json.JsonValue minimalJsonValue : minimalJsonArray) {</span>
+<span class="fc" id="L401">            result.add(convert(minimalJsonValue));</span>
+<span class="fc" id="L402">        }</span>
+
+<span class="fc" id="L404">        return result;</span>
+    }
+
+    /**
+     * Returns a JSON NULL literal which is typed as JSON array.
+     *
+     * @return an array typed JSON NULL literal.
+     */
+    public static JsonArray nullArray() {
+<span class="fc" id="L413">        return NULL_JSON_ARRAY;</span>
+    }
+
+    /**
+     * Returns a new JSON field based on the specified key value pair.
+     *
+     * @param key the key of the field to be created.
+     * @param value the value of the field to be created. {@code null} will be converted to the JSON NULL Literal.
+     * @return a new JSON field containing the specified key value pair.
+     * @throws NullPointerException if {@code key} is null;
+     */
+    public static JsonField newField(final JsonKey key, @Nullable final JsonValue value) {
+<span class="pc bpc" id="L425" title="1 of 2 branches missed.">        return ImmutableJsonField.newInstance(key, (null != value) ? value : NULL_LITERAL);</span>
+    }
+
+    /**
+     * Returns a new JSON field based on the specified key value pair and definition.
+     *
+     * @param key the key of the field to be created.
+     * @param value the value of the field to be created. {@code null} will be converted to the JSON NULL Literal.
+     * @param definition the definition of the field to be created.
+     * @return a new JSON field containing the specified key value pair and definition.
+     * @throws NullPointerException if {@code key} is {@code null}.
+     */
+    public static JsonField newField(final JsonKey key, @Nullable final JsonValue value,
+            @Nullable final JsonFieldDefinition definition) {
+
+<span class="pc bpc" id="L440" title="1 of 2 branches missed.">        return ImmutableJsonField.newInstance(key, (null != value) ? value : NULL_LITERAL, definition);</span>
+    }
+
+    /**
+     * Returns a new JSON Patch which can be used to specify modifications on JSON Objects.
+     *
+     * @param operation the patch operation type
+     * @param path a JSON Pointer specifying the path within the JSON Object on which the operation is defined
+     * @param value the value to be used for the specified operation on the given path
+     * @return the new JSON Patch.
+     * @throws NullPointerException if {@code operation} or {@code path} is {@code null}.
+     */
+    public static JsonPatch newPatch(final JsonPatch.Operation operation, final JsonPointer path,
+            @Nullable final JsonValue value) {
+
+<span class="nc" id="L455">        return ImmutableJsonPatch.newInstance(operation, path, value);</span>
+    }
+
+    /**
+     * Returns a new JSON Patch created from the given string.
+     *
+     * @param jsonString the string representation of the JSON Patch object to be created.
+     * @return the new JSON Patch.
+     * @throws NullPointerException if {@code jsonString} is {@code null}.
+     * @throws IllegalArgumentException if {@code jsonString} is empty.
+     * @throws JsonParseException if {@code jsonString} does not contain a valid JSON Patch JSON object.
+     * @throws JsonMissingFieldException if {@code jsonString} did not contain {@link JsonPatch.JsonFields#OPERATION} or
+     * {@link JsonPatch.JsonFields#PATH}.
+     */
+    public static JsonPatch newPatch(final String jsonString) {
+<span class="nc" id="L470">        return ImmutableJsonPatch.fromJson(jsonString);</span>
+    }
+
+    /**
+     * Returns an empty JSON pointer.
+     *
+     * @return JSON pointer containing no JSON keys.
+     */
+    public static JsonPointer emptyPointer() {
+<span class="fc" id="L479">        return ImmutableJsonPointer.empty();</span>
+    }
+
+    /**
+     * Returns a new JSON pointer which consist of the specified hierarchical keys..
+     *
+     * @param rootLevel the JSON key which is the root level of the JSON pointer to create.
+     * @param subLevels the JSON keys which form sub levels to the root level as well as to each other.
+     * @return a new JSON pointer consisting of hierarchical JSON keys.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public static JsonPointer newPointer(final JsonKey rootLevel, final JsonKey... subLevels) {
+<span class="fc" id="L491">        return ImmutableJsonPointer.of(rootLevel, subLevels);</span>
+    }
+
+    /**
+     * Parses the given string to obtain a new JSON pointer. This method is the inverse of
+     * {@link JsonPointer#toString()} with one exception: both strings {@code &quot;/&quot;} and {@code &quot;&quot;} lead to an empty
+     * pointer while the string representation of an empty string is always {@code &quot;/&quot;}.
+     * &lt;p&gt;
+     * As a JsonPointer is a hierarchy of JsonKeys it has to support JsonKeys containing slashes. Because of this, a
+     * JsonPointer string has to escape each slash of a JsonKey with {@code &quot;~1&quot;}. To support, tildes in JsonKeys,
+     * too, they have to be escaped with {@code &quot;~0&quot;}. For example, parsing the string
+     * {@code &quot;/foo/~0dum~1~0die~1~0dum/baz&quot;} would result in a JsonPointer consisting of the JsonKeys
+     * &lt;ol&gt;
+     *     &lt;li&gt;{@code &quot;foo&quot;},&lt;/li&gt;
+     *     &lt;li&gt;{@code &quot;~dum/~die/~dum&quot;} and&lt;/li&gt;
+     *     &lt;li&gt;{@code &quot;baz&quot;}.&lt;/li&gt;
+     * &lt;/ol&gt;
+     *
+     * @param slashDelimitedCharSequence a string representing a JSON pointer.
+     * @return a new JSON pointer consisting of the JSON keys which were extracted from {@code
+     * slashDelimitedCharSequence}.
+     * @throws NullPointerException if {@code slashDelimitedCharSequence} is {@code null}.
+     */
+    public static JsonPointer newPointer(final CharSequence slashDelimitedCharSequence) {
+<span class="fc" id="L515">        return ImmutableJsonPointer.ofParsed(slashDelimitedCharSequence);</span>
+    }
+
+    /**
+     * Returns a new mutable builder for {@code JsonParseOptions}.
+     *
+     * @return the new JsonParseOptionsBuilder.
+     */
+    public static JsonParseOptionsBuilder newParseOptionsBuilder() {
+<span class="fc" id="L524">        return ImmutableJsonParseOptionsBuilder.newInstance();</span>
+    }
+
+    /**
+     * Returns a new empty JSON field selector.
+     *
+     * @return a new empty JSON field selector.
+     */
+    public static JsonFieldSelector emptyFieldSelector() {
+<span class="fc" id="L533">        return ImmutableJsonFieldSelector.empty();</span>
+    }
+
+    /**
+     * Returns a new JSON field selector by parsing the given string. If the JSON field selector string is {@code null}
+     * or empty this means that no fields were selected thus this method returns an empty JSON field selector.
+     * &lt;p&gt;
+     * For example, the field selector string
+     * &lt;p&gt;
+     * &lt;pre&gt;
+     * &quot;thingId,attributes(acceleration,someData(foo,bar/baz)),acl,features/key&quot;
+     * &lt;/pre&gt;
+     * &lt;p&gt;
+     * would lead to a JSON field selector which consists of the following JSON pointers:
+     * &lt;ul&gt;
+     * &lt;li&gt;{@code &quot;thingId&quot;},&lt;/li&gt;
+     * &lt;li&gt;{@code &quot;attributes/acceleration&quot;},&lt;/li&gt;
+     * &lt;li&gt;{@code &quot;attributes/someData/foo&quot;},&lt;/li&gt;
+     * &lt;li&gt;{@code &quot;attributes/someData/bar/baz&quot;},&lt;/li&gt;
+     * &lt;li&gt;{@code &quot;acl&quot;} and&lt;/li&gt;
+     * &lt;li&gt;{@code &quot;features/key&quot;}.&lt;/li&gt;
+     * &lt;/ul&gt;
+     *
+     * @param fieldSelectorString string to be transformed into a JSON field selector object.
+     * @param options the JsonParseOptions to apply when parsing the {@code fieldSelectorString}.
+     * @return a new JSON field selector.
+     * @throws JsonFieldSelectorInvalidException if {@code fieldSelectorString} is empty or if {@code
+     * fieldSelectorString} does not contain a closing parenthesis ({@code )}) for each opening parenthesis ({@code
+     * (}).
+     * @throws IllegalStateException if {@code fieldSelectorString} cannot be decoded as UTF-8.
+     */
+    public static JsonFieldSelector newFieldSelector(@Nullable final String fieldSelectorString,
+            final JsonParseOptions options) {
+
+        final JsonFieldSelector result;
+
+<span class="fc bfc" id="L569" title="All 4 branches covered.">        if (null == fieldSelectorString || fieldSelectorString.isEmpty()) {</span>
+<span class="fc" id="L570">            result = ImmutableJsonFieldSelector.empty();</span>
+        } else {
+<span class="fc" id="L572">            final ImmutableJsonFieldSelectorFactory jsonFieldSelectorFactory =</span>
+<span class="fc" id="L573">                    ImmutableJsonFieldSelectorFactory.newInstance(fieldSelectorString, options);</span>
+<span class="fc" id="L574">            result = jsonFieldSelectorFactory.newJsonFieldSelector();</span>
+        }
+
+<span class="fc" id="L577">        return result;</span>
+    }
+
+    /**
+     * Returns a new JSON field selector which is based on the given set of {@link JsonPointer}s. If the set of JSON
+     * pointers string is empty this means that no fields were selected thus this method returns an empty JSON field
+     * selector.
+     *
+     * @param pointers the JSON pointers of the field selector to be created.
+     * @return a new JSON field selector.
+     * @throws NullPointerException if {@code pointers} is {@code null}.
+     * @throws IllegalArgumentException if {@code pointers} is empty.
+     */
+    public static JsonFieldSelector newFieldSelector(final Iterable&lt;JsonPointer&gt; pointers) {
+<span class="fc" id="L591">        requireNonNull(pointers, &quot;In order to create a JSON field selector the JSON pointers must not be null!&quot;);</span>
+
+<span class="fc" id="L593">        return ImmutableJsonFieldSelector.of(pointers);</span>
+    }
+
+    /**
+     * Returns a new JSON field selector which is based on the given {@link JsonPointer}(s).
+     *
+     * @param pointer a JSON pointer of the field selector to be created.
+     * @param furtherPointers additional JSON pointers to form the field selector to be created by this method.
+     * @return a new JSON field selector.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public static JsonFieldSelector newFieldSelector(final JsonPointer pointer, final JsonPointer... furtherPointers) {
+<span class="fc" id="L605">        requireNonNull(pointer, &quot;The JSON pointer must not be null!&quot;);</span>
+<span class="fc" id="L606">        requireNonNull(furtherPointers, &quot;The optional JSON keys must not be null!&quot;);</span>
+
+<span class="fc" id="L608">        final Collection&lt;JsonPointer&gt; jsonPointers = new LinkedHashSet&lt;&gt;(1 + furtherPointers.length);</span>
+<span class="fc" id="L609">        jsonPointers.add(pointer);</span>
+<span class="fc" id="L610">        Collections.addAll(jsonPointers, furtherPointers);</span>
+
+<span class="fc" id="L612">        return ImmutableJsonFieldSelector.of(jsonPointers);</span>
+    }
+
+    /**
+     * Returns a new JSON field selector which is based on the given {@link JsonPointer}(s).
+     *
+     * @param pointerString a JSON pointer of the field selector to be created.
+     * @param furtherPointerStrings additional JSON pointers to form the field selector to be created by this method.
+     * @return a new JSON field selector.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public static JsonFieldSelector newFieldSelector(final CharSequence pointerString,
+            final CharSequence... furtherPointerStrings) {
+
+<span class="fc" id="L626">        requireNonNull(pointerString, &quot;The JSON pointer string must not be null!&quot;);</span>
+<span class="fc" id="L627">        requireNonNull(furtherPointerStrings, &quot;The optional JSON keys must not be null!&quot;);</span>
+
+<span class="fc" id="L629">        final Collection&lt;JsonPointer&gt; jsonPointers = new LinkedHashSet&lt;&gt;(1 + furtherPointerStrings.length);</span>
+<span class="fc" id="L630">        jsonPointers.add(newPointer(pointerString));</span>
+<span class="fc bfc" id="L631" title="All 2 branches covered.">        for (final CharSequence furtherPointerString : furtherPointerStrings) {</span>
+<span class="fc" id="L632">            jsonPointers.add(newPointer(furtherPointerString));</span>
+        }
+
+<span class="fc" id="L635">        return ImmutableJsonFieldSelector.of(jsonPointers);</span>
+    }
+
+    /**
+     * Returns a new JSON field selector which is based on pointers of the given {@link JsonFieldDefinition}(s).
+     *
+     * @param fieldDefinition the JSON field definition of the returned field selector.
+     * @param furtherFieldDefinitions additional JSON field definitions of the returned field selector.
+     * @return a new JSON field selector.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public static JsonFieldSelector newFieldSelector(final JsonFieldDefinition fieldDefinition,
+            final JsonFieldDefinition... furtherFieldDefinitions) {
+
+<span class="nc" id="L649">        requireNonNull(fieldDefinition, &quot;The JSON field definition must not be null!&quot;);</span>
+<span class="nc" id="L650">        requireNonNull(furtherFieldDefinitions, &quot;The optional JSON field definitions must not be null!&quot;);</span>
+
+<span class="nc" id="L652">        final Collection&lt;JsonPointer&gt; pointers = new LinkedHashSet&lt;&gt;(1 + furtherFieldDefinitions.length);</span>
+<span class="nc" id="L653">        pointers.add(fieldDefinition.getPointer());</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">        for (final JsonFieldDefinition furtherFieldDefinition : furtherFieldDefinitions) {</span>
+<span class="nc" id="L655">            pointers.add(furtherFieldDefinition.getPointer());</span>
+        }
+
+<span class="nc" id="L658">        return newFieldSelector(pointers);</span>
+    }
+
+    /**
+     * Returns a new JSON field selector builder for building JSON field selectors.
+     *
+     * @return the JSON field selector builder.
+     */
+    public static JsonFieldSelectorBuilder newFieldSelectorBuilder() {
+<span class="fc" id="L667">        return ImmutableJsonFieldSelectorBuilder.newInstance();</span>
+    }
+
+    /**
+     * Returns a new definition of a JSON field which contains a String value.
+     *
+     * @param pointer a character sequence consisting of either a single JSON key or a slash delimited hierarchy of JSON
+     * keys aka JSON pointer.
+     * @param markers an optional array of markers which add user defined semantics to the defined JSON field.
+     * @return the new JSON field definition.
+     * @throws NullPointerException if any argument is {@code null}.
+     * @throws IllegalArgumentException if {@code pointer} is empty.
+     */
+    public static JsonFieldDefinition&lt;String&gt; newStringFieldDefinition(final CharSequence pointer,
+            final JsonFieldMarker... markers) {
+
+<span class="fc" id="L683">        return JavaValueFieldDefinition.newInstance(pointer, String.class, JsonValue::isString, JsonValue::asString,</span>
+                markers);
+    }
+
+    /**
+     * Returns a new definition of a JSON field which contains a boolean value.
+     *
+     * @param pointer a character sequence consisting of either a single JSON key or a slash delimited hierarchy of JSON
+     * keys aka JSON pointer.
+     * @param markers an optional array of markers which add user defined semantics to the defined JSON field.
+     * @return the new JSON field definition.
+     * @throws NullPointerException if any argument but {@code markers} is {@code null}.
+     * @throws IllegalArgumentException if {@code pointer} is empty.
+     */
+    public static JsonFieldDefinition&lt;Boolean&gt; newBooleanFieldDefinition(final CharSequence pointer,
+            final JsonFieldMarker... markers) {
+
+<span class="fc" id="L700">        return JavaValueFieldDefinition.newInstance(pointer, Boolean.class, JsonValue::isBoolean,</span>
+                JsonValue::asBoolean, markers);
+    }
+
+    /**
+     * Returns a new definition of a JSON field which contains an int value.
+     *
+     * @param pointer a character sequence consisting of either a single JSON key or a slash delimited hierarchy of JSON
+     * keys aka JSON pointer.
+     * @param markers an optional array of markers which add user defined semantics to the defined JSON field.
+     * @return the new JSON field definition.
+     * @throws NullPointerException if any argument but {@code markers} is {@code null}.
+     * @throws IllegalArgumentException if {@code pointer} is empty.
+     */
+    public static JsonFieldDefinition&lt;Integer&gt; newIntFieldDefinition(final CharSequence pointer,
+            final JsonFieldMarker... markers) {
+
+<span class="fc" id="L717">        return JavaValueFieldDefinition.newInstance(pointer, Integer.class, JsonValue::isNumber, JsonValue::asInt,</span>
+                markers);
+    }
+
+    /**
+     * Returns a new definition of a JSON field which contains an long value.
+     *
+     * @param pointer a character sequence consisting of either a single JSON key or a slash delimited hierarchy of JSON
+     * keys aka JSON pointer.
+     * @param markers an optional array of markers which add user defined semantics to the defined JSON field.
+     * @return the new JSON field definition.
+     * @throws NullPointerException if any argument but {@code markers} is {@code null}.
+     * @throws IllegalArgumentException if {@code pointer} is empty.
+     */
+    public static JsonFieldDefinition&lt;Long&gt; newLongFieldDefinition(final CharSequence pointer,
+            final JsonFieldMarker... markers) {
+
+<span class="fc" id="L734">        return JavaValueFieldDefinition.newInstance(pointer, Long.class, JsonValue::isNumber, JsonValue::asLong,</span>
+                markers);
+    }
+
+    /**
+     * Returns a new definition of a JSON field which contains an double value.
+     *
+     * @param pointer a character sequence consisting of either a single JSON key or a slash delimited hierarchy of JSON
+     * keys aka JSON pointer.
+     * @param markers an optional array of markers which add user defined semantics to the defined JSON field.
+     * @return the new JSON field definition.
+     * @throws NullPointerException if any argument but {@code markers} is {@code null}.
+     * @throws IllegalArgumentException if {@code pointer} is empty.
+     */
+    public static JsonFieldDefinition&lt;Double&gt; newDoubleFieldDefinition(final CharSequence pointer,
+            final JsonFieldMarker... markers) {
+
+<span class="fc" id="L751">        return JavaValueFieldDefinition.newInstance(pointer, Double.class, JsonValue::isNumber,</span>
+                JsonValue::asDouble, markers);
+    }
+
+    /**
+     * Returns a new definition of a JSON field which contains an {@link JsonArray} value.
+     *
+     * @param pointer a character sequence consisting of either a single JSON key or a slash delimited hierarchy of JSON
+     * keys aka JSON pointer.
+     * @param markers an optional array of markers which add user defined semantics to the defined JSON field.
+     * @return the new JSON field definition.
+     * @throws NullPointerException if any argument but {@code markers} is {@code null}.
+     * @throws IllegalArgumentException if {@code pointer} is empty.
+     */
+    public static JsonFieldDefinition&lt;JsonArray&gt; newJsonArrayFieldDefinition(final CharSequence pointer,
+            final JsonFieldMarker... markers) {
+
+<span class="fc" id="L768">        return JsonValueFieldDefinition.newInstance(pointer, JsonArray.class, JsonValue::isArray, JsonValue::asArray,</span>
+                markers);
+    }
+
+    /**
+     * Returns a new definition of a JSON field which contains an {@link JsonObject} value.
+     *
+     * @param pointer a character sequence consisting of either a single JSON key or a slash delimited hierarchy of JSON
+     * keys aka JSON pointer.
+     * @param markers an optional array of markers which add user defined semantics to the defined JSON field.
+     * @return the new JSON field definition.
+     * @throws NullPointerException if any argument but {@code markers} is {@code null}.
+     * @throws IllegalArgumentException if {@code pointer} is empty.
+     */
+    public static JsonFieldDefinition&lt;JsonObject&gt; newJsonObjectFieldDefinition(final CharSequence pointer,
+            final JsonFieldMarker... markers) {
+
+<span class="fc" id="L785">        return JsonValueFieldDefinition.newInstance(pointer, JsonObject.class, JsonValue::isObject,</span>
+                JsonValue::asObject, markers);
+    }
+
+    /**
+     * Returns a new definition of a JSON field which contains an {@link JsonValue} value.
+     *
+     * @param pointer a character sequence consisting of either a single JSON key or a slash delimited hierarchy of JSON
+     * keys aka JSON pointer.
+     * @param markers an optional array of markers which add user defined semantics to the defined JSON field.
+     * @return the new JSON field definition.
+     * @throws NullPointerException if any argument but {@code markers} is {@code null}.
+     * @throws IllegalArgumentException if {@code pointer} is empty.
+     */
+    public static JsonFieldDefinition&lt;JsonValue&gt; newJsonValueFieldDefinition(final CharSequence pointer,
+            final JsonFieldMarker... markers) {
+
+<span class="fc" id="L802">        return JsonValueFieldDefinition.newInstance(pointer, JsonValue.class, jsonValue -&gt; true, Function.identity(),</span>
+                markers);
+    }
+
+    /**
+     * Converts the specified JSON value of the Minimal JSON library to a matching object of our own JSON
+     * implementation.
+     *
+     * @param minimalJsonValue the value to be converted.
+     * @return a {@link JsonValue} which matches {@code minimalJsonValue} or {@code null} if {@code minimalJsonValue} is
+     * {@code null}.
+     * @throws IllegalStateException if {@code minimalJsonValue} cannot be converted for some reason.
+     */
+    @SuppressWarnings({&quot;squid:MethodCyclomaticComplexity&quot;,
+            &quot;checkstyle:com.puppycrawl.tools.checkstyle.checks.metrics.CyclomaticComplexityCheck&quot;})
+    @Nullable
+    static JsonValue convert(@Nullable final com.eclipsesource.json.JsonValue minimalJsonValue) {
+        final JsonValue result;
+
+<span class="fc bfc" id="L821" title="All 2 branches covered.">        if (null == minimalJsonValue) {</span>
+<span class="fc" id="L822">            result = null;</span>
+<span class="fc bfc" id="L823" title="All 2 branches covered.">        } else if (minimalJsonValue.isObject()) {</span>
+<span class="fc" id="L824">            final Map&lt;String, JsonField&gt; jsonFields = toMap(minimalJsonValue.asObject());</span>
+<span class="fc" id="L825">            result = ImmutableJsonObject.of(jsonFields);</span>
+<span class="fc bfc" id="L826" title="All 2 branches covered.">        } else if (minimalJsonValue.isString()) {</span>
+<span class="fc" id="L827">            result = ImmutableJsonString.of(minimalJsonValue);</span>
+<span class="fc bfc" id="L828" title="All 2 branches covered.">        } else if (minimalJsonValue.isArray()) {</span>
+<span class="fc" id="L829">            final List&lt;JsonValue&gt; jsonValues = toList(minimalJsonValue.asArray());</span>
+<span class="fc" id="L830">            result = ImmutableJsonArray.of(jsonValues);</span>
+<span class="fc bfc" id="L831" title="All 2 branches covered.">        } else if (minimalJsonValue.isBoolean()) {</span>
+<span class="fc" id="L832">            result = newValue(minimalJsonValue.asBoolean());</span>
+<span class="fc bfc" id="L833" title="All 2 branches covered.">        } else if (minimalJsonValue.isNull()) {</span>
+<span class="fc" id="L834">            result = NULL_LITERAL;</span>
+<span class="pc bpc" id="L835" title="1 of 2 branches missed.">        } else if (minimalJsonValue.isNumber()) {</span>
+<span class="fc" id="L836">            result = ImmutableJsonNumber.of(minimalJsonValue);</span>
+        } else {
+<span class="nc" id="L838">            throw new IllegalStateException(</span>
+<span class="nc" id="L839">                    MessageFormat.format(&quot;Failed to convert {0} to JsonValue!&quot;, minimalJsonValue));</span>
+        }
+
+<span class="fc" id="L842">        return result;</span>
+    }
+
+    /**
+     * Converts the specified JSON value to a matching {@link com.eclipsesource.json.JsonValue} object.
+     *
+     * @param jsonValue the value to be converted.
+     * @return a {@link com.eclipsesource.json.JsonValue} which matches {@code jsonValue} or {@code null} if {@code
+     * jsonValue} is {@code null}.
+     * @throws IllegalStateException if {@code jsonValue} cannot be converted for some reason.
+     */
+    @SuppressWarnings({&quot;checkstyle:com.puppycrawl.tools.checkstyle.checks.metrics.CyclomaticComplexityCheck&quot;,
+            &quot;squid:MethodCyclomaticComplexity&quot;})
+    @Nullable
+    static com.eclipsesource.json.JsonValue convert(@Nullable final JsonValue jsonValue) {
+        final com.eclipsesource.json.JsonValue result;
+
+<span class="fc bfc" id="L859" title="All 2 branches covered.">        if (null == jsonValue) {</span>
+<span class="fc" id="L860">            result = null;</span>
+<span class="fc bfc" id="L861" title="All 2 branches covered.">        } else if (jsonValue.isNull()) {</span>
+<span class="fc" id="L862">            result = Json.NULL;</span>
+<span class="fc bfc" id="L863" title="All 2 branches covered.">        } else if (jsonValue.isString()) {</span>
+<span class="fc" id="L864">            result = Json.value(jsonValue.asString());</span>
+<span class="fc bfc" id="L865" title="All 2 branches covered.">        } else if (jsonValue.isBoolean()) {</span>
+<span class="fc" id="L866">            result = Json.value(jsonValue.asBoolean());</span>
+<span class="fc bfc" id="L867" title="All 2 branches covered.">        } else if (jsonValue.isNumber()) {</span>
+<span class="fc" id="L868">            final Double doubleValue = jsonValue.asDouble();</span>
+<span class="fc bfc" id="L869" title="All 2 branches covered.">            if (doubleValue.intValue() == doubleValue) {</span>
+<span class="fc" id="L870">                result = Json.value(doubleValue.intValue());</span>
+<span class="fc bfc" id="L871" title="All 2 branches covered.">            } else if (doubleValue.longValue() == doubleValue) {</span>
+<span class="fc" id="L872">                result = Json.value(doubleValue.longValue());</span>
+            } else {
+<span class="fc" id="L874">                result = Json.value(doubleValue);</span>
+            }
+<span class="fc bfc" id="L876" title="All 2 branches covered.">        } else if (jsonValue.isObject()) {</span>
+<span class="fc" id="L877">            result = Json.parse(jsonValue.toString());</span>
+<span class="pc bpc" id="L878" title="1 of 2 branches missed.">        } else if (jsonValue.isArray()) {</span>
+<span class="fc" id="L879">            result = Json.parse(jsonValue.toString());</span>
+        } else {
+<span class="nc" id="L881">            throw new IllegalStateException(</span>
+<span class="nc" id="L882">                    MessageFormat.format(&quot;Failed to convert {0} to JsonValue of Minimal JSON!&quot;, jsonValue));</span>
+        }
+
+<span class="fc" id="L885">        return result;</span>
+    }
+
+    /**
+     * Converts the specified char sequence to a {@link JsonPointer} which is guaranteed to be not empty.
+     * @param keyOrPointer a string representation of a JSON pointer or a JsonKey.
+     * @return the pointer.
+     * @throws NullPointerException if {@code keyOrPointer} is {@code null}.
+     * @throws IllegalArgumentException if {@code keyOrPointer} would lead to an empty JsonPointer.
+     */
+    static JsonPointer getNonEmptyPointer(final CharSequence keyOrPointer) {
+<span class="fc" id="L896">        requireNonNull(keyOrPointer, &quot;The key or pointer char sequence must not be null!&quot;);</span>
+
+        final JsonPointer result;
+
+<span class="fc bfc" id="L900" title="All 2 branches covered.">        if (isPointer(keyOrPointer)) {</span>
+<span class="fc" id="L901">            result = JsonFactory.newPointer(keyOrPointer);</span>
+        } else {
+<span class="fc" id="L903">            final JsonKey jsonKey = JsonFactory.newKey(keyOrPointer);</span>
+<span class="fc" id="L904">            result = jsonKey.asPointer();</span>
+        }
+<span class="fc bfc" id="L906" title="All 2 branches covered.">        if (result.isEmpty()) {</span>
+<span class="fc" id="L907">            throw new IllegalArgumentException(&quot;The key or pointer must not be empty!&quot;);</span>
+        }
+
+<span class="fc" id="L910">        return result;</span>
+    }
+
+    private static boolean isPointer(@Nullable final CharSequence charSequence) {
+<span class="pc bpc" id="L914" title="1 of 2 branches missed.">        return null != charSequence &amp;&amp;</span>
+<span class="fc bfc" id="L915" title="All 2 branches covered.">                !JsonKey.class.isAssignableFrom(charSequence.getClass()) &amp;&amp;</span>
+<span class="fc bfc" id="L916" title="All 2 branches covered.">                (JsonPointer.class.isAssignableFrom(charSequence.getClass()) ||</span>
+<span class="fc bfc" id="L917" title="All 2 branches covered.">                        (0 == charSequence.length()) ||</span>
+<span class="fc bfc" id="L918" title="All 2 branches covered.">                        ('/' == charSequence.charAt(0))</span>
+                );
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes</a> &gt; <span class="el_source">AbstractRoute.java</span></div><h1>AbstractRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes;
+
+import static akka.http.javadsl.server.Directives.completeWithFuture;
+import static java.util.Objects.requireNonNull;
+
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonFieldSelector;
+import org.eclipse.ditto.json.JsonParseException;
+import org.eclipse.ditto.json.JsonParseOptions;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.json.JsonSchemaVersion;
+import org.eclipse.ditto.services.gateway.endpoints.HttpRequestActor;
+import org.eclipse.ditto.services.gateway.endpoints.utils.RequestPreProcessors;
+import org.eclipse.ditto.signals.commands.base.Command;
+import org.eclipse.ditto.signals.commands.base.CommandNotSupportedException;
+
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.http.javadsl.model.ContentTypes;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+import akka.japi.function.Function;
+import akka.stream.ActorMaterializer;
+import akka.stream.ActorMaterializerSettings;
+import akka.stream.Supervision;
+import akka.stream.javadsl.Sink;
+import akka.stream.javadsl.Source;
+import akka.stream.javadsl.StreamConverters;
+import akka.util.ByteString;
+
+/**
+ * Base class for Akka HTTP routes.
+ */
+public abstract class AbstractRoute {
+
+    /**
+     * Don't configure URL decoding as JsonParseOptions because Akka-Http already decodes the fields-param and we would
+     * decode twice.
+     */
+<span class="fc" id="L59">    private static final JsonParseOptions JSON_FIELD_SELECTOR_PARSE_OPTIONS = JsonFactory.newParseOptionsBuilder()</span>
+<span class="fc" id="L60">            .withoutUrlDecoding()</span>
+<span class="fc" id="L61">            .build();</span>
+
+    protected final ActorRef proxyActor;
+    protected final ActorMaterializer materializer;
+    private final ActorSystem actorSystem;
+
+    /**
+     * Constructs the abstract route builder.
+     *
+     * @param proxyActor an actor selection of the actor handling delegating to persistence.
+     * @param actorSystem the ActorSystem to use.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+<span class="fc" id="L74">    protected AbstractRoute(final ActorRef proxyActor, final ActorSystem actorSystem) {</span>
+<span class="fc" id="L75">        requireNonNull(proxyActor, &quot;The delegate actor must not be null!&quot;);</span>
+<span class="fc" id="L76">        requireNonNull(actorSystem, &quot;The actor system must not be null!&quot;);</span>
+
+<span class="fc" id="L78">        this.proxyActor = proxyActor;</span>
+<span class="fc" id="L79">        this.actorSystem = actorSystem;</span>
+<span class="fc" id="L80">        materializer = ActorMaterializer.create(ActorMaterializerSettings.create(actorSystem)</span>
+<span class="fc" id="L81">                .withSupervisionStrategy((Function&lt;Throwable, Supervision.Directive&gt;) exc -&gt;</span>
+<span class="fc" id="L82">                        Supervision.stop() // in any case, stop!</span>
+                ), actorSystem);
+<span class="fc" id="L84">    }</span>
+
+    /**
+     * Calculates a JsonFieldSelector from the passed {@code fieldsString}.
+     *
+     * @param fieldsString the fields as string.
+     * @return the Optional JsonFieldSelector
+     */
+    protected static Optional&lt;JsonFieldSelector&gt; calculateSelectedFields(final Optional&lt;String&gt; fieldsString) {
+<span class="fc" id="L93">        return fieldsString.map(fs -&gt; JsonFactory.newFieldSelector(fs, JSON_FIELD_SELECTOR_PARSE_OPTIONS));</span>
+    }
+
+    protected Route handlePerRequest(final RequestContext ctx, final Command command) {
+<span class="fc" id="L97">        return handlePerRequest(ctx, command.getDittoHeaders(), Source.empty(),</span>
+<span class="fc" id="L98">                emptyRequestBody -&gt; command);</span>
+    }
+
+    protected Route handlePerRequest(final RequestContext ctx, final Command command,
+            final Function&lt;JsonValue, JsonValue&gt; responseTransformFunction) {
+<span class="nc" id="L103">        return handlePerRequest(ctx, command.getDittoHeaders(), Source.empty(),</span>
+<span class="nc" id="L104">                emptyRequestBody -&gt; command, responseTransformFunction);</span>
+    }
+
+    protected Route handlePerRequest(final RequestContext ctx,
+            final DittoHeaders dittoHeaders,
+            final Source&lt;ByteString, ?&gt; payloadSource,
+            final Function&lt;String, Command&gt; requestJsonToCommandFunction) {
+<span class="fc" id="L111">        return handlePerRequest(ctx, dittoHeaders, payloadSource, requestJsonToCommandFunction, null);</span>
+    }
+
+    protected Route handlePerRequest(final RequestContext ctx,
+            final DittoHeaders dittoHeaders,
+            final Source&lt;ByteString, ?&gt; payloadSource,
+            final Function&lt;String, Command&gt; requestJsonToCommandFunction,
+            final Function&lt;JsonValue, JsonValue&gt; responseTransformFunction) {
+<span class="fc" id="L119">        final CompletableFuture&lt;HttpResponse&gt; httpResponseFuture = new CompletableFuture&lt;&gt;();</span>
+
+<span class="fc" id="L121">        payloadSource</span>
+<span class="fc" id="L122">                .fold(ByteString.empty(), ByteString::concat)</span>
+<span class="fc" id="L123">                .map(ByteString::utf8String)</span>
+<span class="fc" id="L124">                .map(str -&gt; RequestPreProcessors.replacePlaceholders(str, dittoHeaders))</span>
+<span class="fc" id="L125">                .map(requestJsonToCommandFunction)</span>
+<span class="fc" id="L126">                .map(command -&gt; {</span>
+<span class="fc" id="L127">                    final JsonSchemaVersion schemaVersion =</span>
+<span class="fc" id="L128">                            dittoHeaders.getSchemaVersion().orElse(command.getImplementedSchemaVersion());</span>
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">                    return command.implementsSchemaVersion(schemaVersion) ? command</span>
+<span class="nc" id="L130">                            : CommandNotSupportedException.newBuilder(schemaVersion.toInt())</span>
+<span class="nc" id="L131">                            .dittoHeaders(dittoHeaders)</span>
+<span class="nc" id="L132">                            .build();</span>
+                })
+<span class="fc" id="L134">                .to(Sink.actorRef(createHttpPerRequestActor(ctx, httpResponseFuture),</span>
+                        HttpRequestActor.COMPLETE_MESSAGE))
+<span class="fc" id="L136">                .run(materializer);</span>
+
+        // optional step: transform the response entity:
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">        if (responseTransformFunction != null) {</span>
+<span class="nc" id="L140">            final CompletableFuture&lt;HttpResponse&gt; transformedResponse = httpResponseFuture.thenApply(response -&gt; {</span>
+<span class="nc" id="L141">                final boolean isSuccessfulResponse = response.status().isSuccess();</span>
+                // we have to check if response is empty, because otherwise we'll get an IOException when trying to
+                // read it
+<span class="nc" id="L144">                final boolean isEmptyResponse = response.entity().isKnownEmpty();</span>
+<span class="nc bnc" id="L145" title="All 4 branches missed.">                if (isSuccessfulResponse &amp;&amp; !isEmptyResponse) {</span>
+<span class="nc" id="L146">                    final InputStream inputStream = response.entity()</span>
+<span class="nc" id="L147">                            .getDataBytes()</span>
+<span class="nc" id="L148">                            .fold(ByteString.empty(), ByteString::concat)</span>
+<span class="nc" id="L149">                            .runWith(StreamConverters.asInputStream(), materializer);</span>
+<span class="nc" id="L150">                    final JsonValue jsonValue = JsonFactory.readFrom(new InputStreamReader(inputStream));</span>
+                    try {
+<span class="nc" id="L152">                        final JsonValue transformed = responseTransformFunction.apply(jsonValue);</span>
+<span class="nc" id="L153">                        return response.withEntity(ContentTypes.APPLICATION_JSON, transformed.toString());</span>
+<span class="nc" id="L154">                    } catch (final Exception e) {</span>
+<span class="nc" id="L155">                        throw JsonParseException.newBuilder()</span>
+<span class="nc" id="L156">                                .message(&quot;Could not transform JSON: &quot; + e.getMessage())</span>
+<span class="nc" id="L157">                                .cause(e)</span>
+<span class="nc" id="L158">                                .build();</span>
+                    }
+                } else {
+                    // for non-successful and empty responses, don't transform the response body
+<span class="nc" id="L162">                    return response;</span>
+                }
+            });
+<span class="nc" id="L165">            return completeWithFuture(preprocessResponse(transformedResponse));</span>
+        } else {
+<span class="fc" id="L167">            return completeWithFuture(preprocessResponse(httpResponseFuture));</span>
+        }
+    }
+
+    /**
+     * Processes the {@link HttpResponse} by consuming the CompletionStage and returning another (or the same)
+     * CompletionStage. May be used to modify the HttpResponse before it is sent back to client.
+     */
+    protected CompletionStage&lt;HttpResponse&gt; preprocessResponse(final CompletionStage&lt;HttpResponse&gt; responseStage) {
+<span class="fc" id="L176">        return responseStage; // default: do nothing</span>
+    }
+
+    protected ActorRef createHttpPerRequestActor(final RequestContext ctx,
+            final CompletableFuture&lt;HttpResponse&gt; httpResponseFuture) {
+<span class="fc" id="L181">        return actorSystem.actorOf(HttpRequestActor.props(proxyActor, ctx.getRequest(), httpResponseFuture));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

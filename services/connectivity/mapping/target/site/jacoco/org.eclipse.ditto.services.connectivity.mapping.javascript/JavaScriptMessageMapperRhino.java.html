@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JavaScriptMessageMapperRhino.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Mapping</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.mapping.javascript</a> &gt; <span class="el_source">JavaScriptMessageMapperRhino.java</span></div><h1>JavaScriptMessageMapperRhino.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.mapping.javascript;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import javax.annotation.Nullable;
+import javax.script.Bindings;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.model.base.exceptions.DittoJsonException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.connectivity.ConnectivityModelFactory;
+import org.eclipse.ditto.model.connectivity.ExternalMessage;
+import org.eclipse.ditto.model.connectivity.ExternalMessageBuilder;
+import org.eclipse.ditto.model.connectivity.MessageMapperConfigurationFailedException;
+import org.eclipse.ditto.model.connectivity.MessageMappingFailedException;
+import org.eclipse.ditto.protocoladapter.Adaptable;
+import org.eclipse.ditto.protocoladapter.JsonifiableAdaptable;
+import org.eclipse.ditto.protocoladapter.ProtocolFactory;
+import org.eclipse.ditto.services.connectivity.mapping.MessageMapper;
+import org.eclipse.ditto.services.connectivity.mapping.MessageMapperConfiguration;
+import org.mozilla.javascript.Callable;
+import org.mozilla.javascript.Context;
+import org.mozilla.javascript.ContextFactory;
+import org.mozilla.javascript.Function;
+import org.mozilla.javascript.NativeJSON;
+import org.mozilla.javascript.NativeObject;
+import org.mozilla.javascript.RhinoException;
+import org.mozilla.javascript.Scriptable;
+import org.mozilla.javascript.Undefined;
+import org.mozilla.javascript.typedarrays.NativeArrayBuffer;
+
+import com.typesafe.config.Config;
+
+/**
+ * This mapper executes its mapping methods on the &lt;b&gt;current thread&lt;/b&gt;. The caller should be aware of that.
+ */
+final class JavaScriptMessageMapperRhino implements MessageMapper {
+
+    private static final String WEBJARS_PATH = &quot;/META-INF/resources/webjars&quot;;
+
+    private static final String WEBJARS_BYTEBUFFER = WEBJARS_PATH + &quot;/bytebuffer/5.0.1/dist/bytebuffer.js&quot;;
+    private static final String WEBJARS_LONG = WEBJARS_PATH + &quot;/long/3.2.0/dist/long.min.js&quot;;
+
+    private static final String DITTO_SCOPE_SCRIPT = &quot;/javascript/ditto-scope.js&quot;;
+    private static final String INCOMING_SCRIPT = &quot;/javascript/incoming-mapping.js&quot;;
+    private static final String OUTGOING_SCRIPT = &quot;/javascript/outgoing-mapping.js&quot;;
+
+    private static final String EXTERNAL_MESSAGE_HEADERS = &quot;headers&quot;;
+    private static final String EXTERNAL_MESSAGE_CONTENT_TYPE = &quot;contentType&quot;;
+    private static final String EXTERNAL_MESSAGE_TEXT_PAYLOAD = &quot;textPayload&quot;;
+    private static final String EXTERNAL_MESSAGE_BYTE_PAYLOAD = &quot;bytePayload&quot;;
+
+    private static final String INCOMING_FUNCTION_NAME = &quot;mapToDittoProtocolMsgWrapper&quot;;
+    private static final String OUTGOING_FUNCTION_NAME = &quot;mapFromDittoProtocolMsgWrapper&quot;;
+
+    private static final String CONFIG_JAVASCRIPT_MAX_SCRIPT_SIZE_BYTES = &quot;javascript.maxScriptSizeBytes&quot;;
+    private static final String CONFIG_JAVASCRIPT_MAX_SCRIPT_EXECUTION_TIME = &quot;javascript.maxScriptExecutionTime&quot;;
+    private static final String CONFIG_JAVASCRIPT_MAX_SCRIPT_STACK_DEPTH = &quot;javascript.maxScriptStackDepth&quot;;
+
+    @Nullable
+    private ContextFactory contextFactory;
+    @Nullable
+    private Scriptable scope;
+
+    @Nullable private JavaScriptMessageMapperConfiguration configuration;
+
+<span class="fc" id="L91">    JavaScriptMessageMapperRhino() {</span>
+        // no-op
+<span class="fc" id="L93">    }</span>
+
+    @Override
+    public void configure(final Config mappingConfig, final MessageMapperConfiguration options) {
+<span class="fc" id="L97">        this.configuration = new ImmutableJavaScriptMessageMapperConfiguration.Builder(options.getProperties()).build();</span>
+
+<span class="fc" id="L99">        final int maxScriptSizeBytes = mappingConfig.getInt(CONFIG_JAVASCRIPT_MAX_SCRIPT_SIZE_BYTES);</span>
+<span class="fc" id="L100">        final Integer incomingScriptSize = configuration.getIncomingScript().map(String::length).orElse(0);</span>
+<span class="fc" id="L101">        final Integer outgoingScriptSize = configuration.getOutgoingScript().map(String::length).orElse(0);</span>
+
+<span class="pc bpc" id="L103" title="1 of 4 branches missed.">        if (incomingScriptSize &gt; maxScriptSizeBytes || outgoingScriptSize &gt; maxScriptSizeBytes) {</span>
+<span class="fc" id="L104">            throw MessageMapperConfigurationFailedException</span>
+<span class="fc" id="L105">                    .newBuilder(&quot;The script size was bigger than the allowed &lt;&quot; + maxScriptSizeBytes + &quot;&gt; bytes: &quot; +</span>
+                            &quot;incoming script size was &lt;&quot; + incomingScriptSize + &quot;&gt; bytes, &quot; +
+                            &quot;outgoing script size was &lt;&quot; + outgoingScriptSize + &quot;&gt; bytes&quot;)
+<span class="fc" id="L108">                    .build();</span>
+        }
+
+<span class="fc" id="L111">        contextFactory = new SandboxingContextFactory(</span>
+<span class="fc" id="L112">                mappingConfig.getDuration(CONFIG_JAVASCRIPT_MAX_SCRIPT_EXECUTION_TIME),</span>
+<span class="fc" id="L113">                mappingConfig.getInt(CONFIG_JAVASCRIPT_MAX_SCRIPT_STACK_DEPTH));</span>
+
+        try {
+            // create scope once and load the required libraries in order to get best performance:
+<span class="fc" id="L117">            scope = (Scriptable) contextFactory.call(cx -&gt; {</span>
+<span class="fc" id="L118">                final Scriptable scope = cx.initSafeStandardObjects(); // that one disables &quot;print, exit, quit&quot;, etc.</span>
+<span class="fc" id="L119">                initLibraries(cx, scope);</span>
+<span class="fc" id="L120">                return scope;</span>
+            });
+<span class="nc" id="L122">        } catch (final RhinoException e) {</span>
+<span class="nc bnc" id="L123" title="All 4 branches missed.">            final boolean sourceExists = e.lineSource() != null &amp;&amp; !e.lineSource().isEmpty();</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            final String lineSource = sourceExists ? (&quot;, source:\n&quot; + e.lineSource()) : &quot;&quot;;</span>
+<span class="nc bnc" id="L125" title="All 4 branches missed.">            final boolean stackExists = e.getScriptStackTrace() != null &amp;&amp; !e.getScriptStackTrace().isEmpty();</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            final String scriptStackTrace = stackExists ? (&quot;, stack:\n&quot; + e.getScriptStackTrace()) : &quot;&quot;;</span>
+<span class="nc" id="L127">            throw MessageMapperConfigurationFailedException.newBuilder(e.getMessage() +</span>
+<span class="nc" id="L128">                    &quot; - in line/column #&quot; + e.lineNumber() + &quot;/&quot; + e.columnNumber() + lineSource + scriptStackTrace)</span>
+<span class="nc" id="L129">                    .cause(e)</span>
+<span class="nc" id="L130">                    .build();</span>
+<span class="fc" id="L131">        }</span>
+<span class="fc" id="L132">    }</span>
+
+    @Override
+    public Optional&lt;Adaptable&gt; map(final ExternalMessage message) {
+
+        try {
+<span class="fc" id="L138">            return Optional.ofNullable((Adaptable) contextFactory.call(cx -&gt; {</span>
+<span class="fc" id="L139">                final NativeObject headersObj = new NativeObject();</span>
+<span class="fc" id="L140">                message.getHeaders().forEach((key, value) -&gt; headersObj.put(key, headersObj, value));</span>
+
+                final NativeArrayBuffer bytePayload;
+<span class="fc bfc" id="L143" title="All 2 branches covered.">                if (message.getBytePayload().isPresent()) {</span>
+<span class="fc" id="L144">                    final ByteBuffer byteBuffer = message.getBytePayload().get();</span>
+<span class="fc" id="L145">                    final byte[] array = byteBuffer.array();</span>
+<span class="fc" id="L146">                    bytePayload = new NativeArrayBuffer(array.length);</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">                    for (int a = 0; a &lt; array.length; a++) {</span>
+<span class="fc" id="L148">                        bytePayload.getBuffer()[a] = array[a];</span>
+                    }
+<span class="fc" id="L150">                } else {</span>
+<span class="fc" id="L151">                    bytePayload = null;</span>
+                }
+
+<span class="fc" id="L154">                final String contentType = message.getHeaders().get(ExternalMessage.CONTENT_TYPE_HEADER);</span>
+<span class="fc" id="L155">                final String textPayload = message.getTextPayload().orElse(null);</span>
+
+<span class="fc" id="L157">                final NativeObject externalMessage = new NativeObject();</span>
+<span class="fc" id="L158">                externalMessage.put(EXTERNAL_MESSAGE_HEADERS, externalMessage, headersObj);</span>
+<span class="fc" id="L159">                externalMessage.put(EXTERNAL_MESSAGE_TEXT_PAYLOAD, externalMessage, textPayload);</span>
+<span class="fc" id="L160">                externalMessage.put(EXTERNAL_MESSAGE_BYTE_PAYLOAD, externalMessage, bytePayload);</span>
+<span class="fc" id="L161">                externalMessage.put(EXTERNAL_MESSAGE_CONTENT_TYPE, externalMessage, contentType);</span>
+
+<span class="fc" id="L163">                final Function mapToDittoProtocolMsgWrapper = (Function) scope.get(INCOMING_FUNCTION_NAME, scope);</span>
+<span class="fc" id="L164">                final Object result = mapToDittoProtocolMsgWrapper.call(cx, scope, scope, new Object[] {externalMessage});</span>
+
+<span class="fc bfc" id="L166" title="All 2 branches covered.">                if (result == null) {</span>
+                    // return null if result is null causing the wrapping Optional to be empty
+<span class="fc" id="L168">                    return null;</span>
+                }
+
+<span class="fc" id="L171">                final String dittoProtocolJsonStr = (String) NativeJSON.stringify(cx, scope, result, null, null);</span>
+
+<span class="fc" id="L173">                return DittoJsonException.wrapJsonRuntimeException(() -&gt; {</span>
+<span class="fc" id="L174">                    final JsonObject jsonObject = JsonFactory.readFrom(dittoProtocolJsonStr).asObject();</span>
+<span class="fc" id="L175">                    return ProtocolFactory.jsonifiableAdaptableFromJson(jsonObject);</span>
+                });
+            }));
+<span class="fc" id="L178">        } catch (final RhinoException e) {</span>
+<span class="fc" id="L179">            throw buildMessageMappingFailedException(e, message.findContentType().orElse(&quot;&quot;),</span>
+<span class="fc" id="L180">                    DittoHeaders.of(message.getHeaders()));</span>
+<span class="fc" id="L181">        } catch (final Throwable e) {</span>
+<span class="fc" id="L182">            throw MessageMappingFailedException.newBuilder(message.findContentType().orElse(null))</span>
+<span class="fc" id="L183">                    .description(e.getMessage())</span>
+<span class="fc" id="L184">                    .dittoHeaders(DittoHeaders.of(message.getHeaders()))</span>
+<span class="fc" id="L185">                    .cause(e)</span>
+<span class="fc" id="L186">                    .build();</span>
+        }
+    }
+
+    private MessageMappingFailedException buildMessageMappingFailedException(final RhinoException e,
+            final String contentType, final DittoHeaders dittoHeaders) {
+<span class="pc bpc" id="L192" title="3 of 4 branches missed.">        final boolean sourceExists = e.lineSource() != null &amp;&amp; !e.lineSource().isEmpty();</span>
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">        final String lineSource = sourceExists ? (&quot;, source:\n&quot; + e.lineSource()) : &quot;&quot;;</span>
+<span class="pc bpc" id="L194" title="2 of 4 branches missed.">        final boolean stackExists = e.getScriptStackTrace() != null &amp;&amp; !e.getScriptStackTrace().isEmpty();</span>
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">        final String scriptStackTrace = stackExists ? (&quot;, stack:\n&quot; + e.getScriptStackTrace()) : &quot;&quot;;</span>
+<span class="fc" id="L196">        return MessageMappingFailedException.newBuilder(contentType)</span>
+<span class="fc" id="L197">                .description(e.getMessage() + &quot; - in line/column #&quot; + e.lineNumber() + &quot;/&quot; + e.columnNumber() +</span>
+                        lineSource + scriptStackTrace)
+<span class="fc" id="L199">                .dittoHeaders(dittoHeaders)</span>
+<span class="fc" id="L200">                .cause(e)</span>
+<span class="fc" id="L201">                .build();</span>
+    }
+
+    @Override
+    public Optional&lt;ExternalMessage&gt; map(final Adaptable adaptable) {
+<span class="fc" id="L206">        final JsonifiableAdaptable jsonifiableAdaptable =</span>
+<span class="fc" id="L207">                ProtocolFactory.wrapAsJsonifiableAdaptable(adaptable);</span>
+
+        try {
+<span class="fc" id="L210">            return Optional.ofNullable((ExternalMessage) contextFactory.call(cx -&gt; {</span>
+<span class="fc" id="L211">                final Object dittoProtocolMessage =</span>
+<span class="fc" id="L212">                        NativeJSON.parse(cx, scope, jsonifiableAdaptable.toJsonString(), new NullCallable());</span>
+
+<span class="fc" id="L214">                final Function mapFromDittoProtocolMsgWrapper = (Function) scope.get(OUTGOING_FUNCTION_NAME, scope);</span>
+<span class="fc" id="L215">                final NativeObject result =</span>
+<span class="fc" id="L216">                        (NativeObject) mapFromDittoProtocolMsgWrapper.call(cx, scope, scope,</span>
+                                new Object[]{dittoProtocolMessage});
+
+<span class="fc bfc" id="L219" title="All 2 branches covered.">                if (result == null) {</span>
+                    // return null if result is null causing the wrapping Optional to be empty
+<span class="fc" id="L221">                    return null;</span>
+                }
+
+<span class="fc" id="L224">                final Object contentType = result.get(EXTERNAL_MESSAGE_CONTENT_TYPE);</span>
+<span class="fc" id="L225">                final Object textPayload = result.get(EXTERNAL_MESSAGE_TEXT_PAYLOAD);</span>
+<span class="fc" id="L226">                final Object bytePayload = result.get(EXTERNAL_MESSAGE_BYTE_PAYLOAD);</span>
+<span class="fc" id="L227">                final Object mappingHeaders = result.get(EXTERNAL_MESSAGE_HEADERS);</span>
+
+                final Map&lt;String, String&gt; headers;
+<span class="pc bpc" id="L230" title="2 of 4 branches missed.">                if (mappingHeaders != null &amp;&amp; !(mappingHeaders instanceof Undefined)) {</span>
+<span class="fc" id="L231">                    headers = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L232">                    final Map jsHeaders = (Map) mappingHeaders;</span>
+<span class="fc" id="L233">                    jsHeaders.forEach((key, value) -&gt; headers.put((String) key, value.toString()));</span>
+<span class="fc" id="L234">                } else {</span>
+<span class="nc" id="L235">                    headers = Collections.emptyMap();</span>
+                }
+
+<span class="fc" id="L238">                final ExternalMessageBuilder messageBuilder = ConnectivityModelFactory.newExternalMessageBuilder(headers,</span>
+<span class="fc" id="L239">                        adaptable.getTopicPath().getPath());</span>
+
+<span class="pc bpc" id="L241" title="1 of 2 branches missed.">                if (!(contentType instanceof Undefined)) {</span>
+<span class="fc" id="L242">                    messageBuilder.withAdditionalHeaders(ExternalMessage.CONTENT_TYPE_HEADER,</span>
+<span class="fc" id="L243">                            ((CharSequence) contentType).toString());</span>
+                }
+
+<span class="fc" id="L246">                final Optional&lt;ByteBuffer&gt; byteBuffer = convertToByteBuffer(bytePayload);</span>
+<span class="fc bfc" id="L247" title="All 2 branches covered.">                if (byteBuffer.isPresent()) {</span>
+<span class="fc" id="L248">                    messageBuilder.withBytes(byteBuffer.get());</span>
+<span class="pc bpc" id="L249" title="1 of 2 branches missed.">                } else if (!(textPayload instanceof Undefined)) {</span>
+<span class="fc" id="L250">                    messageBuilder.withText(((CharSequence) textPayload).toString());</span>
+                } else {
+<span class="nc" id="L252">                    throw MessageMappingFailedException.newBuilder(&quot;&quot;)</span>
+<span class="nc" id="L253">                            .description(&quot;Neither &lt;bytePayload&gt; nor &lt;textPayload&gt; were defined in the outgoing script&quot;)</span>
+<span class="nc" id="L254">                            .dittoHeaders(adaptable.getHeaders().orElse(DittoHeaders.empty()))</span>
+<span class="nc" id="L255">                            .build();</span>
+                }
+
+<span class="fc" id="L258">                return messageBuilder.build();</span>
+            }));
+<span class="nc" id="L260">        } catch (final RhinoException e) {</span>
+<span class="nc" id="L261">            throw buildMessageMappingFailedException(e, MessageMapper.findContentType(adaptable).orElse(&quot;&quot;),</span>
+<span class="nc" id="L262">                    adaptable.getHeaders().orElseGet(DittoHeaders::empty));</span>
+<span class="nc" id="L263">        } catch (final Throwable e) {</span>
+<span class="nc" id="L264">            throw MessageMappingFailedException.newBuilder(MessageMapper.findContentType(adaptable).orElse(&quot;&quot;))</span>
+<span class="nc" id="L265">                    .description(e.getMessage())</span>
+<span class="nc" id="L266">                    .dittoHeaders(adaptable.getHeaders().orElseGet(DittoHeaders::empty))</span>
+<span class="nc" id="L267">                    .cause(e)</span>
+<span class="nc" id="L268">                    .build();</span>
+        }
+    }
+
+
+    private void initLibraries(final Context cx, final Scriptable scope) {
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">        if (getConfiguration().map(JavaScriptMessageMapperConfiguration::isLoadLongJS).orElse(false)) {</span>
+<span class="nc" id="L275">            loadJavascriptLibrary(cx, scope, new InputStreamReader(getClass().getResourceAsStream(WEBJARS_LONG)),</span>
+                    WEBJARS_LONG);
+        }
+<span class="fc bfc" id="L278" title="All 2 branches covered.">        if (getConfiguration().map(JavaScriptMessageMapperConfiguration::isLoadBytebufferJS).orElse(false)) {</span>
+<span class="fc" id="L279">            loadJavascriptLibrary(cx, scope, new InputStreamReader(getClass().getResourceAsStream(WEBJARS_BYTEBUFFER)),</span>
+                    WEBJARS_BYTEBUFFER);
+        }
+
+<span class="fc" id="L283">        loadJavascriptLibrary(cx, scope, new InputStreamReader(getClass().getResourceAsStream(DITTO_SCOPE_SCRIPT)),</span>
+                DITTO_SCOPE_SCRIPT);
+<span class="fc" id="L285">        loadJavascriptLibrary(cx, scope, new InputStreamReader(getClass().getResourceAsStream(INCOMING_SCRIPT)),</span>
+                INCOMING_SCRIPT);
+<span class="fc" id="L287">        loadJavascriptLibrary(cx, scope, new InputStreamReader(getClass().getResourceAsStream(OUTGOING_SCRIPT)),</span>
+                OUTGOING_SCRIPT);
+
+<span class="fc" id="L290">        cx.evaluateString(scope,</span>
+<span class="fc" id="L291">                    getConfiguration().flatMap(JavaScriptMessageMapperConfiguration::getIncomingScript)</span>
+<span class="fc" id="L292">                            .orElse(&quot;&quot;),</span>
+                JavaScriptMessageMapperConfigurationProperties.INCOMING_SCRIPT, 1, null);
+<span class="fc" id="L294">        cx.evaluateString(scope,</span>
+<span class="fc" id="L295">                    getConfiguration().flatMap(JavaScriptMessageMapperConfiguration::getOutgoingScript)</span>
+<span class="fc" id="L296">                            .orElse(&quot;&quot;),</span>
+                JavaScriptMessageMapperConfigurationProperties.OUTGOING_SCRIPT, 1, null);
+<span class="fc" id="L298">    }</span>
+
+    private Optional&lt;JavaScriptMessageMapperConfiguration&gt; getConfiguration() {
+<span class="fc" id="L301">        return Optional.ofNullable(configuration);</span>
+    }
+
+    private void loadJavascriptLibrary(final Context cx, final Scriptable scope, final Reader reader,
+            final String libraryName) {
+
+        try {
+<span class="fc" id="L308">            cx.evaluateReader(scope, reader, libraryName, 1, null);</span>
+<span class="nc" id="L309">        } catch (final IOException e) {</span>
+<span class="nc" id="L310">            throw new IllegalStateException(&quot;Could not load script &lt;&quot; + libraryName + &quot;&gt;&quot;, e);</span>
+<span class="fc" id="L311">        }</span>
+<span class="fc" id="L312">    }</span>
+
+    private static Optional&lt;ByteBuffer&gt; convertToByteBuffer(final Object obj) {
+<span class="fc bfc" id="L315" title="All 2 branches covered.">        if (obj instanceof NativeArrayBuffer) {</span>
+<span class="fc" id="L316">            return Optional.of(ByteBuffer.wrap(((NativeArrayBuffer) obj).getBuffer()));</span>
+<span class="pc bpc" id="L317" title="1 of 2 branches missed.">        } else if (obj instanceof Bindings) {</span>
+            try {
+<span class="nc" id="L319">                final Class&lt;?&gt; cls = Class.forName(&quot;jdk.nashorn.api.scripting.ScriptObjectMirror&quot;);</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">                if (cls.isAssignableFrom(obj.getClass())) {</span>
+<span class="nc" id="L321">                    final Method isArray = cls.getMethod(&quot;isArray&quot;);</span>
+<span class="nc" id="L322">                    final Object result = isArray.invoke(obj);</span>
+<span class="nc bnc" id="L323" title="All 4 branches missed.">                    if (result != null &amp;&amp; result.equals(true)) {</span>
+<span class="nc" id="L324">                        final Method values = cls.getMethod(&quot;values&quot;);</span>
+<span class="nc" id="L325">                        final Object vals = values.invoke(obj);</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">                        if (vals instanceof Collection) {</span>
+<span class="nc" id="L327">                            final ByteArrayOutputStream baos = new ByteArrayOutputStream();</span>
+<span class="nc" id="L328">                            final Collection coll = (Collection) vals;</span>
+<span class="nc" id="L329">                            coll.forEach(e -&gt; baos.write(((Number) e).intValue()));</span>
+<span class="nc" id="L330">                            return Optional.of(ByteBuffer.wrap(baos.toByteArray()));</span>
+                        }
+                    }
+                }
+<span class="nc" id="L334">            } catch (final ClassNotFoundException | NoSuchMethodException | SecurityException</span>
+                    | IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
+<span class="nc" id="L336">                throw new IllegalStateException(&quot;Could not retrieve array values&quot;, e);</span>
+<span class="nc" id="L337">            }</span>
+<span class="pc bpc" id="L338" title="1 of 2 branches missed.">        } else if (obj instanceof List&lt;?&gt;) {</span>
+<span class="nc" id="L339">            final List&lt;?&gt; list = (List&lt;?&gt;) obj;</span>
+<span class="nc" id="L340">            final ByteArrayOutputStream baos = new ByteArrayOutputStream();</span>
+<span class="nc" id="L341">            list.forEach(e -&gt; baos.write(((Number) e).intValue()));</span>
+<span class="nc" id="L342">            return Optional.of(ByteBuffer.wrap(baos.toByteArray()));</span>
+        }
+<span class="fc" id="L344">        return Optional.empty();</span>
+    }
+
+    private static class NullCallable implements Callable {
+
+        @Override
+        public Object call(final Context context, final Scriptable scope, final Scriptable holdable,
+                final Object[] objects) {
+<span class="fc" id="L352">            return objects[1];</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

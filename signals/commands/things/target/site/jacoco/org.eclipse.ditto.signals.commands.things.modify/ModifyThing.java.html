@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ModifyThing.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Signals :: Commands :: Things</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.signals.commands.things.modify</a> &gt; <span class="el_source">ModifyThing.java</span></div><h1>ModifyThing.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.signals.commands.things.modify;
+
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Predicate;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonField;
+import org.eclipse.ditto.json.JsonFieldDefinition;
+import org.eclipse.ditto.json.JsonMissingFieldException;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonObjectBuilder;
+import org.eclipse.ditto.json.JsonPointer;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.json.FieldType;
+import org.eclipse.ditto.model.base.json.JsonSchemaVersion;
+import org.eclipse.ditto.model.things.AccessControlList;
+import org.eclipse.ditto.model.things.AclNotAllowedException;
+import org.eclipse.ditto.model.things.Thing;
+import org.eclipse.ditto.model.things.ThingsModelFactory;
+import org.eclipse.ditto.signals.commands.base.AbstractCommand;
+import org.eclipse.ditto.signals.commands.base.CommandJsonDeserializer;
+import org.eclipse.ditto.signals.commands.things.exceptions.PolicyIdNotAllowedException;
+
+/**
+ * This command modifies an existing Thing. It contains the full {@link Thing} including the Thing ID which should be
+ * used for modification.
+ */
+public final class ModifyThing extends AbstractCommand&lt;ModifyThing&gt; implements ThingModifyCommand&lt;ModifyThing&gt; {
+
+    /**
+     * Name of the &quot;Modify Thing&quot; command.
+     */
+    public static final String NAME = &quot;modifyThing&quot;;
+
+    /**
+     * Type of this command.
+     */
+    public static final String TYPE = TYPE_PREFIX + NAME;
+
+<span class="fc" id="L55">    static final JsonFieldDefinition&lt;JsonObject&gt; JSON_THING =</span>
+<span class="fc" id="L56">            JsonFactory.newJsonObjectFieldDefinition(&quot;thing&quot;, FieldType.REGULAR, JsonSchemaVersion.V_1,</span>
+                    JsonSchemaVersion.V_2);
+
+    /**
+     * Json Field definition for the optional initial &quot;inline&quot; policy when creating a Thing.
+     */
+<span class="fc" id="L62">    public static final JsonFieldDefinition&lt;JsonObject&gt; JSON_INITIAL_POLICY =</span>
+<span class="fc" id="L63">            JsonFactory.newJsonObjectFieldDefinition(&quot;initialPolicy&quot;, FieldType.REGULAR, JsonSchemaVersion.V_2);</span>
+
+    /**
+     * Json Field definition for the optional initial &quot;inline&quot; policy for usage in getEntity().
+     */
+<span class="fc" id="L68">    public static final JsonFieldDefinition&lt;JsonObject&gt; JSON_INLINE_POLICY =</span>
+<span class="fc" id="L69">            JsonFactory.newJsonObjectFieldDefinition(&quot;_policy&quot;, FieldType.REGULAR, JsonSchemaVersion.V_2);</span>
+
+    private final String thingId;
+    private final Thing thing;
+    @Nullable private final JsonObject initialPolicy;
+
+    private ModifyThing(final String thingId, final Thing thing, @Nullable final JsonObject initialPolicy,
+            final DittoHeaders dittoHeaders) {
+<span class="fc" id="L77">        super(TYPE, dittoHeaders);</span>
+<span class="fc" id="L78">        this.thingId = thingId;</span>
+<span class="fc" id="L79">        this.thing = thing;</span>
+<span class="fc" id="L80">        this.initialPolicy = initialPolicy;</span>
+<span class="fc" id="L81">    }</span>
+
+    /**
+     * Returns a command for modifying a thing which is passed as argument.
+     *
+     * @param thingId the Thing's ID.
+     * @param thing the {@link Thing} to modify.
+     * @param initialPolicy the initial {@code Policy} to set for the Thing when creating it - may be null.
+     * @param dittoHeaders the headers of the command.
+     * @return the command.
+     * @throws NullPointerException if any argument is {@code null}.
+     * @throws AclNotAllowedException if the passed {@code thing} contained a Policy or Policy ID but the command was
+     * created via API version {@link JsonSchemaVersion#V_1}.
+     * @throws PolicyIdNotAllowedException if the passed {@code thing} contained an ACL but the command was created via
+     * an API version greater than {@link JsonSchemaVersion#V_1}.
+     */
+    public static ModifyThing of(final String thingId, final Thing thing, @Nullable final JsonObject initialPolicy,
+            final DittoHeaders dittoHeaders) {
+<span class="fc" id="L99">        Objects.requireNonNull(thingId, &quot;The Thing identifier must not be null!&quot;);</span>
+<span class="fc" id="L100">        Objects.requireNonNull(thing, &quot;The modified Thing must not be null!&quot;);</span>
+<span class="fc" id="L101">        ensureAuthorizationMatchesSchemaVersion(thingId, thing, initialPolicy, dittoHeaders);</span>
+<span class="fc" id="L102">        return new ModifyThing(thingId, thing, initialPolicy, dittoHeaders);</span>
+    }
+
+    /**
+     * Creates a new {@code ModifyThing} from a JSON string.
+     *
+     * @param jsonString the JSON string of which the command is to be created.
+     * @param dittoHeaders the headers of the command.
+     * @return the command.
+     * @throws NullPointerException if {@code jsonString} is {@code null}.
+     * @throws IllegalArgumentException if {@code jsonString} is empty.
+     * @throws org.eclipse.ditto.json.JsonParseException if the passed in {@code jsonString} was not in the expected
+     * format.
+     */
+    public static ModifyThing fromJson(final String jsonString, final DittoHeaders dittoHeaders) {
+<span class="fc" id="L117">        return fromJson(JsonFactory.newObject(jsonString), dittoHeaders);</span>
+    }
+
+    /**
+     * Creates a new {@code ModifyThing} from a JSON object.
+     *
+     * @param jsonObject the JSON object of which the command is to be created.
+     * @param dittoHeaders the headers of the command.
+     * @return the command.
+     * @throws NullPointerException if {@code jsonObject} is {@code null}.
+     * @throws org.eclipse.ditto.json.JsonParseException if the passed in {@code jsonObject} was not in the expected
+     * format.
+     * @throws org.eclipse.ditto.json.JsonMissingFieldException if {@code jsonObject} did not contain a field for {@link
+     * ThingModifyCommand.JsonFields#JSON_THING_ID} or {@link #JSON_THING}.
+     */
+    public static ModifyThing fromJson(final JsonObject jsonObject, final DittoHeaders dittoHeaders) {
+<span class="fc" id="L133">        return new CommandJsonDeserializer&lt;ModifyThing&gt;(TYPE, jsonObject).deserialize(() -&gt; {</span>
+<span class="fc" id="L134">            final JsonObject thingJsonObject = jsonObject.getValueOrThrow(JSON_THING);</span>
+<span class="fc" id="L135">            final Thing extractedThing = ThingsModelFactory.newThing(thingJsonObject);</span>
+<span class="fc" id="L136">            final JsonObject initialPolicyObject = jsonObject.getValue(JSON_INITIAL_POLICY).orElse(null);</span>
+
+<span class="fc" id="L138">            final Optional&lt;String&gt; optionalThingId = jsonObject.getValue(ThingModifyCommand.JsonFields.JSON_THING_ID);</span>
+<span class="pc" id="L139">            final String thingId = optionalThingId.orElseGet(() -&gt; extractedThing.getId().orElseThrow(() -&gt;</span>
+<span class="nc" id="L140">                    new JsonMissingFieldException(ThingModifyCommand.JsonFields.JSON_THING_ID)</span>
+            ));
+
+<span class="fc" id="L143">            return of(thingId, extractedThing, initialPolicyObject, dittoHeaders);</span>
+        });
+    }
+
+    /**
+     * Ensures that the command will not contain inconsistent authorization information. &lt;ul&gt; &lt;li&gt;{@link
+     * org.eclipse.ditto.model.base.json.JsonSchemaVersion#V_1} commands may not contain policy information.&lt;/li&gt;
+     * &lt;li&gt;{@link org.eclipse.ditto.model.base.json.JsonSchemaVersion#LATEST} commands may not contain ACL
+     * information.&lt;/li&gt; &lt;/ul&gt;
+     */
+    private static void ensureAuthorizationMatchesSchemaVersion(final String thingId,
+            final Thing thing,
+            @Nullable final JsonObject initialPolicy,
+            final DittoHeaders dittoHeaders) {
+
+<span class="fc" id="L158">        final JsonSchemaVersion version = dittoHeaders.getSchemaVersion().orElse(JsonSchemaVersion.LATEST);</span>
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        if (JsonSchemaVersion.V_1.equals(version)) {</span>
+            // v1 commands may not contain policy information
+<span class="pc bpc" id="L161" title="1 of 4 branches missed.">            final boolean containsPolicy = null != initialPolicy || thing.getPolicyId().isPresent();</span>
+<span class="pc bpc" id="L162" title="1 of 2 branches missed.">            if (containsPolicy) {</span>
+<span class="fc" id="L163">                throw PolicyIdNotAllowedException</span>
+<span class="fc" id="L164">                        .newBuilder(thingId)</span>
+<span class="fc" id="L165">                        .dittoHeaders(dittoHeaders)</span>
+<span class="fc" id="L166">                        .build();</span>
+            }
+<span class="nc" id="L168">        } else {</span>
+            // v2 commands may not contain ACL information
+<span class="fc" id="L170">            final boolean isCommandAclEmpty = thing</span>
+<span class="fc" id="L171">                    .getAccessControlList()</span>
+<span class="fc" id="L172">                    .map(AccessControlList::isEmpty)</span>
+<span class="fc" id="L173">                    .orElse(true);</span>
+<span class="fc bfc" id="L174" title="All 2 branches covered.">            if (!isCommandAclEmpty) {</span>
+<span class="fc" id="L175">                throw AclNotAllowedException</span>
+<span class="fc" id="L176">                        .newBuilder(thingId)</span>
+<span class="fc" id="L177">                        .dittoHeaders(dittoHeaders)</span>
+<span class="fc" id="L178">                        .build();</span>
+            }
+        }
+<span class="fc" id="L181">    }</span>
+
+    /**
+     * Returns the {@code Thing} to modify.
+     *
+     * @return the Thing to modify.
+     */
+    public Thing getThing() {
+<span class="fc" id="L189">        return thing;</span>
+    }
+
+    @Override
+    public String getThingId() {
+<span class="nc" id="L194">        return thingId;</span>
+    }
+
+    /**
+     * @return the initial {@code Policy} if there should be one applied when creating the Thing.
+     */
+    public Optional&lt;JsonObject&gt; getInitialPolicy() {
+<span class="nc" id="L201">        return Optional.ofNullable(initialPolicy);</span>
+    }
+
+    @Override
+    public JsonPointer getResourcePath() {
+<span class="nc" id="L206">        return JsonPointer.empty();</span>
+    }
+
+    @Override
+    public Optional&lt;JsonValue&gt; getEntity(final JsonSchemaVersion schemaVersion) {
+<span class="nc" id="L211">        final JsonObject thingJson = thing.toJson(schemaVersion, FieldType.regularOrSpecial());</span>
+<span class="nc" id="L212">        final JsonObject fullThingJson =</span>
+<span class="nc" id="L213">                getInitialPolicy().map(ip -&gt; thingJson.set(JSON_INLINE_POLICY, ip)).orElse(thingJson);</span>
+<span class="nc" id="L214">        return Optional.of(fullThingJson);</span>
+    }
+
+    @Override
+    protected void appendPayload(final JsonObjectBuilder jsonObjectBuilder, final JsonSchemaVersion schemaVersion,
+            final Predicate&lt;JsonField&gt; thePredicate) {
+<span class="fc" id="L220">        final Predicate&lt;JsonField&gt; predicate = schemaVersion.and(thePredicate);</span>
+<span class="fc" id="L221">        jsonObjectBuilder.set(ThingModifyCommand.JsonFields.JSON_THING_ID, thingId, predicate);</span>
+<span class="fc" id="L222">        jsonObjectBuilder.set(JSON_THING, thing.toJson(schemaVersion, thePredicate), predicate);</span>
+<span class="pc bpc" id="L223" title="1 of 2 branches missed.">        if (initialPolicy != null) {</span>
+<span class="nc" id="L224">            jsonObjectBuilder.set(JSON_INITIAL_POLICY, initialPolicy, predicate);</span>
+        }
+<span class="fc" id="L226">    }</span>
+
+    @Override
+    public Category getCategory() {
+<span class="nc" id="L230">        return Category.MODIFY;</span>
+    }
+
+    @Override
+    public ModifyThing setDittoHeaders(final DittoHeaders dittoHeaders) {
+<span class="nc" id="L235">        return of(thingId, thing, initialPolicy, dittoHeaders);</span>
+    }
+
+    @Override
+    public boolean changesAuthorization() {
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        return thing.getPolicyId().isPresent() ||</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">                thing.getAccessControlList().isPresent();</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L246">        return Objects.hash(super.hashCode(), thingId, thing, initialPolicy);</span>
+    }
+
+    @SuppressWarnings(&quot;squid:MethodCyclomaticComplexity&quot;)
+    @Override
+    public boolean equals(@Nullable final Object obj) {
+<span class="fc bfc" id="L252" title="All 2 branches covered.">        if (this == obj) {</span>
+<span class="fc" id="L253">            return true;</span>
+        }
+<span class="fc bfc" id="L255" title="All 4 branches covered.">        if (null == obj || getClass() != obj.getClass()) {</span>
+<span class="fc" id="L256">            return false;</span>
+        }
+<span class="fc" id="L258">        final ModifyThing that = (ModifyThing) obj;</span>
+<span class="pc bpc" id="L259" title="1 of 4 branches missed.">        return that.canEqual(this) &amp;&amp; Objects.equals(thingId, that.thingId)</span>
+<span class="fc bfc" id="L260" title="All 4 branches covered.">                &amp;&amp; Objects.equals(thing, that.thing) &amp;&amp; Objects.equals(initialPolicy, that.initialPolicy) &amp;&amp;</span>
+<span class="fc bfc" id="L261" title="All 2 branches covered.">                super.equals(obj);</span>
+    }
+
+    @Override
+    protected boolean canEqual(@Nullable final Object other) {
+<span class="fc" id="L266">        return (other instanceof ModifyThing);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L271">        return getClass().getSimpleName() + &quot; [&quot; + super.toString() + &quot;, thingId=&quot; + thingId + &quot;, thing=&quot; + thing +</span>
+                &quot;, initialPolicy=&quot; + initialPolicy + &quot;]&quot;;
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

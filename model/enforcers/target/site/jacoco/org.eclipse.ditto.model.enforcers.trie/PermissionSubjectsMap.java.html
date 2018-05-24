@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PermissionSubjectsMap.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Model :: Enforcers</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.model.enforcers.trie</a> &gt; <span class="el_source">PermissionSubjectsMap.java</span></div><h1>PermissionSubjectsMap.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.model.enforcers.trie;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.util.AbstractMap;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import javax.annotation.concurrent.NotThreadSafe;
+
+/**
+ * Weighted N-to-N relation (en.wikipedia.org/wiki/Binary_relation) between permissions and authorization subjects.
+ * All uses of the words &quot;relation&quot; and &quot;relate&quot; on this page refers to binary relations in the mathematical sense as
+ * defined in the linked Wikipedia page.
+ */
+@NotThreadSafe
+final class PermissionSubjectsMap extends AbstractMap&lt;String, Map&lt;String, Integer&gt;&gt; {
+
+    private final Map&lt;String, Map&lt;String, Integer&gt;&gt; data;
+
+    /**
+     * Constructs a new {@code PermissionSubjectsMap} object.
+     */
+<span class="fc" id="L45">    PermissionSubjectsMap() {</span>
+<span class="fc" id="L46">        data = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L47">    }</span>
+
+    @Override
+    public Set&lt;Entry&lt;String, Map&lt;String, Integer&gt;&gt;&gt; entrySet() {
+<span class="fc" id="L51">        return data.entrySet();</span>
+    }
+
+    @Override
+    public Map&lt;String, Integer&gt; put(final String key, final Map&lt;String, Integer&gt; value) {
+<span class="fc" id="L56">        return data.put(checkNotNull(key, &quot;key&quot;), checkNotNull(value, &quot;value&quot;));</span>
+    }
+
+    /**
+     * Augment this relation by a total relation between a set of permissions and a set of authorization subject IDs.
+     * Every pair in the total relation has weight 0.
+     *
+     * @param permissions Left projection of the added total relation.
+     * @param subjectIds Right projection of the added total relation.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    void addTotalRelationOfWeightZero(final Iterable&lt;String&gt; permissions, final Collection&lt;String&gt; subjectIds) {
+<span class="fc" id="L68">        validatePermissions(permissions);</span>
+<span class="fc" id="L69">        validateSubjectIds(subjectIds);</span>
+
+<span class="fc" id="L71">        final Map&lt;String, Integer&gt; subjectsWithDefaultWeight = subjectIds.stream()</span>
+<span class="fc" id="L72">                .collect(Collectors.toMap(Function.identity(), subject -&gt; 0));</span>
+<span class="fc" id="L73">        permissions.forEach(permission -&gt; addPermissionSubjects(permission, subjectsWithDefaultWeight));</span>
+<span class="fc" id="L74">    }</span>
+
+    /**
+     * If &lt;em&gt;some&lt;/em&gt; of the given permissions are related to some of the given subject IDs, then return the maximum
+     * weight of related permission-subject pairs among the given. Mathematically, intersect this relation with the
+     * Cartesian product of {@code permissions} and {@code subjectIds}, then return the maximum weight in the resulting
+     * relation.
+     *
+     * @param subjectIds The set of subject IDs to check.
+     * @param permissions The set of permissions to check.
+     * @return Either the maximum weight of given subject IDs related to the given permissions or
+     * {@code Optional.empty()}.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    Optional&lt;Integer&gt; getMaxWeightForAllPermissions(final Set&lt;String&gt; subjectIds,
+            final Collection&lt;String&gt; permissions) {
+
+<span class="fc" id="L91">        validateSubjectIds(subjectIds);</span>
+<span class="fc" id="L92">        validatePermissions(permissions);</span>
+
+<span class="fc" id="L94">        return permissions.stream()</span>
+<span class="fc" id="L95">                .flatMap(permission -&gt; {</span>
+<span class="fc" id="L96">                    final Map&lt;String, Integer&gt; permittedSubjects = getOrDefault(permission, Collections.emptyMap());</span>
+<span class="fc" id="L97">                    return intersect(subjectIds, permittedSubjects.keySet()).map(permittedSubjects::get);</span>
+                })
+<span class="fc" id="L99">                .max(Comparator.naturalOrder());</span>
+    }
+
+    /**
+     * If &lt;em&gt;all&lt;/em&gt;of the given permissions are related to some of the given subject IDs, then return the maximum
+     * weight of the related subject IDs among the given subject IDs; otherwise return {@code Optional.empty()}.
+     *
+     * @param subjectIds The set of subject IDs to check.
+     * @param permissions The set of permissions to check.
+     * @return Either the maximum weight of given subject IDs related to the given permissions, or
+     * {@code Optional.empty()}.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    Optional&lt;Integer&gt; getMaxNonemptyWeightForAllPermissions(final Set&lt;String&gt; subjectIds,
+            final Collection&lt;String&gt; permissions) {
+
+<span class="fc" id="L115">        validateSubjectIds(subjectIds);</span>
+<span class="fc" id="L116">        validatePermissions(permissions);</span>
+
+<span class="fc" id="L118">        final List&lt;Optional&lt;Integer&gt;&gt; permissionWeights = permissions.stream()</span>
+<span class="fc" id="L119">                .map(permission -&gt; {</span>
+<span class="fc" id="L120">                    final Map&lt;String, Integer&gt; permittedSubjects = getOrDefault(permission, Collections.emptyMap());</span>
+<span class="fc" id="L121">                    return intersect(subjectIds, permittedSubjects.keySet())</span>
+<span class="fc" id="L122">                            .map(permittedSubjects::get)</span>
+<span class="fc" id="L123">                            .max(Comparator.naturalOrder());</span>
+                })
+<span class="fc" id="L125">                .collect(Collectors.toList());</span>
+<span class="fc bfc" id="L126" title="All 4 branches covered.">        if (permissionWeights.stream().anyMatch(maybeWeight -&gt; !maybeWeight.isPresent())) {</span>
+<span class="fc" id="L127">            return Optional.empty();</span>
+        } else {
+<span class="fc" id="L129">            return permissionWeights.stream().map(Optional::get).max(Comparator.naturalOrder());</span>
+        }
+    }
+
+    /**
+     * Returns the set of subjects each of which is related to &lt;em&gt;some&lt;/em&gt; permission among the given.
+     *
+     * @param permissions The set of permissions to check.
+     * @return The set of subjects related to some permission among the given.
+     * @throws NullPointerException if {@code permissions} is {@code null}.
+     */
+    Map&lt;String, Integer&gt; getSubjectUnion(final Set&lt;String&gt; permissions) {
+<span class="fc" id="L141">        validatePermissions(permissions);</span>
+
+<span class="fc" id="L143">        final Map&lt;String, Integer&gt; subjectUnion = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L144">        intersect(keySet(), permissions)</span>
+<span class="fc" id="L145">                .flatMap(permission -&gt; get(permission).entrySet().stream())</span>
+<span class="fc" id="L146">                .forEach(entry -&gt; subjectUnion.compute(entry.getKey(), (subject, weight) -&gt;</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">                        weight == null ? entry.getValue() : Math.max(entry.getValue(), weight)));</span>
+<span class="fc" id="L148">        return subjectUnion;</span>
+    }
+
+    /**
+     * Returns the set of subjects each of which is related to &lt;em&gt;all&lt;/em&gt; given permissions.
+     *
+     * @param permissions The set of permissions to check.
+     * @return The set of subjects each of which is related to all given permissions.
+     * @throws NullPointerException if {@code permissions} is {@code null}.
+     */
+    Map&lt;String, Integer&gt; getSubjectIntersect(final Set&lt;String&gt; permissions) {
+<span class="fc" id="L159">        validatePermissions(permissions);</span>
+
+<span class="fc" id="L161">        final Stream&lt;Map&lt;String, Integer&gt;&gt; subjectsOfPermissions = intersect(keySet(), permissions).map(this::get);</span>
+
+<span class="fc" id="L163">        final Optional&lt;Map&lt;String, Integer&gt;&gt; reduceResult = subjectsOfPermissions.reduce((map1, map2) -&gt;</span>
+<span class="fc" id="L164">                intersect(map1.keySet(), map2.keySet())</span>
+<span class="fc" id="L165">                        .collect(Collectors.toMap(Function.identity(), key -&gt; Math.max(map1.get(key), map2.get(key)))));</span>
+
+<span class="fc" id="L167">        return reduceResult.orElse(Collections.emptyMap());</span>
+    }
+
+    /**
+     * Returns a copy of this relation.
+     *
+     * @return The copy.
+     */
+    PermissionSubjectsMap copy() {
+<span class="fc" id="L176">        final PermissionSubjectsMap copy = new PermissionSubjectsMap();</span>
+<span class="fc" id="L177">        forEach((permission, subjectMap) -&gt; copy.put(permission, new HashMap&lt;&gt;(subjectMap)));</span>
+<span class="fc" id="L178">        return copy;</span>
+    }
+
+    /**
+     * Returns a copy of this relation where the weight of each permission-subject pair is increased by 1.
+     *
+     * @return The copy with incremented weight.
+     */
+    PermissionSubjectsMap copyWithIncrementedWeight() {
+<span class="fc" id="L187">        return copyWithWeightAdjustment(1);</span>
+    }
+
+    /**
+     * Returns a copy of this relation where the weight of each permission-subject pair is decreased by 1.
+     *
+     * @return The copy with decremented weight.
+     */
+    PermissionSubjectsMap copyWithDecrementedWeight() {
+<span class="fc" id="L196">        return copyWithWeightAdjustment(-1);</span>
+    }
+
+    /**
+     * Removes all permission-subject pairs in the given relation {@code update}.
+     *
+     * @param update The relation to delete from this.
+     * @return This object after the mutation.
+     * @throws NullPointerException if {@code update} is {@code null}.
+     */
+    PermissionSubjectsMap removeAllEntriesFrom(final PermissionSubjectsMap update) {
+<span class="fc" id="L207">        checkNotNull(update, &quot;relation to be deleted&quot;);</span>
+<span class="fc" id="L208">        update.forEach((permission, subjectMap) -&gt; removePermissionSubjects(permission, subjectMap.keySet()));</span>
+<span class="fc" id="L209">        return this;</span>
+    }
+
+    private void removePermissionSubjects(final String permission, final Iterable&lt;String&gt; subjectIds) {
+<span class="fc" id="L213">        compute(permission, (p, subjectMap) -&gt; {</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">            if (subjectMap == null) {</span>
+<span class="fc" id="L215">                return null;</span>
+            } else {
+<span class="fc" id="L217">                subjectIds.forEach(subjectMap::remove);</span>
+<span class="fc" id="L218">                return subjectMap;</span>
+            }
+        });
+<span class="fc" id="L221">    }</span>
+
+    /**
+     * Add all permission-subject pairs in the given relation to this relation such that the weight of each pair is
+     * the maximum weight of the pair in both relations. Mathematically, compute the union of this relation with the
+     * relation {@code other} such that pairs are assigned their maximum weight in both relations, then replace this
+     * object by the union.
+     *
+     * @param other The relation to add to this.
+     * @return This object after the mutation.
+     * @throws NullPointerException if {@code other} is {@code null}.
+     */
+    PermissionSubjectsMap addAllEntriesFrom(final PermissionSubjectsMap other) {
+<span class="fc" id="L234">        checkNotNull(other, &quot;relation to be added&quot;);</span>
+<span class="fc" id="L235">        other.forEach(this::addPermissionSubjects);</span>
+<span class="fc" id="L236">        return this;</span>
+    }
+
+    @Override
+    public boolean equals(final Object o) {
+<span class="fc bfc" id="L241" title="All 2 branches covered.">        if (this == o) {</span>
+<span class="fc" id="L242">            return true;</span>
+        }
+<span class="fc bfc" id="L244" title="All 4 branches covered.">        if (o == null || getClass() != o.getClass()) {</span>
+<span class="fc" id="L245">            return false;</span>
+        }
+<span class="fc bfc" id="L247" title="All 2 branches covered.">        if (!super.equals(o)) {</span>
+<span class="fc" id="L248">            return false;</span>
+        }
+<span class="fc" id="L250">        final PermissionSubjectsMap that = (PermissionSubjectsMap) o;</span>
+<span class="fc" id="L251">        return Objects.equals(data, that.data);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L256">        return Objects.hash(super.hashCode(), data);</span>
+    }
+
+    private static void validateSubjectIds(final Collection&lt;String&gt; subjectIds) {
+<span class="fc" id="L260">        checkNotNull(subjectIds, &quot;subject IDs to check&quot;);</span>
+<span class="fc" id="L261">    }</span>
+
+    private static void validatePermissions(final Object permissions) {
+<span class="fc" id="L264">        checkNotNull(permissions, &quot;permissions to check&quot;);</span>
+<span class="fc" id="L265">    }</span>
+
+    private void addPermissionSubjects(final String permission, final Map&lt;String, Integer&gt; subjects) {
+<span class="fc" id="L268">        compute(permission, (p, subjectMap) -&gt; {</span>
+<span class="fc bfc" id="L269" title="All 2 branches covered.">            if (subjectMap == null) {</span>
+<span class="fc" id="L270">                return new HashMap&lt;&gt;(subjects);</span>
+            } else {
+<span class="fc" id="L272">                subjects.forEach((subject, thatWeight) -&gt; {</span>
+<span class="fc" id="L273">                    subjectMap.compute(subject, (s, thisWeight) -&gt;</span>
+<span class="fc bfc" id="L274" title="All 2 branches covered.">                            thisWeight == null ? thatWeight : Math.max(thisWeight, thatWeight));</span>
+<span class="fc" id="L275">                });</span>
+<span class="fc" id="L276">                return subjectMap;</span>
+            }
+        });
+<span class="fc" id="L279">    }</span>
+
+    private static &lt;T&gt; Stream&lt;T&gt; intersect(final Set&lt;T&gt; set1, final Set&lt;T&gt; set2) {
+<span class="fc bfc" id="L282" title="All 2 branches covered.">        return set1.size() &lt;= set2.size()</span>
+<span class="fc" id="L283">                ? set1.stream().filter(set2::contains)</span>
+<span class="fc" id="L284">                : set2.stream().filter(set1::contains);</span>
+    }
+
+    private PermissionSubjectsMap copyWithWeightAdjustment(final int adjustment) {
+<span class="fc" id="L288">        final PermissionSubjectsMap copy = new PermissionSubjectsMap();</span>
+<span class="fc" id="L289">        forEach((permission, subjectMap) -&gt; {</span>
+<span class="fc" id="L290">            final Map&lt;String, Integer&gt; adjustedSubjectMap = subjectMap.entrySet()</span>
+<span class="fc" id="L291">                    .stream()</span>
+<span class="fc" id="L292">                    .collect(Collectors.toMap(Map.Entry::getKey, entry -&gt; entry.getValue() + adjustment));</span>
+<span class="fc" id="L293">            copy.put(permission, adjustedSubjectMap);</span>
+<span class="fc" id="L294">        });</span>
+<span class="fc" id="L295">        return copy;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

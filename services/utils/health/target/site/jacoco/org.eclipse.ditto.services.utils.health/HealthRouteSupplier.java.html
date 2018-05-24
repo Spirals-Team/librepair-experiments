@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HealthRouteSupplier.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Utils :: Health Utils</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.utils.health</a> &gt; <span class="el_source">HealthRouteSupplier.java</span></div><h1>HealthRouteSupplier.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.utils.health;
+
+import static akka.http.javadsl.server.Directives.completeWithFuture;
+
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+
+import javax.annotation.Nullable;
+
+import akka.actor.ActorRef;
+import akka.event.LoggingAdapter;
+import akka.http.javadsl.model.ContentTypes;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.server.Route;
+import akka.pattern.PatternsCS;
+import akka.util.Timeout;
+import scala.concurrent.duration.Duration;
+
+/**
+ * Function for Akka HTTP Routes to transform a RequestContext into a RouteResult with the expected status code for
+ * health (200/503) and the required format.
+ */
+public class HealthRouteSupplier implements Supplier&lt;Route&gt; {
+
+    private static final int HEALTH_CHECK_TIMEOUT = 60;
+<span class="nc" id="L37">    private static final Timeout TIMEOUT = new Timeout(Duration.create(HEALTH_CHECK_TIMEOUT, TimeUnit.SECONDS));</span>
+
+    private static final int HTTP_STATUS_OK = 200;
+    private static final int HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
+
+    private final ActorRef healthCheckingActor;
+    private final LoggingAdapter log;
+
+    /**
+     * Constructs a new {@code HealthRouteFunction}.
+     *
+     * @param healthCheckingActor the Actor selection to the health-checking actor to use.
+     */
+<span class="nc" id="L50">    public HealthRouteSupplier(final ActorRef healthCheckingActor, final LoggingAdapter log) {</span>
+<span class="nc" id="L51">        this.healthCheckingActor = healthCheckingActor;</span>
+<span class="nc" id="L52">        this.log = log;</span>
+<span class="nc" id="L53">    }</span>
+
+    @Override
+    public Route get() {
+<span class="nc" id="L57">        return completeWithFuture(</span>
+                PatternsCS
+<span class="nc" id="L59">                        .ask(healthCheckingActor, RetrieveHealth.newInstance(), TIMEOUT)</span>
+<span class="nc" id="L60">                        .handle(this::handleHealthResult)</span>
+        );
+    }
+
+    private HttpResponse handleHealthResult(@Nullable final Object health, @Nullable final Throwable failure) {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        if (null != health) {</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">            if (health instanceof StatusInfo) {</span>
+<span class="nc" id="L67">                return completeHealthRequest((StatusInfo) health);</span>
+            } else {
+<span class="nc" id="L69">                return completeHealthRequestForUnexpectedHealthResult(health);</span>
+            }
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        } else if (null != failure) {</span>
+<span class="nc" id="L72">            return completeHealthRequest(failure);</span>
+        } else {
+<span class="nc" id="L74">            return completeHealthRequestForUnexpectedHealthResult(null);</span>
+        }
+    }
+
+    private HttpResponse completeHealthRequest(final StatusInfo statusInfo) {
+<span class="nc" id="L79">        final int httpStatusCode =</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">                statusInfo.getStatus() == StatusInfo.Status.DOWN ? HTTP_STATUS_SERVICE_UNAVAILABLE :</span>
+                        HTTP_STATUS_OK;
+
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        if (statusInfo.getStatus() == StatusInfo.Status.DOWN) {</span>
+<span class="nc" id="L84">            log.warning(&quot;Own health check returned DOWN: {}&quot;, statusInfo);</span>
+        }
+
+<span class="nc" id="L87">        return HttpResponse.create()</span>
+<span class="nc" id="L88">                .withEntity(ContentTypes.APPLICATION_JSON, statusInfo.toJsonString())</span>
+<span class="nc" id="L89">                .withStatus(httpStatusCode);</span>
+    }
+
+    private HttpResponse completeHealthRequest(final Throwable failure) {
+<span class="nc" id="L93">        log.error(failure, &quot;Health check resulted in failure: '{}'&quot;, failure.getMessage());</span>
+<span class="nc" id="L94">        return HttpResponse.create()</span>
+<span class="nc" id="L95">                .withStatus(HTTP_STATUS_SERVICE_UNAVAILABLE);</span>
+    }
+
+    private HttpResponse completeHealthRequestForUnexpectedHealthResult(@Nullable final Object healthResult) {
+<span class="nc" id="L99">        log.error( &quot;Health check returned an unexpected result: '{}'&quot;, healthResult);</span>
+<span class="nc" id="L100">        return HttpResponse.create()</span>
+<span class="nc" id="L101">                .withStatus(HTTP_STATUS_SERVICE_UNAVAILABLE);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HttpClientFacade.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Util</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.starter.service.util</a> &gt; <span class="el_source">HttpClientFacade.java</span></div><h1>HttpClientFacade.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.starter.service.util;
+
+import java.net.InetSocketAddress;
+import java.util.concurrent.CompletionStage;
+
+import com.typesafe.config.Config;
+
+import akka.actor.ActorSystem;
+import akka.http.javadsl.ClientTransport;
+import akka.http.javadsl.Http;
+import akka.http.javadsl.model.HttpRequest;
+import akka.http.javadsl.model.HttpResponse;
+import akka.http.javadsl.model.headers.HttpCredentials;
+import akka.http.javadsl.settings.ConnectionPoolSettings;
+import akka.stream.ActorMaterializer;
+
+/**
+ * Provides a pre-configured Akka HTTP client.
+ */
+public final class HttpClientFacade {
+
+    private static HttpClientFacade INSTANCE;
+
+    private final ActorSystem actorSystem;
+    private final ConnectionPoolSettings connectionPoolSettings;
+    private final ActorMaterializer actorMaterializer;
+
+    private HttpClientFacade(final ActorSystem actorSystem,
+            final boolean proxyEnabled, final String proxyHost, final Integer proxyPort,
+<span class="nc" id="L41">            final String proxyUsername, final String proxyPassword) {</span>
+
+<span class="nc" id="L43">        this.actorSystem = actorSystem;</span>
+<span class="nc bnc" id="L44" title="All 2 branches missed.">        if (proxyEnabled) {</span>
+            final ClientTransport proxyClientTransport;
+<span class="nc bnc" id="L46" title="All 8 branches missed.">            if (proxyHost != null &amp;&amp; proxyPort != null &amp;&amp; proxyUsername != null &amp;&amp; proxyPassword != null) {</span>
+<span class="nc" id="L47">                proxyClientTransport = ClientTransport.httpsProxy(</span>
+<span class="nc" id="L48">                        InetSocketAddress.createUnresolved(proxyHost, proxyPort),</span>
+<span class="nc" id="L49">                        HttpCredentials.create(proxyUsername, proxyPassword)</span>
+                );
+<span class="nc bnc" id="L51" title="All 4 branches missed.">            } else if (proxyHost != null &amp;&amp; proxyPort != null) {</span>
+<span class="nc" id="L52">                proxyClientTransport = ClientTransport.httpsProxy(</span>
+<span class="nc" id="L53">                        InetSocketAddress.createUnresolved(proxyHost, proxyPort)</span>
+                );
+            } else {
+<span class="nc" id="L56">                throw new IllegalArgumentException(&quot;When HTTP proxy is enabled via config '&quot; +</span>
+                        ConfigKeys.AUTHENTICATION_HTTP_PROXY_ENABLED +
+                        &quot;' at least proxy host and port must be configured as well&quot;);
+            }
+<span class="nc" id="L60">            connectionPoolSettings = ConnectionPoolSettings.create(actorSystem).withTransport(proxyClientTransport);</span>
+<span class="nc" id="L61">        } else {</span>
+<span class="nc" id="L62">            connectionPoolSettings = ConnectionPoolSettings.create(actorSystem);</span>
+        }
+<span class="nc" id="L64">        actorMaterializer = ActorMaterializer.create(actorSystem);</span>
+<span class="nc" id="L65">    }</span>
+
+    /**
+     * Returns the {@code HttpClientProvider} instance.
+     *
+     * @param actorSystem the {@code ActorSystem} in which to create the HttpClientProvider.
+     * @return the instance.
+     */
+    public static HttpClientFacade getInstance(final ActorSystem actorSystem) {
+<span class="nc" id="L74">        final Config config = actorSystem.settings().config();</span>
+        // the HttpClientProvider is only configured at the very first invocation of getInstance(Config) as we can assume
+        // that the config does not change during Runtime
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        if (null == INSTANCE) {</span>
+            // this is the only non-null mandatory entry:
+<span class="nc" id="L79">            final boolean proxyEnabled = config.getBoolean(ConfigKeys.AUTHENTICATION_HTTP_PROXY_ENABLED);</span>
+
+            // all others may also be null:
+<span class="nc" id="L82">            final String proxyHost = getFromConf(config, ConfigKeys.AUTHENTICATION_HTTP_PROXY_HOST, String.class);</span>
+            Integer proxyPort;
+            try {
+<span class="nc" id="L85">                proxyPort = getFromConf(config, ConfigKeys.AUTHENTICATION_HTTP_PROXY_PORT, Integer.class);</span>
+                // this might be a String when passed via system properties - therefore we might get a ClassCastException:
+<span class="nc" id="L87">            } catch (final ClassCastException e) {</span>
+                // try String as fallback
+<span class="nc" id="L89">                final String proxyPortString = getFromConf(config, ConfigKeys.AUTHENTICATION_HTTP_PROXY_PORT, String.class);</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">                proxyPort = proxyPortString != null ? Integer.parseInt(proxyPortString) : null;</span>
+<span class="nc" id="L91">            }</span>
+<span class="nc" id="L92">            final String proxyUsername =</span>
+<span class="nc" id="L93">                    getFromConf(config, ConfigKeys.AUTHENTICATION_HTTP_PROXY_USERNAME, String.class);</span>
+<span class="nc" id="L94">            final String proxyPassword =</span>
+<span class="nc" id="L95">                    getFromConf(config, ConfigKeys.AUTHENTICATION_HTTP_PROXY_PASSWORD, String.class);</span>
+<span class="nc" id="L96">            INSTANCE =</span>
+                    new HttpClientFacade(actorSystem, proxyEnabled, proxyHost, proxyPort, proxyUsername, proxyPassword);
+        }
+<span class="nc" id="L99">        return INSTANCE;</span>
+    }
+
+    private static &lt;T&gt; T getFromConf(final Config config, final String configKey, final Class&lt;T&gt; expectedType) {
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        if (config.hasPath(configKey)) {</span>
+<span class="nc" id="L104">            return expectedType.cast(config.getValue(configKey).unwrapped());</span>
+        } else {
+<span class="nc" id="L106">            return null;</span>
+        }
+    }
+
+    /**
+     * Creates a CompletionStage for the passed {@link HttpRequest} containing the {@link HttpResponse}.
+     *
+     * @return the HttpResponse CompletionStage.
+     */
+    public CompletionStage&lt;HttpResponse&gt; createSingleHttpRequest(final HttpRequest request) {
+<span class="nc" id="L116">        return Http.get(actorSystem).singleRequest(</span>
+                request,
+<span class="nc" id="L118">                Http.get(actorSystem).defaultClientHttpsContext(),</span>
+                connectionPoolSettings,
+<span class="nc" id="L120">                actorSystem.log(),</span>
+                actorMaterializer
+        );
+    }
+
+    /**
+     * @return an {@link ActorMaterializer} instance which can be used for stream execution.
+     */
+    public ActorMaterializer getActorMaterializer() {
+<span class="nc" id="L129">        return actorMaterializer;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

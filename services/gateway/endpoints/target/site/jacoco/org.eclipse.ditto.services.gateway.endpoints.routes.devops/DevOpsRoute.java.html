@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DevOpsRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes.devops</a> &gt; <span class="el_source">DevOpsRoute.java</span></div><h1>DevOpsRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes.devops;
+
+import static akka.http.javadsl.server.Directives.extractDataBytes;
+import static akka.http.javadsl.server.Directives.get;
+import static akka.http.javadsl.server.Directives.parameterOptional;
+import static akka.http.javadsl.server.Directives.post;
+import static akka.http.javadsl.server.Directives.put;
+import static akka.http.javadsl.server.Directives.rawPathPrefix;
+import static akka.http.javadsl.server.Directives.route;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.CustomPathMatchers.mergeDoubleSlashes;
+
+import java.util.Optional;
+import java.util.UUID;
+
+import javax.annotation.Nullable;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonPointer;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.headers.DittoHeadersBuilder;
+import org.eclipse.ditto.model.devops.ImmutableLoggerConfig;
+import org.eclipse.ditto.services.gateway.endpoints.routes.AbstractRoute;
+import org.eclipse.ditto.signals.commands.devops.ChangeLogLevel;
+import org.eclipse.ditto.signals.commands.devops.ExecutePiggybackCommand;
+import org.eclipse.ditto.signals.commands.devops.RetrieveLoggerConfig;
+
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.http.javadsl.server.PathMatchers;
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+import akka.http.javadsl.unmarshalling.Unmarshaller;
+import akka.japi.function.Function;
+
+/**
+ * Builder for creating Akka HTTP routes for {@code /devops}.
+ */
+public final class DevOpsRoute extends AbstractRoute {
+
+    /**
+     * Public endpoint of devops.
+     */
+    public static final String PATH_DEVOPS = &quot;devops&quot;;
+
+    private static final String PATH_LOGGING = &quot;logging&quot;;
+    private static final String PATH_PIGGYBACK = &quot;piggyback&quot;;
+
+    /**
+     * Timeout in milliseconds of how long to wait for all responses before returning.
+     */
+    private static final String TIMEOUT_PARAMETER = &quot;timeout&quot;;
+
+    /**
+     * Constructs the {@code /devops} route builder.
+     *
+     * @param actorSystem the Actor System.
+     */
+    public DevOpsRoute(final ActorRef proxyActor, final ActorSystem actorSystem) {
+<span class="fc" id="L72">        super(proxyActor, actorSystem);</span>
+<span class="fc" id="L73">    }</span>
+
+    /**
+     * @return the {@code /devops} route.
+     */
+    public Route buildDevopsRoute(final RequestContext ctx) {
+<span class="fc" id="L79">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_DEVOPS), () -&gt; // /devops</span>
+<span class="nc" id="L80">                parameterOptional(Unmarshaller.sync(Long::parseLong), TIMEOUT_PARAMETER, optionalTimeout -&gt;</span>
+<span class="nc" id="L81">                        route(</span>
+<span class="nc" id="L82">                                rawPathPrefix(mergeDoubleSlashes().concat(PATH_LOGGING), () -&gt; // /devops/logging</span>
+<span class="nc" id="L83">                                        logging(ctx, createHeaders(optionalTimeout))</span>
+                                ),
+<span class="nc" id="L85">                                rawPathPrefix(mergeDoubleSlashes().concat(PATH_PIGGYBACK), () -&gt; // /devops/piggyback</span>
+<span class="nc" id="L86">                                        piggyback(ctx, createHeaders(optionalTimeout))</span>
+                                )
+                        )
+                )
+        );
+    }
+
+    /*
+     * @return {@code /devops/logging} route.
+     */
+    private Route logging(final RequestContext ctx, final DittoHeaders dittoHeaders) {
+<span class="nc" id="L97">        return buildRouteWithOptionalServiceNameAndInstance(ctx, dittoHeaders, this::routeLogging);</span>
+    }
+
+    /*
+    * @return {@code /devops/piggyback} route.
+    */
+    private Route piggyback(final RequestContext ctx, final DittoHeaders dittoHeaders) {
+<span class="nc" id="L104">        return buildRouteWithOptionalServiceNameAndInstance(ctx, dittoHeaders, this::routePiggyback);</span>
+    }
+
+    /*
+     * @return {@code /devops/&lt;logging|piggyback&gt;/} route.
+     */
+    private static Route buildRouteWithOptionalServiceNameAndInstance(final RequestContext ctx,
+            final DittoHeaders dittoHeaders,
+            final RouteBuilderWithOptionalServiceNameAndInstance routeBuilder) {
+
+<span class="nc" id="L114">        return route(</span>
+                // /devops/&lt;logging|piggyback&gt;/&lt;serviceName&gt;
+<span class="nc" id="L116">                buildRouteWithServiceNameAndOptionalInstance(ctx, dittoHeaders, routeBuilder),</span>
+                // /devops/&lt;logging|piggyback&gt;/
+<span class="nc" id="L118">                routeBuilder.build(ctx, null, null, dittoHeaders)</span>
+        );
+    }
+
+    /*
+     * @return {@code /devops/&lt;logging|piggyback&gt;/&lt;serviceName&gt;} route.
+     */
+    private static Route buildRouteWithServiceNameAndOptionalInstance(final RequestContext ctx,
+            final DittoHeaders dittoHeaders,
+            final RouteBuilderWithOptionalServiceNameAndInstance routeBuilder) {
+
+<span class="nc" id="L129">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()), serviceName -&gt;</span>
+<span class="nc" id="L130">                route(</span>
+                        // /devops/&lt;logging|piggyback&gt;/&lt;serviceName&gt;/&lt;instance&gt;
+<span class="nc" id="L132">                        buildRouteWithServiceNameAndInstance(ctx, serviceName, dittoHeaders, routeBuilder),</span>
+                        // /devops/&lt;logging|piggyback&gt;/&lt;serviceName&gt;
+<span class="nc" id="L134">                        routeBuilder.build(ctx, serviceName, null, dittoHeaders)</span>
+                )
+        );
+    }
+
+    /*
+     * @return {@code /devops/&lt;logging|piggyback&gt;/&lt;serviceName&gt;/&lt;instance&gt;} route.
+     */
+    private static Route buildRouteWithServiceNameAndInstance(final RequestContext ctx,
+            final String serviceName,
+            final DittoHeaders dittoHeaders,
+            final RouteBuilderWithOptionalServiceNameAndInstance routeBuilder) {
+
+<span class="nc" id="L147">        return rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()), instance -&gt;</span>
+                // /devops/&lt;logging|piggyback&gt;/&lt;serviceName&gt;/&lt;instance&gt;
+<span class="nc" id="L149">                routeBuilder.build(ctx, serviceName, Integer.parseInt(instance), dittoHeaders)</span>
+        );
+    }
+
+    private Route routeLogging(final RequestContext ctx, final String serviceName, final Integer instance,
+            final DittoHeaders dittoHeaders) {
+
+<span class="nc" id="L156">        return route(</span>
+<span class="nc" id="L157">                get(() -&gt;</span>
+<span class="nc" id="L158">                        handlePerRequest(ctx,</span>
+<span class="nc" id="L159">                                RetrieveLoggerConfig.ofAllKnownLoggers(serviceName, instance, dittoHeaders),</span>
+<span class="nc" id="L160">                                transformResponse(serviceName, instance)</span>
+                        )
+                ),
+<span class="nc" id="L163">                put(() -&gt;</span>
+<span class="nc" id="L164">                        extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L165">                                handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+                                        loggerConfigJson -&gt;
+<span class="nc" id="L167">                                                ChangeLogLevel.of(serviceName, instance,</span>
+<span class="nc" id="L168">                                                        ImmutableLoggerConfig.fromJson(loggerConfigJson), dittoHeaders),</span>
+<span class="nc" id="L169">                                        transformResponse(serviceName, instance)</span>
+                                )
+                        )
+                )
+        );
+    }
+
+    private Route routePiggyback(final RequestContext ctx, @Nullable final String serviceName,
+            @Nullable final Integer instance, final DittoHeaders dittoHeaders) {
+<span class="nc" id="L178">        return post(() -&gt;</span>
+<span class="nc" id="L179">                extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L180">                        handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+                                piggybackCommandJson -&gt; {
+<span class="nc" id="L182">                                    final JsonObject parsedJson =</span>
+<span class="nc" id="L183">                                            JsonFactory.readFrom(piggybackCommandJson).asObject();</span>
+
+<span class="nc" id="L185">                                    return ExecutePiggybackCommand.of(serviceName, instance,</span>
+<span class="nc" id="L186">                                            parsedJson.getValueOrThrow(</span>
+                                                    ExecutePiggybackCommand.JSON_TARGET_ACTORSELECTION),
+<span class="nc" id="L188">                                            parsedJson.getValueOrThrow(</span>
+                                                    ExecutePiggybackCommand.JSON_PIGGYBACK_COMMAND),
+<span class="nc" id="L190">                                            parsedJson.getValue(&quot;headers&quot;)</span>
+<span class="nc" id="L191">                                                    .filter(JsonValue::isObject)</span>
+<span class="nc" id="L192">                                                    .map(JsonValue::asObject)</span>
+<span class="nc" id="L193">                                                    .map(DittoHeaders::newBuilder)</span>
+<span class="nc" id="L194">                                                    .map(head -&gt; head.putHeaders(dittoHeaders))</span>
+<span class="nc" id="L195">                                                    .map(DittoHeadersBuilder::build)</span>
+<span class="nc" id="L196">                                                    .orElse(dittoHeaders));</span>
+                                }
+                        )
+                )
+        );
+    }
+
+    private static Function&lt;JsonValue, JsonValue&gt; transformResponse(final String serviceName, final Integer instance) {
+<span class="nc" id="L204">        final JsonPointer transformerPointer = transformerPointer(serviceName, instance);</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (transformerPointer.isEmpty()) {</span>
+<span class="nc" id="L206">            return resp -&gt; resp;</span>
+        } else {
+<span class="nc" id="L208">            return resp -&gt; resp.asObject()</span>
+<span class="nc" id="L209">                    .getValue(transformerPointer)</span>
+<span class="nc" id="L210">                    .orElse(JsonFactory.nullObject());</span>
+        }
+    }
+
+    private static JsonPointer transformerPointer(@Nullable final String serviceName,
+            @Nullable final Integer instance) {
+<span class="nc" id="L216">        JsonPointer newPointer = JsonPointer.empty();</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (serviceName != null) {</span>
+<span class="nc" id="L218">            newPointer = newPointer.append(JsonPointer.of(serviceName));</span>
+        }
+<span class="nc bnc" id="L220" title="All 2 branches missed.">        if (instance != null) {</span>
+<span class="nc" id="L221">            newPointer = newPointer.append(JsonPointer.of(instance.toString()));</span>
+        }
+<span class="nc" id="L223">        return newPointer;</span>
+    }
+
+    private static DittoHeaders createHeaders(final Optional&lt;Long&gt; optionalTimeout) {
+        final DittoHeadersBuilder headersBuilder =
+<span class="nc" id="L228">                DittoHeaders.newBuilder().correlationId(UUID.randomUUID().toString());</span>
+<span class="nc" id="L229">        optionalTimeout.ifPresent(t -&gt; headersBuilder.putHeader(TIMEOUT_PARAMETER, Long.toString(t)));</span>
+<span class="nc" id="L230">        return headersBuilder.build();</span>
+    }
+
+    @FunctionalInterface
+    private interface RouteBuilderWithOptionalServiceNameAndInstance {
+
+        Route build(final RequestContext ctx, final String serviceName, final Integer instance,
+                final DittoHeaders dittoHeaders);
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

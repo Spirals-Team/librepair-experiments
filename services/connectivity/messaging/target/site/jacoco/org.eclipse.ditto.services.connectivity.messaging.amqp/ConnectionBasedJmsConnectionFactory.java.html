@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConnectionBasedJmsConnectionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Connectivity :: Messaging</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.connectivity.messaging.amqp</a> &gt; <span class="el_source">ConnectionBasedJmsConnectionFactory.java</span></div><h1>ConnectionBasedJmsConnectionFactory.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.connectivity.messaging.amqp;
+
+import static org.apache.qpid.jms.provider.failover.FailoverProviderFactory.FAILOVER_OPTION_PREFIX;
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.Hashtable;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
+import javax.jms.ConnectionFactory;
+import javax.jms.ExceptionListener;
+import javax.jms.JMSException;
+import javax.naming.Context;
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+
+import org.apache.qpid.jms.JmsConnection;
+import org.eclipse.ditto.model.connectivity.Connection;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Factory for creating a {@link javax.jms.Connection} based on a {@link Connection}.
+ */
+@NotThreadSafe
+public final class ConnectionBasedJmsConnectionFactory implements JmsConnectionFactory {
+
+<span class="fc" id="L48">    private static final org.slf4j.Logger LOGGER =</span>
+<span class="fc" id="L49">            LoggerFactory.getLogger(ConnectionBasedJmsConnectionFactory.class);</span>
+
+    private static final String SECURE_AMQP_SCHEME = &quot;amqps&quot;;
+
+    private ConnectionBasedJmsConnectionFactory() {
+        // no-op
+    }
+
+    /**
+     * Returns an instance of {@code ConnectionBasedJmsConnectionFactory}.
+     *
+     * @return the instance.
+     */
+    public static ConnectionBasedJmsConnectionFactory getInstance() {
+<span class="nc" id="L63">        return new ConnectionBasedJmsConnectionFactory();</span>
+    }
+
+    @Override
+    public JmsConnection createConnection(final Connection connection, final ExceptionListener exceptionListener)
+            throws JMSException, NamingException {
+<span class="nc" id="L69">        checkNotNull(connection, &quot;Connection&quot;);</span>
+<span class="nc" id="L70">        checkNotNull(exceptionListener, &quot;Exception Listener&quot;);</span>
+
+<span class="nc" id="L72">        final Context ctx = createContext(connection);</span>
+<span class="nc" id="L73">        final ConnectionFactory cf = (javax.jms.ConnectionFactory) ctx.lookup(connection.getId());</span>
+
+<span class="nc" id="L75">        @SuppressWarnings(&quot;squid:S2095&quot;) final JmsConnection jmsConnection = (JmsConnection) cf.createConnection();</span>
+<span class="nc" id="L76">        jmsConnection.setExceptionListener(exceptionListener);</span>
+<span class="nc" id="L77">        return jmsConnection;</span>
+    }
+
+    private Context createContext(final Connection connection) throws NamingException {
+<span class="nc" id="L81">        final String connectionUri = buildAmqpConnectionUriFromConnection(connection);</span>
+<span class="nc" id="L82">        @SuppressWarnings(&quot;squid:S1149&quot;) final Hashtable&lt;Object, Object&gt; env = new Hashtable&lt;&gt;();</span>
+<span class="nc" id="L83">        env.put(Context.INITIAL_CONTEXT_FACTORY, &quot;org.apache.qpid.jms.jndi.JmsInitialContextFactory&quot;);</span>
+<span class="nc" id="L84">        env.put(&quot;connectionfactory.&quot; + connection.getId(), connectionUri);</span>
+
+<span class="nc" id="L86">        return new InitialContext(env);</span>
+    }
+
+    public static String buildAmqpConnectionUriFromConnection(final Connection connection) {
+<span class="fc" id="L90">        final String id = connection.getId();</span>
+<span class="fc" id="L91">        final String username = connection.getUsername().orElse(null);</span>
+<span class="fc" id="L92">        final String password = connection.getPassword().orElse(null);</span>
+<span class="fc" id="L93">        final String protocol = connection.getProtocol();</span>
+<span class="fc" id="L94">        final String hostname = connection.getHostname();</span>
+<span class="fc" id="L95">        final int port = connection.getPort();</span>
+<span class="fc" id="L96">        final boolean failoverEnabled = connection.isFailoverEnabled();</span>
+
+<span class="fc" id="L98">        final Map&lt;String, String&gt; specificConfig = connection.getSpecificConfig();</span>
+
+<span class="fc" id="L100">        final String baseUri = formatUri(protocol, hostname, port);</span>
+
+<span class="pc bpc" id="L102" title="2 of 4 branches missed.">        final List&lt;String&gt; parameters =</span>
+<span class="fc" id="L103">                new ArrayList&lt;&gt;(getAmqpParameters(username == null || password == null, specificConfig));</span>
+<span class="fc" id="L104">        final boolean securedConnection =</span>
+<span class="pc bpc" id="L105" title="3 of 4 branches missed.">                !connection.isValidateCertificates() &amp;&amp; SECURE_AMQP_SCHEME.equalsIgnoreCase(protocol);</span>
+<span class="fc" id="L106">        parameters.addAll(getTransportParameters(securedConnection, specificConfig));</span>
+<span class="fc" id="L107">        final String nestedUri = baseUri + parameters.stream().collect(Collectors.joining(&quot;&amp;&quot;, &quot;?&quot;, &quot;&quot;));</span>
+
+<span class="fc" id="L109">        final List&lt;String&gt; globalParameters =</span>
+<span class="fc" id="L110">                new ArrayList&lt;&gt;(getJmsParameters(id, username, password, specificConfig));</span>
+        final String connectionUri;
+<span class="pc bpc" id="L112" title="1 of 2 branches missed.">        if (failoverEnabled) {</span>
+<span class="fc" id="L113">            globalParameters.addAll(getFailoverParameters(specificConfig));</span>
+<span class="fc" id="L114">            connectionUri =</span>
+<span class="fc" id="L115">                    wrapWithFailOver(nestedUri) + globalParameters.stream().collect(Collectors.joining(&quot;&amp;&quot;, &quot;?&quot;, &quot;&quot;));</span>
+        } else {
+<span class="nc" id="L117">            connectionUri = nestedUri + globalParameters.stream().collect(Collectors.joining(&quot;&amp;&quot;, &quot;&amp;&quot;, &quot;&quot;));</span>
+        }
+<span class="fc" id="L119">        LOGGER.debug(&quot;[{}] URI: {}&quot;, id, connectionUri);</span>
+<span class="fc" id="L120">        return connectionUri;</span>
+    }
+
+    private static String formatUri(final String protocol, final String hostname, final int port) {
+<span class="fc" id="L124">        final String pattern = &quot;{0}://{1}:{2}&quot;;</span>
+<span class="fc" id="L125">        return MessageFormat.format(pattern, protocol, hostname, Integer.toString(port));</span>
+    }
+
+    @SuppressWarnings(&quot;squid:S2068&quot;)
+    private static List&lt;String&gt; getJmsParameters(final String id, @Nullable final String username,
+            @Nullable final String password, final Map&lt;String, String&gt; specificConfig) {
+        String encodedId;
+        try {
+<span class="fc" id="L133">            encodedId = URLEncoder.encode(id, StandardCharsets.UTF_8.displayName());</span>
+<span class="nc" id="L134">        } catch (final UnsupportedEncodingException e) {</span>
+<span class="nc" id="L135">            LOGGER.info(&quot;Encoding not supported: {}&quot;, e.getMessage());</span>
+            //fallback: replace special characters
+<span class="nc" id="L137">            encodedId = id.replaceAll(&quot;[^a-zA-Z0-9]+&quot;, &quot;&quot;);</span>
+<span class="fc" id="L138">        }</span>
+<span class="fc" id="L139">        final List&lt;String&gt; jmsParams = specificConfig.entrySet().stream()</span>
+<span class="fc" id="L140">                .filter(e -&gt; e.getKey().startsWith(&quot;jms&quot;))</span>
+<span class="pc" id="L141">                .map(e -&gt; e.getKey() + &quot;=&quot; + e.getValue())</span>
+<span class="fc" id="L142">                .collect(Collectors.toList());</span>
+
+<span class="fc" id="L144">        jmsParams.add(&quot;jms.clientID=&quot; + encodedId);</span>
+<span class="pc bpc" id="L145" title="2 of 4 branches missed.">        if (username != null &amp;&amp; password != null) {</span>
+<span class="fc" id="L146">            jmsParams.add(&quot;jms.username=&quot; + username);</span>
+<span class="fc" id="L147">            jmsParams.add(&quot;jms.password=&quot; + password);</span>
+        }
+<span class="fc" id="L149">        return jmsParams;</span>
+    }
+
+    private static List&lt;String&gt; getAmqpParameters(final boolean anonymous,
+            final Map&lt;String, String&gt; specificConfig) {
+
+<span class="fc" id="L155">        final List&lt;String&gt; amqpParams = specificConfig.entrySet().stream()</span>
+<span class="fc" id="L156">                .filter(e -&gt; e.getKey().startsWith(&quot;amqp&quot;))</span>
+<span class="pc" id="L157">                .map(e -&gt; e.getKey() + &quot;=&quot; + e.getValue())</span>
+<span class="fc" id="L158">                .collect(Collectors.toList());</span>
+
+<span class="pc bpc" id="L160" title="1 of 2 branches missed.">        if (anonymous) {</span>
+<span class="nc" id="L161">            amqpParams.add(&quot;amqp.saslMechanisms=ANONYMOUS&quot;);</span>
+        } else {
+<span class="fc" id="L163">            amqpParams.add(&quot;amqp.saslMechanisms=PLAIN&quot;);</span>
+        }
+
+<span class="fc" id="L166">        return amqpParams;</span>
+    }
+
+    private static List&lt;String&gt; getTransportParameters(final boolean securedConnectionWithAcceptInvalidCertificates,
+            final Map&lt;String, String&gt; specificConfig) {
+
+<span class="fc" id="L172">        final List&lt;String&gt; transportParams = specificConfig.entrySet().stream()</span>
+<span class="fc" id="L173">                .filter(e -&gt; e.getKey().startsWith(&quot;transport&quot;))</span>
+<span class="pc" id="L174">                .map(e -&gt; e.getKey() + &quot;=&quot; + e.getValue())</span>
+<span class="fc" id="L175">                .collect(Collectors.toList());</span>
+
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">        if (securedConnectionWithAcceptInvalidCertificates) {</span>
+            // these setting can only be applied for amqps connections:
+<span class="nc" id="L179">            transportParams.add(&quot;transport.trustAll=true&quot;);</span>
+<span class="nc" id="L180">            transportParams.add(&quot;transport.verifyHost=false&quot;);</span>
+        }
+<span class="fc" id="L182">        return transportParams;</span>
+    }
+
+    private static List&lt;String&gt; getFailoverParameters(
+            final Map&lt;String, String&gt; specificConfig) {
+
+<span class="fc" id="L188">        final List&lt;String&gt; failoverParams = specificConfig.entrySet().stream()</span>
+<span class="fc" id="L189">                .filter(e -&gt; e.getKey().startsWith(FAILOVER_OPTION_PREFIX))</span>
+<span class="fc" id="L190">                .map(e -&gt; e.getKey() + &quot;=&quot; + e.getValue())</span>
+<span class="fc" id="L191">                .collect(Collectors.toList());</span>
+
+<span class="fc" id="L193">        final List&lt;String&gt; defaultFailoverParams =</span>
+<span class="fc" id="L194">                Stream.of(FAILOVER_OPTION_PREFIX + &quot;initialReconnectDelay=&quot; + TimeUnit.SECONDS.toMillis(10),</span>
+                        FAILOVER_OPTION_PREFIX + &quot;startupMaxReconnectAttempts=1&quot;,
+                        // important, we cannot interrupt connection initiation
+<span class="fc" id="L197">                        FAILOVER_OPTION_PREFIX + &quot;reconnectDelay=&quot; + TimeUnit.SECONDS.toMillis(1),</span>
+<span class="fc" id="L198">                        FAILOVER_OPTION_PREFIX + &quot;maxReconnectDelay=&quot; + TimeUnit.MINUTES.toMillis(60),</span>
+                        FAILOVER_OPTION_PREFIX + &quot;useReconnectBackOff=true&quot;,
+<span class="fc" id="L200">                        FAILOVER_OPTION_PREFIX + &quot;reconnectBackOffMultiplier=1.0&quot;).collect(Collectors.toList());</span>
+
+<span class="fc" id="L202">        defaultFailoverParams.addAll(failoverParams);</span>
+<span class="fc" id="L203">        return defaultFailoverParams;</span>
+    }
+
+    private static String wrapWithFailOver(final String uri) {
+<span class="fc" id="L207">        return MessageFormat.format(&quot;failover:({0})&quot;, uri);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

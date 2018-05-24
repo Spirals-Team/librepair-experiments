@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ThingCacheUpdateActor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Concierge :: Cache</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.concierge.cache.update</a> &gt; <span class="el_source">ThingCacheUpdateActor.java</span></div><h1>ThingCacheUpdateActor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.concierge.cache.update;
+
+import static java.util.Objects.requireNonNull;
+
+import java.util.Collections;
+
+import org.eclipse.ditto.model.enforcers.Enforcer;
+import org.eclipse.ditto.services.models.concierge.EntityId;
+import org.eclipse.ditto.services.models.concierge.cache.Entry;
+import org.eclipse.ditto.services.utils.cache.Cache;
+import org.eclipse.ditto.signals.commands.things.ThingCommand;
+import org.eclipse.ditto.signals.events.things.AclEntryCreated;
+import org.eclipse.ditto.signals.events.things.AclEntryDeleted;
+import org.eclipse.ditto.signals.events.things.AclEntryModified;
+import org.eclipse.ditto.signals.events.things.AclModified;
+import org.eclipse.ditto.signals.events.things.PolicyIdModified;
+import org.eclipse.ditto.signals.events.things.ThingCreated;
+import org.eclipse.ditto.signals.events.things.ThingDeleted;
+import org.eclipse.ditto.signals.events.things.ThingEvent;
+import org.eclipse.ditto.signals.events.things.ThingModified;
+
+import akka.actor.ActorRef;
+import akka.actor.Props;
+
+/**
+ * An actor which subscribes to Thing Events and updates caches when necessary.
+ */
+public class ThingCacheUpdateActor extends AbstractPubSubListenerActor {
+
+    /**
+     * The name of this actor.
+     */
+    public static final String ACTOR_NAME = &quot;thingCacheUpdater&quot;;
+
+    private final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; aclEnforcerCache;
+    private final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; thingIdCache;
+
+    private ThingCacheUpdateActor(final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; aclEnforcerCache,
+            final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; thingIdCache, final ActorRef pubSubMediator,
+            final int instanceIndex) {
+
+<span class="fc" id="L53">        super(pubSubMediator, Collections.singleton(ThingEvent.TYPE_PREFIX), instanceIndex);</span>
+
+<span class="fc" id="L55">        this.aclEnforcerCache = requireNonNull(aclEnforcerCache);</span>
+<span class="fc" id="L56">        this.thingIdCache = requireNonNull(thingIdCache);</span>
+<span class="fc" id="L57">    }</span>
+
+    /**
+     * Create an Akka {@code Props} object for this actor.
+     *
+     * @param aclEnforcerCache the acl-enforcer cache.
+     * @param thingIdCache the thing-id cache.
+     * @param pubSubMediator Akka pub-sub mediator.
+     * @param instanceIndex the index of this service instance.
+     * @return Akka {@code Props} object.
+     */
+    public static Props props(final Cache&lt;EntityId, Entry&lt;Enforcer&gt;&gt; aclEnforcerCache,
+            final Cache&lt;EntityId, Entry&lt;EntityId&gt;&gt; thingIdCache,
+            final ActorRef pubSubMediator, final int instanceIndex) {
+<span class="fc" id="L71">        requireNonNull(aclEnforcerCache);</span>
+<span class="fc" id="L72">        requireNonNull(thingIdCache);</span>
+<span class="fc" id="L73">        requireNonNull(pubSubMediator);</span>
+
+<span class="fc" id="L75">        return Props.create(ThingCacheUpdateActor.class,</span>
+<span class="fc" id="L76">                () -&gt; new ThingCacheUpdateActor(aclEnforcerCache, thingIdCache, pubSubMediator, instanceIndex));</span>
+    }
+
+    @Override
+    protected Receive handleEvents() {
+<span class="fc" id="L81">        return receiveBuilder().match(ThingEvent.class, this::handleEvent).build();</span>
+    }
+
+    private void handleEvent(final ThingEvent event) {
+<span class="fc" id="L85">        final EntityId key = EntityId.of(ThingCommand.RESOURCE_TYPE, event.getThingId());</span>
+
+<span class="fc bfc" id="L87" title="All 2 branches covered.">        if (isAclAffected(event)) {</span>
+<span class="fc" id="L88">            aclEnforcerCache.invalidate(key);</span>
+        }
+
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (isEnforcerIdAffected(event)) {</span>
+<span class="fc" id="L92">            thingIdCache.invalidate(key);</span>
+        }
+<span class="fc" id="L94">    }</span>
+
+    private static boolean isEnforcerIdAffected(final ThingEvent event) {
+<span class="fc bfc" id="L97" title="All 4 branches covered.">        return isCompleteThingChanged(event) || isPolicyIdModified(event);</span>
+    }
+
+    private static boolean isPolicyIdModified(final ThingEvent event) {
+        // the policyId changes or is set initially (when converting a v1 to a v2 thing)
+<span class="fc" id="L102">        return event instanceof PolicyIdModified;</span>
+    }
+
+    private static boolean isAclAffected(final ThingEvent event) {
+<span class="fc bfc" id="L106" title="All 6 branches covered.">        return isCompleteThingChanged(event) || isAclChanged(event) || isPolicyIdModified(event);</span>
+    }
+
+    private static boolean isAclChanged(final ThingEvent event) {
+<span class="fc bfc" id="L110" title="All 8 branches covered.">        return event instanceof AclModified || event instanceof AclEntryCreated || event instanceof AclEntryModified ||</span>
+                event instanceof AclEntryDeleted;
+    }
+
+    private static boolean isCompleteThingChanged(final ThingEvent event) {
+<span class="fc bfc" id="L115" title="All 6 branches covered.">        return event instanceof ThingCreated || event instanceof ThingModified || event instanceof ThingDeleted;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

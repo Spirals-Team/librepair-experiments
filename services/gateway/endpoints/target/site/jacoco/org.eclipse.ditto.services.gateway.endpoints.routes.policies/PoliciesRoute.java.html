@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PoliciesRoute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Services :: Gateway :: Endpoints</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.services.gateway.endpoints.routes.policies</a> &gt; <span class="el_source">PoliciesRoute.java</span></div><h1>PoliciesRoute.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.services.gateway.endpoints.routes.policies;
+
+import static akka.http.javadsl.server.Directives.delete;
+import static akka.http.javadsl.server.Directives.extractDataBytes;
+import static akka.http.javadsl.server.Directives.get;
+import static akka.http.javadsl.server.Directives.pathEndOrSingleSlash;
+import static akka.http.javadsl.server.Directives.put;
+import static akka.http.javadsl.server.Directives.rawPathPrefix;
+import static akka.http.javadsl.server.Directives.route;
+import static org.eclipse.ditto.model.base.exceptions.DittoJsonException.wrapJsonRuntimeException;
+import static org.eclipse.ditto.services.gateway.endpoints.directives.CustomPathMatchers.mergeDoubleSlashes;
+
+import org.eclipse.ditto.json.JsonFactory;
+import org.eclipse.ditto.json.JsonObject;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.policies.PoliciesModelFactory;
+import org.eclipse.ditto.model.policies.Policy;
+import org.eclipse.ditto.services.gateway.endpoints.routes.AbstractRoute;
+import org.eclipse.ditto.signals.commands.policies.exceptions.PolicyIdNotExplicitlySettableException;
+import org.eclipse.ditto.signals.commands.policies.modify.DeletePolicy;
+import org.eclipse.ditto.signals.commands.policies.modify.ModifyPolicy;
+import org.eclipse.ditto.signals.commands.policies.query.RetrievePolicy;
+
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.http.javadsl.server.Directives;
+import akka.http.javadsl.server.PathMatchers;
+import akka.http.javadsl.server.RequestContext;
+import akka.http.javadsl.server.Route;
+
+/**
+ * Builder for creating Akka HTTP routes for {@code /policies}.
+ */
+public final class PoliciesRoute extends AbstractRoute {
+
+    private static final String PATH_POLICIES = &quot;policies&quot;;
+    private static final String PATH_ENTRIES = &quot;entries&quot;;
+
+    private final PolicyEntriesRoute policyEntriesRoute;
+
+    /**
+     * Constructs the {@code /policies} route builder.
+     *
+     * @param proxyActor an actor selection of the command delegating actor.
+     * @param actorSystem the ActorSystem to use.
+     * @throws NullPointerException if any argument is {@code null}.
+     */
+    public PoliciesRoute(final ActorRef proxyActor, final ActorSystem actorSystem) {
+<span class="fc" id="L61">        super(proxyActor, actorSystem);</span>
+
+<span class="fc" id="L63">        policyEntriesRoute = new PolicyEntriesRoute(proxyActor, actorSystem);</span>
+<span class="fc" id="L64">    }</span>
+
+    /**
+     * Builds the {@code /policies} route.
+     *
+     * @return the {@code /policies} route.
+     */
+    public Route buildPoliciesRoute(final RequestContext ctx, final DittoHeaders dittoHeaders) {
+<span class="fc" id="L72">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_POLICIES), () -&gt;</span>
+<span class="nc" id="L73">                rawPathPrefix(mergeDoubleSlashes().concat(PathMatchers.segment()), policyId -&gt; // /policies/&lt;policyId&gt;</span>
+<span class="nc" id="L74">                        route(</span>
+<span class="nc" id="L75">                                policyEntry(ctx, dittoHeaders, policyId),</span>
+<span class="nc" id="L76">                                policyEntryEntries(ctx, dittoHeaders, policyId)</span>
+                        )
+                )
+        );
+    }
+
+    /*
+     * Describes {@code /policies/&lt;policyId&gt;} route.
+     * @return {@code /policies/&lt;policyId&gt;} route.
+     */
+    private Route policyEntry(final RequestContext ctx, final DittoHeaders dittoHeaders, final String policyId) {
+<span class="nc" id="L87">        return pathEndOrSingleSlash(() -&gt;</span>
+<span class="nc" id="L88">                Directives.route(</span>
+<span class="nc" id="L89">                        get(() -&gt; // GET /policies/&lt;policyId&gt;</span>
+<span class="nc" id="L90">                                handlePerRequest(ctx, RetrievePolicy.of(policyId, dittoHeaders))</span>
+                        ),
+<span class="nc" id="L92">                        put(() -&gt; // PUT /policies/&lt;policyId&gt;</span>
+<span class="nc" id="L93">                                extractDataBytes(payloadSource -&gt;</span>
+<span class="nc" id="L94">                                        handlePerRequest(ctx, dittoHeaders, payloadSource,</span>
+<span class="nc" id="L95">                                                policyJson -&gt; ModifyPolicy</span>
+<span class="nc" id="L96">                                                        .of(policyId, PoliciesModelFactory.newPolicy(</span>
+<span class="nc" id="L97">                                                                createPolicyJsonObjectForPut(policyJson, policyId)),</span>
+                                                                dittoHeaders)
+                                        )
+                                )
+                        ),
+<span class="nc" id="L102">                        delete(() -&gt; // DELETE /policies/&lt;policyId&gt;</span>
+<span class="nc" id="L103">                                handlePerRequest(ctx, DeletePolicy.of(policyId, dittoHeaders))</span>
+                        )
+                )
+        );
+    }
+
+    private JsonObject createPolicyJsonObjectForPut(final String jsonString, final String policyId) {
+<span class="nc" id="L110">        final JsonObject policyJsonObject = wrapJsonRuntimeException(() -&gt; JsonFactory.newObject(jsonString));</span>
+<span class="nc" id="L111">        policyJsonObject.getValue(Policy.JsonFields.ID.getPointer())</span>
+<span class="nc" id="L112">                .ifPresent(policyIdJsonValue -&gt; {</span>
+<span class="nc bnc" id="L113" title="All 4 branches missed.">                    if (!policyIdJsonValue.isString() || !policyId.equals(policyIdJsonValue.asString())) {</span>
+<span class="nc" id="L114">                        throw PolicyIdNotExplicitlySettableException.newBuilder().build();</span>
+                    }
+<span class="nc" id="L116">                });</span>
+<span class="nc" id="L117">        return policyJsonObject.setValue(Policy.JsonFields.ID.getPointer(), JsonValue.of(policyId));</span>
+    }
+
+    /*
+     * Describes {@code /policies/&lt;policyId&gt;/entries} route.
+     *
+     * @return {@code /policies/&lt;policyId&gt;/entries} route.
+     */
+    private Route policyEntryEntries(final RequestContext ctx, final DittoHeaders dittoHeaders,
+            final String policyId) {
+<span class="nc" id="L127">        return rawPathPrefix(mergeDoubleSlashes().concat(PATH_ENTRIES), () -&gt; // /policies/&lt;policyId&gt;/entries</span>
+<span class="nc" id="L128">                policyEntriesRoute.buildPolicyEntriesRoute(ctx, dittoHeaders, policyId)</span>
+        );
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

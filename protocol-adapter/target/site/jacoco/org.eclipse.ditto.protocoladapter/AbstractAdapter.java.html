@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: Protocol Adapter</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.protocoladapter</a> &gt; <span class="el_source">AbstractAdapter.java</span></div><h1>AbstractAdapter.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.protocoladapter;
+
+import static org.eclipse.ditto.model.base.common.ConditionChecker.checkNotNull;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.eclipse.ditto.json.JsonArray;
+import org.eclipse.ditto.json.JsonFieldSelector;
+import org.eclipse.ditto.json.JsonParseException;
+import org.eclipse.ditto.json.JsonPointer;
+import org.eclipse.ditto.json.JsonValue;
+import org.eclipse.ditto.model.base.auth.AuthorizationSubject;
+import org.eclipse.ditto.model.base.common.HttpStatusCode;
+import org.eclipse.ditto.model.base.exceptions.DittoJsonException;
+import org.eclipse.ditto.model.base.headers.DittoHeaders;
+import org.eclipse.ditto.model.base.json.Jsonifiable;
+import org.eclipse.ditto.model.messages.MessageHeaderDefinition;
+import org.eclipse.ditto.model.things.AccessControlList;
+import org.eclipse.ditto.model.things.AccessControlListModelFactory;
+import org.eclipse.ditto.model.things.AclEntry;
+import org.eclipse.ditto.model.things.Attributes;
+import org.eclipse.ditto.model.things.Feature;
+import org.eclipse.ditto.model.things.FeatureDefinition;
+import org.eclipse.ditto.model.things.FeatureProperties;
+import org.eclipse.ditto.model.things.Features;
+import org.eclipse.ditto.model.things.Thing;
+import org.eclipse.ditto.model.things.ThingsModelFactory;
+
+/**
+ * Abstract implementation of {@link Adapter} to provide common functionality.
+ */
+abstract class AbstractAdapter&lt;T extends Jsonifiable&gt; implements Adapter&lt;T&gt; {
+
+    private static final int ATTRIBUTE_PATH_LEVEL = 1;
+    private static final int FEATURE_PROPERTY_PATH_LEVEL = 3;
+
+    private final Map&lt;String, JsonifiableMapper&lt;T&gt;&gt; mappingStrategies;
+
+<span class="fc" id="L54">    protected AbstractAdapter(final Map&lt;String, JsonifiableMapper&lt;T&gt;&gt; mappingStrategies) {</span>
+<span class="fc" id="L55">        this.mappingStrategies = mappingStrategies;</span>
+<span class="fc" id="L56">    }</span>
+
+    protected static boolean isCreated(final Adaptable adaptable) {
+<span class="fc" id="L59">        return adaptable.getPayload().getStatus()</span>
+<span class="fc" id="L60">                .map(HttpStatusCode.CREATED::equals)</span>
+<span class="pc" id="L61">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static DittoHeaders dittoHeadersFrom(final Adaptable adaptable) {
+<span class="fc" id="L65">        return adaptable.getHeaders().orElseGet(DittoHeaders::empty);</span>
+    }
+
+    protected static AuthorizationSubject authorizationSubjectFrom(final Adaptable adaptable) {
+<span class="fc" id="L69">        return AuthorizationSubject.newInstance(leafValue(adaptable.getPayload().getPath()));</span>
+    }
+
+    protected static JsonFieldSelector selectedFieldsFrom(final Adaptable adaptable) {
+<span class="fc" id="L73">        return adaptable.getPayload().getFields().orElse(null);</span>
+    }
+
+    protected static String thingIdFrom(final Adaptable adaptable) {
+<span class="fc" id="L77">        final TopicPath topicPath = adaptable.getTopicPath();</span>
+<span class="fc" id="L78">        return topicPath.getNamespace() + &quot;:&quot; + topicPath.getId();</span>
+    }
+
+    protected static Thing thingFrom(final Adaptable adaptable) {
+<span class="fc" id="L82">        return adaptable.getPayload().getValue()</span>
+<span class="fc" id="L83">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L84">                .map(ThingsModelFactory::newThing)</span>
+<span class="pc" id="L85">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static JsonArray thingsArrayFrom(final Adaptable adaptable) {
+<span class="fc" id="L89">        return adaptable.getPayload()</span>
+<span class="fc" id="L90">                .getValue()</span>
+<span class="fc" id="L91">                .filter(JsonValue::isArray)</span>
+<span class="fc" id="L92">                .map(JsonValue::asArray)</span>
+<span class="pc" id="L93">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static AccessControlList aclFrom(final Adaptable adaptable) {
+<span class="fc" id="L97">        return adaptable.getPayload()</span>
+<span class="fc" id="L98">                .getValue()</span>
+<span class="fc" id="L99">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L100">                .map(AccessControlListModelFactory::newAcl)</span>
+<span class="pc" id="L101">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static AclEntry aclEntryFrom(final Adaptable adaptable) {
+<span class="fc" id="L105">        return adaptable.getPayload()</span>
+<span class="fc" id="L106">                .getValue()</span>
+<span class="fc" id="L107">                .map(permissions -&gt; AccessControlListModelFactory</span>
+<span class="fc" id="L108">                        .newAclEntry(leafValue(adaptable.getPayload().getPath()), permissions))</span>
+<span class="pc" id="L109">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static Attributes attributesFrom(final Adaptable adaptable) {
+<span class="fc" id="L113">        return adaptable.getPayload()</span>
+<span class="fc" id="L114">                .getValue()</span>
+<span class="fc" id="L115">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L116">                .map(ThingsModelFactory::newAttributes)</span>
+<span class="pc" id="L117">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static JsonPointer attributePointerFrom(final Adaptable adaptable) {
+<span class="fc" id="L121">        final JsonPointer path = adaptable.getPayload().getPath();</span>
+<span class="fc" id="L122">        return path.getSubPointer(ATTRIBUTE_PATH_LEVEL)</span>
+<span class="pc" id="L123">                .orElseThrow(() -&gt; UnknownPathException.newBuilder(path).build());</span>
+    }
+
+    protected static JsonValue attributeValueFrom(final Adaptable adaptable) {
+<span class="pc" id="L127">        return adaptable.getPayload().getValue().orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static String featureIdFrom(final Adaptable adaptable) {
+<span class="fc" id="L131">        final JsonPointer path = adaptable.getPayload().getPath();</span>
+<span class="pc" id="L132">        return path.get(1).orElseThrow(() -&gt; UnknownPathException.newBuilder(path).build()).toString();</span>
+    }
+
+    protected static String featureIdForMessageFrom(final Adaptable adaptable) {
+<span class="fc" id="L136">        return adaptable.getHeaders()</span>
+<span class="fc" id="L137">                .map(h -&gt; h.get(MessageHeaderDefinition.FEATURE_ID.getKey()))</span>
+<span class="pc" id="L138">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static Features featuresFrom(final Adaptable adaptable) {
+<span class="fc" id="L142">        return adaptable.getPayload()</span>
+<span class="fc" id="L143">                .getValue()</span>
+<span class="fc" id="L144">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L145">                .map(ThingsModelFactory::newFeatures)</span>
+<span class="pc" id="L146">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static Feature featureFrom(final Adaptable adaptable) {
+<span class="fc" id="L150">        return adaptable.getPayload()</span>
+<span class="fc" id="L151">                .getValue()</span>
+<span class="fc" id="L152">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L153">                .map(jsonObject -&gt; ThingsModelFactory.newFeatureBuilder(jsonObject)</span>
+<span class="fc" id="L154">                        .useId(featureIdFrom(adaptable))</span>
+<span class="fc" id="L155">                        .build())</span>
+<span class="pc" id="L156">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static FeatureDefinition featureDefinitionFrom(final Adaptable adaptable) {
+<span class="fc" id="L160">        return adaptable.getPayload()</span>
+<span class="fc" id="L161">                .getValue()</span>
+<span class="fc" id="L162">                .map(JsonValue::asArray)</span>
+<span class="fc" id="L163">                .map(ThingsModelFactory::newFeatureDefinition)</span>
+<span class="pc" id="L164">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static FeatureProperties featurePropertiesFrom(final Adaptable adaptable) {
+<span class="fc" id="L168">        return adaptable.getPayload()</span>
+<span class="fc" id="L169">                .getValue()</span>
+<span class="fc" id="L170">                .map(JsonValue::asObject)</span>
+<span class="fc" id="L171">                .map(ThingsModelFactory::newFeatureProperties)</span>
+<span class="pc" id="L172">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static JsonPointer featurePropertyPointerFrom(final Adaptable adaptable) {
+<span class="fc" id="L176">        final JsonPointer path = adaptable.getPayload().getPath();</span>
+<span class="fc" id="L177">        return path.getSubPointer(FEATURE_PROPERTY_PATH_LEVEL)</span>
+<span class="pc" id="L178">                .orElseThrow(() -&gt; UnknownPathException.newBuilder(path).build());</span>
+    }
+
+    protected static JsonValue featurePropertyValueFrom(final Adaptable adaptable) {
+<span class="pc" id="L182">        return adaptable.getPayload().getValue().orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static String policyIdFrom(final Adaptable adaptable) {
+<span class="fc" id="L186">        return adaptable.getPayload()</span>
+<span class="fc" id="L187">                .getValue()</span>
+<span class="fc" id="L188">                .map(JsonValue::asString)</span>
+<span class="pc" id="L189">                .orElseThrow(() -&gt; JsonParseException.newBuilder().build());</span>
+    }
+
+    protected static HttpStatusCode statusCodeFrom(final Adaptable adaptable) {
+<span class="fc" id="L193">        return adaptable.getPayload().getStatus().orElse(null);</span>
+    }
+
+    protected static String namespaceFrom(final Adaptable adaptable) {
+<span class="fc" id="L197">        final String namespace = adaptable.getTopicPath().getNamespace();</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">        return &quot;_&quot;.equals(namespace) ? null : namespace;</span>
+    }
+
+    private static String leafValue(final JsonPointer path) {
+<span class="pc" id="L202">        return path.getLeaf().orElseThrow(() -&gt; UnknownPathException.newBuilder(path).build()).toString();</span>
+    }
+
+    protected static CommandsTopicPathBuilder fromTopicPathBuilderWithChannel(final TopicPathBuilder topicPathBuilder,
+            final TopicPath.Channel channel) {
+        final CommandsTopicPathBuilder commandsTopicPathBuilder;
+<span class="pc bpc" id="L208" title="1 of 2 branches missed.">        if (channel == TopicPath.Channel.TWIN) {</span>
+<span class="fc" id="L209">            commandsTopicPathBuilder = topicPathBuilder.twin().commands();</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        } else if (channel == TopicPath.Channel.LIVE) {</span>
+<span class="nc" id="L211">            commandsTopicPathBuilder = topicPathBuilder.live().commands();</span>
+        } else {
+<span class="nc" id="L213">            throw new IllegalArgumentException(&quot;Unknown Channel '&quot; + channel + &quot;'&quot;);</span>
+        }
+<span class="fc" id="L215">        return commandsTopicPathBuilder;</span>
+    }
+
+    protected static TopicPath.Action getAction(final TopicPath topicPath) {
+<span class="fc" id="L219">        return topicPath.getAction()</span>
+<span class="pc" id="L220">                .orElseThrow(() -&gt; new NullPointerException(&quot;TopicPath did not contain an Action!&quot;));</span>
+    }
+
+    @Override
+    public T fromAdaptable(final Adaptable adaptable) {
+<span class="fc" id="L225">        checkNotNull(adaptable, &quot;Adaptable&quot;);</span>
+<span class="fc" id="L226">        final String type = getType(adaptable);</span>
+<span class="fc" id="L227">        final JsonifiableMapper&lt;T&gt; jsonifiableMapper = mappingStrategies.get(type);</span>
+<span class="pc bpc" id="L228" title="1 of 2 branches missed.">        if (null == jsonifiableMapper) {</span>
+<span class="nc" id="L229">            throw UnknownTopicPathException.newBuilder(adaptable.getTopicPath()).build();</span>
+        }
+
+<span class="fc" id="L232">        return DittoJsonException.wrapJsonRuntimeException(() -&gt; jsonifiableMapper.map(adaptable));</span>
+    }
+
+    protected abstract String getType(Adaptable adaptable);
+
+    /**
+     * Returns the given String {@code s} with an upper case first letter.
+     *
+     * @param s the String.
+     * @return the upper case String.
+     */
+    protected static String upperCaseFirst(final String s) {
+<span class="pc bpc" id="L244" title="1 of 2 branches missed.">        if (s.isEmpty()) {</span>
+<span class="nc" id="L245">            return s;</span>
+        }
+
+<span class="fc" id="L248">        final char[] chars = s.toCharArray();</span>
+<span class="fc" id="L249">        chars[0] = Character.toUpperCase(chars[0]);</span>
+<span class="fc" id="L250">        return new String(chars);</span>
+    }
+
+    /**
+     * Utility class for matching {@link Payload} path.
+     */
+    static final class PathMatcher {
+
+<span class="fc" id="L258">        static final Map&lt;String, Pattern&gt; PATTERNS = new HashMap&lt;&gt;();</span>
+
+        static {
+<span class="fc" id="L261">            PATTERNS.put(&quot;thing&quot;, Pattern.compile(&quot;^/$&quot;));</span>
+<span class="fc" id="L262">            PATTERNS.put(&quot;acl&quot;, Pattern.compile(&quot;^/acl$&quot;));</span>
+<span class="fc" id="L263">            PATTERNS.put(&quot;aclEntry&quot;, Pattern.compile(&quot;^/acl/[^/]*$&quot;));</span>
+<span class="fc" id="L264">            PATTERNS.put(&quot;policyId&quot;, Pattern.compile(&quot;^/policyId$&quot;));</span>
+<span class="fc" id="L265">            PATTERNS.put(&quot;policy&quot;, Pattern.compile(&quot;^/_policy&quot;));</span>
+<span class="fc" id="L266">            PATTERNS.put(&quot;policyEntries&quot;, Pattern.compile(&quot;^/_policy/entries$&quot;));</span>
+<span class="fc" id="L267">            PATTERNS.put(&quot;policyEntry&quot;, Pattern.compile(&quot;^/_policy/entries/.*$&quot;));</span>
+<span class="fc" id="L268">            PATTERNS.put(&quot;policyEntrySubjects&quot;, Pattern.compile(&quot;^/_policy/entries/[^/]*/subjects$&quot;));</span>
+<span class="fc" id="L269">            PATTERNS.put(&quot;policyEntrySubject&quot;, Pattern.compile(&quot;^/_policy/entries/[^/]*/subjects/.*$&quot;));</span>
+<span class="fc" id="L270">            PATTERNS.put(&quot;policyEntryResources&quot;, Pattern.compile(&quot;^/_policy/entries/[^/]*/resources$&quot;));</span>
+<span class="fc" id="L271">            PATTERNS.put(&quot;policyEntryResource&quot;, Pattern.compile(&quot;^/_policy/entries/[^/]*/resources/.*$&quot;));</span>
+<span class="fc" id="L272">            PATTERNS.put(&quot;attributes&quot;, Pattern.compile(&quot;^/attributes$&quot;));</span>
+<span class="fc" id="L273">            PATTERNS.put(&quot;attribute&quot;, Pattern.compile(&quot;^/attributes/.*$&quot;));</span>
+<span class="fc" id="L274">            PATTERNS.put(&quot;features&quot;, Pattern.compile(&quot;^/features$&quot;));</span>
+<span class="fc" id="L275">            PATTERNS.put(&quot;feature&quot;, Pattern.compile(&quot;^/features/[^/]*$&quot;));</span>
+<span class="fc" id="L276">            PATTERNS.put(&quot;featureDefinition&quot;, Pattern.compile(&quot;^/features/[^/]*/definition$&quot;));</span>
+<span class="fc" id="L277">            PATTERNS.put(&quot;featureProperties&quot;, Pattern.compile(&quot;^/features/[^/]*/properties$&quot;));</span>
+<span class="fc" id="L278">            PATTERNS.put(&quot;featureProperty&quot;, Pattern.compile(&quot;^/features/[^/]*/properties/.*$&quot;));</span>
+<span class="fc" id="L279">        }</span>
+
+<span class="nc" id="L281">        private PathMatcher() {</span>
+<span class="nc" id="L282">            throw new AssertionError();</span>
+        }
+
+        /**
+         * Matches a given {@code path} against known schemes and returns the corresponding entity name.
+         *
+         * @param path the path to match.
+         * @return the entity name which matched.
+         * @throws UnknownPathException if {@code path} matched no known scheme.
+         */
+        static String match(final JsonPointer path) {
+<span class="fc" id="L293">            final Predicate&lt;Map.Entry&lt;String, Pattern&gt;&gt; pathMatchesPattern = entry -&gt; {</span>
+<span class="fc" id="L294">                final Pattern pattern = entry.getValue();</span>
+<span class="fc" id="L295">                final Matcher matcher = pattern.matcher(path);</span>
+<span class="fc" id="L296">                return matcher.matches();</span>
+            };
+
+<span class="fc" id="L299">            return PATTERNS.entrySet()</span>
+<span class="fc" id="L300">                    .stream()</span>
+<span class="fc" id="L301">                    .filter(pathMatchesPattern)</span>
+<span class="fc" id="L302">                    .findFirst()</span>
+<span class="fc" id="L303">                    .map(Map.Entry::getKey)</span>
+<span class="pc" id="L304">                    .orElseThrow(() -&gt; UnknownPathException.newBuilder(path).build());</span>
+        }
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

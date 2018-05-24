@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ImmutableJsonFieldSelectorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Eclipse Ditto :: JSON</a> &gt; <a href="index.source.html" class="el_package">org.eclipse.ditto.json</a> &gt; <span class="el_source">ImmutableJsonFieldSelectorFactory.java</span></div><h1>ImmutableJsonFieldSelectorFactory.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2017 Bosch Software Innovations GmbH.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v2.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-2.0/index.php
+ *
+ * Contributors:
+ *    Bosch Software Innovations GmbH - initial contribution
+ */
+package org.eclipse.ditto.json;
+
+import static java.util.Objects.requireNonNull;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import javax.annotation.concurrent.Immutable;
+
+/**
+ * This factory is capable of parsing a (complex) JSON field selector string in order to create an instance of
+ * {@link ImmutableJsonFieldSelector}. For example, the field selector string
+ * &lt;p&gt;
+ * {@code &quot;thingId,attributes(acceleration,someData(foo,bar/baz)),acl,features/key&quot;}
+ * &lt;/p&gt;
+ * would lead to a JSON field selector which consists of the following JSON pointers:
+ * &lt;ul&gt;
+ * &lt;li&gt;{@code &quot;thingId&quot;},&lt;/li&gt;
+ * &lt;li&gt;{@code &quot;attributes/acceleration&quot;},&lt;/li&gt;
+ * &lt;li&gt;{@code &quot;attributes/someData/foo&quot;},&lt;/li&gt;
+ * &lt;li&gt;{@code &quot;attributes/someData/bar/baz&quot;},&lt;/li&gt;
+ * &lt;li&gt;{@code &quot;acl&quot;} and&lt;/li&gt;
+ * &lt;li&gt;{@code &quot;features/key&quot;}.&lt;/li&gt;
+ * &lt;/ul&gt;
+ */
+@Immutable
+final class ImmutableJsonFieldSelectorFactory {
+
+    private static final String OPENING_PARENTHESIS = &quot;(&quot;;
+    private static final String CLOSING_PARENTHESIS = &quot;)&quot;;
+
+    private final String jsonFieldSelectorString;
+
+<span class="fc" id="L51">    private ImmutableJsonFieldSelectorFactory(final String theJsonFieldSelectorString) {</span>
+<span class="fc" id="L52">        jsonFieldSelectorString = theJsonFieldSelectorString;</span>
+
+<span class="fc" id="L54">        validateJsonFieldSelectorString();</span>
+<span class="fc" id="L55">    }</span>
+
+    /**
+     * Returns a new instance of {@code ImmutableJsonFieldSelectorFactory} which constructs a {@link JsonFieldSelector}
+     * based on the given string.
+     *
+     * @param jsonFieldSelectorString the string to create a JSON field selector from.
+     * @param jsonParseOptions the JsonParseOptions to apply when parsing the {@code jsonFieldSelectorString}.
+     * @return a new JSON field selector factory.
+     * @throws NullPointerException if {@code jsonFieldSelectorString} is {@code null}.
+     * @throws JsonFieldSelectorInvalidException if {@code jsonFieldSelectorString} is empty or if {@code
+     * jsonFieldSelectorString} does not contain closing parenthesis ({@code )}) for each opening parenthesis ({@code
+     * (}).
+     */
+    public static ImmutableJsonFieldSelectorFactory newInstance(final String jsonFieldSelectorString,
+            final JsonParseOptions jsonParseOptions) {
+<span class="fc" id="L71">        requireNonNull(jsonFieldSelectorString, &quot;The JSON field selector string must not be null!&quot;);</span>
+<span class="fc" id="L72">        requireNonNull(jsonParseOptions, &quot;The JSON parse options must not be null!&quot;);</span>
+
+<span class="fc" id="L74">        final String decodedJsonFieldSelectorString = tryToDecodeString(jsonFieldSelectorString, jsonParseOptions);</span>
+<span class="fc" id="L75">        return new ImmutableJsonFieldSelectorFactory(decodedJsonFieldSelectorString);</span>
+    }
+
+    @SuppressWarnings(&quot;squid:S1166&quot;)
+    private static String tryToDecodeString(final String s, final JsonParseOptions jsonParseOptions) {
+        try {
+<span class="fc" id="L81">            return decode(s, jsonParseOptions);</span>
+<span class="fc" id="L82">        } catch (final Exception e) {</span>
+<span class="fc" id="L83">            throw JsonFieldSelectorInvalidException.newBuilder() //</span>
+<span class="fc" id="L84">                    .fieldSelector(s) //</span>
+<span class="fc" id="L85">                    .description(&quot;Check if the field selector is correctly URL encoded.&quot;) //</span>
+<span class="fc" id="L86">                    .cause(e) //</span>
+<span class="fc" id="L87">                    .build();</span>
+        }
+    }
+
+    private static String decode(final String s, final JsonParseOptions jsonParseOptions)
+            throws UnsupportedEncodingException {
+<span class="fc bfc" id="L93" title="All 2 branches covered.">        if (jsonParseOptions.isApplyUrlDecoding()) {</span>
+<span class="fc" id="L94">            return URLDecoder.decode(s, &quot;UTF-8&quot;);</span>
+        } else {
+<span class="fc" id="L96">            return s;</span>
+        }
+    }
+
+    /*
+     * Splits the passed in String at the String's commas ({@code ,}) and returns a List of the single parts.
+     * Thereby also handles Parentheses ({@code (} and {@code )}) in a way that they are treated as another &quot;level&quot; at
+     * which no splitting at commas is performed.
+     *
+     * Example Strings and how they are split:
+     * &lt;pre&gt;
+     *    &quot;thingId,attributes,acl&quot;                               List [ &quot;thingId&quot;, &quot;attributes&quot;, &quot;acl&quot; ]
+     *    &quot;thingId,attributes(someAttr),acl&quot;                     List [ &quot;thingId&quot;, &quot;attributes&quot;, &quot;acl&quot; ]
+     *    &quot;thingId,attributes(someAttr,someOther,another),acl&quot;   List [ &quot;thingId&quot;, &quot;attributes&quot;, &quot;acl&quot; ]
+     *    &quot;thingId,attributes(someAttr/subel,foo),acl&quot;           List [ &quot;thingId&quot;, &quot;attributes&quot;, &quot;acl&quot; ]
+     * &lt;/pre&gt;
+     *
+     * @return a List of the single split parts.
+     */
+    private static List&lt;String&gt; splitAroundComma(final String toSplit) {
+<span class="fc" id="L116">        final List&lt;String&gt; topLevelFields = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L117">        final StringBuilder sb = new StringBuilder(toSplit.length());</span>
+
+<span class="fc" id="L119">        int waitForClosingParenthesesCnt = 0;</span>
+<span class="fc bfc" id="L120" title="All 2 branches covered.">        for (final Character c : toSplit.toCharArray()) {</span>
+<span class="fc bfc" id="L121" title="All 2 branches covered.">            if (c == '(') {</span>
+<span class="fc" id="L122">                waitForClosingParenthesesCnt++;</span>
+<span class="fc" id="L123">                sb.append(c);</span>
+<span class="fc" id="L124">                continue;</span>
+            }
+<span class="fc bfc" id="L126" title="All 2 branches covered.">            if (waitForClosingParenthesesCnt &gt; 0) {</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">                if (c == ')') {</span>
+<span class="fc" id="L128">                    waitForClosingParenthesesCnt--;</span>
+                }
+<span class="fc" id="L130">                sb.append(c);</span>
+<span class="fc" id="L131">                continue;</span>
+            }
+
+<span class="fc bfc" id="L134" title="All 2 branches covered.">            if (c != ',') {</span>
+<span class="fc" id="L135">                sb.append(c);</span>
+            } else {
+<span class="fc" id="L137">                topLevelFields.add(sb.toString());</span>
+<span class="fc" id="L138">                sb.setLength(0);</span>
+            }
+        }
+<span class="fc" id="L141">        topLevelFields.add(sb.toString());</span>
+<span class="fc" id="L142">        return topLevelFields;</span>
+    }
+
+    private static Set&lt;JsonPointer&gt; flattenToJsonPointers(final Iterable&lt;String&gt; rawJsonKeys) {
+<span class="fc" id="L146">        final Set&lt;JsonPointer&gt; result = new LinkedHashSet&lt;&gt;();</span>
+
+<span class="fc bfc" id="L148" title="All 2 branches covered.">        for (final String rawJsonKey : rawJsonKeys) {</span>
+<span class="fc bfc" id="L149" title="All 2 branches covered.">            if (isJsonSelectorFormat(rawJsonKey)) {</span>
+<span class="fc" id="L150">                result.addAll(flattenToJsonPointers(rawJsonKey));</span>
+            } else {
+                // slashes are already treated by the constructor of the JSON pointer
+<span class="fc" id="L153">                result.add(JsonFactory.newPointer(rawJsonKey));</span>
+            }
+<span class="fc" id="L155">        }</span>
+
+<span class="fc" id="L157">        return result;</span>
+    }
+
+    private static boolean isJsonSelectorFormat(final String jsonKey) {
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        if (jsonKey.contains(OPENING_PARENTHESIS)) {</span>
+<span class="fc" id="L162">            final int iOpeningParenthesis = jsonKey.indexOf(OPENING_PARENTHESIS);</span>
+<span class="fc" id="L163">            final int iClosingParenthesis = jsonKey.indexOf(CLOSING_PARENTHESIS);</span>
+
+<span class="fc bfc" id="L165" title="All 2 branches covered.">            return iOpeningParenthesis &lt; iClosingParenthesis;</span>
+        }
+
+<span class="fc" id="L168">        return false;</span>
+    }
+
+    private static Collection&lt;JsonPointer&gt; flattenToJsonPointers(final String stringWithParentheses) {
+<span class="fc" id="L172">        final int indexOfOpeningParenthesis = stringWithParentheses.indexOf(OPENING_PARENTHESIS);</span>
+
+        // the string before the first opening parenthesis
+<span class="fc" id="L175">        final String commonRootKey = stringWithParentheses.substring(0, indexOfOpeningParenthesis);</span>
+<span class="fc" id="L176">        final JsonPointer commonRootPointer = JsonFactory.newPointer(commonRootKey);</span>
+
+        // the string within the opening and closing parenthesis
+        // this string is (recursively) treated like a new field selector string (because technically it is)
+<span class="fc" id="L180">        final String withoutParentheses =</span>
+<span class="fc" id="L181">                stringWithParentheses.substring(indexOfOpeningParenthesis + 1, stringWithParentheses.length() - 1);</span>
+<span class="fc" id="L182">        final Set&lt;JsonPointer&gt; jsonPointers = flattenToJsonPointers(splitAroundComma(withoutParentheses));</span>
+
+<span class="fc" id="L184">        return jsonPointers.stream() //</span>
+<span class="fc" id="L185">                .map(commonRootPointer::append) //</span>
+<span class="fc" id="L186">                .collect(Collectors.toCollection(LinkedHashSet::new));</span>
+    }
+
+    private void validateJsonFieldSelectorString() {
+<span class="fc bfc" id="L190" title="All 2 branches covered.">        if (jsonFieldSelectorString.isEmpty()) {</span>
+<span class="fc" id="L191">            throw JsonFieldSelectorInvalidException.newBuilder() //</span>
+<span class="fc" id="L192">                    .fieldSelector(jsonFieldSelectorString) //</span>
+<span class="fc" id="L193">                    .build();</span>
+        }
+<span class="fc bfc" id="L195" title="All 2 branches covered.">        if (jsonFieldSelectorString.contains(OPENING_PARENTHESIS)) {</span>
+<span class="fc" id="L196">            final int openedParenthesesCnt = getCountOf(OPENING_PARENTHESIS);</span>
+<span class="fc" id="L197">            final int closedParenthesesCnt = getCountOf(CLOSING_PARENTHESIS);</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">            if (openedParenthesesCnt != closedParenthesesCnt) {</span>
+<span class="fc" id="L199">                throw JsonFieldSelectorInvalidException.newBuilder() //</span>
+<span class="fc" id="L200">                        .fieldSelector(jsonFieldSelectorString) //</span>
+<span class="fc" id="L201">                        .build();</span>
+            }
+        }
+<span class="fc" id="L204">    }</span>
+
+    private int getCountOf(final CharSequence parenthesis) {
+<span class="fc" id="L207">        return jsonFieldSelectorString.length() - jsonFieldSelectorString.replace(parenthesis, &quot;&quot;).length();</span>
+    }
+
+    /**
+     * Returns a new JSON field selector based on the parsed string which was given to this class' constructor.
+     *
+     * @return a new JSON field selector instance.
+     * @throws IllegalStateException if the JSON field selector string could not be decoded as UTF-8.
+     */
+    public JsonFieldSelector newJsonFieldSelector() {
+<span class="fc" id="L217">        final List&lt;String&gt; rawJsonKeys = splitAroundComma(jsonFieldSelectorString);</span>
+<span class="fc" id="L218">        final Set&lt;JsonPointer&gt; jsonPointers = flattenToJsonPointers(rawJsonKeys);</span>
+<span class="fc" id="L219">        return ImmutableJsonFieldSelector.of(jsonPointers, jsonFieldSelectorString);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>
