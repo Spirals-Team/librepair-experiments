@@ -1,0 +1,41 @@
+package spoon.test.reference;
+
+
+public class MyClass {
+    public MyClass() {
+        this("Default");
+    }
+
+    public MyClass(java.lang.String param) {
+        this(param, 0);
+    }
+
+    public MyClass(java.lang.String param, int paramint) {
+    }
+
+    public <T> void method1(T t) {
+        method2();
+    }
+
+    public <T extends java.lang.String> void method1(T t) {
+        method2();
+    }
+
+    public void method2() {
+        method1("String");
+        method1(5);
+        method5(1, "Call method 5");
+    }
+
+    public void method3() {
+        method2();
+        method4("Call method 4");
+    }
+
+    public void method4(java.lang.String param) {
+    }
+
+    public <S> void method5(S s, java.lang.String s2) {
+    }
+}
+
