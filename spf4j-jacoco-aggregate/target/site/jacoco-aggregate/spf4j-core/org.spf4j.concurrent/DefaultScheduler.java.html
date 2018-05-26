@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>DefaultScheduler.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">spf4j-jacoco-aggregate</a> &gt; <a href="../index.html" class="el_bundle">spf4j-core</a> &gt; <a href="index.source.html" class="el_package">org.spf4j.concurrent</a> &gt; <span class="el_source">DefaultScheduler.java</span></div><h1>DefaultScheduler.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2017, Zoltan Farkas All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * Additionally licensed with:
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.spf4j.concurrent;
+
+import com.google.common.util.concurrent.ListeningScheduledExecutorService;
+import com.google.common.util.concurrent.MoreExecutors;
+import java.util.List;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import org.spf4j.base.AbstractRunnable;
+
+/**
+ *
+ * @author zoly
+ */
+public final class DefaultScheduler {
+
+  private static final long HOUR_MILLIS = 3600000;
+
+  private static final long DAY_MILLIS = HOUR_MILLIS * 24;
+
+<span class="nc" id="L53">  public static final ScheduledExecutorService INSTANCE</span>
+          = new ScheduledThreadPoolExecutor(
+<span class="nc" id="L55">                  Integer.getInteger(&quot;spf4j.executors.defaultScheduler.coreThreads&quot;, 2),</span>
+                  new CustomThreadFactory(&quot;DefaultScheduler&quot;,
+<span class="nc" id="L57">                          Boolean.getBoolean(&quot;spf4j.executors.defaultScheduler.daemon&quot;),</span>
+<span class="nc" id="L58">                          Integer.getInteger(&quot;spf4j.executors.defaultScheduler.priority&quot;, Thread.NORM_PRIORITY)));</span>
+
+<span class="nc" id="L60">  public static final ListeningScheduledExecutorService LISTENABLE_INSTANCE</span>
+<span class="nc" id="L61">          = MoreExecutors.listeningDecorator(INSTANCE);</span>
+
+  static {
+<span class="nc" id="L64">    org.spf4j.base.Runtime.queueHookAtEnd(new AbstractRunnable(true) {</span>
+
+      @Override
+      public void doRun() throws InterruptedException {
+<span class="nc" id="L68">        INSTANCE.shutdown();</span>
+<span class="nc" id="L69">        INSTANCE.awaitTermination(org.spf4j.base.Runtime.WAIT_FOR_SHUTDOWN_NANOS, TimeUnit.NANOSECONDS);</span>
+<span class="nc" id="L70">        List&lt;Runnable&gt; remaining = INSTANCE.shutdownNow();</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (remaining.size() &gt; 0) {</span>
+<span class="nc" id="L72">          org.spf4j.base.Runtime.error(&quot;Remaining tasks: &quot; + remaining);</span>
+        }
+<span class="nc" id="L74">      }</span>
+    });
+<span class="nc" id="L76">  }</span>
+
+  private DefaultScheduler() {
+  }
+
+  /**
+   * this will schedule a runnable aligned to the hour or day at a fixed rate.
+   *
+   * @param command - the Runnable to execute.
+   * @param millisInterval - the schedule interval in milliseconds.
+   * @return - Future that allows to cancel the schedule.
+   */
+  public static ScheduledFuture&lt;?&gt; scheduleAllignedAtFixedRateMillis(
+          final Runnable command, final long millisInterval) {
+<span class="nc" id="L90">    long currentTime = System.currentTimeMillis();</span>
+    long nextScheduleTime;
+<span class="nc bnc" id="L92" title="All 2 branches missed.">    if (millisInterval &lt; HOUR_MILLIS) {</span>
+<span class="nc" id="L93">      long millisPastHour = currentTime % HOUR_MILLIS;</span>
+<span class="nc" id="L94">      nextScheduleTime = (millisPastHour / millisInterval + 1) * millisInterval + currentTime - millisPastHour;</span>
+<span class="nc" id="L95">    } else {</span>
+<span class="nc" id="L96">      long millisPastDay = currentTime % DAY_MILLIS;</span>
+<span class="nc" id="L97">      nextScheduleTime = (millisPastDay / millisInterval + 1) * millisInterval + currentTime - millisPastDay;</span>
+    }
+<span class="nc" id="L99">    return INSTANCE.scheduleAtFixedRate(</span>
+            command, nextScheduleTime - currentTime, millisInterval, TimeUnit.MILLISECONDS);
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TransferBuffer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">spf4j-jacoco-aggregate</a> &gt; <a href="../index.html" class="el_bundle">spf4j-core</a> &gt; <a href="index.source.html" class="el_package">org.spf4j.io.tcp.proxy</a> &gt; <span class="el_source">TransferBuffer.java</span></div><h1>TransferBuffer.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2017, Zoltan Farkas All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * Additionally licensed with:
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.spf4j.io.tcp.proxy;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
+import java.nio.channels.SocketChannel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ *
+ * @author zoly
+ */
+public final class TransferBuffer {
+
+<span class="nc" id="L48">  private static final Logger LOG = LoggerFactory.getLogger(TransferBuffer.class);</span>
+
+<span class="nc" id="L50">  public enum Operation {</span>
+<span class="nc" id="L51">    READ, WRITE</span>
+  };
+
+  private final ByteBuffer buffer;
+
+  private Operation lastOperation;
+
+  private boolean isEof;
+
+  private Runnable isDataInBufferHook;
+
+  private Runnable isRoomInBufferHook;
+
+  private Sniffer incomingSniffer;
+
+  private IOException readException;
+
+  private IOException writeException;
+
+<span class="nc" id="L70">  public TransferBuffer(final int bufferSize) {</span>
+<span class="nc" id="L71">    buffer = ByteBuffer.allocateDirect(bufferSize);</span>
+<span class="nc" id="L72">    lastOperation = Operation.READ;</span>
+<span class="nc" id="L73">    isEof = false;</span>
+<span class="nc" id="L74">    this.isDataInBufferHook = null;</span>
+<span class="nc" id="L75">    this.isRoomInBufferHook = null;</span>
+<span class="nc" id="L76">    this.readException = null;</span>
+<span class="nc" id="L77">    this.writeException = null;</span>
+<span class="nc" id="L78">  }</span>
+
+  public synchronized int read(final SocketChannel channel) {
+<span class="nc bnc" id="L81" title="All 2 branches missed.">    if (lastOperation == Operation.WRITE) {</span>
+<span class="nc" id="L82">      buffer.compact();</span>
+<span class="nc" id="L83">      lastOperation = Operation.READ;</span>
+    }
+    int nrRead;
+<span class="nc" id="L86">    IOException oex = null;</span>
+    try {
+<span class="nc" id="L88">      nrRead = channel.read(buffer);</span>
+<span class="nc bnc" id="L89" title="All 4 branches missed.">      if (incomingSniffer != null &amp;&amp; (nrRead != 0)) {</span>
+<span class="nc" id="L90">        nrRead = incomingSniffer.received(buffer, nrRead);</span>
+      }
+<span class="nc" id="L92">    } catch (IOException ex) {</span>
+<span class="nc" id="L93">      oex = ex;</span>
+<span class="nc bnc" id="L94" title="All 2 branches missed.">      if (incomingSniffer == null) {</span>
+<span class="nc" id="L95">        readException = ex;</span>
+      } else {
+<span class="nc" id="L97">        readException = incomingSniffer.received(ex);</span>
+      }
+<span class="nc bnc" id="L99" title="All 2 branches missed.">      if (readException != null) {</span>
+<span class="nc" id="L100">        LOG.debug(&quot;Exception while reading from {}&quot;, channel, ex);</span>
+<span class="nc" id="L101">        nrRead = -1;</span>
+      } else {
+<span class="nc" id="L103">        nrRead = 0; // sniffer filters exception, behave a s no data received.</span>
+      }
+      try {
+<span class="nc" id="L106">        channel.close();</span>
+<span class="nc" id="L107">      } catch (IOException ex1) {</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        if (readException != null) {</span>
+<span class="nc" id="L109">          readException.addSuppressed(ex1);</span>
+        }
+<span class="nc" id="L111">      }</span>
+<span class="nc" id="L112">    }</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">    if (nrRead &lt; 0) {</span>
+<span class="nc" id="L114">      isEof = true;</span>
+      try {
+<span class="nc" id="L116">        channel.socket().shutdownInput(); // ? is this really necessary?</span>
+<span class="nc" id="L117">      } catch (ClosedChannelException cex) {</span>
+        // channel is closed.
+<span class="nc" id="L119">      } catch (IOException ex) {</span>
+<span class="nc" id="L120">        throw new UncheckedIOException(ex);</span>
+<span class="nc" id="L121">      }</span>
+<span class="nc bnc" id="L122" title="All 4 branches missed.">    } else if (oex == null &amp;&amp; buffer.hasRemaining()) {</span>
+<span class="nc" id="L123">      isRoomInBufferHook.run();</span>
+    }
+<span class="nc bnc" id="L125" title="All 4 branches missed.">    if (buffer.position() &gt; 0 || isEof) {</span>
+<span class="nc" id="L126">      isDataInBufferHook.run();</span>
+    }
+<span class="nc" id="L128">    return nrRead;</span>
+  }
+
+  public synchronized int write(final SocketChannel channel) {
+<span class="nc bnc" id="L132" title="All 2 branches missed.">    if (lastOperation == Operation.READ) {</span>
+<span class="nc" id="L133">      buffer.flip();</span>
+<span class="nc" id="L134">      lastOperation = Operation.WRITE;</span>
+    }
+    int nrWritten;
+    try {
+<span class="nc" id="L138">      nrWritten = channel.write(buffer);</span>
+<span class="nc" id="L139">    } catch (IOException ex) {</span>
+      try {
+<span class="nc" id="L141">        channel.close();</span>
+<span class="nc" id="L142">      } catch (IOException ex1) {</span>
+<span class="nc" id="L143">        ex.addSuppressed(ex1);</span>
+<span class="nc" id="L144">      }</span>
+<span class="nc" id="L145">      LOG.debug(&quot;Exception while writing to {}&quot;, channel, ex);</span>
+<span class="nc" id="L146">      writeException = ex;</span>
+<span class="nc" id="L147">      nrWritten = 0;</span>
+<span class="nc" id="L148">    }</span>
+<span class="nc" id="L149">    final boolean hasRemaining = buffer.hasRemaining();</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">    if (!hasRemaining) {</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">      if (isEof) {</span>
+        try {
+<span class="nc" id="L153">          channel.socket().shutdownOutput();</span>
+<span class="nc" id="L154">        } catch (ClosedChannelException closed) {</span>
+          //channel is closed already
+<span class="nc" id="L156">        } catch (IOException ex) {</span>
+<span class="nc" id="L157">          throw new UncheckedIOException(ex);</span>
+<span class="nc" id="L158">        }</span>
+<span class="nc" id="L159">        return nrWritten;</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">      } else if (readException != null) {</span>
+        try {
+<span class="nc" id="L162">          channel.socket().shutdownOutput();</span>
+<span class="nc" id="L163">        } catch (ClosedChannelException closed) {</span>
+          //channel is closed already
+<span class="nc" id="L165">        }  catch (IOException ex) {</span>
+<span class="nc" id="L166">          readException.addSuppressed(ex);</span>
+<span class="nc" id="L167">        }</span>
+<span class="nc" id="L168">        LOG.debug(&quot;Closed channel {} due to read exception&quot;, channel, readException);</span>
+<span class="nc" id="L169">        return nrWritten;</span>
+      }
+    }
+<span class="nc bnc" id="L172" title="All 4 branches missed.">    if (!isEof &amp;&amp; buffer.position() &gt; 0) {</span>
+<span class="nc" id="L173">      isRoomInBufferHook.run();</span>
+    }
+<span class="nc bnc" id="L175" title="All 4 branches missed.">    if (hasRemaining &amp;&amp; writeException != null) {</span>
+<span class="nc" id="L176">      isDataInBufferHook.run();</span>
+    }
+<span class="nc" id="L178">    return nrWritten;</span>
+  }
+
+  public static int transfer(final SocketChannel in, final SocketChannel out, final ByteBuffer buffer)
+          throws IOException {
+<span class="nc" id="L183">    int read = 0;</span>
+    //CHECKSTYLE:OFF
+<span class="nc bnc" id="L185" title="All 6 branches missed.">    while ((in.finishConnect() &amp;&amp; ((read = in.read(buffer)) &gt; 0)) || (buffer.position() &gt; 0)) {</span>
+      //CHECKSTYLE:ON
+<span class="nc" id="L187">      buffer.flip();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">      if (!out.finishConnect()) {</span>
+<span class="nc" id="L189">        break;</span>
+      }
+<span class="nc" id="L191">      int writen = out.write(buffer);</span>
+<span class="nc" id="L192">      buffer.compact();</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">      if (writen &lt;= 0) {</span>
+<span class="nc" id="L194">        break;</span>
+      }
+<span class="nc" id="L196">    }</span>
+<span class="nc" id="L197">    return read;</span>
+  }
+
+  public synchronized void setIsDataInBufferHook(final Runnable isDataInBufferHook) {
+<span class="nc" id="L201">    this.isDataInBufferHook = isDataInBufferHook;</span>
+<span class="nc" id="L202">  }</span>
+
+  public synchronized void setIsRoomInBufferHook(final Runnable isRoomInBufferHook) {
+<span class="nc" id="L205">    this.isRoomInBufferHook = isRoomInBufferHook;</span>
+<span class="nc" id="L206">  }</span>
+
+  public synchronized void setIncomingSniffer(final Sniffer incomingSniffer) {
+<span class="nc" id="L209">    this.incomingSniffer = incomingSniffer;</span>
+<span class="nc" id="L210">  }</span>
+
+  @Override
+  public String toString() {
+<span class="nc" id="L214">    return &quot;TransferBuffer{&quot; + &quot;buffer=&quot; + buffer + &quot;, lastOperation=&quot; + lastOperation</span>
+            + &quot;, isEof=&quot; + isEof + &quot;, isDataInBufferHook=&quot; + isDataInBufferHook
+            + &quot;, isRoomInBufferHook=&quot; + isRoomInBufferHook + '}';
+  }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>
