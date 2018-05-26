@@ -1,0 +1,814 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ManagementAgent.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">debian</a> &gt; <a href="../index.html" class="el_bundle">infrastructure</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.infrastructure</a> &gt; <span class="el_source">ManagementAgent.java</span></div><h1>ManagementAgent.java</h1><pre class="source lang-java linenums">package org.corfudb.infrastructure;
+
+import com.google.common.collect.Sets;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.infrastructure.management.IDetector;
+import org.corfudb.infrastructure.management.PollReport;
+import org.corfudb.infrastructure.management.ReconfigurationEventHandler;
+import org.corfudb.protocols.wireprotocol.NetworkMetrics;
+import org.corfudb.protocols.wireprotocol.NodeView;
+import org.corfudb.protocols.wireprotocol.SequencerMetrics;
+import org.corfudb.protocols.wireprotocol.SequencerMetrics.SequencerStatus;
+import org.corfudb.protocols.wireprotocol.ServerMetrics;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.exceptions.QuorumUnreachableException;
+import org.corfudb.runtime.exceptions.ServerNotReadyException;
+import org.corfudb.runtime.view.Layout;
+import org.corfudb.runtime.view.QuorumFuturesFactory;
+import org.corfudb.util.CFUtils;
+import org.corfudb.util.NodeLocator;
+import org.corfudb.util.Sleep;
+import org.corfudb.util.concurrent.SingletonResource;
+
+/**
+ * Instantiates and performs failure detection and handling asynchronously.
+ *
+ * &lt;p&gt;Failure Detector:
+ * Executes detection policy to detect failed and healed nodes.
+ * It then checks for status of the nodes. If there are failed or healed nodes to be addressed,
+ * this then triggers the respective handler which then responds to these reconfiguration changes
+ * based on a policy.
+ *
+ * &lt;p&gt;Created by zlokhandwala on 1/15/18.
+ */
+<span class="nc" id="L58">@Slf4j</span>
+public class ManagementAgent {
+
+    private final ServerContext serverContext;
+    private final Map&lt;String, Object&gt; opts;
+
+    /**
+     * Detectors to be used to detect failures and healing.
+     */
+<span class="nc" id="L67">    @Getter</span>
+    private IDetector failureDetector;
+<span class="nc" id="L69">    @Getter</span>
+    private IDetector healingDetector;
+    /**
+     * Failure Handler Dispatcher to launch configuration changes or recovery.
+     */
+<span class="nc" id="L74">    @Getter</span>
+    private final ReconfigurationEventHandler reconfigurationEventHandler;
+    /**
+     * Interval in executing the failure detection policy.
+     * In milliseconds.
+     */
+<span class="nc" id="L80">    @Getter</span>
+    private final long policyExecuteInterval = 1000;
+    /**
+     * To dispatch initialization tasks for recovery and sequencer bootstrap.
+     */
+<span class="nc" id="L85">    @Getter</span>
+    private Thread initializationTaskThread;
+    /**
+     * Detection Task Scheduler Service
+     * This service schedules the following tasks every policyExecuteInterval (1 sec):
+     * - Detection of failed nodes.
+     * - Detection of healed nodes.
+     */
+<span class="nc" id="L93">    @Getter</span>
+    private final ScheduledExecutorService detectionTasksScheduler;
+    /**
+     * To dispatch tasks for failure or healed nodes detection.
+     */
+<span class="nc" id="L98">    @Getter</span>
+    private ExecutorService detectionTaskWorkers;
+    /**
+     * Future for periodic failure and healed nodes detection task.
+     */
+<span class="nc" id="L103">    private Future failureDetectorFuture = null;</span>
+<span class="nc" id="L104">    private Future healingDetectorFuture = null;</span>
+<span class="nc" id="L105">    private boolean recovered = false;</span>
+
+    private final SingletonResource&lt;CorfuRuntime&gt; runtimeSingletonResource;
+    private final String bootstrapEndpoint;
+
+<span class="nc" id="L110">    private volatile boolean shutdown = false;</span>
+
+    /**
+     * Future which is marked completed if:
+     * If Recovery, recovered successfully
+     * Else, after bootstrapping the primary sequencer successfully.
+     */
+<span class="nc" id="L117">    @Getter</span>
+    private volatile CompletableFuture&lt;Boolean&gt; sequencerBootstrappedFuture;
+
+    /**
+     * The management agent attempts to bootstrap a NOT_READY sequencer if the
+     * sequencerNotReadyCounter counter exceeds this value.
+     */
+    private static final int SEQUENCER_NOT_READY_THRESHOLD = 3;
+
+    /**
+     * This tuple maintains, in an epoch, how many heartbeats the primary sequencer has responded
+     * in not bootstrapped (NOT_READY) state.
+     */
+    @Getter
+<span class="nc" id="L131">    @Setter</span>
+<span class="nc" id="L132">    @AllArgsConstructor</span>
+    private class SequencerNotReadyCounter {
+<span class="nc" id="L134">        private final long epoch;</span>
+<span class="nc" id="L135">        private int counter;</span>
+    }
+
+    private SequencerNotReadyCounter sequencerNotReadyCounter;
+
+    /**
+     * Cluster metrics collection.
+     */
+    //  Service to poll local node metrics.
+    private final ScheduledExecutorService localMetricsPollingService;
+    //  Locally collected server metrics polling interval.
+<span class="nc" id="L146">    private static final Duration METRICS_POLL_INTERVAL = Duration.ofMillis(3000);</span>
+    //  Local copy of the local node's server metrics.
+<span class="nc" id="L148">    @Getter(AccessLevel.PROTECTED)</span>
+    private volatile ServerMetrics localServerMetrics;
+    //  A view of peers' connectivity.
+    // Connectivity of any unresponsive nodes responding. Updated by HealingDetector.
+<span class="nc" id="L152">    private Set&lt;String&gt; responsiveNodesPeerView = Collections.emptySet();</span>
+    // Connectivity of any responsive nodes not responding. Updated by FailureDetector.
+<span class="nc" id="L154">    private Set&lt;String&gt; unresponsiveNodesPeerView = Collections.emptySet();</span>
+
+
+    /**
+     * Checks and restores if a layout is present in the local datastore to recover from.
+     * Spawns the initialization task which recovers if required, bootstraps sequencer and
+     * schedules detector tasks.
+     *
+     * @param runtimeSingletonResource Singleton resource to fetch runtime.
+     * @param serverContext            Server Context.
+     */
+    ManagementAgent(SingletonResource&lt;CorfuRuntime&gt; runtimeSingletonResource,
+<span class="nc" id="L166">                    ServerContext serverContext) {</span>
+<span class="nc" id="L167">        this.runtimeSingletonResource = runtimeSingletonResource;</span>
+<span class="nc" id="L168">        this.serverContext = serverContext;</span>
+<span class="nc" id="L169">        this.opts = serverContext.getServerConfig();</span>
+
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        bootstrapEndpoint = (opts.get(&quot;--management-server&quot;) != null)</span>
+<span class="nc" id="L172">                ? opts.get(&quot;--management-server&quot;).toString() : null;</span>
+
+<span class="nc" id="L174">        sequencerBootstrappedFuture = new CompletableFuture&lt;&gt;();</span>
+
+<span class="nc" id="L176">        localServerMetrics = new ServerMetrics(NodeLocator.parseString(getLocalEndpoint()),</span>
+                new SequencerMetrics(SequencerStatus.UNKNOWN));
+
+        // If no state was preserved, there is no layout to recover.
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        if (serverContext.getManagementLayout() == null) {</span>
+<span class="nc" id="L181">            recovered = true;</span>
+        }
+
+        // The management server needs to check both the Layout Server's persisted layout as well
+        // as the Management Server's previously persisted layout. We try to recover from both of
+        // these as the more recent layout (with higher epoch is retained).
+        // When a node does not contain a layout server component and is trying to recover, we
+        // would completely rely on recovering from the management server's persisted layout.
+        // Else in every other case, the layout server is active and will contain the latest layout
+        // (In case of trailing layout server, the management server's persisted layout helps.)
+<span class="nc" id="L191">        serverContext.installSingleNodeLayoutIfAbsent();</span>
+<span class="nc" id="L192">        serverContext.saveManagementLayout(serverContext.getCurrentLayout());</span>
+<span class="nc" id="L193">        serverContext.saveManagementLayout(serverContext.getManagementLayout());</span>
+
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (!recovered) {</span>
+<span class="nc" id="L196">            log.info(&quot;Attempting to recover. Layout before shutdown: {}&quot;,</span>
+<span class="nc" id="L197">                    serverContext.getManagementLayout());</span>
+        }
+
+<span class="nc" id="L200">        this.failureDetector = serverContext.getFailureDetector();</span>
+<span class="nc" id="L201">        this.healingDetector = serverContext.getHealingDetector();</span>
+<span class="nc" id="L202">        this.reconfigurationEventHandler = new ReconfigurationEventHandler();</span>
+
+<span class="nc" id="L204">        final int managementServiceCount = 1;</span>
+<span class="nc" id="L205">        final int detectionWorkersCount = 2;</span>
+
+<span class="nc" id="L207">        this.detectionTasksScheduler = Executors.newScheduledThreadPool(</span>
+                managementServiceCount,
+                new ThreadFactoryBuilder()
+<span class="nc" id="L210">                        .setDaemon(true)</span>
+<span class="nc" id="L211">                        .setNameFormat(serverContext.getThreadPrefix() + &quot;ManagementService&quot;)</span>
+<span class="nc" id="L212">                        .build());</span>
+
+        // Creating the detection worker thread pool.
+        // This thread pool is utilized to dispatch detection tasks at regular intervals in the
+        // detectorTaskScheduler.
+<span class="nc" id="L217">        this.detectionTaskWorkers = Executors.newFixedThreadPool(</span>
+                detectionWorkersCount,
+                new ThreadFactoryBuilder()
+<span class="nc" id="L220">                        .setDaemon(true)</span>
+<span class="nc" id="L221">                        .setNameFormat(serverContext.getThreadPrefix() + &quot;DetectionWorker-%d&quot;)</span>
+<span class="nc" id="L222">                        .build());</span>
+
+<span class="nc" id="L224">        this.localMetricsPollingService = Executors.newSingleThreadScheduledExecutor(</span>
+                new ThreadFactoryBuilder()
+<span class="nc" id="L226">                        .setDaemon(true)</span>
+<span class="nc" id="L227">                        .setNameFormat(serverContext.getThreadPrefix() + &quot;LocalMetricsPolling&quot;)</span>
+<span class="nc" id="L228">                        .build());</span>
+
+        // Creating the initialization task thread.
+        // This thread pool is utilized to dispatch one time recovery and sequencer bootstrap tasks.
+        // One these tasks finish successfully, they initiate the detection tasks.
+<span class="nc" id="L233">        this.initializationTaskThread = new Thread(this::initializationTask);</span>
+<span class="nc" id="L234">        this.initializationTaskThread.setUncaughtExceptionHandler(</span>
+<span class="nc" id="L235">                (thread, throwable) -&gt; log.error(&quot;Error in initialization task: {}&quot;, throwable));</span>
+<span class="nc" id="L236">        this.initializationTaskThread.start();</span>
+<span class="nc" id="L237">    }</span>
+
+    /**
+     * Initialization task.
+     * Performs recovery if required.
+     * Bootstraps the primary sequencer if the server has been bootstrapped.
+     * Initiates the failure detection and healing detection tasks.
+     */
+    private void initializationTask() {
+
+        try {
+<span class="nc bnc" id="L248" title="All 2 branches missed.">            while (!shutdown) {</span>
+<span class="nc bnc" id="L249" title="All 4 branches missed.">                if (serverContext.getManagementLayout() == null &amp;&amp; bootstrapEndpoint == null) {</span>
+<span class="nc" id="L250">                    log.warn(&quot;Management Server waiting to be bootstrapped&quot;);</span>
+<span class="nc" id="L251">                    Sleep.MILLISECONDS.sleepRecoverably(policyExecuteInterval);</span>
+<span class="nc" id="L252">                    continue;</span>
+                }
+
+                // Recover if flag is false
+<span class="nc bnc" id="L256" title="All 2 branches missed.">                while (!recovered) {</span>
+<span class="nc" id="L257">                    recovered = runRecoveryReconfiguration();</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">                    if (!recovered) {</span>
+<span class="nc" id="L259">                        log.error(&quot;detectorTaskScheduler: Recovery failed. Retrying.&quot;);</span>
+<span class="nc" id="L260">                        continue;</span>
+                    }
+                    // If recovery succeeds, reconfiguration was successful.
+<span class="nc" id="L263">                    sequencerBootstrappedFuture.complete(true);</span>
+<span class="nc" id="L264">                    log.info(&quot;Recovery completed&quot;);</span>
+                }
+                break;
+            }
+
+            // Sequencer bootstrap required if this is fresh startup (not recovery).
+<span class="nc bnc" id="L270" title="All 2 branches missed.">            if (!sequencerBootstrappedFuture.isDone()) {</span>
+<span class="nc" id="L271">                bootstrapPrimarySequencerServer();</span>
+            }
+
+            // Initiating periodic task to poll for failures.
+            try {
+<span class="nc" id="L276">                localMetricsPollingService.scheduleAtFixedRate(</span>
+                        this::updateLocalMetrics,
+                        0,
+<span class="nc" id="L279">                        METRICS_POLL_INTERVAL.toMillis(),</span>
+                        TimeUnit.MILLISECONDS);
+
+<span class="nc" id="L282">                detectionTasksScheduler.scheduleAtFixedRate(</span>
+                        this::detectorTaskScheduler,
+                        0,
+                        policyExecuteInterval,
+                        TimeUnit.MILLISECONDS);
+<span class="nc" id="L287">            } catch (RejectedExecutionException err) {</span>
+<span class="nc" id="L288">                log.error(&quot;Error scheduling failure detection task, {}&quot;, err);</span>
+<span class="nc" id="L289">            }</span>
+<span class="nc" id="L290">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L291">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L292">        }</span>
+<span class="nc" id="L293">    }</span>
+
+    private String getLocalEndpoint() {
+<span class="nc" id="L296">        return this.opts.get(&quot;--address&quot;) + &quot;:&quot; + this.opts.get(&quot;&lt;port&gt;&quot;);</span>
+    }
+
+    /**
+     * Returns a connected instance of the CorfuRuntime.
+     *
+     * @return A connected instance of runtime.
+     */
+    public CorfuRuntime getCorfuRuntime() {
+<span class="nc" id="L305">        return runtimeSingletonResource.get();</span>
+    }
+
+    /**
+     * Bootstraps the primary sequencer on a fresh startup (not recovery).
+     */
+    private void bootstrapPrimarySequencerServer() {
+        try {
+<span class="nc" id="L313">            Layout layout = serverContext.getManagementLayout();</span>
+<span class="nc" id="L314">            boolean bootstrapResult = getCorfuRuntime().getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L315">                    .getPrimarySequencerClient()</span>
+<span class="nc" id="L316">                    .bootstrap(0L, Collections.emptyMap(), layout.getEpoch(), false)</span>
+<span class="nc" id="L317">                    .get();</span>
+<span class="nc" id="L318">            sequencerBootstrappedFuture.complete(bootstrapResult);</span>
+            // If false, the sequencer is already bootstrapped with a higher epoch.
+<span class="nc bnc" id="L320" title="All 2 branches missed.">            if (!bootstrapResult) {</span>
+<span class="nc" id="L321">                log.warn(&quot;Sequencer already bootstrapped.&quot;);</span>
+            } else {
+<span class="nc" id="L323">                log.info(&quot;Bootstrapped sequencer server at epoch:{}&quot;, layout.getEpoch());</span>
+            }
+<span class="nc" id="L325">        } catch (InterruptedException | ExecutionException e) {</span>
+<span class="nc" id="L326">            log.error(&quot;Bootstrapping sequencer failed: &quot;, e);</span>
+<span class="nc" id="L327">        }</span>
+<span class="nc" id="L328">    }</span>
+
+    /**
+     * This is called when the management server detects an existing layout in the local datastore
+     * on startup. This requires a recovery from the same layout and attempt to rejoin the cluster.
+     * Recovery is carried out as follows:
+     * - Attempt to run reconfiguration on the cluster from the recovered layout found in the
+     * local data store by incrementing the epoch.
+     * The reconfiguration succeeds if the attempt to reach consensus by re-proposing this
+     * recovery layout with its epoch incremented succeeds.
+     * - If reconfiguration succeeds, the node is added to the layout and recovery was successful.
+     * - If reconfiguration fails, the cluster has moved ahead.
+     * * - This node now cannot force its inclusion into the cluster (it has a stale layout).
+     * * - This node if marked unresponsive will be detected and unmarked by its peers in cluster.
+     * - If multiple nodes are trying to recover, they will retry until they have recovered with
+     * the latest layout previously accepted by the majority.
+     * eg. Consider 3 nodes [Node(Epoch)]:
+     * A(1), B(2), C(2). All 3 nodes crash and attempt to recover at the same time.
+     * Node A should not be able to recover as it will detect a higher epoch in the rest of the
+     * cluster. Hence either node B or C will succeed in recovering the cluster to epoch 3 with
+     * their persisted layout.
+     *
+     * @return True if recovery was successful. False otherwise.
+     */
+    private boolean runRecoveryReconfiguration() {
+<span class="nc" id="L353">        Layout layout = new Layout(serverContext.getManagementLayout());</span>
+<span class="nc" id="L354">        boolean recoveryReconfigurationResult = reconfigurationEventHandler</span>
+<span class="nc" id="L355">                .recoverCluster(layout, getCorfuRuntime());</span>
+<span class="nc" id="L356">        log.info(&quot;Recovery reconfiguration attempt result: {}&quot;, recoveryReconfigurationResult);</span>
+
+<span class="nc" id="L358">        getCorfuRuntime().invalidateLayout();</span>
+<span class="nc" id="L359">        Layout clusterLayout = getCorfuRuntime().getLayoutView().getLayout();</span>
+
+<span class="nc" id="L361">        log.info(&quot;Recovery layout epoch:{}, Cluster epoch: {}&quot;,</span>
+<span class="nc" id="L362">                serverContext.getManagementLayout().getEpoch(), clusterLayout.getEpoch());</span>
+        // The cluster has moved ahead. This node should not force any layout. Let the other
+        // members detect that this node has healed and include it in the layout.
+<span class="nc" id="L365">        boolean recoveryResult =</span>
+<span class="nc bnc" id="L366" title="All 4 branches missed.">                clusterLayout.getEpoch() &gt; serverContext.getManagementLayout().getEpoch()</span>
+                        || recoveryReconfigurationResult;
+
+<span class="nc bnc" id="L369" title="All 2 branches missed.">        if (recoveryResult) {</span>
+<span class="nc" id="L370">            sequencerBootstrappedFuture.complete(true);</span>
+        }
+
+<span class="nc" id="L373">        return recoveryResult;</span>
+    }
+
+    /**
+     * Task to collect local node metrics.
+     * This task collects the following:
+     * Boolean Status of layout, sequencer and logunit servers.
+     * These metrics are then composed into ServerMetrics model and stored locally.
+     */
+    private void updateLocalMetrics() {
+        // Initializing the status of components
+        // No need to poll unless node is bootstrapped.
+<span class="nc" id="L385">        Layout layout = serverContext.getManagementLayout();</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">        if (layout == null) {</span>
+<span class="nc" id="L387">            return;</span>
+        }
+
+        // Build and replace existing locally stored nodeMetrics
+        SequencerMetrics sequencerMetrics;
+        // This is an optimization. If this node is not the primary sequencer for the current
+        // layout, there is no reason to request metrics from this sequencer.
+<span class="nc bnc" id="L394" title="All 2 branches missed.">        if (layout.getSequencers().get(0).equals(getLocalEndpoint())) {</span>
+            try {
+<span class="nc" id="L396">                sequencerMetrics = CFUtils.getUninterruptibly(</span>
+<span class="nc" id="L397">                        getCorfuRuntime()</span>
+<span class="nc" id="L398">                                .getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L399">                                .getSequencerClient(getLocalEndpoint())</span>
+<span class="nc" id="L400">                                .requestMetrics());</span>
+<span class="nc" id="L401">            } catch (ServerNotReadyException snre) {</span>
+<span class="nc" id="L402">                sequencerMetrics = new SequencerMetrics(SequencerStatus.NOT_READY);</span>
+<span class="nc" id="L403">            } catch (Exception e) {</span>
+<span class="nc" id="L404">                log.error(&quot;Error while requesting metrics from the sequencer: &quot;, e);</span>
+<span class="nc" id="L405">                sequencerMetrics = new SequencerMetrics(SequencerStatus.UNKNOWN);</span>
+<span class="nc" id="L406">            }</span>
+        } else {
+<span class="nc" id="L408">            sequencerMetrics = new SequencerMetrics(SequencerStatus.UNKNOWN);</span>
+        }
+
+<span class="nc" id="L411">        localServerMetrics =</span>
+<span class="nc" id="L412">                new ServerMetrics(NodeLocator.parseString(getLocalEndpoint()), sequencerMetrics);</span>
+<span class="nc" id="L413">    }</span>
+
+    /**
+     * Schedules the detection tasks run by detectorTaskScheduler.
+     * It schedules exactly one instance of the following tasks.
+     * - Failure detection tasks.
+     * - Healing detection tasks.
+     */
+    private synchronized void detectorTaskScheduler() {
+
+<span class="nc" id="L423">        CorfuRuntime corfuRuntime = getCorfuRuntime();</span>
+<span class="nc" id="L424">        getCorfuRuntime().invalidateLayout();</span>
+<span class="nc" id="L425">        serverContext.saveManagementLayout(corfuRuntime.getLayoutView().getLayout());</span>
+
+<span class="nc bnc" id="L427" title="All 2 branches missed.">        if (!canHandleReconfigurations()) {</span>
+<span class="nc" id="L428">            return;</span>
+        }
+
+<span class="nc" id="L431">        runFailureDetectorTask();</span>
+
+<span class="nc" id="L433">        runHealingDetectorTask();</span>
+<span class="nc" id="L434">    }</span>
+
+    /**
+     * Checks if this management client is allowed to handle reconfigurations.
+     * - This client is not authorized to trigger reconfigurations if this node is not a part
+     * of the current layout.
+     *
+     * @return True if node is allowed to handle reconfigurations. False otherwise.
+     */
+    private boolean canHandleReconfigurations() {
+
+        // We check for the following condition here: If the node is NOT a part of the
+        // current layout, it should not attempt to change layout.
+<span class="nc" id="L447">        Layout layout = serverContext.getManagementLayout();</span>
+<span class="nc bnc" id="L448" title="All 2 branches missed.">        if (!layout.getAllServers().contains(getLocalEndpoint())) {</span>
+<span class="nc" id="L449">            log.debug(&quot;This Server is not a part of the active layout. &quot;</span>
+                    + &quot;Aborting reconfiguration handling.&quot;);
+<span class="nc" id="L451">            return false;</span>
+        }
+
+<span class="nc" id="L454">        return true;</span>
+    }
+
+    /**
+     * Combines the peer connectivity view from the failure and the healing detectors.
+     * This map containing the view of the detectors is used to create the NodeView.
+     * This NodeView is sent in the HeartbeatResponse message.
+     *
+     * @return Peer connectivity view map
+     */
+    NetworkMetrics getConnectivityView() {
+<span class="nc" id="L465">        Map&lt;String, Boolean&gt; peerConnectivityDeltaMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L466">        responsiveNodesPeerView.forEach(s -&gt; peerConnectivityDeltaMap.put(s, true));</span>
+<span class="nc" id="L467">        unresponsiveNodesPeerView.forEach(s -&gt; peerConnectivityDeltaMap.put(s, false));</span>
+        // If the management server is not bootstrapped, stamp with INVALID_EPOCH.
+<span class="nc bnc" id="L469" title="All 2 branches missed.">        long peerConnectivitySnapshotEpoch = serverContext.getManagementLayout() != null</span>
+<span class="nc" id="L470">                ? serverContext.getManagementLayout().getEpoch() : Layout.INVALID_EPOCH;</span>
+<span class="nc" id="L471">        return new NetworkMetrics(peerConnectivitySnapshotEpoch, peerConnectivityDeltaMap);</span>
+    }
+
+    /**
+     * This contains the healing mechanism.
+     * - This task is executed in intervals of 1 second (default). This task is blocked until
+     * the management server is bootstrapped and has a connected runtime.
+     * - On every invocation, this task refreshes the runtime to fetch the latest layout and also
+     * updates the local persisted copy of the latest layout
+     * - It then executes the poll using the healingDetector which generates a pollReport at the
+     * end of the round.
+     * - The poll report contains servers that are now responsive and healed.
+     * - The healed servers in the pollReport are then handled based on the healing handler policy.
+     * - The healing handler policy dictates whether the healing node should be added back as a
+     * logUnit node or should only operate as a layout server or a primary/backup sequencer.
+     */
+    private void runHealingDetectorTask() {
+
+<span class="nc bnc" id="L489" title="All 4 branches missed.">        if (healingDetectorFuture == null || healingDetectorFuture.isDone()) {</span>
+<span class="nc" id="L490">            healingDetectorFuture = detectionTaskWorkers.submit(() -&gt; {</span>
+
+<span class="nc" id="L492">                CorfuRuntime corfuRuntime = getCorfuRuntime();</span>
+<span class="nc" id="L493">                PollReport pollReport =</span>
+<span class="nc" id="L494">                        healingDetector.poll(serverContext.getManagementLayout(), corfuRuntime);</span>
+
+<span class="nc" id="L496">                responsiveNodesPeerView = pollReport.getHealingNodes();</span>
+
+<span class="nc bnc" id="L498" title="All 2 branches missed.">                if (!pollReport.getHealingNodes().isEmpty()) {</span>
+
+
+                    try {
+<span class="nc" id="L502">                        log.info(&quot;Attempting to heal nodes in poll report: {}&quot;, pollReport);</span>
+<span class="nc" id="L503">                        Layout layout = serverContext.getManagementLayout();</span>
+<span class="nc" id="L504">                        corfuRuntime.getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L505">                                .getManagementClient(getLocalEndpoint())</span>
+<span class="nc" id="L506">                                .handleHealing(pollReport.getPollEpoch(),</span>
+<span class="nc" id="L507">                                        pollReport.getHealingNodes())</span>
+<span class="nc" id="L508">                                .get();</span>
+<span class="nc" id="L509">                        log.info(&quot;Healing nodes successful: {}&quot;, pollReport);</span>
+<span class="nc" id="L510">                    } catch (InterruptedException | ExecutionException e) {</span>
+<span class="nc" id="L511">                        log.error(&quot;Healing nodes failed: &quot;, e);</span>
+<span class="nc" id="L512">                    }</span>
+                }
+
+<span class="nc" id="L515">            });</span>
+        } else {
+<span class="nc" id="L517">            log.debug(&quot;Cannot initiate new healing polling task. Polling in progress.&quot;);</span>
+        }
+<span class="nc" id="L519">    }</span>
+
+    /**
+     * This contains the failure detection and handling mechanism.
+     * - This task is executed in intervals of 1 second (default). This task is blocked until
+     * the management server is bootstrapped and has a connected runtime.
+     * - On every invocation, this task refreshes the runtime to fetch the latest layout and also
+     * updates the local persisted copy of the latest layout
+     * - It then executes the poll using the failureDetector which generates a pollReport at the
+     * end of the round.
+     * - The poll report contains servers that are unresponsive and servers whose epochs do not
+     * match the current cluster epoch
+     * - The outOfPhase epoch server errors are corrected by resealing and patching these trailing
+     * layout servers if needed.
+     * - Finally all unresponsive server failures are handled by either removing or marking them
+     * as unresponsive based on a failure handling policy.
+     */
+    private void runFailureDetectorTask() {
+
+<span class="nc bnc" id="L538" title="All 4 branches missed.">        if (failureDetectorFuture == null || failureDetectorFuture.isDone()) {</span>
+<span class="nc" id="L539">            failureDetectorFuture = detectionTaskWorkers.submit(() -&gt; {</span>
+
+<span class="nc" id="L541">                CorfuRuntime corfuRuntime = getCorfuRuntime();</span>
+                // Execute the failure detection poll round.
+<span class="nc" id="L543">                PollReport pollReport =</span>
+<span class="nc" id="L544">                        failureDetector.poll(serverContext.getManagementLayout(), corfuRuntime);</span>
+
+<span class="nc" id="L546">                unresponsiveNodesPeerView = pollReport.getFailingNodes();</span>
+
+                // Corrects out of phase epoch issues if present in the report. This method
+                // performs re-sealing of all nodes if required and catchup of a layout server to
+                // the current state.
+<span class="nc" id="L551">                correctOutOfPhaseEpochs(pollReport);</span>
+
+                // Analyze the poll report and trigger failure handler if needed.
+<span class="nc" id="L554">                handleFailures(pollReport);</span>
+
+<span class="nc" id="L556">            });</span>
+        } else {
+<span class="nc" id="L558">            log.debug(&quot;Cannot initiate new polling task. Polling in progress.&quot;);</span>
+        }
+<span class="nc" id="L560">    }</span>
+
+    /**
+     * We check if these servers are the same set of servers which are marked as unresponsive in
+     * the layout.
+     * Check if this new detected failure has already been recognized.
+     *
+     * @param pollReport Report from the polling task
+     * @return Set of nodes which have failed, relative to the latest local copy of the layout.
+     */
+    private Set&lt;String&gt; getNewFailures(PollReport pollReport) {
+<span class="nc" id="L571">        return Sets.difference(</span>
+<span class="nc" id="L572">                pollReport.getFailingNodes(),</span>
+<span class="nc" id="L573">                new HashSet&lt;&gt;(serverContext.getManagementLayout().getUnresponsiveServers()));</span>
+    }
+
+    /**
+     * All Layout servers have been sealed but there is no client to take this forward and fill the
+     * slot by proposing a new layout.
+     * In this case we can pass an empty set to propose the same layout again and fill the layout
+     * slot to un-block the data plane operations.
+     *
+     * @param pollReport Report from the polling task
+     * @return True if latest layout slot is vacant. Else False.
+     */
+    private boolean isCurrentLayoutSlotUnFilled(PollReport pollReport) {
+<span class="nc" id="L586">        boolean result = pollReport.getOutOfPhaseEpochNodes().keySet()</span>
+<span class="nc" id="L587">                .containsAll(serverContext.getManagementLayout().getLayoutServers());</span>
+<span class="nc bnc" id="L588" title="All 2 branches missed.">        if (result) {</span>
+<span class="nc" id="L589">            log.info(&quot;Current layout slot is empty. Filling slot with current layout.&quot;);</span>
+        }
+<span class="nc" id="L591">        return result;</span>
+    }
+
+    private SequencerStatus getPrimarySequencerStatus(Layout layout, PollReport pollReport) {
+<span class="nc" id="L595">        String primarySequencer = layout.getSequencers().get(0);</span>
+<span class="nc" id="L596">        NodeView nodeView = pollReport.getNodeViewMap().get(primarySequencer);</span>
+        // If we have a stale poll report, we should discard this and continue polling.
+<span class="nc bnc" id="L598" title="All 2 branches missed.">        if (layout.getEpoch() &gt; pollReport.getPollEpoch()) {</span>
+<span class="nc" id="L599">            log.warn(&quot;getPrimarySequencerStatus: Received poll report for epoch {} but currently &quot;</span>
+<span class="nc" id="L600">                    + &quot;at epoch {}&quot;, pollReport.getPollEpoch(), layout.getEpoch());</span>
+<span class="nc" id="L601">            return SequencerStatus.UNKNOWN;</span>
+        } else {
+<span class="nc" id="L603">            return nodeView.getServerMetrics().getSequencerMetrics().getSequencerStatus();</span>
+        }
+    }
+
+    /**
+     * Analyzes the poll report and triggers the failure handler if status change
+     * of node detected.
+     *
+     * @param pollReport Poll report obtained from failure detection policy.
+     */
+    private void handleFailures(PollReport pollReport) {
+        try {
+<span class="nc" id="L615">            Set&lt;String&gt; failedNodes = new HashSet&lt;&gt;(getNewFailures(pollReport));</span>
+
+            // These conditions are mutually exclusive. If there is a failure to be
+            // handled, we don't need to explicitly fix the unfilled layout slot. Else we do.
+<span class="nc" id="L619">            Layout layout = serverContext.getManagementLayout();</span>
+<span class="nc bnc" id="L620" title="All 4 branches missed.">            if (!failedNodes.isEmpty() || isCurrentLayoutSlotUnFilled(pollReport)) {</span>
+
+<span class="nc" id="L622">                log.info(&quot;Detected changes in node responsiveness: Failed:{}, pollReport:{}&quot;,</span>
+                        failedNodes, pollReport);
+<span class="nc" id="L624">                getCorfuRuntime().getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L625">                        .getManagementClient(getLocalEndpoint())</span>
+<span class="nc" id="L626">                        .handleFailure(pollReport.getPollEpoch(), failedNodes).get();</span>
+
+<span class="nc" id="L628">            } else if (!getPrimarySequencerStatus(layout, pollReport)</span>
+<span class="nc bnc" id="L629" title="All 2 branches missed.">                    .equals(SequencerStatus.READY)) {</span>
+                // If failures are not present we can check if the primary sequencer has been
+                // bootstrapped from the heartbeat responses received.
+<span class="nc bnc" id="L632" title="All 2 branches missed.">                if (sequencerNotReadyCounter == null</span>
+<span class="nc bnc" id="L633" title="All 2 branches missed.">                        || sequencerNotReadyCounter.getEpoch() != layout.getEpoch()) {</span>
+                    // If the epoch is different than the poll epoch, we reset the timeout state.
+<span class="nc" id="L635">                    sequencerNotReadyCounter = new SequencerNotReadyCounter(layout.getEpoch(), 1);</span>
+
+<span class="nc bnc" id="L637" title="All 2 branches missed.">                } else if (sequencerNotReadyCounter.getEpoch() == layout.getEpoch()) {</span>
+                    // If the epoch is same as the epoch being tracked in the tuple, we need to
+                    // increment the count and attempt to bootstrap the sequencer if the count has
+                    // crossed the threshold.
+<span class="nc" id="L641">                    sequencerNotReadyCounter.setCounter(sequencerNotReadyCounter.getCounter() + 1);</span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">                    if (sequencerNotReadyCounter.getCounter() &gt;= SEQUENCER_NOT_READY_THRESHOLD) {</span>
+                        // Launch task to bootstrap the primary sequencer.
+<span class="nc" id="L644">                        log.info(&quot;Attempting to bootstrap the primary sequencer.&quot;);</span>
+<span class="nc" id="L645">                        getCorfuRuntime().getLayoutManagementView()</span>
+<span class="nc" id="L646">                                .reconfigureSequencerServers(layout, layout, true);</span>
+                    }
+                }
+            }
+
+<span class="nc" id="L651">        } catch (Exception e) {</span>
+<span class="nc" id="L652">            log.error(&quot;Exception invoking failure handler : {}&quot;, e);</span>
+<span class="nc" id="L653">        }</span>
+<span class="nc" id="L654">    }</span>
+
+    /**
+     * Corrects out of phase epochs by resealing the servers.
+     * This would also need to update trailing layout servers.
+     *
+     * @param pollReport Poll Report from running the failure detection policy.
+     */
+    private void correctOutOfPhaseEpochs(PollReport pollReport) {
+
+<span class="nc" id="L664">        final Map&lt;String, Long&gt; outOfPhaseEpochNodes = pollReport.getOutOfPhaseEpochNodes();</span>
+<span class="nc bnc" id="L665" title="All 2 branches missed.">        if (outOfPhaseEpochNodes.isEmpty()) {</span>
+<span class="nc" id="L666">            return;</span>
+        }
+
+        try {
+<span class="nc" id="L670">            Layout layout = serverContext.getManagementLayout();</span>
+            // Query all layout servers to get quorum Layout.
+<span class="nc" id="L672">            Map&lt;String, CompletableFuture&lt;Layout&gt;&gt; layoutCompletableFutureMap = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L673" title="All 2 branches missed.">            for (String layoutServer : layout.getLayoutServers()) {</span>
+<span class="nc" id="L674">                CompletableFuture&lt;Layout&gt; completableFuture = new CompletableFuture&lt;&gt;();</span>
+                try {
+<span class="nc" id="L676">                    completableFuture = getCorfuRuntime().getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L677">                            .getLayoutClient(layoutServer)</span>
+<span class="nc" id="L678">                            .getLayout();</span>
+<span class="nc" id="L679">                } catch (Exception e) {</span>
+<span class="nc" id="L680">                    completableFuture.completeExceptionally(e);</span>
+<span class="nc" id="L681">                }</span>
+<span class="nc" id="L682">                layoutCompletableFutureMap.put(layoutServer, completableFuture);</span>
+<span class="nc" id="L683">            }</span>
+
+            // Retrieve the correct layout from quorum of members to reseal servers.
+            // If we are unable to reach a consensus from a quorum we get an exception and
+            // abort the epoch correction phase.
+<span class="nc" id="L688">            Layout quorumLayout = fetchQuorumLayout(layoutCompletableFutureMap.values()</span>
+<span class="nc" id="L689">                    .toArray(new CompletableFuture[layoutCompletableFutureMap.size()]));</span>
+
+            // Update local layout copy.
+<span class="nc" id="L692">            serverContext.saveManagementLayout(quorumLayout);</span>
+<span class="nc" id="L693">            layout = serverContext.getManagementLayout();</span>
+
+            // In case of a partial seal, a set of servers can be sealed with a higher epoch.
+            // We should be able to detect this and bring the rest of the servers to this epoch.
+<span class="nc" id="L697">            long maxOutOfPhaseEpoch = Collections.max(outOfPhaseEpochNodes.values());</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">            if (maxOutOfPhaseEpoch &gt; layout.getEpoch()) {</span>
+<span class="nc" id="L699">                layout.setEpoch(maxOutOfPhaseEpoch);</span>
+            }
+
+            // Re-seal all servers with the latestLayout epoch.
+            // This has no effect on up-to-date servers. Only the trailing servers are caught up.
+<span class="nc" id="L704">            getCorfuRuntime().getLayoutView().getRuntimeLayout(layout).moveServersToEpoch();</span>
+
+            // Check if any layout server has a stale layout.
+            // If yes patch it (commit) with the latestLayout (received from quorum).
+<span class="nc" id="L708">            updateTrailingLayoutServers(layoutCompletableFutureMap);</span>
+
+<span class="nc" id="L710">        } catch (QuorumUnreachableException e) {</span>
+<span class="nc" id="L711">            log.error(&quot;Error in correcting server epochs: {}&quot;, e);</span>
+<span class="nc" id="L712">        }</span>
+<span class="nc" id="L713">    }</span>
+
+    /**
+     * Fetches the updated layout from quorum of layout servers.
+     *
+     * @return quorum agreed layout.
+     * @throws QuorumUnreachableException If unable to receive consensus on layout.
+     */
+    private Layout fetchQuorumLayout(CompletableFuture&lt;Layout&gt;[] completableFutures)
+            throws QuorumUnreachableException {
+
+<span class="nc" id="L724">        QuorumFuturesFactory.CompositeFuture&lt;Layout&gt; quorumFuture = QuorumFuturesFactory</span>
+<span class="nc" id="L725">                .getQuorumFuture(</span>
+<span class="nc" id="L726">                        Comparator.comparing(Layout::asJSONString),</span>
+                        completableFutures);
+        try {
+<span class="nc" id="L729">            return quorumFuture.get();</span>
+<span class="nc" id="L730">        } catch (ExecutionException | InterruptedException e) {</span>
+<span class="nc bnc" id="L731" title="All 2 branches missed.">            if (e.getCause() instanceof QuorumUnreachableException) {</span>
+<span class="nc" id="L732">                throw (QuorumUnreachableException) e.getCause();</span>
+            }
+
+<span class="nc" id="L735">            int reachableServers = (int) Arrays.stream(completableFutures)</span>
+<span class="nc" id="L736">                    .filter(booleanCompletableFuture -&gt; !booleanCompletableFuture</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">                            .isCompletedExceptionally()).count();</span>
+<span class="nc" id="L738">            throw new QuorumUnreachableException(reachableServers, completableFutures.length);</span>
+        }
+    }
+
+    /**
+     * Finds all trailing layout servers and patches them with the latest persisted layout
+     * retrieved by quorum.
+     *
+     * @param layoutCompletableFutureMap Map of layout server endpoints to their layout requests.
+     */
+    private void updateTrailingLayoutServers(
+            Map&lt;String, CompletableFuture&lt;Layout&gt;&gt; layoutCompletableFutureMap) {
+
+        // Patch trailing layout servers with latestLayout.
+<span class="nc" id="L752">        Layout latestLayout = serverContext.getManagementLayout();</span>
+<span class="nc" id="L753">        layoutCompletableFutureMap.keySet().forEach(layoutServer -&gt; {</span>
+<span class="nc" id="L754">            Layout layout = null;</span>
+            try {
+<span class="nc" id="L756">                layout = layoutCompletableFutureMap.get(layoutServer).get();</span>
+<span class="nc" id="L757">            } catch (InterruptedException | ExecutionException e) {</span>
+                // Expected wrong epoch exception if layout server fell behind and has stale
+                // layout and server epoch.
+<span class="nc" id="L760">                log.warn(&quot;updateTrailingLayoutServers: layout fetch failed: {}&quot;, e);</span>
+<span class="nc" id="L761">            }</span>
+
+            // Do nothing if this layout server is updated with the latestLayout.
+<span class="nc bnc" id="L764" title="All 4 branches missed.">            if (layout != null &amp;&amp; layout.equals(latestLayout)) {</span>
+<span class="nc" id="L765">                return;</span>
+            }
+            try {
+                // Committing this layout directly to the trailing layout servers.
+                // This is safe because this layout is acquired by a quorum fetch which confirms
+                // that there was a consensus on this layout and has been committed to a quorum.
+<span class="nc" id="L771">                boolean result = getCorfuRuntime().getLayoutView().getRuntimeLayout(latestLayout)</span>
+<span class="nc" id="L772">                        .getLayoutClient(layoutServer)</span>
+<span class="nc" id="L773">                        .committed(latestLayout.getEpoch(), latestLayout).get();</span>
+<span class="nc bnc" id="L774" title="All 2 branches missed.">                if (result) {</span>
+<span class="nc" id="L775">                    log.debug(&quot;Layout Server: {} successfully patched with latest layout : {}&quot;,</span>
+                            layoutServer, latestLayout);
+                } else {
+<span class="nc" id="L778">                    log.debug(&quot;Layout Server: {} patch with latest layout failed : {}&quot;,</span>
+                            layoutServer, latestLayout);
+                }
+<span class="nc" id="L781">            } catch (InterruptedException | ExecutionException e) {</span>
+<span class="nc" id="L782">                log.error(&quot;Updating layout servers failed due to : {}&quot;, e);</span>
+<span class="nc" id="L783">            }</span>
+<span class="nc" id="L784">        });</span>
+<span class="nc" id="L785">    }</span>
+
+    /**
+     * Shutdown the detectorTaskScheduler, workers and initializationTaskThread.
+     */
+    public void shutdown() {
+        // Shutting the fault detector.
+<span class="nc" id="L792">        shutdown = true;</span>
+<span class="nc" id="L793">        detectionTasksScheduler.shutdownNow();</span>
+<span class="nc" id="L794">        detectionTaskWorkers.shutdownNow();</span>
+<span class="nc" id="L795">        localMetricsPollingService.shutdownNow();</span>
+
+        try {
+<span class="nc" id="L798">            initializationTaskThread.interrupt();</span>
+<span class="nc" id="L799">            initializationTaskThread.join(ServerContext.SHUTDOWN_TIMER.toMillis());</span>
+<span class="nc" id="L800">            detectionTasksScheduler.awaitTermination(ServerContext.SHUTDOWN_TIMER.getSeconds(),</span>
+                    TimeUnit.SECONDS);
+<span class="nc" id="L802">            detectionTaskWorkers.awaitTermination(ServerContext.SHUTDOWN_TIMER.getSeconds(),</span>
+                    TimeUnit.SECONDS);
+<span class="nc" id="L804">            localMetricsPollingService.awaitTermination(ServerContext.SHUTDOWN_TIMER.getSeconds(),</span>
+                    TimeUnit.SECONDS);
+<span class="nc" id="L806">        } catch (InterruptedException ie) {</span>
+<span class="nc" id="L807">            log.debug(&quot;detectionTaskWorkers awaitTermination interrupted : {}&quot;, ie);</span>
+<span class="nc" id="L808">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L809">        }</span>
+<span class="nc" id="L810">        log.info(&quot;Management Agent shutting down.&quot;);</span>
+<span class="nc" id="L811">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

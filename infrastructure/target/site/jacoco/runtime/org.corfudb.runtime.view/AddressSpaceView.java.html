@@ -1,0 +1,381 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AddressSpaceView.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">infrastructure</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.view</a> &gt; <span class="el_source">AddressSpaceView.java</span></div><h1>AddressSpaceView.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.view;
+
+import com.codahale.metrics.Gauge;
+import com.codahale.metrics.MetricRegistry;
+import com.github.benmanes.caffeine.cache.CacheLoader;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.LoadingCache;
+import com.google.common.collect.Iterables;
+import lombok.extern.slf4j.Slf4j;
+import org.corfudb.protocols.wireprotocol.DataType;
+import org.corfudb.protocols.wireprotocol.ILogData;
+import org.corfudb.protocols.wireprotocol.IToken;
+import org.corfudb.protocols.wireprotocol.LogData;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.clients.LogUnitClient;
+import org.corfudb.runtime.exceptions.OverwriteException;
+import org.corfudb.runtime.exceptions.StaleTokenException;
+import org.corfudb.runtime.exceptions.TrimmedException;
+import org.corfudb.runtime.exceptions.WriteSizeException;
+import org.corfudb.runtime.exceptions.WrongEpochException;
+import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuError;
+import org.corfudb.util.CFUtils;
+import org.corfudb.util.CorfuComponent;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
+
+/**
+ * A view of the address space implemented by Corfu.
+ *
+ * &lt;p&gt;Created by mwei on 12/10/15.&lt;/p&gt;
+ */
+<span class="nc" id="L40">@Slf4j</span>
+public class AddressSpaceView extends AbstractView {
+
+    /**
+     * A cache for read results.
+     */
+<span class="nc" id="L46">    final LoadingCache&lt;Long, ILogData&gt; readCache = Caffeine.&lt;Long, ILogData&gt;newBuilder()</span>
+<span class="nc" id="L47">            .maximumSize(runtime.getParameters().getNumCacheEntries())</span>
+<span class="nc" id="L48">            .expireAfterAccess(runtime.getParameters().getCacheExpiryTime(), TimeUnit.SECONDS)</span>
+<span class="nc" id="L49">            .expireAfterWrite(runtime.getParameters().getCacheExpiryTime(), TimeUnit.SECONDS)</span>
+<span class="nc" id="L50">            .recordStats()</span>
+<span class="nc" id="L51">            .build(new CacheLoader&lt;Long, ILogData&gt;() {</span>
+                @Override
+                public ILogData load(Long value) throws Exception {
+<span class="nc" id="L54">                    return cacheFetch(value);</span>
+                }
+
+                @Override
+                public Map&lt;Long, ILogData&gt; loadAll(Iterable&lt;? extends Long&gt; keys) throws Exception {
+<span class="nc" id="L59">                    return cacheFetch((Iterable&lt;Long&gt;) keys);</span>
+                }
+            });
+
+    /**
+     * Constructor for the Address Space View.
+     */
+    public AddressSpaceView(@Nonnull final CorfuRuntime runtime) {
+<span class="nc" id="L67">        super(runtime);</span>
+<span class="nc" id="L68">        MetricRegistry metrics = runtime.getMetrics();</span>
+<span class="nc" id="L69">        final String pfx = String.format(&quot;%s0x%x.cache.&quot;, CorfuComponent.ASV.toString(),</span>
+<span class="nc" id="L70">                                         this.hashCode());</span>
+<span class="nc" id="L71">        metrics.register(pfx + &quot;cache-size&quot;, (Gauge&lt;Long&gt;) readCache::estimatedSize);</span>
+<span class="nc" id="L72">        metrics.register(pfx + &quot;evictions&quot;, (Gauge&lt;Long&gt;) () -&gt; readCache.stats().evictionCount());</span>
+<span class="nc" id="L73">        metrics.register(pfx + &quot;hit-rate&quot;, (Gauge&lt;Double&gt;) () -&gt; readCache.stats().hitRate());</span>
+<span class="nc" id="L74">        metrics.register(pfx + &quot;hits&quot;, (Gauge&lt;Long&gt;) () -&gt; readCache.stats().hitCount());</span>
+<span class="nc" id="L75">        metrics.register(pfx + &quot;misses&quot;, (Gauge&lt;Long&gt;) () -&gt; readCache.stats().missCount());</span>
+<span class="nc" id="L76">    }</span>
+
+
+    /**
+     * Reset all in-memory caches.
+     */
+    public void resetCaches() {
+<span class="nc" id="L83">        readCache.invalidateAll();</span>
+<span class="nc" id="L84">    }</span>
+
+
+    /**
+     * Validates the state of a write after an exception occurred during the process
+     *
+     * There are [currently] three different scenarios:
+     *   1. The data was persisted to some log units and we were able to recover it.
+     *   2. The data was not persisted and another client (or this client) hole filled.
+     *      In that case, we return an OverwriteException and let the upper layer handle it.
+     *   3. The address we tried to write to was trimmed. In this case, there is no way to
+     *      know if the write went through or not. For sanity, we throw an OverwriteException
+     *      and let the above layer retry.
+     *
+     * @param address
+     */
+    private void validateStateOfWrittenEntry(long address, @Nonnull ILogData ld) {
+        ILogData logData;
+        try {
+<span class="nc" id="L103">            logData = read(address);</span>
+<span class="nc" id="L104">        } catch (TrimmedException te) {</span>
+            // We cannot know if the write went through or not
+<span class="nc" id="L106">            throw new UnrecoverableCorfuError(&quot;We cannot determine state of an update because of a trim.&quot;);</span>
+<span class="nc" id="L107">        }</span>
+
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        if (!logData.equals(ld)){</span>
+<span class="nc" id="L110">            throw new OverwriteException();</span>
+        }
+<span class="nc" id="L112">    }</span>
+
+    /** Write the given log data using a token, returning
+     * either when the write has been completed successfully,
+     * or throwing an OverwriteException if another value
+     * has been adopted, or a WrongEpochException if the
+     * token epoch is invalid.
+     *
+     * @param token     The token to use for the write.
+     * @param data      The data to write.
+     * @throws OverwriteException   If the globalAddress given
+     *                              by the token has adopted
+     *                              another value.
+     * @throws WrongEpochException  If the token epoch is invalid.
+     */
+    public void write(IToken token, Object data) throws OverwriteException {
+<span class="nc" id="L128">        final ILogData ld = new LogData(DataType.DATA, data);</span>
+
+<span class="nc" id="L130">        layoutHelper(e -&gt; {</span>
+<span class="nc" id="L131">            Layout l = e.getLayout();</span>
+            // Check if the token issued is in the same
+            // epoch as the layout we are about to write
+            // to.
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            if (token.getEpoch() != l.getEpoch()) {</span>
+<span class="nc" id="L136">                throw new StaleTokenException(l.getEpoch());</span>
+            }
+
+            // Set the data to use the token
+<span class="nc" id="L140">            ld.useToken(token);</span>
+<span class="nc" id="L141">            ld.setId(runtime.getParameters().getClientId());</span>
+
+
+            // Do the write
+            try {
+<span class="nc" id="L146">                l.getReplicationMode(token.getTokenValue())</span>
+<span class="nc" id="L147">                        .getReplicationProtocol(runtime)</span>
+<span class="nc" id="L148">                        .write(e, ld);</span>
+<span class="nc" id="L149">            } catch (OverwriteException | WriteSizeException ex) {</span>
+                // If we have an Overwrite exception, it is already too late for trying
+                // to validate the state of the write, we know that the write didn't complete.
+                // Large writes are also rejected right away.
+<span class="nc" id="L153">                throw ex;</span>
+<span class="nc" id="L154">            } catch (RuntimeException re) {</span>
+<span class="nc" id="L155">                validateStateOfWrittenEntry(token.getTokenValue(), ld);</span>
+<span class="nc" id="L156">            }</span>
+<span class="nc" id="L157">            return null;</span>
+        }, true);
+
+        // Cache the successful write
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        if (!runtime.getParameters().isCacheDisabled()) {</span>
+<span class="nc" id="L162">            readCache.put(token.getTokenValue(), ld);</span>
+        }
+<span class="nc" id="L164">    }</span>
+
+    /** Directly read from the log, returning any
+     * committed value, or NULL, if no value has
+     * been committed.
+     *
+     * @param address   The address to read from.
+     * @return          Committed data stored in the
+     *                  log, or NULL, if no value
+     *                  has been committed.
+     */
+    public @Nullable ILogData peek(final long address) {
+<span class="nc" id="L176">        return layoutHelper(e -&gt; e.getLayout().getReplicationMode(address)</span>
+<span class="nc" id="L177">                    .getReplicationProtocol(runtime)</span>
+<span class="nc" id="L178">                    .peek(e, address));</span>
+    }
+
+    /**
+     * Read the given object from an address and streams.
+     *
+     * @param address An address to read from.
+     * @return A result, which be cached.
+     */
+    public @Nonnull ILogData read(long address) {
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (!runtime.getParameters().isCacheDisabled()) {</span>
+<span class="nc" id="L189">            ILogData data = readCache.get(address);</span>
+<span class="nc bnc" id="L190" title="All 4 branches missed.">            if (data == null || data.getType() == DataType.EMPTY) {</span>
+<span class="nc" id="L191">                throw new RuntimeException(&quot;Unexpected return of empty data at address &quot;</span>
+                        + address + &quot; on read&quot;);
+<span class="nc bnc" id="L193" title="All 2 branches missed.">            } else if (data.isTrimmed()) {</span>
+<span class="nc" id="L194">                throw new TrimmedException();</span>
+            }
+<span class="nc" id="L196">            return data;</span>
+        }
+<span class="nc" id="L198">        return fetch(address);</span>
+    }
+
+    /**
+     * Read the given object from a range of addresses.
+     *
+     * @param addresses An iterable with addresses to read from
+     * @return A result, which be cached.
+     */
+    public Map&lt;Long, ILogData&gt; read(Iterable&lt;Long&gt; addresses) {
+        Map&lt;Long, ILogData&gt; addressesMap;
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (!runtime.getParameters().isCacheDisabled()) {</span>
+<span class="nc" id="L210">            addressesMap = readCache.getAll(addresses);</span>
+        } else {
+<span class="nc" id="L212">            addressesMap = this.cacheFetch(addresses);</span>
+        }
+
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        for (ILogData logData : addressesMap.values()) {</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            if (logData.isTrimmed()) {</span>
+<span class="nc" id="L217">                throw new TrimmedException();</span>
+            }
+<span class="nc" id="L219">        }</span>
+
+<span class="nc" id="L221">        return addressesMap;</span>
+    }
+
+    /**
+     * Get the first address in the address space.
+     */
+    public long getTrimMark() {
+<span class="nc" id="L228">        return layoutHelper(</span>
+<span class="nc" id="L229">                e -&gt; e.getLayout().segments.stream()</span>
+<span class="nc" id="L230">                        .flatMap(seg -&gt; seg.getStripes().stream())</span>
+<span class="nc" id="L231">                        .flatMap(stripe -&gt; stripe.getLogServers().stream())</span>
+<span class="nc" id="L232">                        .map(e::getLogUnitClient)</span>
+<span class="nc" id="L233">                        .map(LogUnitClient::getTrimMark)</span>
+<span class="nc" id="L234">                        .map(CFUtils::getUninterruptibly)</span>
+<span class="nc" id="L235">                        .max(Comparator.naturalOrder()).get());</span>
+    }
+
+    /**
+     * Prefix trim the address space.
+     *
+     * &lt;p&gt;At the end of a prefix trim, all addresses equal to or
+     * less than the address given will be marked for trimming,
+     * which means that they may return either the original
+     * data, or a trimmed exception.&lt;/p&gt;
+     *
+     * @param address log address
+     */
+    public void prefixTrim(final long address) {
+<span class="nc" id="L249">        log.debug(&quot;PrefixTrim[{}]&quot;, address);</span>
+        try {
+<span class="nc" id="L251">            layoutHelper(e -&gt; {</span>
+<span class="nc" id="L252">                        e.getLayout().getPrefixSegments(address).stream()</span>
+<span class="nc" id="L253">                                .flatMap(seg -&gt; seg.getStripes().stream())</span>
+<span class="nc" id="L254">                                .flatMap(stripe -&gt; stripe.getLogServers().stream())</span>
+<span class="nc" id="L255">                                .map(e::getLogUnitClient)</span>
+<span class="nc" id="L256">                                .map(client -&gt; client.prefixTrim(address))</span>
+<span class="nc" id="L257">                                .forEach(CFUtils::getUninterruptibly);</span>
+<span class="nc" id="L258">                        return null;    // No return value</span>
+                    }
+            );
+
+<span class="nc" id="L262">            runtime.getSequencerView().trimCache(address);</span>
+
+<span class="nc" id="L264">        } catch (Exception e) {</span>
+<span class="nc" id="L265">            log.error(&quot;prefixTrim: Error while calling prefix trimming {}&quot;, address, e);</span>
+<span class="nc" id="L266">            throw new UnrecoverableCorfuError(&quot;Unexpected error while prefix trimming&quot;, e);</span>
+<span class="nc" id="L267">        }</span>
+<span class="nc" id="L268">    }</span>
+
+    /** Force compaction on an address space, which will force
+     * all log units to free space, and process any outstanding
+     * trim requests.
+     *
+     */
+    public void gc() {
+<span class="nc" id="L276">        log.debug(&quot;GarbageCollect&quot;);</span>
+<span class="nc" id="L277">        layoutHelper(e -&gt; {</span>
+<span class="nc" id="L278">            e.getLayout().segments.stream()</span>
+<span class="nc" id="L279">                    .flatMap(seg -&gt; seg.getStripes().stream())</span>
+<span class="nc" id="L280">                    .flatMap(stripe -&gt; stripe.getLogServers().stream())</span>
+<span class="nc" id="L281">                    .map(e::getLogUnitClient)</span>
+<span class="nc" id="L282">                    .map(LogUnitClient::compact)</span>
+<span class="nc" id="L283">                    .forEach(CFUtils::getUninterruptibly);</span>
+<span class="nc" id="L284">            return null;</span>
+        });
+<span class="nc" id="L286">    }</span>
+
+    /** Force all server caches to be invalidated.
+     */
+    public void invalidateServerCaches() {
+<span class="nc" id="L291">        log.debug(&quot;InvalidateServerCaches&quot;);</span>
+<span class="nc" id="L292">        layoutHelper(e -&gt; {</span>
+<span class="nc" id="L293">            e.getLayout().segments.stream()</span>
+<span class="nc" id="L294">                    .flatMap(seg -&gt; seg.getStripes().stream())</span>
+<span class="nc" id="L295">                    .flatMap(stripe -&gt; stripe.getLogServers().stream())</span>
+<span class="nc" id="L296">                    .map(e::getLogUnitClient)</span>
+<span class="nc" id="L297">                    .map(LogUnitClient::flushCache)</span>
+<span class="nc" id="L298">                    .forEach(CFUtils::getUninterruptibly);</span>
+<span class="nc" id="L299">            return null;</span>
+        });
+<span class="nc" id="L301">    }</span>
+
+    /** Force the client cache to be invalidated. */
+    public void invalidateClientCache() {
+<span class="nc" id="L305">        readCache.invalidateAll();</span>
+<span class="nc" id="L306">    }</span>
+
+    /**
+     * Fetch an address for insertion into the cache.
+     *
+     * @param address An address to read from.
+     * @return A result to be cached. If the readresult is empty,
+     *         This entry will be scheduled to self invalidate.
+     */
+    private @Nonnull ILogData cacheFetch(long address) {
+<span class="nc" id="L316">        log.trace(&quot;CacheMiss[{}]&quot;, address);</span>
+<span class="nc" id="L317">        ILogData result = fetch(address);</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">        if (result.getType() == DataType.EMPTY) {</span>
+<span class="nc" id="L319">            throw new RuntimeException(&quot;Unexpected empty return at &quot; +  address + &quot; from fetch&quot;);</span>
+        }
+<span class="nc" id="L321">        return result;</span>
+    }
+
+    /**
+     * Fetch a collection of addresses for insertion into the cache.
+     *
+     * @param addresses collection of addresses to read from.
+     * @return A result to be cached
+     */
+    public @Nonnull
+    Map&lt;Long, ILogData&gt; cacheFetch(Iterable&lt;Long&gt; addresses) {
+<span class="nc" id="L332">        Map&lt;Long, ILogData&gt; allAddresses = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L334">        Iterable&lt;List&lt;Long&gt;&gt; batches = Iterables.partition(addresses,</span>
+<span class="nc" id="L335">            runtime.getParameters().getBulkReadSize());</span>
+
+<span class="nc bnc" id="L337" title="All 2 branches missed.">        for (List&lt;Long&gt; batch : batches) {</span>
+            try {
+                //doesn't handle the case where some address have a different replication mode
+<span class="nc" id="L340">                allAddresses.putAll(layoutHelper(e -&gt; e.getLayout()</span>
+<span class="nc" id="L341">                        .getReplicationMode(batch.iterator().next())</span>
+<span class="nc" id="L342">                        .getReplicationProtocol(runtime)</span>
+<span class="nc" id="L343">                        .readAll(e, batch)));</span>
+<span class="nc" id="L344">            } catch (Exception e) {</span>
+<span class="nc" id="L345">                log.error(&quot;cacheFetch: Couldn't read addresses {}&quot;, batch, e);</span>
+<span class="nc" id="L346">                throw new UnrecoverableCorfuError(</span>
+                    &quot;Unexpected error during cacheFetch&quot;, e);
+<span class="nc" id="L348">            }</span>
+<span class="nc" id="L349">        }</span>
+
+<span class="nc" id="L351">        return allAddresses;</span>
+    }
+
+    /**
+     * Fetch a collection of addresses.
+     *
+     * @param addresses collection of addresses to read from.
+     * @return A result to be cached
+     */
+    public @Nonnull
+    Map&lt;Long, ILogData&gt; cacheFetch(Set&lt;Long&gt; addresses) {
+<span class="nc" id="L362">        return layoutHelper(e -&gt; e.getLayout().getReplicationMode(addresses.iterator().next())</span>
+<span class="nc" id="L363">                .getReplicationProtocol(runtime)</span>
+<span class="nc" id="L364">                .readRange(e, addresses));</span>
+    }
+
+    /**
+     * Explicitly fetch a given address, bypassing the cache.
+     *
+     * @param address An address to read from.
+     * @return A result, which will be uncached.
+     */
+    public @Nonnull
+    ILogData fetch(final long address) {
+<span class="nc" id="L375">        return layoutHelper(e -&gt; e.getLayout().getReplicationMode(address)</span>
+<span class="nc" id="L376">                .getReplicationProtocol(runtime)</span>
+<span class="nc" id="L377">                .read(e, address)</span>
+        );
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

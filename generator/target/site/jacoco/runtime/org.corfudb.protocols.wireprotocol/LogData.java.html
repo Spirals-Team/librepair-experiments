@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LogData.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">generator</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.protocols.wireprotocol</a> &gt; <span class="el_source">LogData.java</span></div><h1>LogData.java</h1><pre class="source lang-java linenums">package org.corfudb.protocols.wireprotocol;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+
+import java.util.EnumMap;
+import java.util.concurrent.atomic.AtomicReference;
+
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.protocols.logprotocol.CheckpointEntry;
+import org.corfudb.protocols.logprotocol.LogEntry;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.util.serializer.Serializers;
+
+/**
+ * Created by mwei on 8/15/16.
+ */
+<span class="nc" id="L20">@Slf4j</span>
+public class LogData implements ICorfuPayload&lt;LogData&gt;, IMetadata, ILogData {
+
+    public static final int NOT_KNOWN = -1;
+
+<span class="nc" id="L25">    @Getter</span>
+    final DataType type;
+
+<span class="nc" id="L28">    @Getter</span>
+    byte[] data;
+
+<span class="nc" id="L31">    private ByteBuf serializedCache = null;</span>
+
+<span class="nc" id="L33">    private int lastKnownSize = NOT_KNOWN;</span>
+
+<span class="nc" id="L35">    private final transient AtomicReference&lt;Object&gt; payload = new AtomicReference&lt;&gt;();</span>
+
+    public static LogData getTrimmed(long address) {
+<span class="nc" id="L38">        LogData logData = new LogData(DataType.TRIMMED);</span>
+<span class="nc" id="L39">        logData.setGlobalAddress(address);</span>
+<span class="nc" id="L40">        return logData;</span>
+    }
+
+    public static LogData getHole(long address) {
+<span class="nc" id="L44">        LogData logData = new LogData(DataType.HOLE);</span>
+<span class="nc" id="L45">        logData.setGlobalAddress(address);</span>
+<span class="nc" id="L46">        return logData;</span>
+    }
+
+    public static LogData getEmpty(long address) {
+<span class="nc" id="L50">        LogData logData = new LogData(DataType.EMPTY);</span>
+<span class="nc" id="L51">        logData.setGlobalAddress(address);</span>
+<span class="nc" id="L52">        return logData;</span>
+    }
+
+    /**
+     * Return the payload.
+     */
+    public Object getPayload(CorfuRuntime runtime) {
+<span class="nc" id="L59">        Object value = payload.get();</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L61">            synchronized (this.payload) {</span>
+<span class="nc" id="L62">                value = this.payload.get();</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">                if (value == null) {</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">                    if (data == null) {</span>
+<span class="nc" id="L65">                        this.payload.set(null);</span>
+                    } else {
+<span class="nc" id="L67">                        ByteBuf copyBuf = Unpooled.wrappedBuffer(data);</span>
+<span class="nc" id="L68">                        final Object actualValue =</span>
+<span class="nc" id="L69">                                Serializers.CORFU.deserialize(copyBuf, runtime);</span>
+                        // TODO: Remove circular dependency on logentry.
+<span class="nc bnc" id="L71" title="All 2 branches missed.">                        if (actualValue instanceof LogEntry) {</span>
+<span class="nc" id="L72">                            ((LogEntry) actualValue).setEntry(this);</span>
+<span class="nc" id="L73">                            ((LogEntry) actualValue).setRuntime(runtime);</span>
+                        }
+<span class="nc bnc" id="L75" title="All 2 branches missed.">                        value = actualValue == null ? this.payload : actualValue;</span>
+<span class="nc" id="L76">                        this.payload.set(value);</span>
+<span class="nc" id="L77">                        copyBuf.release();</span>
+<span class="nc" id="L78">                        lastKnownSize = data.length;</span>
+<span class="nc" id="L79">                        data = null;</span>
+                    }
+                }
+<span class="nc" id="L82">            }</span>
+        }
+
+<span class="nc" id="L85">        return value;</span>
+    }
+
+    @Override
+    public synchronized void releaseBuffer() {
+<span class="nc bnc" id="L90" title="All 2 branches missed.">        if (serializedCache != null) {</span>
+<span class="nc" id="L91">            serializedCache.release();</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">            if (serializedCache.refCnt() == 0) {</span>
+<span class="nc" id="L93">                serializedCache = null;</span>
+            }
+        }
+<span class="nc" id="L96">    }</span>
+
+    @Override
+    public synchronized void acquireBuffer() {
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (serializedCache == null) {</span>
+<span class="nc" id="L101">            serializedCache = Unpooled.buffer();</span>
+<span class="nc" id="L102">            doSerializeInternal(serializedCache);</span>
+<span class="nc" id="L103">            lastKnownSize = serializedCache.array().length;</span>
+        } else {
+<span class="nc" id="L105">            serializedCache.retain();</span>
+        }
+<span class="nc" id="L107">    }</span>
+
+    @Override
+    public int getSizeEstimate() {
+<span class="nc" id="L111">        byte[] tempData = data;</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (tempData != null) {</span>
+<span class="nc" id="L113">            return tempData.length;</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        } else if (lastKnownSize != NOT_KNOWN) {</span>
+<span class="nc" id="L115">            return lastKnownSize;</span>
+        }
+<span class="nc" id="L117">        log.warn(&quot;getSizeEstimate: LogData size estimate is defaulting to 1,&quot;</span>
+                + &quot; this might cause leaks in the cache!&quot;);
+<span class="nc" id="L119">        return 1;</span>
+    }
+
+<span class="nc" id="L122">    @Getter</span>
+    final EnumMap&lt;LogUnitMetadataType, Object&gt; metadataMap;
+
+    /**
+     * Return the payload.
+     */
+<span class="nc" id="L128">    public LogData(ByteBuf buf) {</span>
+<span class="nc" id="L129">        type = ICorfuPayload.fromBuffer(buf, DataType.class);</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (type == DataType.DATA) {</span>
+<span class="nc" id="L131">            data = ICorfuPayload.fromBuffer(buf, byte[].class);</span>
+        } else {
+<span class="nc" id="L133">            data = null;</span>
+        }
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        if (type.isMetadataAware()) {</span>
+<span class="nc" id="L136">            metadataMap =</span>
+<span class="nc" id="L137">                    ICorfuPayload.enumMapFromBuffer(buf,</span>
+                            IMetadata.LogUnitMetadataType.class, Object.class);
+        } else {
+<span class="nc" id="L140">            metadataMap = new EnumMap&lt;&gt;(IMetadata.LogUnitMetadataType.class);</span>
+        }
+<span class="nc" id="L142">    }</span>
+
+    /**
+     * Constructor for generating LogData.
+     *
+     * @param type The type of log data to instantiate.
+     */
+<span class="nc" id="L149">    public LogData(DataType type) {</span>
+<span class="nc" id="L150">        this.type = type;</span>
+<span class="nc" id="L151">        this.data = null;</span>
+<span class="nc" id="L152">        this.metadataMap = new EnumMap&lt;&gt;(IMetadata.LogUnitMetadataType.class);</span>
+<span class="nc" id="L153">    }</span>
+
+    /**
+     * Constructor for generating LogData.
+     *
+     * @param type The type of log data to instantiate.
+     * @param object The actual data/value
+     */
+<span class="nc" id="L161">    public LogData(DataType type, final Object object) {</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (object instanceof ByteBuf) {</span>
+<span class="nc" id="L163">            this.type = type;</span>
+<span class="nc" id="L164">            this.data = byteArrayFromBuf((ByteBuf) object);</span>
+<span class="nc" id="L165">            this.metadataMap = new EnumMap&lt;&gt;(IMetadata.LogUnitMetadataType.class);</span>
+        } else {
+<span class="nc" id="L167">            this.type = type;</span>
+<span class="nc" id="L168">            this.data = null;</span>
+<span class="nc" id="L169">            this.payload.set(object);</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">            if (object instanceof LogEntry) {</span>
+<span class="nc" id="L171">                ((LogEntry) object).setEntry(this);</span>
+            }
+<span class="nc" id="L173">            this.metadataMap = new EnumMap&lt;&gt;(IMetadata.LogUnitMetadataType.class);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">            if (object instanceof CheckpointEntry) {</span>
+<span class="nc" id="L175">                CheckpointEntry cp = (CheckpointEntry) object;</span>
+<span class="nc" id="L176">                setCheckpointType(cp.getCpType());</span>
+<span class="nc" id="L177">                setCheckpointId(cp.getCheckpointId());</span>
+<span class="nc" id="L178">                setCheckpointedStreamId(cp.getStreamId());</span>
+<span class="nc" id="L179">                setCheckpointedStreamStartLogAddress(</span>
+<span class="nc" id="L180">                        Long.parseLong(cp.getDict()</span>
+<span class="nc" id="L181">                                .get(CheckpointEntry.CheckpointDictKey.START_LOG_ADDRESS)));</span>
+            }
+        }
+<span class="nc" id="L184">    }</span>
+
+    /**
+     * Return a byte array from buffer.
+     *
+     * @param buf The buffer to read from
+     */
+    public byte[] byteArrayFromBuf(final ByteBuf buf) {
+<span class="nc" id="L192">        ByteBuf readOnlyCopy = buf.asReadOnly();</span>
+<span class="nc" id="L193">        readOnlyCopy.resetReaderIndex();</span>
+<span class="nc" id="L194">        byte[] outArray = new byte[readOnlyCopy.readableBytes()];</span>
+<span class="nc" id="L195">        readOnlyCopy.readBytes(outArray);</span>
+<span class="nc" id="L196">        return outArray;</span>
+    }
+
+    @Override
+    public void doSerialize(ByteBuf buf) {
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (serializedCache != null) {</span>
+<span class="nc" id="L202">            serializedCache.resetReaderIndex();</span>
+<span class="nc" id="L203">            buf.writeBytes(serializedCache);</span>
+        } else {
+<span class="nc" id="L205">            doSerializeInternal(buf);</span>
+        }
+<span class="nc" id="L207">    }</span>
+
+    void doSerializeInternal(ByteBuf buf) {
+<span class="nc" id="L210">        ICorfuPayload.serialize(buf, type);</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (type == DataType.DATA) {</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            if (data == null) {</span>
+<span class="nc" id="L213">                int lengthIndex = buf.writerIndex();</span>
+<span class="nc" id="L214">                buf.writeInt(0);</span>
+<span class="nc" id="L215">                Serializers.CORFU.serialize(payload.get(), buf);</span>
+<span class="nc" id="L216">                int size = buf.writerIndex() - (lengthIndex + 4);</span>
+<span class="nc" id="L217">                buf.writerIndex(lengthIndex);</span>
+<span class="nc" id="L218">                buf.writeInt(size);</span>
+<span class="nc" id="L219">                buf.writerIndex(lengthIndex + size + 4);</span>
+<span class="nc" id="L220">            } else {</span>
+<span class="nc" id="L221">                ICorfuPayload.serialize(buf, data);</span>
+            }
+        }
+<span class="nc bnc" id="L224" title="All 2 branches missed.">        if (type.isMetadataAware()) {</span>
+<span class="nc" id="L225">            ICorfuPayload.serialize(buf, metadataMap);</span>
+        }
+<span class="nc" id="L227">    }</span>
+
+    /**
+     * LogData are considered equals if clientId and threadId are equal.
+     * Here, it means or both of them are null or both of them are the same.
+     * @param o
+     * @return
+     */
+    @Override
+    public boolean equals(Object o) {
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        if (o == this) {</span>
+<span class="nc" id="L238">            return true;</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        } else if (!(o instanceof LogData)) {</span>
+<span class="nc" id="L240">            return false;</span>
+        } else {
+<span class="nc" id="L242">            LogData other = (LogData) o;</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">            if (compareTo(other) == 0) {</span>
+<span class="nc bnc" id="L244" title="All 4 branches missed.">                boolean sameClientId = getClientId() == null ? other.getClientId() == null :</span>
+<span class="nc" id="L245">                        getClientId().equals(other.getClientId());</span>
+<span class="nc bnc" id="L246" title="All 4 branches missed.">                boolean sameThreadId = getThreadId() == null ? other.getThreadId() == null :</span>
+<span class="nc" id="L247">                        getThreadId().equals(other.getThreadId());</span>
+
+<span class="nc bnc" id="L249" title="All 4 branches missed.">                return sameClientId &amp;&amp; sameThreadId;</span>
+            }
+
+<span class="nc" id="L252">            return false;</span>
+        }
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L258">        return &quot;LogData[&quot; + getGlobalAddress() + &quot;]&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

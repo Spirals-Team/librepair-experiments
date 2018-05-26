@@ -1,0 +1,589 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CorfuServer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">debian</a> &gt; <a href="../index.html" class="el_bundle">infrastructure</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.infrastructure</a> &gt; <span class="el_source">CorfuServer.java</span></div><h1>CorfuServer.java</h1><pre class="source lang-java linenums">package org.corfudb.infrastructure;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import com.google.common.collect.ImmutableList;
+import io.netty.bootstrap.ServerBootstrap;
+import io.netty.buffer.PooledByteBufAllocator;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.ServerChannel;
+import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+import io.netty.handler.codec.LengthFieldPrepender;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslHandler;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.io.FileUtils;
+import org.corfudb.protocols.wireprotocol.NettyCorfuMessageDecoder;
+import org.corfudb.protocols.wireprotocol.NettyCorfuMessageEncoder;
+import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuError;
+import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuInterruptedError;
+import org.corfudb.security.sasl.plaintext.PlainTextSaslNettyServer;
+import org.corfudb.security.tls.SslContextConstructor;
+import org.corfudb.util.GitRepositoryState;
+import org.corfudb.util.Version;
+import org.docopt.Docopt;
+import org.fusesource.jansi.AnsiConsole;
+import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nonnull;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLException;
+import java.io.File;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import static org.corfudb.util.NetworkUtils.getAddressFromInterfaceName;
+import static org.fusesource.jansi.Ansi.Color.BLUE;
+import static org.fusesource.jansi.Ansi.Color.MAGENTA;
+import static org.fusesource.jansi.Ansi.Color.RED;
+import static org.fusesource.jansi.Ansi.Color.WHITE;
+import static org.fusesource.jansi.Ansi.ansi;
+
+
+/**
+ * This is the new Corfu server single-process executable.
+ *
+ * &lt;p&gt;The command line options are documented in the USAGE variable.
+ *
+ * &lt;p&gt;Created by mwei on 11/30/15.
+ */
+
+<span class="nc" id="L61">@Slf4j</span>
+<span class="nc" id="L62">public class CorfuServer {</span>
+    /**
+     * This string defines the command line arguments,
+     * in the docopt DSL (see http://docopt.org) for the executable.
+     * It also serves as the documentation for the executable.
+     *
+     * &lt;p&gt;Unfortunately, Java doesn't support multi-line string literals,
+     * so you must concatenate strings and terminate with newlines.
+     *
+     * &lt;p&gt;Note that the java implementation of docopt has a strange requirement
+     * that each option must be preceded with a space.
+     */
+    private static final String USAGE =
+            &quot;Corfu Server, the server for the Corfu Infrastructure.\n&quot;
+                    + &quot;\n&quot;
+                    + &quot;Usage:\n&quot;
+                    + &quot;\tcorfu_server (-l &lt;path&gt;|-m) [-ns] [-a &lt;address&gt;|-q &lt;interface-name&gt;] &quot;
+                    + &quot;[-t &lt;token&gt;] [-c &lt;ratio&gt;] [-d &lt;level&gt;] [-p &lt;seconds&gt;] [-M &lt;address&gt;:&lt;port&gt;] &quot;
+                    + &quot;[-e [-u &lt;keystore&gt; -f &lt;keystore_password_file&gt;] [-r &lt;truststore&gt; -w &quot;
+                    + &quot;&lt;truststore_password_file&gt;] [-b] [-g -o &lt;username_file&gt; -j &lt;password_file&gt;] &quot;
+                    + &quot;[-k &lt;seqcache&gt;] [-T &lt;threads&gt;] [-i &lt;channel-implementation&gt;] [-H &lt;seconds&gt;] &quot;
+                    + &quot;[-I &lt;cluster-id&gt;] [-x &lt;ciphers&gt;] [-z &lt;tls-protocols&gt;]] [-P &lt;prefix&gt;]&quot;
+                    + &quot; [--agent] &lt;port&gt;\n&quot;
+                    + &quot;\n&quot;
+                    + &quot;Options:\n&quot;
+                    + &quot; -l &lt;path&gt;, --log-path=&lt;path&gt;                                             &quot;
+                    + &quot;              Set the path to the storage file for the log unit.\n&quot;
+                    + &quot; -s, --single                                                             &quot;
+                    + &quot;              Deploy a single-node configuration.\n&quot;
+                    + &quot; -I &lt;cluster-id&gt;, --cluster-id=&lt;cluster-id&gt;&quot;
+                    + &quot;              For a single node configuration the cluster id to use in UUID,&quot;
+                    + &quot;              base64 format, or auto to randomly generate [default: auto].\n&quot;
+                    + &quot; -T &lt;threads&gt;, --Threads=&lt;threads&gt;                                        &quot;
+                    + &quot;              Number of corfu server worker threads, or 0 to use 2x the &quot;
+                    + &quot;              number of available processors [default: 0].\n&quot;
+                    + &quot; -P &lt;prefix&gt; --Prefix=&lt;prefix&gt;&quot;
+                    + &quot;              The prefix to use for threads (useful for debugging multiple&quot;
+                    + &quot;              servers) [default: ].&quot;
+                    + &quot;                                                                          &quot;
+                    + &quot;              The server will be bootstrapped with a simple one-unit layout.&quot;
+                    + &quot;\n -a &lt;address&gt;, --address=&lt;address&gt;                                      &quot;
+                    + &quot;                IP address for the server router to bind to and to &quot;
+                    + &quot;advertise to external clients.\n&quot;
+                    + &quot; -q &lt;interface-name&gt;, --network-interface=&lt;interface-name&gt;                &quot;
+                    + &quot;              The name of the network interface.\n&quot;
+                    + &quot; -i &lt;channel-implementation&gt;, --implementation &lt;channel-implementation&gt;   &quot;
+                    + &quot;              The type of channel to use (auto, nio, epoll, kqueue)&quot;
+                    + &quot;[default: nio].\n&quot;
+                    + &quot; -m, --memory                                                             &quot;
+                    + &quot;              Run the unit in-memory (non-persistent).\n&quot;
+                    + &quot;                                                                          &quot;
+                    + &quot;              Data will be lost when the server exits!\n&quot;
+                    + &quot; -c &lt;ratio&gt;, --cache-heap-ratio=&lt;ratio&gt;                                   &quot;
+                    + &quot;              The ratio of jvm max heap size we will use for the the &quot;
+                    + &quot;in-memory cache to serve requests from -\n&quot;
+                    + &quot;                                                                          &quot;
+                    + &quot;              (e.g. ratio = 0.5 means the cache size will be 0.5 * jvm max &quot;
+                    + &quot;heap size\n&quot;
+                    + &quot;                                                                          &quot;
+                    + &quot;              If there is no log, then this will be the size of the log unit&quot;
+                    + &quot;\n                                                                        &quot;
+                    + &quot;                evicted entries will be auto-trimmed. [default: 0.5].\n&quot;
+                    + &quot; -H &lt;seconds&gt;, --HandshakeTimeout=&lt;sceonds&gt;                               &quot;
+                    + &quot;              Handshake timeout in seconds [default: 10].\n               &quot;
+                    + &quot; -t &lt;token&gt;, --initial-token=&lt;token&gt;                                      &quot;
+                    + &quot;              The first token the sequencer will issue, or -1 to recover\n&quot;
+                    + &quot;                                                                          &quot;
+                    + &quot;              from the log. [default: -1].\n                              &quot;
+                    + &quot;                                                                          &quot;
+                    + &quot; -k &lt;seqcache&gt;, --sequencer-cache-size=&lt;seqcache&gt;                         &quot;
+                    + &quot;               The size of the sequencer's cache. [default: 250000].\n    &quot;
+                    + &quot; -p &lt;seconds&gt;, --compact=&lt;seconds&gt;                                        &quot;
+                    + &quot;              The rate the log unit should compact entries (find the,\n&quot;
+                    + &quot;                                                                          &quot;
+                    + &quot;              contiguous tail) in seconds [default: 60].\n&quot;
+                    + &quot; -d &lt;level&gt;, --log-level=&lt;level&gt;                                          &quot;
+                    + &quot;              Set the logging level, valid levels are: \n&quot;
+                    + &quot;                                                                          &quot;
+                    + &quot;              ALL,ERROR,WARN,INFO,DEBUG,TRACE,OFF [default: INFO].\n&quot;
+                    + &quot; -M &lt;address&gt;:&lt;port&gt;, --management-server=&lt;address&gt;:&lt;port&gt;                &quot;
+                    + &quot;              Layout endpoint to seed Management Server\n&quot;
+                    + &quot; -n, --no-verify                                                          &quot;
+                    + &quot;              Disable checksum computation and verification.\n&quot;
+                    + &quot; -e, --enable-tls                                                         &quot;
+                    + &quot;              Enable TLS.\n&quot;
+                    + &quot; -u &lt;keystore&gt;, --keystore=&lt;keystore&gt;                                     &quot;
+                    + &quot;              Path to the key store.\n&quot;
+                    + &quot; -f &lt;keystore_password_file&gt;, &quot;
+                    + &quot;--keystore-password-file=&lt;keystore_password_file&gt;         Path to the file &quot;
+                    + &quot;containing the key store password.\n&quot;
+                    + &quot; -b, --enable-tls-mutual-auth                                             &quot;
+                    + &quot;              Enable TLS mutual authentication.\n&quot;
+                    + &quot; -r &lt;truststore&gt;, --truststore=&lt;truststore&gt;                               &quot;
+                    + &quot;              Path to the trust store.\n&quot;
+                    + &quot; -w &lt;truststore_password_file&gt;, &quot;
+                    + &quot;--truststore-password-file=&lt;truststore_password_file&gt;   Path to the file &quot;
+                    + &quot;containing the trust store password.\n&quot;
+                    + &quot; -g, --enable-sasl-plain-text-auth                                        &quot;
+                    + &quot;              Enable SASL Plain Text Authentication.\n&quot;
+                    + &quot; -o &lt;username_file&gt;, --sasl-plain-text-username-file=&lt;username_file&gt;      &quot;
+                    + &quot;              Path to the file containing the username for SASL Plain Text &quot;
+                    + &quot;Authentication.\n&quot;
+                    + &quot; -j &lt;password_file&gt;, --sasl-plain-text-password-file=&lt;password_file&gt;      &quot;
+                    + &quot;              Path to the file containing the password for SASL Plain Text &quot;
+                    + &quot;Authentication.\n&quot;
+                    + &quot; -x &lt;ciphers&gt;, --tls-ciphers=&lt;ciphers&gt;                                    &quot;
+                    + &quot;              Comma separated list of TLS ciphers to use.\n&quot;
+                    + &quot;                                                                          &quot;
+                    + &quot;              [default: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256].\n&quot;
+                    + &quot; -z &lt;tls-protocols&gt;, --tls-protocols=&lt;tls-protocols&gt;                      &quot;
+                    + &quot;              Comma separated list of TLS protocols to use.\n&quot;
+                    + &quot;                                                                          &quot;
+                    + &quot;              [default: TLSv1.1,TLSv1.2].\n&quot;
+                    + &quot; --agent      Run with byteman agent to enable runtime code injection.\n  &quot;
+                    + &quot; -h, --help                                                               &quot;
+                    + &quot;              Show this screen\n&quot;
+                    + &quot; --version                                                                &quot;
+                    + &quot;              Show version\n&quot;;
+
+    private static volatile Thread corfuServerThread;
+    private static volatile Thread shutdownThread;
+
+    /**
+     * Main program entry point.
+     *
+     * @param args command line argument strings
+     */
+    public static void main(String[] args) {
+
+        // Parse the options given, using docopt.
+<span class="nc" id="L192">        Map&lt;String, Object&gt; opts = new Docopt(USAGE)</span>
+<span class="nc" id="L193">                .withVersion(GitRepositoryState.getRepositoryState().describe)</span>
+<span class="nc" id="L194">                .parse(args);</span>
+        // Print a nice welcome message.
+<span class="nc" id="L196">        AnsiConsole.systemInstall();</span>
+<span class="nc" id="L197">        printStartupMsg(opts);</span>
+
+        // Pick the correct logging level before outputting error messages.
+<span class="nc" id="L200">        final Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);</span>
+<span class="nc" id="L201">        final Level level = Level.toLevel(((String) opts.get(&quot;--log-level&quot;)).toUpperCase());</span>
+<span class="nc" id="L202">        root.setLevel(level);</span>
+
+<span class="nc" id="L204">        log.debug(&quot;Started with arguments: {}&quot;, opts);</span>
+
+        // Bind to all interfaces only if no address or interface specified by the user.
+        final boolean bindToAllInterfaces;
+        // Fetch the address if given a network interface.
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (opts.get(&quot;--network-interface&quot;) != null) {</span>
+<span class="nc" id="L210">            opts.put(&quot;--address&quot;,</span>
+<span class="nc" id="L211">                    getAddressFromInterfaceName((String) opts.get(&quot;--network-interface&quot;)));</span>
+<span class="nc" id="L212">            bindToAllInterfaces = false;</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        } else if (opts.get(&quot;--address&quot;) == null) {</span>
+            // Default the address to localhost and set the bind to all interfaces flag to true,
+            // if the address and interface is not specified.
+<span class="nc" id="L216">            bindToAllInterfaces = true;</span>
+<span class="nc" id="L217">            opts.put(&quot;--address&quot;, &quot;localhost&quot;);</span>
+        } else {
+            // Address is specified by the user.
+<span class="nc" id="L220">            bindToAllInterfaces = false;</span>
+        }
+
+        // Create the service directory if it does not exist.
+<span class="nc bnc" id="L224" title="All 2 branches missed.">        if (!(Boolean) opts.get(&quot;--memory&quot;)) {</span>
+<span class="nc" id="L225">            File serviceDir = new File((String) opts.get(&quot;--log-path&quot;));</span>
+
+<span class="nc bnc" id="L227" title="All 2 branches missed.">            if (!serviceDir.isDirectory()) {</span>
+<span class="nc" id="L228">                log.error(&quot;Service directory {} does not point to a directory. Aborting.&quot;,</span>
+                        serviceDir);
+<span class="nc" id="L230">                throw new UnrecoverableCorfuError(&quot;Service directory must be a directory!&quot;);</span>
+            } else {
+<span class="nc" id="L232">                String corfuServiceDirPath = serviceDir.getAbsolutePath()</span>
+                        + File.separator
+                        + &quot;corfu&quot;;
+<span class="nc" id="L235">                File corfuServiceDir = new File(corfuServiceDirPath);</span>
+                // Update the new path with the dedicated child service directory.
+<span class="nc" id="L237">                opts.put(&quot;--log-path&quot;, corfuServiceDirPath);</span>
+<span class="nc bnc" id="L238" title="All 4 branches missed.">                if (!corfuServiceDir.exists() &amp;&amp; corfuServiceDir.mkdirs()) {</span>
+<span class="nc" id="L239">                    log.info(&quot;Created new service directory at {}.&quot;, corfuServiceDir);</span>
+                }
+            }
+        }
+
+<span class="nc" id="L244">        corfuServerThread = new Thread(() -&gt; startServer(opts, bindToAllInterfaces));</span>
+<span class="nc" id="L245">        corfuServerThread.setName(&quot;CorfuServer&quot;);</span>
+<span class="nc" id="L246">        corfuServerThread.start();</span>
+<span class="nc" id="L247">    }</span>
+
+    /**
+     * Creates all the components of the Corfu Server.
+     * Starts the Server Router.
+     *
+     * @param opts Options passed by the user.
+     */
+    public static void startServer(Map&lt;String, Object&gt; opts, boolean bindToAllInterfaces) {
+
+<span class="nc" id="L257">        int port = Integer.parseInt((String) opts.get(&quot;&lt;port&gt;&quot;));</span>
+
+        // Create a common Server Context for all servers to access.
+<span class="nc" id="L260">        try (ServerContext serverContext = new ServerContext(opts)) {</span>
+<span class="nc" id="L261">            List&lt;AbstractServer&gt; servers = ImmutableList.&lt;AbstractServer&gt;builder()</span>
+<span class="nc" id="L262">                    .add(new BaseServer(serverContext))</span>
+<span class="nc" id="L263">                    .add(new SequencerServer(serverContext))</span>
+<span class="nc" id="L264">                    .add(new LayoutServer(serverContext))</span>
+<span class="nc" id="L265">                    .add(new LogUnitServer(serverContext))</span>
+<span class="nc" id="L266">                    .add(new ManagementServer(serverContext))</span>
+<span class="nc" id="L267">                    .build();</span>
+
+<span class="nc" id="L269">            NettyServerRouter router = new NettyServerRouter(servers);</span>
+<span class="nc" id="L270">            serverContext.setServerRouter(router);</span>
+<span class="nc" id="L271">            serverContext.setBindToAllInterfaces(bindToAllInterfaces);</span>
+
+            // Register shutdown handler
+<span class="nc" id="L274">            shutdownThread = new Thread(() -&gt; cleanShutdown(router));</span>
+<span class="nc" id="L275">            shutdownThread.setName(&quot;ShutdownThread&quot;);</span>
+<span class="nc" id="L276">            Runtime.getRuntime().addShutdownHook(shutdownThread);</span>
+
+<span class="nc" id="L278">            startAndListen(serverContext.getBossGroup(),</span>
+<span class="nc" id="L279">                    serverContext.getWorkerGroup(),</span>
+<span class="nc" id="L280">                    b -&gt; configureBootstrapOptions(serverContext, b),</span>
+                    serverContext,
+                    router,
+<span class="nc" id="L283">                    (String) opts.get(&quot;--address&quot;),</span>
+<span class="nc" id="L284">                    port).channel().closeFuture().syncUninterruptibly();</span>
+<span class="nc bnc" id="L285" title="All 8 branches missed.">        } catch (Exception e) {</span>
+<span class="nc" id="L286">            log.error(&quot;CorfuServer: Server exiting due to unrecoverable error: &quot;, e);</span>
+<span class="nc" id="L287">            throw new UnrecoverableCorfuError(e);</span>
+<span class="nc" id="L288">        }</span>
+<span class="nc" id="L289">    }</span>
+
+    /** A functional interface for receiving and configuring a {@link ServerBootstrap}.
+     */
+    @FunctionalInterface
+    public interface BootstrapConfigurer {
+
+        /** Configure a {@link ServerBootstrap}.
+         *
+         * @param serverBootstrap   The {@link ServerBootstrap} to configure.
+         */
+        void configure(ServerBootstrap serverBootstrap);
+    }
+
+    /** Start the Corfu server and bind it to the given {@code port} using the provided
+     * {@code channelType}. It is the callers' responsibility to shutdown the
+     * {@link EventLoopGroup}s. For implementations which listen on multiple ports,
+     * {@link EventLoopGroup}s may be reused.
+     *
+     * @param bossGroup             The &quot;boss&quot; {@link EventLoopGroup} which services incoming
+     *                              connections.
+     * @param workerGroup           The &quot;worker&quot; {@link EventLoopGroup} which services incoming
+     *                              requests.
+     * @param bootstrapConfigurer   A {@link BootstrapConfigurer} which will receive the
+     *                              {@link ServerBootstrap} to set options.
+     * @param context               A {@link ServerContext} which will be used to configure the
+     *                              server.
+     * @param router                A {@link NettyServerRouter} which will process incoming
+     *                              messages.
+     * @param port                  The port the {@link ServerChannel} will be created on.
+     * @return                      A {@link ChannelFuture} which can be used to wait for the server
+     *                              to be shutdown.
+     */
+    public static
+            ChannelFuture startAndListen(@Nonnull EventLoopGroup bossGroup,
+                          @Nonnull EventLoopGroup workerGroup,
+                          @Nonnull BootstrapConfigurer bootstrapConfigurer,
+                          @Nonnull ServerContext context,
+                          @Nonnull NettyServerRouter router,
+                          String address,
+                          int port) {
+        try {
+<span class="nc" id="L331">            ServerBootstrap bootstrap = new ServerBootstrap();</span>
+<span class="nc" id="L332">            bootstrap.group(bossGroup, workerGroup)</span>
+<span class="nc" id="L333">                .channel(context.getChannelImplementation().getServerChannelClass());</span>
+<span class="nc" id="L334">            bootstrapConfigurer.configure(bootstrap);</span>
+
+<span class="nc" id="L336">            bootstrap.childHandler(getServerChannelInitializer(context, router));</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">            if (context.isBindToAllInterfaces()) {</span>
+<span class="nc" id="L338">                log.info(&quot;Corfu Server listening on all interfaces on port:{}&quot;, port);</span>
+<span class="nc" id="L339">                return bootstrap.bind(port).sync();</span>
+            } else {
+<span class="nc" id="L341">                log.info(&quot;Corfu Server listening on {}:{}&quot;, address, port);</span>
+<span class="nc" id="L342">                return bootstrap.bind(address, port).sync();</span>
+            }
+<span class="nc" id="L344">        } catch (InterruptedException ie) {</span>
+<span class="nc" id="L345">            throw new UnrecoverableCorfuInterruptedError(ie);</span>
+        }
+    }
+
+    /** Configure server bootstrap per-channel options, such as TCP options, etc.
+     *
+     * @param context       The {@link ServerContext} to use.
+     * @param bootstrap     The {@link ServerBootstrap} to be configured.
+     */
+    public static void configureBootstrapOptions(@Nonnull ServerContext context,
+            @Nonnull ServerBootstrap bootstrap) {
+<span class="nc" id="L356">        bootstrap.option(ChannelOption.SO_BACKLOG, 100)</span>
+<span class="nc" id="L357">            .childOption(ChannelOption.SO_KEEPALIVE, true)</span>
+<span class="nc" id="L358">            .childOption(ChannelOption.SO_REUSEADDR, true)</span>
+<span class="nc" id="L359">            .childOption(ChannelOption.TCP_NODELAY, true)</span>
+<span class="nc" id="L360">            .childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);</span>
+<span class="nc" id="L361">    }</span>
+
+
+    /** Obtain a {@link ChannelInitializer} which initializes the channel pipeline
+     *  for a new {@link ServerChannel}.
+     *
+     * @param context   The {@link ServerContext} to use.
+     * @param router    The {@link NettyServerRouter} to initialize the channel with.
+     * @return          A {@link ChannelInitializer} to intialize the channel.
+     */
+    private static ChannelInitializer getServerChannelInitializer(@Nonnull ServerContext context,
+            @Nonnull NettyServerRouter router) {
+        // Security variables
+        final SslContext sslContext;
+        final String[] enabledTlsProtocols;
+        final String[] enabledTlsCipherSuites;
+
+        // Security Initialization
+<span class="nc" id="L379">        Boolean tlsEnabled = context.getServerConfig(Boolean.class, &quot;--enable-tls&quot;);</span>
+<span class="nc" id="L380">        Boolean tlsMutualAuthEnabled = context.getServerConfig(Boolean.class,</span>
+                &quot;--enable-tls-mutual-auth&quot;);
+<span class="nc bnc" id="L382" title="All 2 branches missed.">        if (tlsEnabled) {</span>
+            // Get the TLS cipher suites to enable
+<span class="nc" id="L384">            String ciphs = context.getServerConfig(String.class, &quot;--tls-ciphers&quot;);</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">            if (ciphs != null) {</span>
+<span class="nc" id="L386">                List&lt;String&gt; ciphers = Pattern.compile(&quot;,&quot;)</span>
+<span class="nc" id="L387">                        .splitAsStream(ciphs)</span>
+<span class="nc" id="L388">                        .map(String::trim)</span>
+<span class="nc" id="L389">                        .collect(Collectors.toList());</span>
+<span class="nc" id="L390">                enabledTlsCipherSuites = ciphers.toArray(new String[ciphers.size()]);</span>
+<span class="nc" id="L391">            } else {</span>
+<span class="nc" id="L392">                enabledTlsCipherSuites = new String[]{};</span>
+            }
+
+            // Get the TLS protocols to enable
+<span class="nc" id="L396">            String protos = context.getServerConfig(String.class, &quot;--tls-protocols&quot;);</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">            if (protos != null) {</span>
+<span class="nc" id="L398">                List&lt;String&gt; protocols = Pattern.compile(&quot;,&quot;)</span>
+<span class="nc" id="L399">                        .splitAsStream(protos)</span>
+<span class="nc" id="L400">                        .map(String::trim)</span>
+<span class="nc" id="L401">                        .collect(Collectors.toList());</span>
+<span class="nc" id="L402">                enabledTlsProtocols = protocols.toArray(new String[protocols.size()]);</span>
+<span class="nc" id="L403">            } else {</span>
+<span class="nc" id="L404">                enabledTlsProtocols = new String[]{};</span>
+            }
+
+
+            try {
+<span class="nc" id="L409">                sslContext = SslContextConstructor.constructSslContext(true,</span>
+<span class="nc" id="L410">                    context.getServerConfig(String.class, &quot;--keystore&quot;),</span>
+<span class="nc" id="L411">                    context.getServerConfig(String.class, &quot;--keystore-password-file&quot;),</span>
+<span class="nc" id="L412">                    context.getServerConfig(String.class, &quot;--truststore&quot;),</span>
+<span class="nc" id="L413">                    context.getServerConfig(String.class,</span>
+                        &quot;--truststore-password-file&quot;));
+<span class="nc" id="L415">            } catch (SSLException e) {</span>
+<span class="nc" id="L416">                log.error(&quot;Could not build the SSL context&quot;, e);</span>
+<span class="nc" id="L417">                throw new UnrecoverableCorfuError(&quot;Couldn't build the SSL context&quot;, e);</span>
+<span class="nc" id="L418">            }</span>
+<span class="nc" id="L419">        } else {</span>
+<span class="nc" id="L420">            enabledTlsCipherSuites = new String[]{};</span>
+<span class="nc" id="L421">            enabledTlsProtocols = new String[]{};</span>
+<span class="nc" id="L422">            sslContext = null;</span>
+        }
+
+<span class="nc" id="L425">        Boolean saslPlainTextAuth = context.getServerConfig(Boolean.class,</span>
+                &quot;--enable-sasl-plain-text-auth&quot;);
+
+        // Generate the initializer.
+<span class="nc" id="L429">        return new ChannelInitializer() {</span>
+            @Override
+            protected void initChannel(@Nonnull Channel ch) throws Exception {
+                // If TLS is enabled, setup the encryption pipeline.
+<span class="nc bnc" id="L433" title="All 2 branches missed.">                if (tlsEnabled) {</span>
+<span class="nc" id="L434">                    SSLEngine engine = sslContext.newEngine(ch.alloc());</span>
+<span class="nc" id="L435">                    engine.setEnabledCipherSuites(enabledTlsCipherSuites);</span>
+<span class="nc" id="L436">                    engine.setEnabledProtocols(enabledTlsProtocols);</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">                    if (tlsMutualAuthEnabled) {</span>
+<span class="nc" id="L438">                        engine.setNeedClientAuth(true);</span>
+                    }
+<span class="nc" id="L440">                    ch.pipeline().addLast(&quot;ssl&quot;, new SslHandler(engine));</span>
+                }
+                // Add/parse a length field
+<span class="nc" id="L443">                ch.pipeline().addLast(new LengthFieldPrepender(4));</span>
+<span class="nc" id="L444">                ch.pipeline().addLast(new LengthFieldBasedFrameDecoder(Integer</span>
+                        .MAX_VALUE, 0, 4,
+                        0, 4));
+                // If SASL authentication is requested, perform a SASL plain-text auth.
+<span class="nc bnc" id="L448" title="All 2 branches missed.">                if (saslPlainTextAuth) {</span>
+<span class="nc" id="L449">                    ch.pipeline().addLast(&quot;sasl/plain-text&quot;, new</span>
+                            PlainTextSaslNettyServer());
+                }
+                // Transform the framed message into a Corfu message.
+<span class="nc" id="L453">                ch.pipeline().addLast(new NettyCorfuMessageDecoder());</span>
+<span class="nc" id="L454">                ch.pipeline().addLast(new NettyCorfuMessageEncoder());</span>
+<span class="nc" id="L455">                ch.pipeline().addLast(new ServerHandshakeHandler(context.getNodeId(),</span>
+<span class="nc" id="L456">                        Version.getVersionString() + &quot;(&quot;</span>
+<span class="nc" id="L457">                                + GitRepositoryState.getRepositoryState().commitIdAbbrev + &quot;)&quot;,</span>
+<span class="nc" id="L458">                        context.getServerConfig(String.class, &quot;--HandshakeTimeout&quot;)));</span>
+                // Route the message to the server class.
+<span class="nc" id="L460">                ch.pipeline().addLast(router);</span>
+<span class="nc" id="L461">            }</span>
+        };
+    }
+
+    /**
+     * Cleanly shuts down the server and restarts.
+     *
+     * @param serverContext Server Context.
+     * @param resetData     Resets and clears all data if True.
+     */
+    public static void restartServer(ServerContext serverContext, boolean resetData) {
+
+<span class="nc" id="L473">        final Thread previousServerThread = corfuServerThread;</span>
+<span class="nc" id="L474">        final Map&lt;String, Object&gt; opts = serverContext.getServerConfig();</span>
+<span class="nc" id="L475">        final boolean bindToAllInterfaces = serverContext.isBindToAllInterfaces();</span>
+
+<span class="nc" id="L477">        corfuServerThread = new Thread(() -&gt; {</span>
+<span class="nc" id="L478">            cleanShutdown((NettyServerRouter) serverContext.getServerRouter());</span>
+<span class="nc bnc" id="L479" title="All 4 branches missed.">            if (resetData &amp;&amp; !(Boolean) serverContext.getServerConfig().get(&quot;--memory&quot;)) {</span>
+<span class="nc" id="L480">                File serviceDir = new File((String) serverContext.getServerConfig()</span>
+<span class="nc" id="L481">                        .get(&quot;--log-path&quot;));</span>
+                try {
+<span class="nc" id="L483">                    FileUtils.cleanDirectory(serviceDir);</span>
+<span class="nc" id="L484">                } catch (IOException ioe) {</span>
+<span class="nc" id="L485">                    throw new UnrecoverableCorfuError(ioe);</span>
+<span class="nc" id="L486">                }</span>
+            }
+<span class="nc" id="L488">            serverContext.close();</span>
+
+            // Wait for previous server thread to join.
+            try {
+<span class="nc" id="L492">                previousServerThread.join();</span>
+<span class="nc" id="L493">                Runtime.getRuntime().removeShutdownHook(shutdownThread);</span>
+<span class="nc" id="L494">            } catch (InterruptedException ie) {</span>
+<span class="nc" id="L495">                throw new UnrecoverableCorfuInterruptedError(ie);</span>
+<span class="nc" id="L496">            }</span>
+
+<span class="nc" id="L498">            Runtime.getRuntime().removeShutdownHook(shutdownThread);</span>
+
+            // Restart the server.
+<span class="nc" id="L501">            log.info(&quot;RestartServer: Restarting corfu server&quot;);</span>
+<span class="nc" id="L502">            printStartupMsg(opts);</span>
+<span class="nc" id="L503">            startServer(opts, bindToAllInterfaces);</span>
+<span class="nc" id="L504">        });</span>
+<span class="nc" id="L505">        corfuServerThread.setName(&quot;CorfuServer&quot;);</span>
+<span class="nc" id="L506">        corfuServerThread.start();</span>
+<span class="nc" id="L507">    }</span>
+
+    /**
+     * Attempt to cleanly shutdown all the servers.
+     */
+    public static void cleanShutdown(@Nonnull NettyServerRouter router) {
+<span class="nc" id="L513">        log.info(&quot;CleanShutdown: Starting Cleanup.&quot;);</span>
+        // Create a list of servers
+<span class="nc" id="L515">        final List&lt;AbstractServer&gt; servers = router.getServers();</span>
+
+        // A executor service to create the shutdown threads
+        // plus name the threads correctly.
+<span class="nc" id="L519">        final ExecutorService shutdownService =</span>
+<span class="nc" id="L520">                Executors.newFixedThreadPool(servers.size());</span>
+
+        // Turn into a list of futures on the shutdown, returning
+        // generating a log message to inform of the result.
+<span class="nc" id="L524">        CompletableFuture[] shutdownFutures = servers.stream()</span>
+<span class="nc" id="L525">                .map(s -&gt; CompletableFuture.runAsync(() -&gt; {</span>
+                    try {
+<span class="nc" id="L527">                        Thread.currentThread().setName(s.getClass().getSimpleName()</span>
+                                + &quot;-shutdown&quot;);
+<span class="nc" id="L529">                        log.info(&quot;CleanShutdown: Shutting down {}&quot;,</span>
+<span class="nc" id="L530">                                s.getClass().getSimpleName());</span>
+<span class="nc" id="L531">                        s.shutdown();</span>
+<span class="nc" id="L532">                        log.info(&quot;CleanShutdown: Cleanly shutdown {}&quot;,</span>
+<span class="nc" id="L533">                                s.getClass().getSimpleName());</span>
+<span class="nc" id="L534">                    } catch (Exception e) {</span>
+<span class="nc" id="L535">                        log.error(&quot;CleanShutdown: Failed to cleanly shutdown {}&quot;,</span>
+<span class="nc" id="L536">                                s.getClass().getSimpleName(), e);</span>
+<span class="nc" id="L537">                    }</span>
+<span class="nc" id="L538">                }, shutdownService))</span>
+<span class="nc" id="L539">                .toArray(CompletableFuture[]::new);</span>
+
+<span class="nc" id="L541">        CompletableFuture.allOf(shutdownFutures).join();</span>
+<span class="nc" id="L542">        log.info(&quot;CleanShutdown: Shutdown Complete.&quot;);</span>
+<span class="nc" id="L543">    }</span>
+
+    /**
+     * Print the corfu logo.
+     */
+    private static void printLogo() {
+<span class="nc" id="L549">        println(ansi().fg(WHITE).toString());</span>
+<span class="nc" id="L550">        println(&quot;▄████████  ▄██████▄     ▄████████    ▄████████ ███    █▄&quot;);</span>
+<span class="nc" id="L551">        println(&quot;███    ███ ███    ███   ███    ███   ███    ██████    ███&quot;);</span>
+<span class="nc" id="L552">        println(&quot;███    █▀  ███    ███   ███    ███   ███    █▀ ███    ███&quot;);</span>
+<span class="nc" id="L553">        println(&quot;███        ███    ███  ▄███▄▄▄▄██▀  ▄███▄▄▄    ███    ███&quot;);</span>
+<span class="nc" id="L554">        println(&quot;███        ███    ███ ▀▀███▀▀▀▀▀   ▀▀███▀▀▀    ███    ███&quot;);</span>
+<span class="nc" id="L555">        println(&quot;███    █▄  ███    ███ ▀███████████   ███       ███    ███&quot;);</span>
+<span class="nc" id="L556">        println(&quot;███    ███ ███    ███   ███    ███   ███       ███    ███&quot;);</span>
+<span class="nc" id="L557">        println(&quot;████████▀   ▀██████▀    ███    ███   ███       ████████▀ &quot;);</span>
+<span class="nc" id="L558">        println(&quot;                        ███    ███&quot;);</span>
+<span class="nc" id="L559">        println(ansi().reset().toString());</span>
+<span class="nc" id="L560">    }</span>
+
+    /** Print an object to the console, followed by a newline.
+     *  Call this method instead of calling System.out.println().
+     *
+     * @param line  The object to print.
+     */
+    @SuppressWarnings(&quot;checkstyle:printLine&quot;)
+    private static void println(Object line) {
+<span class="nc" id="L569">        System.out.println(line);</span>
+<span class="nc" id="L570">    }</span>
+
+    /**
+     * Print the welcome message, logo and the arguments.
+     *
+     * @param opts Arguments.
+     */
+    private static void printStartupMsg(Map&lt;String, Object&gt; opts) {
+<span class="nc" id="L578">        printLogo();</span>
+<span class="nc" id="L579">        int port = Integer.parseInt((String) opts.get(&quot;&lt;port&gt;&quot;));</span>
+<span class="nc" id="L580">        println(ansi().a(&quot;Welcome to &quot;).fg(RED).a(&quot;CORFU &quot;).fg(MAGENTA).a(&quot;SERVER&quot;).reset());</span>
+<span class="nc" id="L581">        println(ansi().a(&quot;Version &quot;).a(Version.getVersionString()).a(&quot; (&quot;).fg(BLUE)</span>
+<span class="nc" id="L582">                .a(GitRepositoryState.getRepositoryState().commitIdAbbrev).reset().a(&quot;)&quot;));</span>
+<span class="nc" id="L583">        println(ansi().a(&quot;Serving on port &quot;).fg(WHITE).a(port).reset());</span>
+<span class="nc" id="L584">        println(ansi().a(&quot;Service directory: &quot;).fg(WHITE).a(</span>
+<span class="nc bnc" id="L585" title="All 2 branches missed.">                (Boolean) opts.get(&quot;--memory&quot;) ? &quot;MEMORY mode&quot; :</span>
+<span class="nc" id="L586">                        opts.get(&quot;--log-path&quot;)).reset());</span>
+<span class="nc" id="L587">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

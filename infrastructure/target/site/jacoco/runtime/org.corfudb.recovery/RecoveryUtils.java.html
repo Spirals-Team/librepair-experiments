@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RecoveryUtils.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">infrastructure</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.recovery</a> &gt; <span class="el_source">RecoveryUtils.java</span></div><h1>RecoveryUtils.java</h1><pre class="source lang-java linenums">package org.corfudb.recovery;
+
+import com.google.common.collect.ContiguousSet;
+import com.google.common.collect.DiscreteDomain;
+import com.google.common.collect.Range;
+import org.corfudb.protocols.logprotocol.CheckpointEntry;
+import org.corfudb.protocols.logprotocol.LogEntry;
+import org.corfudb.protocols.wireprotocol.ILogData;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.object.CorfuCompileProxy;
+import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.view.ObjectBuilder;
+import org.corfudb.runtime.view.ObjectsView;
+import org.corfudb.util.serializer.ISerializer;
+
+import java.util.Map;
+import java.util.UUID;
+
+import static org.corfudb.protocols.logprotocol.CheckpointEntry.CheckpointDictKey.SNAPSHOT_ADDRESS;
+
+/**
+ * Created by rmichoud on 6/22/17.
+ */
+<span class="nc" id="L24">public class RecoveryUtils {</span>
+
+    static ObjectsView.ObjectID getObjectIdFromStreamId(UUID streamId, Class type) {
+<span class="nc" id="L27">        return new ObjectsView.ObjectID(streamId, type);</span>
+    }
+    static boolean isCheckPointEntry(ILogData logData) {
+<span class="nc" id="L30">        return logData.hasCheckpointMetadata();</span>
+    }
+
+    static long getSnapShotAddressOfCheckPoint(CheckpointEntry logEntry) {
+<span class="nc" id="L34">        return Long.parseLong(logEntry.getDict().get(SNAPSHOT_ADDRESS));</span>
+    }
+
+    static long getStartAddressOfCheckPoint(ILogData logData) {
+<span class="nc" id="L38">        return logData.getCheckpointedStreamStartLogAddress();</span>
+    }
+
+    /** Create a new object SMRMap as recipient of SMRUpdates (if doesn't exist yet)
+     *
+     * @param streamId
+     */
+    static void createObjectIfNotExist(CorfuRuntime runtime, UUID streamId, ISerializer serializer, Class type) {
+<span class="nc" id="L46">        if (!runtime.getObjectsView().getObjectCache()</span>
+<span class="nc bnc" id="L47" title="All 2 branches missed.">                .containsKey(RecoveryUtils.getObjectIdFromStreamId(streamId, type))) {</span>
+<span class="nc" id="L48">            runtime.getObjectsView().build()</span>
+<span class="nc" id="L49">                    .setStreamID(streamId)</span>
+<span class="nc" id="L50">                    .setType(type)</span>
+<span class="nc" id="L51">                    .setSerializer(serializer)</span>
+<span class="nc" id="L52">                    .open();</span>
+        }
+<span class="nc" id="L54">    }</span>
+
+    static void createObjectIfNotExist(ObjectBuilder ob, ISerializer serializer) {
+<span class="nc" id="L57">        if (!ob.getRuntime().getObjectsView().getObjectCache()</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">                .containsKey(RecoveryUtils.getObjectIdFromStreamId(ob.getStreamID(), ob.getType()))){</span>
+<span class="nc" id="L59">                ob.setSerializer(serializer).open();</span>
+        }
+<span class="nc" id="L61">    }</span>
+
+    /**
+     * Fetch LogData from Corfu server
+     *
+     * @param address address to be fetched
+     * @return LogData at address
+     */
+    static ILogData getLogData(CorfuRuntime runtime, boolean loadInCache, long address) {
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (loadInCache) {</span>
+<span class="nc" id="L71">            return runtime.getAddressSpaceView().read(address);</span>
+        } else {
+<span class="nc" id="L73">            return runtime.getAddressSpaceView().fetch(address);</span>
+        }
+    }
+
+    /**
+     * Get a range of LogData from the server
+     *
+     * This is using the underlying bulk read implementation for
+     * fetching a range of addresses. This read will return
+     * a map ordered by address.
+     *
+     * It uses a ClosedOpen range : [start, end)
+     * (e.g [0, 5) == (0,1,2,3,4))
+     *
+     * @param start start address for the bulk read
+     * @param end end address for the bulk read
+     * @return logData map ordered by addresses (increasing)
+     */
+    static Map&lt;Long, ILogData&gt; getLogData(CorfuRuntime runtime, long start, long end) {
+<span class="nc" id="L92">        return runtime.getAddressSpaceView().</span>
+<span class="nc" id="L93">                cacheFetch(ContiguousSet.create(Range.closedOpen(start, end), DiscreteDomain.longs()));</span>
+    }
+
+    /** Deserialize a logData by getting the logEntry
+     *
+     * Getting the underlying logEntry should trigger deserialization only once.
+     * Next access should just returned the logEntry direclty.
+     *
+     * @param logData
+     * @return
+     * @throws Exception
+     */
+    public static LogEntry deserializeLogData(CorfuRuntime runtime, ILogData logData) throws Exception{
+<span class="nc" id="L106">        return logData.getLogEntry(runtime);</span>
+    }
+
+    /**
+     * Look in the objectCache for the corresponding CorfuCompileProxy
+     *
+     * @param runtime
+     * @param streamId
+     * @return
+     */
+    static CorfuCompileProxy getCorfuCompileProxy(CorfuRuntime runtime, UUID streamId, Class type) {
+<span class="nc" id="L117">        ObjectsView.ObjectID thisObjectId = new ObjectsView.ObjectID(streamId, type);</span>
+<span class="nc" id="L118">        return ((CorfuCompileProxy) ((ICorfuSMR) runtime.getObjectsView().getObjectCache().get(thisObjectId)).</span>
+<span class="nc" id="L119">                getCorfuSMRProxy());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

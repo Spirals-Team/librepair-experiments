@@ -1,0 +1,1391 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StreamLogFiles.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">debian</a> &gt; <a href="../index.html" class="el_bundle">infrastructure</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.infrastructure.log</a> &gt; <span class="el_source">StreamLogFiles.java</span></div><h1>StreamLogFiles.java</h1><pre class="source lang-java linenums">package org.corfudb.infrastructure.log;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
+import com.google.protobuf.AbstractMessage;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+
+import java.io.File;
+import java.io.FileFilter;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+import javax.annotation.Nullable;
+
+import lombok.extern.slf4j.Slf4j;
+
+import org.apache.commons.io.FileUtils;
+import org.corfudb.format.Types;
+import org.corfudb.format.Types.LogEntry;
+import org.corfudb.format.Types.LogHeader;
+import org.corfudb.format.Types.Metadata;
+import org.corfudb.format.Types.TrimEntry;
+import org.corfudb.infrastructure.ServerContext;
+import org.corfudb.protocols.logprotocol.CheckpointEntry;
+import org.corfudb.protocols.wireprotocol.IMetadata;
+import org.corfudb.protocols.wireprotocol.LogData;
+import org.corfudb.runtime.exceptions.DataCorruptionException;
+import org.corfudb.runtime.exceptions.OverwriteException;
+
+import static org.corfudb.infrastructure.utils.Persistence.syncDirectory;
+
+
+/**
+ * This class implements the StreamLog by persisting the stream log as records in multiple files.
+ * This StreamLog implementation can detect log file corruption, if checksum is enabled, otherwise
+ * the checksum field will be ignored.
+ *
+ * &lt;p&gt;Created by maithem on 10/28/16.
+ */
+
+<span class="nc" id="L71">@Slf4j</span>
+public class StreamLogFiles implements StreamLog, StreamLogWithRankedAddressSpace {
+
+<span class="nc" id="L74">    public static final int METADATA_SIZE = Metadata.newBuilder()</span>
+<span class="nc" id="L75">            .setLengthChecksum(-1)</span>
+<span class="nc" id="L76">            .setPayloadChecksum(-1)</span>
+<span class="nc" id="L77">            .setLength(-1)</span>
+<span class="nc" id="L78">            .build()</span>
+<span class="nc" id="L79">            .getSerializedSize();</span>
+<span class="nc" id="L80">    public static int VERSION = 2;</span>
+<span class="nc" id="L81">    public static int RECORDS_PER_LOG_FILE = 10000;</span>
+<span class="nc" id="L82">    public static int TRIM_THRESHOLD = (int) (.25 * RECORDS_PER_LOG_FILE);</span>
+    public final String logDir;
+    private final boolean noVerify;
+    private final ServerContext serverContext;
+<span class="nc" id="L86">    private final AtomicLong globalTail = new AtomicLong(0L);</span>
+    private Map&lt;String, SegmentHandle&gt; writeChannels;
+    private Set&lt;FileChannel&gt; channelsToSync;
+<span class="nc" id="L89">    private MultiReadWriteLock segmentLocks = new MultiReadWriteLock();</span>
+    private long lastSegment;
+    private volatile long startingAddress;
+
+    /**
+     * Returns a file-based stream log object.
+     * @param serverContext  Context object that provides server state such as epoch,
+     *                       segment and start address
+     * @param noVerify       Disable checksum if true
+     */
+<span class="nc" id="L99">    public StreamLogFiles(ServerContext serverContext, boolean noVerify) {</span>
+<span class="nc" id="L100">        logDir = serverContext.getServerConfig().get(&quot;--log-path&quot;) + File.separator + &quot;log&quot;;</span>
+<span class="nc" id="L101">        File dir = new File(logDir);</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        if (!dir.exists()) {</span>
+<span class="nc" id="L103">            dir.mkdirs();</span>
+        }
+
+<span class="nc" id="L106">        writeChannels = new ConcurrentHashMap();</span>
+<span class="nc" id="L107">        channelsToSync = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L108">        this.noVerify = noVerify;</span>
+<span class="nc" id="L109">        this.serverContext = serverContext;</span>
+<span class="nc" id="L110">        verifyLogs();</span>
+        // Starting address initialization should happen before
+        // initializing the tail segment (i.e. initializeMaxGlobalAddress)
+<span class="nc" id="L113">        initializeStartingAddress();</span>
+<span class="nc" id="L114">        initializeMaxGlobalAddress();</span>
+
+        // This can happen if a prefix trim happens on
+        // addresses that haven't been written
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        if (getGlobalTail() &lt; getTrimMark()) {</span>
+<span class="nc" id="L119">            syncTailSegment(getTrimMark() - 1);</span>
+        }
+<span class="nc" id="L121">    }</span>
+
+    public static String getPendingTrimsFilePath(String segmentPath) {
+<span class="nc" id="L124">        return segmentPath + &quot;.pending&quot;;</span>
+    }
+
+    public static String getTrimmedFilePath(String segmentPath) {
+<span class="nc" id="L128">        return segmentPath + &quot;.trimmed&quot;;</span>
+    }
+
+    /**
+     * Write the header for a Corfu log file.
+     *
+     * @param fc      The file channel to use.
+     * @param version The version number to append to the header.
+     * @param verify  Checksum verify flag
+     * @throws IOException I/O exception
+     */
+    public static void writeHeader(FileChannel fc, int version, boolean verify)
+            throws IOException {
+
+<span class="nc" id="L142">        LogHeader header = LogHeader.newBuilder()</span>
+<span class="nc" id="L143">                .setVersion(version)</span>
+<span class="nc" id="L144">                .setVerifyChecksum(verify)</span>
+<span class="nc" id="L145">                .build();</span>
+
+<span class="nc" id="L147">        ByteBuffer buf = getByteBufferWithMetaData(header);</span>
+<span class="nc" id="L148">        safeWrite(fc, buf);</span>
+<span class="nc" id="L149">        fc.force(true);</span>
+<span class="nc" id="L150">    }</span>
+
+    public static Metadata getMetadata(AbstractMessage message) {
+<span class="nc" id="L153">        return Metadata.newBuilder()</span>
+<span class="nc" id="L154">                .setPayloadChecksum(getChecksum(message.toByteArray()))</span>
+<span class="nc" id="L155">                .setLengthChecksum(getChecksum(message.getSerializedSize()))</span>
+<span class="nc" id="L156">                .setLength(message.getSerializedSize())</span>
+<span class="nc" id="L157">                .build();</span>
+    }
+
+    public static ByteBuffer getByteBuffer(Metadata metadata, AbstractMessage message) {
+<span class="nc" id="L161">        ByteBuffer buf = ByteBuffer.allocate(metadata.getSerializedSize()</span>
+<span class="nc" id="L162">                + message.getSerializedSize());</span>
+<span class="nc" id="L163">        buf.put(metadata.toByteArray());</span>
+<span class="nc" id="L164">        buf.put(message.toByteArray());</span>
+<span class="nc" id="L165">        buf.flip();</span>
+<span class="nc" id="L166">        return buf;</span>
+    }
+
+    public static ByteBuffer getByteBufferWithMetaData(AbstractMessage message) {
+<span class="nc" id="L170">        Metadata metadata = getMetadata(message);</span>
+
+<span class="nc" id="L172">        ByteBuffer buf = ByteBuffer.allocate(metadata.getSerializedSize()</span>
+<span class="nc" id="L173">                + message.getSerializedSize());</span>
+<span class="nc" id="L174">        buf.put(metadata.toByteArray());</span>
+<span class="nc" id="L175">        buf.put(message.toByteArray());</span>
+<span class="nc" id="L176">        buf.flip();</span>
+<span class="nc" id="L177">        return buf;</span>
+    }
+
+    /**
+     * Returns checksum used for log.
+     * @param bytes  data over which to compute the checksum
+     * @return       checksum of bytes
+     */
+    public static int getChecksum(byte[] bytes) {
+<span class="nc" id="L186">        Hasher hasher = Hashing.crc32c().newHasher();</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        for (byte a : bytes) {</span>
+<span class="nc" id="L188">            hasher.putByte(a);</span>
+        }
+
+<span class="nc" id="L191">        return hasher.hash().asInt();</span>
+    }
+
+    static int getChecksum(long num) {
+<span class="nc" id="L195">        Hasher hasher = Hashing.crc32c().newHasher();</span>
+<span class="nc" id="L196">        return hasher.putLong(num).hash().asInt();</span>
+    }
+
+    static int getChecksum(int num) {
+<span class="nc" id="L200">        Hasher hasher = Hashing.crc32c().newHasher();</span>
+<span class="nc" id="L201">        return hasher.putInt(num).hash().asInt();</span>
+    }
+
+    @Override
+    public long getGlobalTail() {
+<span class="nc" id="L206">        return globalTail.get();</span>
+    }
+
+    private void syncTailSegment(long address) {
+        // TODO(Maithem) since writing a record and setting the tail segment is not
+        // an atomic operation, it is possible to set an incorrect tail segment. In
+        // that case we will need to scan more than one segment
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        globalTail.getAndUpdate(maxTail -&gt; address &gt; maxTail ? address : maxTail);</span>
+<span class="nc" id="L214">        long segment = address / RECORDS_PER_LOG_FILE;</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        if (lastSegment &lt; segment) {</span>
+<span class="nc" id="L216">            serverContext.setTailSegment(segment);</span>
+<span class="nc" id="L217">            lastSegment = segment;</span>
+        }
+<span class="nc" id="L219">    }</span>
+
+    @Override
+    public void prefixTrim(long address) {
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        if (address &lt; startingAddress) {</span>
+<span class="nc" id="L224">            log.warn(&quot;prefixTrim: Ignoring repeated trim {}&quot;, address);</span>
+        } else {
+            // TODO(Maithem): Although this operation is persisted to disk,
+            // the startingAddress can be lost even after the method has completed.
+            // This is due to the fact that updates on the local datastore don't
+            // expose disk sync functionalty.
+<span class="nc" id="L230">            long newStartingAddress = address + 1;</span>
+<span class="nc" id="L231">            serverContext.setStartingAddress(newStartingAddress);</span>
+<span class="nc" id="L232">            startingAddress = newStartingAddress;</span>
+<span class="nc" id="L233">            syncTailSegment(address);</span>
+<span class="nc" id="L234">            log.debug(&quot;Trimmed prefix, new starting address {}&quot;, newStartingAddress);</span>
+        }
+<span class="nc" id="L236">    }</span>
+
+    private boolean isTrimmed(long address) {
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        if (address &lt; startingAddress) {</span>
+<span class="nc" id="L240">            return true;</span>
+        }
+<span class="nc" id="L242">        return false;</span>
+    }
+
+    private void initializeStartingAddress() {
+<span class="nc" id="L246">        startingAddress = serverContext.getStartingAddress();</span>
+<span class="nc" id="L247">    }</span>
+
+    private void initializeMaxGlobalAddress() {
+<span class="nc" id="L250">        long tailSegment = serverContext.getTailSegment();</span>
+<span class="nc" id="L251">        long addressInTailSegment = (tailSegment * RECORDS_PER_LOG_FILE) + 1;</span>
+<span class="nc" id="L252">        SegmentHandle sh = getSegmentHandleForAddress(addressInTailSegment);</span>
+
+        try {
+
+<span class="nc bnc" id="L256" title="All 2 branches missed.">            for (long address : sh.getKnownAddresses().keySet()) {</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">                globalTail.getAndUpdate(maxTail -&gt; address &gt; maxTail</span>
+                        ? address : maxTail);
+<span class="nc" id="L259">            }</span>
+
+        } finally {
+<span class="nc" id="L262">            sh.release();</span>
+<span class="nc" id="L263">        }</span>
+
+<span class="nc" id="L265">        lastSegment = tailSegment;</span>
+<span class="nc" id="L266">    }</span>
+
+    private void verifyLogs() {
+<span class="nc" id="L269">        String[] extension = {&quot;log&quot;};</span>
+<span class="nc" id="L270">        File dir = new File(logDir);</span>
+
+<span class="nc bnc" id="L272" title="All 2 branches missed.">        if (dir.exists()) {</span>
+<span class="nc" id="L273">            Collection&lt;File&gt; files = FileUtils.listFiles(dir, extension, true);</span>
+
+<span class="nc bnc" id="L275" title="All 2 branches missed.">            for (File file : files) {</span>
+<span class="nc" id="L276">                try (FileInputStream fsIn = new FileInputStream(file)) {</span>
+<span class="nc" id="L277">                    FileChannel fc = fsIn.getChannel();</span>
+<span class="nc" id="L278">                    LogHeader header = parseHeader(fc);</span>
+<span class="nc" id="L279">                    fc.close();</span>
+<span class="nc" id="L280">                    fsIn.close();</span>
+
+<span class="nc bnc" id="L282" title="All 2 branches missed.">                    if (header == null) {</span>
+<span class="nc" id="L283">                        log.warn(&quot;verifyLogs: Ignoring partially written header in {}&quot;, file.getAbsoluteFile());</span>
+                        continue;
+                    }
+
+<span class="nc bnc" id="L287" title="All 2 branches missed.">                    if (header.getVersion() != VERSION) {</span>
+<span class="nc" id="L288">                        String msg = String.format(&quot;Log version %s for %s should match &quot;</span>
+                                + &quot;the logunit log version %s&quot;,
+<span class="nc" id="L290">                                header.getVersion(), file.getAbsoluteFile(), VERSION);</span>
+<span class="nc" id="L291">                        throw new RuntimeException(msg);</span>
+                    }
+
+<span class="nc bnc" id="L294" title="All 4 branches missed.">                    if (!noVerify &amp;&amp; !header.getVerifyChecksum()) {</span>
+<span class="nc" id="L295">                        String msg = String.format(&quot;Log file %s not generated with &quot;</span>
+<span class="nc" id="L296">                                + &quot;checksums, can't verify!&quot;, file.getAbsoluteFile());</span>
+<span class="nc" id="L297">                        throw new RuntimeException(msg);</span>
+                    }
+
+<span class="nc bnc" id="L300" title="All 12 branches missed.">                } catch (IOException e) {</span>
+<span class="nc" id="L301">                    throw new RuntimeException(e.getMessage(), e);</span>
+<span class="nc" id="L302">                }</span>
+<span class="nc" id="L303">            }</span>
+        }
+<span class="nc" id="L305">    }</span>
+
+    @Override
+    public void sync(boolean force) throws IOException {
+<span class="nc bnc" id="L309" title="All 2 branches missed.">        if (force) {</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">            for (FileChannel ch : channelsToSync) {</span>
+<span class="nc" id="L311">                ch.force(true);</span>
+<span class="nc" id="L312">            }</span>
+        }
+<span class="nc" id="L314">        log.debug(&quot;Sync'd {} channels&quot;, channelsToSync.size());</span>
+<span class="nc" id="L315">        channelsToSync.clear();</span>
+<span class="nc" id="L316">    }</span>
+
+    @Override
+    public void trim(long address) {
+<span class="nc" id="L320">        SegmentHandle handle = getSegmentHandleForAddress(address);</span>
+        try {
+<span class="nc bnc" id="L322" title="All 2 branches missed.">            if (!handle.getKnownAddresses().containsKey(address)</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">                    || handle.getPendingTrims().contains(address)) {</span>
+<span class="nc" id="L324">                return;</span>
+            }
+
+<span class="nc" id="L327">            TrimEntry entry = TrimEntry.newBuilder()</span>
+<span class="nc" id="L328">                    .setChecksum(getChecksum(address))</span>
+<span class="nc" id="L329">                    .setAddress(address)</span>
+<span class="nc" id="L330">                    .build();</span>
+
+            // TODO(Maithem) possibly move this to SegmentHandle. Do we need to close and flush?
+<span class="nc" id="L333">            OutputStream outputStream = Channels.newOutputStream(handle.getPendingTrimChannel());</span>
+
+<span class="nc" id="L335">            entry.writeDelimitedTo(outputStream);</span>
+<span class="nc" id="L336">            outputStream.flush();</span>
+<span class="nc" id="L337">            handle.getPendingTrims().add(address);</span>
+<span class="nc" id="L338">            channelsToSync.add(handle.getPendingTrimChannel());</span>
+<span class="nc" id="L339">        } catch (IOException e) {</span>
+<span class="nc" id="L340">            log.warn(&quot;Exception while writing a trim entry {} : {}&quot;, address, e.toString());</span>
+        } finally {
+<span class="nc" id="L342">            handle.release();</span>
+<span class="nc" id="L343">        }</span>
+<span class="nc" id="L344">    }</span>
+
+    @Override
+    public synchronized void compact() {
+<span class="nc bnc" id="L348" title="All 2 branches missed.">        if (startingAddress == 0) {</span>
+<span class="nc" id="L349">            spaseCompact();</span>
+        } else {
+<span class="nc" id="L351">            trimPrefix();</span>
+        }
+<span class="nc" id="L353">    }</span>
+
+    @Override
+    public long getTrimMark() {
+<span class="nc" id="L357">        return startingAddress;</span>
+    }
+
+    private void trimPrefix() {
+        // Trim all segments up till the segment that contains the starting address
+        // (i.e. trim only complete segments)
+<span class="nc" id="L363">        long endSegment = (startingAddress / RECORDS_PER_LOG_FILE) - 1;</span>
+
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        if (endSegment &lt;= 0) {</span>
+<span class="nc" id="L366">            log.debug(&quot;Only one segment detected, ignoring trim&quot;);</span>
+<span class="nc" id="L367">            return;</span>
+        }
+
+        // Close segments before deleting their corresponding log files
+<span class="nc" id="L371">        closeSegmentHandlers(endSegment);</span>
+
+<span class="nc" id="L373">        deleteFilesMatchingFilter(file -&gt; {</span>
+            try {
+<span class="nc" id="L375">                String segmentStr = file.getName().split(&quot;\\.&quot;)[0];</span>
+<span class="nc bnc" id="L376" title="All 2 branches missed.">                return Long.parseLong(segmentStr) &lt; endSegment;</span>
+<span class="nc" id="L377">            } catch (Exception e) {</span>
+<span class="nc" id="L378">                log.warn(&quot;trimPrefix: ignoring file {}&quot;, file.getName());</span>
+<span class="nc" id="L379">                return false;</span>
+            }
+        });
+
+<span class="nc" id="L383">        log.info(&quot;trimPrefix: completed, end segment {}&quot;, endSegment);</span>
+<span class="nc" id="L384">    }</span>
+
+    private void spaseCompact() {
+        //TODO(Maithem) Open all segment handlers?
+<span class="nc bnc" id="L388" title="All 2 branches missed.">        for (SegmentHandle sh : writeChannels.values()) {</span>
+<span class="nc" id="L389">            Set&lt;Long&gt; pending = new HashSet(sh.getPendingTrims());</span>
+<span class="nc" id="L390">            Set&lt;Long&gt; trimmed = sh.getTrimmedAddresses();</span>
+
+<span class="nc bnc" id="L392" title="All 2 branches missed.">            if (sh.getKnownAddresses().size() + trimmed.size() != RECORDS_PER_LOG_FILE) {</span>
+<span class="nc" id="L393">                log.info(&quot;Log segment still not complete, skipping&quot;);</span>
+<span class="nc" id="L394">                continue;</span>
+            }
+
+<span class="nc" id="L397">            pending.removeAll(trimmed);</span>
+
+            //what if pending size  == knownaddresses size ?
+<span class="nc bnc" id="L400" title="All 2 branches missed.">            if (pending.size() &lt; TRIM_THRESHOLD) {</span>
+<span class="nc" id="L401">                log.trace(&quot;Thresh hold not exceeded. Ratio {} threshold {}&quot;,</span>
+<span class="nc" id="L402">                            pending.size(), TRIM_THRESHOLD);</span>
+<span class="nc" id="L403">                return; // TODO - should not return if compact on ranked address space is necessary</span>
+            }
+
+            try {
+<span class="nc" id="L407">                log.info(&quot;Starting compaction, pending entries size {}&quot;, pending.size());</span>
+<span class="nc" id="L408">                trimLogFile(sh.getFileName(), pending);</span>
+<span class="nc" id="L409">            } catch (IOException e) {</span>
+<span class="nc" id="L410">                log.error(&quot;Compact operation failed for file {}, {}&quot;, sh.getFileName(), e);</span>
+<span class="nc" id="L411">            }</span>
+<span class="nc" id="L412">        }</span>
+<span class="nc" id="L413">    }</span>
+
+    private void trimLogFile(String filePath, Set&lt;Long&gt; pendingTrim) throws IOException {
+<span class="nc" id="L416">        try (FileChannel fc = FileChannel.open(FileSystems.getDefault().getPath(filePath + &quot;.copy&quot;),</span>
+<span class="nc" id="L417">                EnumSet.of(StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE,</span>
+                        StandardOpenOption.CREATE, StandardOpenOption.SPARSE))) {
+
+<span class="nc" id="L420">            CompactedEntry log = getCompactedEntries(filePath, pendingTrim);</span>
+
+<span class="nc" id="L422">            LogHeader header = log.getLogHeader();</span>
+<span class="nc" id="L423">            Collection&lt;LogEntry&gt; compacted = log.getEntries();</span>
+
+<span class="nc" id="L425">            writeHeader(fc, header.getVersion(), header.getVerifyChecksum());</span>
+
+<span class="nc bnc" id="L427" title="All 2 branches missed.">            for (LogEntry entry : compacted) {</span>
+
+<span class="nc" id="L429">                ByteBuffer record = getByteBufferWithMetaData(entry);</span>
+<span class="nc" id="L430">                ByteBuffer recordBuf = ByteBuffer.allocate(record.capacity());</span>
+
+<span class="nc" id="L432">                recordBuf.put(record.array());</span>
+<span class="nc" id="L433">                recordBuf.flip();</span>
+
+<span class="nc" id="L435">                fc.write(recordBuf);</span>
+<span class="nc" id="L436">            }</span>
+
+<span class="nc" id="L438">            fc.force(true);</span>
+<span class="nc bnc" id="L439" title="All 8 branches missed.">        }</span>
+
+<span class="nc" id="L441">        try (FileChannel fc2 = FileChannel.open(FileSystems.getDefault()</span>
+<span class="nc" id="L442">                        .getPath(getTrimmedFilePath(filePath)),</span>
+<span class="nc" id="L443">                EnumSet.of(StandardOpenOption.APPEND))) {</span>
+<span class="nc" id="L444">            try (OutputStream outputStream = Channels.newOutputStream(fc2)) {</span>
+                // Todo(Maithem) How do we verify that the compacted file is correct?
+<span class="nc bnc" id="L446" title="All 2 branches missed.">                for (Long address : pendingTrim) {</span>
+<span class="nc" id="L447">                    TrimEntry entry = TrimEntry.newBuilder()</span>
+<span class="nc" id="L448">                            .setChecksum(getChecksum(address))</span>
+<span class="nc" id="L449">                            .setAddress(address)</span>
+<span class="nc" id="L450">                            .build();</span>
+<span class="nc" id="L451">                    entry.writeDelimitedTo(outputStream);</span>
+<span class="nc" id="L452">                }</span>
+<span class="nc" id="L453">                outputStream.flush();</span>
+<span class="nc" id="L454">                fc2.force(true);</span>
+<span class="nc bnc" id="L455" title="All 8 branches missed.">            }</span>
+<span class="nc bnc" id="L456" title="All 8 branches missed.">        }</span>
+
+<span class="nc" id="L458">        Files.move(Paths.get(filePath + &quot;.copy&quot;), Paths.get(filePath),</span>
+                StandardCopyOption.ATOMIC_MOVE);
+
+        // Force the reload of the new segment
+<span class="nc" id="L462">        writeChannels.remove(filePath);</span>
+<span class="nc" id="L463">    }</span>
+
+    private CompactedEntry getCompactedEntries(String filePath,
+                                               Set&lt;Long&gt; pendingTrim) throws IOException {
+
+<span class="nc" id="L468">        FileChannel fc = getChannel(filePath, true);</span>
+
+        // Skip the header
+<span class="nc" id="L471">        ByteBuffer headerMetadataBuf = ByteBuffer.allocate(METADATA_SIZE);</span>
+<span class="nc" id="L472">        fc.read(headerMetadataBuf);</span>
+<span class="nc" id="L473">        headerMetadataBuf.flip();</span>
+
+<span class="nc" id="L475">        Metadata headerMetadata = Metadata.parseFrom(headerMetadataBuf.array());</span>
+<span class="nc" id="L476">        ByteBuffer headerBuf = ByteBuffer.allocate(headerMetadata.getLength());</span>
+<span class="nc" id="L477">        fc.read(headerBuf);</span>
+<span class="nc" id="L478">        headerBuf.flip();</span>
+
+<span class="nc" id="L480">        ByteBuffer o = ByteBuffer.allocate((int) fc.size() - (int) fc.position());</span>
+<span class="nc" id="L481">        fc.read(o);</span>
+<span class="nc" id="L482">        fc.close();</span>
+<span class="nc" id="L483">        o.flip();</span>
+
+<span class="nc" id="L485">        LinkedHashMap&lt;Long, LogEntry&gt; compacted = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L487" title="All 2 branches missed.">        while (o.hasRemaining()) {</span>
+<span class="nc" id="L488">            byte[] metadataBuf = new byte[METADATA_SIZE];</span>
+<span class="nc" id="L489">            o.get(metadataBuf);</span>
+
+            try {
+<span class="nc" id="L492">                Metadata metadata = Metadata.parseFrom(metadataBuf);</span>
+
+<span class="nc" id="L494">                byte[] logEntryBuf = new byte[metadata.getLength()];</span>
+
+<span class="nc" id="L496">                o.get(logEntryBuf);</span>
+
+<span class="nc" id="L498">                LogEntry entry = LogEntry.parseFrom(logEntryBuf);</span>
+
+<span class="nc bnc" id="L500" title="All 2 branches missed.">                if (!noVerify) {</span>
+<span class="nc bnc" id="L501" title="All 2 branches missed.">                    if (metadata.getPayloadChecksum() != getChecksum(entry.toByteArray())) {</span>
+<span class="nc" id="L502">                        log.error(&quot;Checksum mismatch detected while trying to read address {}&quot;,</span>
+<span class="nc" id="L503">                                    entry.getGlobalAddress());</span>
+<span class="nc" id="L504">                        throw new DataCorruptionException();</span>
+                    }
+                }
+
+<span class="nc bnc" id="L508" title="All 2 branches missed.">                if (!pendingTrim.contains(entry.getGlobalAddress())) {</span>
+<span class="nc" id="L509">                    compacted.put(entry.getGlobalAddress(), entry);</span>
+                }
+
+<span class="nc" id="L512">            } catch (InvalidProtocolBufferException e) {</span>
+<span class="nc" id="L513">                throw new DataCorruptionException();</span>
+<span class="nc" id="L514">            }</span>
+<span class="nc" id="L515">        }</span>
+
+<span class="nc" id="L517">        LogHeader header = LogHeader.parseFrom(headerBuf.array());</span>
+<span class="nc" id="L518">        return new CompactedEntry(header, compacted.values());</span>
+    }
+
+    private LogData getLogData(LogEntry entry) {
+<span class="nc" id="L522">        ByteBuf data = Unpooled.wrappedBuffer(entry.getData().toByteArray());</span>
+<span class="nc" id="L523">        LogData logData = new LogData(org.corfudb.protocols.wireprotocol</span>
+<span class="nc" id="L524">                .DataType.typeMap.get((byte) entry.getDataType().getNumber()), data);</span>
+
+<span class="nc" id="L526">        logData.setBackpointerMap(getUUIDLongMap(entry.getBackpointersMap()));</span>
+<span class="nc" id="L527">        logData.setGlobalAddress(entry.getGlobalAddress());</span>
+<span class="nc" id="L528">        logData.setRank(createDataRank(entry));</span>
+
+<span class="nc bnc" id="L530" title="All 2 branches missed.">        if (entry.hasThreadId()) {</span>
+<span class="nc" id="L531">            logData.setThreadId(entry.getThreadId());</span>
+        }
+<span class="nc bnc" id="L533" title="All 4 branches missed.">        if (entry.hasClientIdLeastSignificant() &amp;&amp; entry.hasClientIdMostSignificant()){</span>
+<span class="nc" id="L534">            long lsd = entry.getClientIdLeastSignificant();</span>
+<span class="nc" id="L535">            long msd = entry.getClientIdMostSignificant();</span>
+<span class="nc" id="L536">            logData.setClientId(new UUID(msd, lsd));</span>
+        }
+
+
+
+<span class="nc bnc" id="L541" title="All 2 branches missed.">        if (entry.hasCheckpointEntryType()) {</span>
+<span class="nc" id="L542">            logData.setCheckpointType(CheckpointEntry.CheckpointEntryType</span>
+<span class="nc" id="L543">                    .typeMap.get((byte) entry.getCheckpointEntryType().ordinal()));</span>
+
+<span class="nc bnc" id="L545" title="All 2 branches missed.">            if (!entry.hasCheckpointIdLeastSignificant()</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">                    || !entry.hasCheckpointIdMostSignificant()) {</span>
+<span class="nc" id="L547">                log.error(&quot;Checkpoint has missing information {}&quot;, entry);</span>
+            }
+
+<span class="nc" id="L550">            long lsd = entry.getCheckpointIdLeastSignificant();</span>
+<span class="nc" id="L551">            long msd = entry.getCheckpointIdMostSignificant();</span>
+<span class="nc" id="L552">            UUID checkpointId = new UUID(msd, lsd);</span>
+
+<span class="nc" id="L554">            logData.setCheckpointId(checkpointId);</span>
+
+<span class="nc" id="L556">            lsd = entry.getCheckpointedStreamIdLeastSignificant();</span>
+<span class="nc" id="L557">            msd = entry.getCheckpointedStreamIdMostSignificant();</span>
+<span class="nc" id="L558">            UUID streamId = new UUID(msd, lsd);</span>
+
+<span class="nc" id="L560">            logData.setCheckpointedStreamId(streamId);</span>
+
+<span class="nc" id="L562">            logData.setCheckpointedStreamStartLogAddress(</span>
+<span class="nc" id="L563">                    entry.getCheckpointedStreamStartLogAddress());</span>
+        }
+
+<span class="nc" id="L566">        return logData;</span>
+    }
+
+    //================Parsing Helper Methods================//
+
+    /**
+     * Parse the metadata field. This method should only be called
+     * when a metadata field is expected.
+     *
+     * @param ch the channel to read from
+     * @return metadata field of null if it was partially written.
+     * @throws IOException
+     */
+    private Metadata parseMetadata(FileChannel ch) throws IOException {
+<span class="nc bnc" id="L580" title="All 2 branches missed.">        if (ch.size() - ch.position() &lt; METADATA_SIZE) {</span>
+<span class="nc" id="L581">            return null;</span>
+        }
+
+<span class="nc" id="L584">        ByteBuffer buf = ByteBuffer.allocate(METADATA_SIZE);</span>
+<span class="nc" id="L585">        ch.read(buf);</span>
+<span class="nc" id="L586">        buf.flip();</span>
+
+        Metadata metadata;
+
+        try {
+<span class="nc" id="L591">            metadata = Metadata.parseFrom(buf.array());</span>
+<span class="nc" id="L592">        } catch (InvalidProtocolBufferException e) {</span>
+<span class="nc" id="L593">            throw new DataCorruptionException();</span>
+<span class="nc" id="L594">        }</span>
+
+<span class="nc bnc" id="L596" title="All 2 branches missed.">        if (metadata.getLengthChecksum() != getChecksum(metadata.getLength())) {</span>
+<span class="nc" id="L597">            throw new DataCorruptionException();</span>
+        }
+
+<span class="nc" id="L600">        return metadata;</span>
+    }
+
+    /**
+     * Read a payload given metadata.
+     *
+     * @param ch channel to read the payload from
+     * @param metadata the metadata that is written before the payload
+     * @return ByteBuffer for the payload
+     * @throws IOException
+     */
+    private ByteBuffer getPayloadForMetadata(FileChannel ch, Metadata metadata) throws IOException {
+<span class="nc bnc" id="L612" title="All 2 branches missed.">        if (ch.size() - ch.position() &lt; metadata.getLength()) {</span>
+<span class="nc" id="L613">            return null;</span>
+        }
+
+<span class="nc" id="L616">        ByteBuffer buf = ByteBuffer.allocate(metadata.getLength());</span>
+<span class="nc" id="L617">        ch.read(buf);</span>
+<span class="nc" id="L618">        buf.flip();</span>
+<span class="nc" id="L619">        return buf;</span>
+    }
+
+    /**
+     *
+     * Parse the logfile header, or create it, or recreate it if it was
+     * partially written.
+     *
+     * @param ch
+     * @return
+     * @throws IOException
+     */
+    private LogHeader parseHeader(FileChannel ch) throws IOException {
+<span class="nc" id="L632">        Metadata metadata = parseMetadata(ch);</span>
+<span class="nc bnc" id="L633" title="All 2 branches missed.">        if (metadata == null) {</span>
+            // Partial write on the metadata for the header
+            // Rewind the channel position to the begining of the file
+<span class="nc" id="L636">            ch.position(0);</span>
+<span class="nc" id="L637">            return null;</span>
+        }
+
+<span class="nc" id="L640">        ByteBuffer buffer = getPayloadForMetadata(ch, metadata);</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">        if (buffer == null) {</span>
+            // partial write on the header payload
+            // Rewind the channel position to the begining of the file
+<span class="nc" id="L644">            ch.position(0);</span>
+<span class="nc" id="L645">            return null;</span>
+        }
+
+<span class="nc bnc" id="L648" title="All 2 branches missed.">        if (getChecksum(buffer.array()) != metadata.getPayloadChecksum()) {</span>
+<span class="nc" id="L649">            throw new DataCorruptionException();</span>
+        }
+
+        LogHeader header;
+
+        try {
+<span class="nc" id="L655">            header = LogHeader.parseFrom(buffer.array());</span>
+<span class="nc" id="L656">        } catch (InvalidProtocolBufferException e) {</span>
+<span class="nc" id="L657">            throw new DataCorruptionException();</span>
+<span class="nc" id="L658">        }</span>
+
+<span class="nc" id="L660">        return header;</span>
+    }
+
+    /**
+     * Parse an entry.
+     *
+     * @param ch
+     * @param metadata
+     * @return
+     * @throws IOException
+     */
+    private LogEntry parseEntry(FileChannel ch, Metadata metadata) throws IOException {
+<span class="nc bnc" id="L672" title="All 2 branches missed.">        if (metadata == null) {</span>
+            // The metadata for this entry was partial written
+<span class="nc" id="L674">            return null;</span>
+        }
+
+<span class="nc" id="L677">        ByteBuffer buffer = getPayloadForMetadata(ch, metadata);</span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">        if (buffer == null) {</span>
+            // partial write on the entry
+            // rewind the channel position to point before
+            // the metadata field for this partially written payload
+<span class="nc" id="L682">            ch.position(ch.position() - METADATA_SIZE);</span>
+<span class="nc" id="L683">            return null;</span>
+        }
+
+<span class="nc bnc" id="L686" title="All 2 branches missed.">        if (!noVerify) {</span>
+<span class="nc bnc" id="L687" title="All 2 branches missed.">            if (metadata.getPayloadChecksum() != getChecksum(buffer.array())) {</span>
+<span class="nc" id="L688">                log.error(&quot;Checksum mismatch detected while trying to read file {}&quot;,</span>
+                        ch);
+<span class="nc" id="L690">                throw new DataCorruptionException();</span>
+            }
+        }
+
+
+        LogEntry entry;
+        try {
+<span class="nc" id="L697">            entry = LogEntry.parseFrom(buffer.array());</span>
+<span class="nc" id="L698">        } catch (InvalidProtocolBufferException e) {</span>
+<span class="nc" id="L699">            throw new DataCorruptionException();</span>
+<span class="nc" id="L700">        }</span>
+<span class="nc" id="L701">        return entry;</span>
+    }
+
+    /**
+     * Reads an address space from a log file into a SegmentHandle.
+     *
+     * @param sh  Object containing state for the segment to be read
+     */
+    private void readAddressSpace(SegmentHandle sh) throws IOException {
+<span class="nc" id="L710">        FileChannel fc = sh.getWriteChannel();</span>
+<span class="nc" id="L711">        fc.position(0);</span>
+
+<span class="nc" id="L713">        LogHeader header = parseHeader(fc);</span>
+<span class="nc bnc" id="L714" title="All 2 branches missed.">        if (header == null) {</span>
+<span class="nc" id="L715">            log.warn(&quot;Couldn't find log header for {}, creating new header.&quot;, sh.getFileName());</span>
+<span class="nc" id="L716">            boolean verify = true;</span>
+<span class="nc bnc" id="L717" title="All 2 branches missed.">            if (noVerify) {</span>
+<span class="nc" id="L718">                verify = false;</span>
+            }
+<span class="nc" id="L720">            writeHeader(fc, VERSION, verify);</span>
+<span class="nc" id="L721">            return;</span>
+        }
+
+<span class="nc bnc" id="L724" title="All 2 branches missed.">        while (fc.size() - fc.position() &gt; 0) {</span>
+<span class="nc" id="L725">            long channelOffset = fc.position();</span>
+<span class="nc" id="L726">            Metadata metadata = parseMetadata(fc);</span>
+<span class="nc" id="L727">            LogEntry entry = parseEntry(fc, metadata);</span>
+
+<span class="nc bnc" id="L729" title="All 2 branches missed.">            if (entry == null) {</span>
+                // Metadata or Entry were partially written
+<span class="nc" id="L731">                log.warn(&quot;Malformed entry, metadata {} in file {}&quot;, metadata, sh.getFileName());</span>
+
+                // Note that after rewinding the channel pointer, it is important to truncate
+                // any bytes that were written. This is required to avoid an ambigous case
+                // where a subsequent write (after a failed write) succeeds but writes less
+                // bytes than the partially written buffer. In that case, the log unit can't
+                // determine if the bytes correspund to a partially written buffer that needs
+                // to be ignored, or if the bytes corrrespond to a corrupted metadata field.
+<span class="nc" id="L739">                fc.truncate(fc.position());</span>
+<span class="nc" id="L740">                fc.force(true);</span>
+<span class="nc" id="L741">                return;</span>
+            }
+
+<span class="nc" id="L744">            sh.getKnownAddresses().put(entry.getGlobalAddress(),</span>
+<span class="nc" id="L745">                    new AddressMetaData(metadata.getPayloadChecksum(),</span>
+<span class="nc" id="L746">                            metadata.getLength(), channelOffset + METADATA_SIZE));</span>
+<span class="nc" id="L747">        }</span>
+<span class="nc" id="L748">    }</span>
+
+    /**
+     * Read a log entry in a file.
+     *
+     * @param sh      The file handle to use.
+     * @param address The address of the entry.
+     * @return The log unit entry at that address, or NULL if there was no entry.
+     */
+    private LogData  readRecord(SegmentHandle sh, long address)
+            throws IOException {
+<span class="nc" id="L759">        FileChannel fc = sh.getReadChannel();</span>
+
+<span class="nc" id="L761">        AddressMetaData metaData = sh.getKnownAddresses().get(address);</span>
+<span class="nc bnc" id="L762" title="All 2 branches missed.">        if (metaData == null) {</span>
+<span class="nc" id="L763">            return null;</span>
+        }
+
+        try {
+<span class="nc" id="L767">            ByteBuffer entryBuf = ByteBuffer.allocate(metaData.length);</span>
+<span class="nc" id="L768">            fc.read(entryBuf, metaData.offset);</span>
+<span class="nc" id="L769">            return getLogData(LogEntry.parseFrom(entryBuf.array()));</span>
+<span class="nc" id="L770">        } catch (InvalidProtocolBufferException e) {</span>
+<span class="nc" id="L771">            throw new DataCorruptionException();</span>
+        }
+    }
+
+    private @Nullable FileChannel getChannel(String filePath, boolean readOnly) throws IOException {
+        try {
+
+<span class="nc bnc" id="L778" title="All 2 branches missed.">            if (readOnly) {</span>
+<span class="nc bnc" id="L779" title="All 2 branches missed.">                if (!new File(filePath).exists()) {</span>
+<span class="nc" id="L780">                    throw new FileNotFoundException();</span>
+                } else {
+<span class="nc" id="L782">                    return FileChannel.open(FileSystems.getDefault().getPath(filePath),</span>
+<span class="nc" id="L783">                            EnumSet.of(StandardOpenOption.READ));</span>
+                }
+            } else {
+
+                try {
+<span class="nc" id="L788">                    FileChannel channel = FileChannel.open(FileSystems.getDefault().getPath(filePath),</span>
+<span class="nc" id="L789">                            EnumSet.of(StandardOpenOption.READ, StandardOpenOption.WRITE,</span>
+                                    StandardOpenOption.CREATE_NEW, StandardOpenOption.SPARSE));
+
+                    // First time creating this segment file, need to sync the parent directory
+<span class="nc" id="L793">                    File segFile = new File(filePath);</span>
+<span class="nc" id="L794">                    syncDirectory(segFile.getParent());</span>
+<span class="nc" id="L795">                    return channel;</span>
+<span class="nc" id="L796">                } catch (FileAlreadyExistsException ex) {</span>
+<span class="nc" id="L797">                    return FileChannel.open(FileSystems.getDefault().getPath(filePath),</span>
+<span class="nc" id="L798">                            EnumSet.of(StandardOpenOption.READ, StandardOpenOption.WRITE));</span>
+                }
+            }
+<span class="nc" id="L801">        } catch (IOException e) {</span>
+<span class="nc" id="L802">            log.error(&quot;Error opening file {}&quot;, filePath, e);</span>
+<span class="nc" id="L803">            throw new RuntimeException(e);</span>
+        }
+
+    }
+
+    /**
+     * Gets the file channel for a particular address, creating it
+     * if is not present in the map.
+     *
+     * @param address The address to open.
+     * @return The FileChannel for that address.
+     */
+    @VisibleForTesting
+    synchronized SegmentHandle getSegmentHandleForAddress(long address) {
+<span class="nc" id="L817">        String filePath = logDir + File.separator;</span>
+<span class="nc" id="L818">        long segment = address / RECORDS_PER_LOG_FILE;</span>
+<span class="nc" id="L819">        filePath += segment;</span>
+<span class="nc" id="L820">        filePath += &quot;.log&quot;;</span>
+
+<span class="nc" id="L822">        SegmentHandle handle = writeChannels.computeIfAbsent(filePath, a -&gt; {</span>
+            try {
+<span class="nc" id="L824">                boolean verify = true;</span>
+<span class="nc bnc" id="L825" title="All 2 branches missed.">                if (noVerify) {</span>
+<span class="nc" id="L826">                    verify = false;</span>
+                }
+
+<span class="nc" id="L829">                FileChannel writeCh = getChannel(a, false);</span>
+<span class="nc" id="L830">                FileChannel readCh = getChannel(a, true);</span>
+<span class="nc" id="L831">                FileChannel trimmedCh = getChannel(getTrimmedFilePath(a), false);</span>
+<span class="nc" id="L832">                FileChannel pendingTrimmedCh = getChannel(getPendingTrimsFilePath(a), false);</span>
+
+<span class="nc" id="L834">                SegmentHandle sh = new SegmentHandle(segment, writeCh, readCh, trimmedCh, pendingTrimmedCh, a);</span>
+                // The first time we open a file we should read to the end, to load the
+                // map of entries we already have.
+                // Once the segment address space is loaded, it should be ready to accept writes.
+<span class="nc" id="L838">                readAddressSpace(sh);</span>
+<span class="nc" id="L839">                loadTrimAddresses(sh);</span>
+<span class="nc" id="L840">                return sh;</span>
+<span class="nc" id="L841">            } catch (IOException e) {</span>
+<span class="nc" id="L842">                log.error(&quot;Error opening file {}&quot;, a, e);</span>
+<span class="nc" id="L843">                throw new RuntimeException(e);</span>
+            }
+        });
+
+<span class="nc" id="L847">        handle.retain();</span>
+<span class="nc" id="L848">        return handle;</span>
+    }
+
+    private void loadTrimAddresses(SegmentHandle sh) throws IOException {
+        long trimmedSize;
+        long pendingTrimSize;
+
+        //TODO(Maithem) compute checksums and refactor
+<span class="nc" id="L856">        try (MultiReadWriteLock.AutoCloseableLock ignored =</span>
+<span class="nc" id="L857">                     segmentLocks.acquireReadLock(sh.getSegment())) {</span>
+<span class="nc" id="L858">            trimmedSize = sh.getTrimmedChannel().size();</span>
+<span class="nc" id="L859">            pendingTrimSize = sh.getPendingTrimChannel().size();</span>
+<span class="nc bnc" id="L860" title="All 8 branches missed.">        }</span>
+
+<span class="nc" id="L862">        try (FileChannel fcTrimmed = getChannel(getTrimmedFilePath(sh.getFileName()), true)) {</span>
+<span class="nc" id="L863">            try (InputStream inputStream = Channels.newInputStream(fcTrimmed)) {</span>
+
+<span class="nc bnc" id="L865" title="All 2 branches missed.">                while (fcTrimmed.position() &lt; trimmedSize) {</span>
+<span class="nc" id="L866">                    TrimEntry trimEntry = TrimEntry.parseDelimitedFrom(inputStream);</span>
+<span class="nc" id="L867">                    sh.getTrimmedAddresses().add(trimEntry.getAddress());</span>
+<span class="nc" id="L868">                }</span>
+
+<span class="nc" id="L870">                inputStream.close();</span>
+<span class="nc" id="L871">                fcTrimmed.close();</span>
+
+<span class="nc" id="L873">                try (FileChannel fcPending =</span>
+<span class="nc" id="L874">                             getChannel(getPendingTrimsFilePath(sh.getFileName()), true)) {</span>
+<span class="nc" id="L875">                    try (InputStream pendingInputStream = Channels.newInputStream(fcPending)) {</span>
+
+<span class="nc bnc" id="L877" title="All 2 branches missed.">                        while (fcPending.position() &lt; pendingTrimSize) {</span>
+<span class="nc" id="L878">                            TrimEntry trimEntry = TrimEntry.parseDelimitedFrom(pendingInputStream);</span>
+<span class="nc" id="L879">                            sh.getPendingTrims().add(trimEntry.getAddress());</span>
+<span class="nc" id="L880">                        }</span>
+<span class="nc bnc" id="L881" title="All 8 branches missed.">                    }</span>
+<span class="nc bnc" id="L882" title="All 8 branches missed.">                }</span>
+<span class="nc bnc" id="L883" title="All 8 branches missed.">            }</span>
+<span class="nc bnc" id="L884" title="All 8 branches missed.">        } catch (FileNotFoundException fe) {</span>
+<span class="nc" id="L885">            return;</span>
+<span class="nc" id="L886">        }</span>
+<span class="nc" id="L887">    }</span>
+
+    Map&lt;String, Long&gt; getStrLongMap(Map&lt;UUID, Long&gt; uuidLongMap) {
+<span class="nc" id="L890">        Map&lt;String, Long&gt; stringLongMap = new HashMap();</span>
+
+<span class="nc bnc" id="L892" title="All 2 branches missed.">        for (Map.Entry&lt;UUID, Long&gt; entry : uuidLongMap.entrySet()) {</span>
+<span class="nc" id="L893">            stringLongMap.put(entry.getKey().toString(), entry.getValue());</span>
+<span class="nc" id="L894">        }</span>
+
+<span class="nc" id="L896">        return stringLongMap;</span>
+    }
+
+    @Deprecated // TODO: Add replacement method that conforms to style
+    @SuppressWarnings(&quot;checkstyle:abbreviationaswordinname&quot;)  // Due to deprecation
+    Map&lt;UUID, Long&gt; getUUIDLongMap(Map&lt;String, Long&gt; stringLongMap) {
+<span class="nc" id="L902">        Map&lt;UUID, Long&gt; uuidLongMap = new HashMap();</span>
+
+<span class="nc bnc" id="L904" title="All 2 branches missed.">        for (Map.Entry&lt;String, Long&gt; entry : stringLongMap.entrySet()) {</span>
+<span class="nc" id="L905">            uuidLongMap.put(UUID.fromString(entry.getKey()), entry.getValue());</span>
+<span class="nc" id="L906">        }</span>
+
+<span class="nc" id="L908">        return uuidLongMap;</span>
+    }
+
+    @Deprecated  // TODO: Add replacement method that conforms to style
+    @SuppressWarnings(&quot;checkstyle:abbreviationaswordinname&quot;) // Due to deprecation
+    Set&lt;String&gt; getStrUUID(Set&lt;UUID&gt; uuids) {
+<span class="nc" id="L914">        Set&lt;String&gt; strUUIds = new HashSet();</span>
+
+<span class="nc bnc" id="L916" title="All 2 branches missed.">        for (UUID uuid : uuids) {</span>
+<span class="nc" id="L917">            strUUIds.add(uuid.toString());</span>
+<span class="nc" id="L918">        }</span>
+
+<span class="nc" id="L920">        return strUUIds;</span>
+    }
+
+    LogEntry getLogEntry(long address, LogData entry) {
+<span class="nc" id="L924">        byte[] data = new byte[0];</span>
+
+<span class="nc bnc" id="L926" title="All 2 branches missed.">        if (entry.getData() != null) {</span>
+<span class="nc" id="L927">            data = entry.getData();</span>
+        }
+
+<span class="nc" id="L930">        LogEntry.Builder logEntryBuilder = LogEntry.newBuilder()</span>
+<span class="nc" id="L931">                .setDataType(Types.DataType.forNumber(entry.getType().ordinal()))</span>
+<span class="nc" id="L932">                .setData(ByteString.copyFrom(data))</span>
+<span class="nc" id="L933">                .setGlobalAddress(address)</span>
+<span class="nc" id="L934">                .addAllStreams(getStrUUID(entry.getStreams()))</span>
+<span class="nc" id="L935">                .putAllBackpointers(getStrLongMap(entry.getBackpointerMap()));</span>
+
+<span class="nc" id="L937">        Optional&lt;Types.DataRank&gt; rank = createProtobufsDataRank(entry);</span>
+<span class="nc bnc" id="L938" title="All 2 branches missed.">        if (rank.isPresent()) {</span>
+<span class="nc" id="L939">            logEntryBuilder.setRank(rank.get());</span>
+        }
+
+<span class="nc bnc" id="L942" title="All 4 branches missed.">        if (entry.getClientId() != null &amp;&amp; entry.getThreadId() != null) {</span>
+<span class="nc" id="L943">            logEntryBuilder.setClientIdMostSignificant(</span>
+<span class="nc" id="L944">                    entry.getClientId().getMostSignificantBits());</span>
+<span class="nc" id="L945">            logEntryBuilder.setClientIdLeastSignificant(</span>
+<span class="nc" id="L946">                    entry.getClientId().getLeastSignificantBits());</span>
+<span class="nc" id="L947">            logEntryBuilder.setThreadId(entry.getThreadId());</span>
+        }
+
+<span class="nc bnc" id="L950" title="All 2 branches missed.">        if (entry.hasCheckpointMetadata()) {</span>
+<span class="nc" id="L951">            logEntryBuilder.setCheckpointEntryType(</span>
+<span class="nc" id="L952">                    Types.CheckpointEntryType.forNumber(</span>
+<span class="nc" id="L953">                            entry.getCheckpointType().ordinal()));</span>
+<span class="nc" id="L954">            logEntryBuilder.setCheckpointIdMostSignificant(</span>
+<span class="nc" id="L955">                    entry.getCheckpointId().getMostSignificantBits());</span>
+<span class="nc" id="L956">            logEntryBuilder.setCheckpointIdLeastSignificant(</span>
+<span class="nc" id="L957">                    entry.getCheckpointId().getLeastSignificantBits());</span>
+<span class="nc" id="L958">            logEntryBuilder.setCheckpointedStreamIdLeastSignificant(</span>
+<span class="nc" id="L959">                    entry.getCheckpointedStreamId().getLeastSignificantBits());</span>
+<span class="nc" id="L960">            logEntryBuilder.setCheckpointedStreamIdMostSignificant(</span>
+<span class="nc" id="L961">                    entry.getCheckpointedStreamId().getMostSignificantBits());</span>
+<span class="nc" id="L962">            logEntryBuilder.setCheckpointedStreamStartLogAddress(</span>
+<span class="nc" id="L963">                    entry.getCheckpointedStreamStartLogAddress());</span>
+        }
+
+<span class="nc" id="L966">        return logEntryBuilder.build();</span>
+    }
+
+    private Optional&lt;Types.DataRank&gt; createProtobufsDataRank(IMetadata entry) {
+<span class="nc" id="L970">        IMetadata.DataRank rank = entry.getRank();</span>
+<span class="nc bnc" id="L971" title="All 2 branches missed.">        if (rank == null) {</span>
+<span class="nc" id="L972">            return Optional.empty();</span>
+        }
+<span class="nc" id="L974">        Types.DataRank result = Types.DataRank.newBuilder()</span>
+<span class="nc" id="L975">                .setRank(rank.getRank())</span>
+<span class="nc" id="L976">                .setUuidLeastSignificant(rank.getUuid().getLeastSignificantBits())</span>
+<span class="nc" id="L977">                .setUuidMostSignificant(rank.getUuid().getMostSignificantBits())</span>
+<span class="nc" id="L978">                .build();</span>
+<span class="nc" id="L979">        return Optional.of(result);</span>
+    }
+
+    private @Nullable IMetadata.DataRank createDataRank(LogEntry entity) {
+<span class="nc bnc" id="L983" title="All 2 branches missed.">        if (!entity.hasRank()) {</span>
+<span class="nc" id="L984">            return null;</span>
+        }
+<span class="nc" id="L986">        Types.DataRank rank = entity.getRank();</span>
+<span class="nc" id="L987">        return new IMetadata.DataRank(rank.getRank(),</span>
+<span class="nc" id="L988">                new UUID(rank.getUuidMostSignificant(), rank.getUuidLeastSignificant()));</span>
+    }
+
+    /**
+     * Write a list of LogData entries to the log file.
+     * @param sh segment handle to the logfile
+     * @param entries list of LogData entries to write.
+     * @return A map of AddressMetaData for the written records
+     * @throws IOException
+     */
+    private Map&lt;Long, AddressMetaData&gt; writeRecords(SegmentHandle sh,
+                                             List&lt;LogData&gt; entries) throws IOException {
+<span class="nc" id="L1000">        Map&lt;Long, AddressMetaData&gt; recordsMap = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L1002">        List&lt;ByteBuffer&gt; entryBuffs = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L1003">        int totalBytes = 0;</span>
+
+<span class="nc" id="L1005">        List&lt;Metadata&gt; metadataList = new ArrayList&lt;&gt;();</span>
+
+<span class="nc bnc" id="L1007" title="All 2 branches missed.">        for (int ind = 0; ind &lt; entries.size(); ind++) {</span>
+<span class="nc" id="L1008">            LogData curr = entries.get(ind);</span>
+<span class="nc" id="L1009">            LogEntry logEntry = getLogEntry(curr.getGlobalAddress(), curr);</span>
+<span class="nc" id="L1010">            Metadata metadata = getMetadata(logEntry);</span>
+<span class="nc" id="L1011">            metadataList.add(metadata);</span>
+<span class="nc" id="L1012">            ByteBuffer record = getByteBuffer(metadata, logEntry);</span>
+<span class="nc" id="L1013">            totalBytes += record.limit();</span>
+<span class="nc" id="L1014">            entryBuffs.add(record);</span>
+        }
+
+<span class="nc" id="L1017">        ByteBuffer allRecordsBuf = ByteBuffer.allocate(totalBytes);</span>
+
+<span class="nc" id="L1019">        try (MultiReadWriteLock.AutoCloseableLock ignored =</span>
+<span class="nc" id="L1020">                     segmentLocks.acquireWriteLock(sh.getSegment())) {</span>
+<span class="nc bnc" id="L1021" title="All 2 branches missed.">            for (int ind = 0; ind &lt; entryBuffs.size(); ind++) {</span>
+<span class="nc" id="L1022">                long channelOffset = sh.getWriteChannel().position()</span>
+<span class="nc" id="L1023">                        + allRecordsBuf.position() + METADATA_SIZE;</span>
+<span class="nc" id="L1024">                allRecordsBuf.put(entryBuffs.get(ind));</span>
+<span class="nc" id="L1025">                Metadata metadata = metadataList.get(ind);</span>
+<span class="nc" id="L1026">                recordsMap.put(entries.get(ind).getGlobalAddress(),</span>
+<span class="nc" id="L1027">                        new AddressMetaData(metadata.getPayloadChecksum(),</span>
+<span class="nc" id="L1028">                                metadata.getLength(), channelOffset));</span>
+            }
+
+<span class="nc" id="L1031">            allRecordsBuf.flip();</span>
+<span class="nc" id="L1032">            safeWrite(sh.getWriteChannel(), allRecordsBuf);</span>
+<span class="nc" id="L1033">            channelsToSync.add(sh.getWriteChannel());</span>
+<span class="nc" id="L1034">            syncTailSegment(entries.get(entries.size() - 1).getGlobalAddress());</span>
+<span class="nc bnc" id="L1035" title="All 8 branches missed.">        }</span>
+
+<span class="nc" id="L1037">        return recordsMap;</span>
+    }
+
+    /**
+     *
+     * Attempts to write a buffer to a file channel, if write fails with an
+     * IOException then the channel pointer is moved back to its original positon
+     * before the write
+     *
+     * @param channel the channel to write to
+     * @param buf  the buffer to write
+     * @throws IOException
+     */
+    private static void safeWrite(FileChannel channel, ByteBuffer buf) throws IOException {
+<span class="nc" id="L1051">        long prev = channel.position();</span>
+        try {
+<span class="nc" id="L1053">            channel.write(buf);</span>
+<span class="nc" id="L1054">        } catch (IOException e) {</span>
+            // Write failed restore the channels position, so the subsequent writes
+            // can overwrite the failed write.
+
+            // Note that after rewinding the channel pointer, it is important to truncate
+            // any bytes that were written. This is required to avoid an ambigous case
+            // where a subsequent write (after a failed write) succeeds but writes less
+            // bytes than the partially written buffer. In that case, the log unit can't
+            // determine if the bytes correspund to a partially written buffer that needs
+            // to be ignored, or if the bytes corrrespond to a corrupted metadata field.
+<span class="nc" id="L1064">            channel.position(prev);</span>
+<span class="nc" id="L1065">            channel.truncate(prev);</span>
+<span class="nc" id="L1066">            channel.force(true);</span>
+<span class="nc" id="L1067">            throw e;</span>
+<span class="nc" id="L1068">        }</span>
+<span class="nc" id="L1069">    }</span>
+
+    /**
+     * Write a log entry record to a file.
+     *
+     * @param fh      The file handle to use.
+     * @param address The address of the entry.
+     * @param entry   The LogData to append.
+     * @return Returns metadata for the written record
+     */
+    private AddressMetaData writeRecord(SegmentHandle fh, long address,
+                                        LogData entry) throws IOException {
+<span class="nc" id="L1081">        LogEntry logEntry = getLogEntry(address, entry);</span>
+<span class="nc" id="L1082">        Metadata metadata = getMetadata(logEntry);</span>
+
+<span class="nc" id="L1084">        ByteBuffer record = getByteBuffer(metadata, logEntry);</span>
+        long channelOffset;
+
+<span class="nc" id="L1087">        try (MultiReadWriteLock.AutoCloseableLock ignored =</span>
+<span class="nc" id="L1088">                     segmentLocks.acquireWriteLock(fh.getSegment())) {</span>
+<span class="nc" id="L1089">            channelOffset = fh.getWriteChannel().position() + METADATA_SIZE;</span>
+<span class="nc" id="L1090">            safeWrite(fh.getWriteChannel(), record);</span>
+<span class="nc" id="L1091">            channelsToSync.add(fh.getWriteChannel());</span>
+<span class="nc" id="L1092">            syncTailSegment(address);</span>
+<span class="nc bnc" id="L1093" title="All 8 branches missed.">        }</span>
+
+<span class="nc" id="L1095">        return new AddressMetaData(metadata.getPayloadChecksum(), metadata.getLength(), channelOffset);</span>
+    }
+
+    long getSegment(LogData entry) {
+<span class="nc" id="L1099">        return entry.getGlobalAddress() / RECORDS_PER_LOG_FILE;</span>
+    }
+
+    /**
+     * Pre-process a range of entries to be written. This includes
+     * removing trimmed entries and advancing the trim mark appropriately.
+     * @param range range of entries
+     * @return A subset of range; entries to be written
+     */
+    List&lt;LogData&gt; preprocess(List&lt;LogData&gt; range) {
+<span class="nc" id="L1109">        List&lt;LogData&gt; processed  = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L1110" title="All 2 branches missed.">        for (int x = 0; x &lt; range.size(); x++) {</span>
+            // TODO(Maithem) Add an extra check to make
+            // sure that trimmed entres don't alternate
+            // with non-trimmed entries
+<span class="nc" id="L1114">            LogData curr = range.get(x);</span>
+<span class="nc bnc" id="L1115" title="All 2 branches missed.">            if (curr.isTrimmed()) {</span>
+                // We don't need to write trimmed entries
+                // because we already track the trim mark
+<span class="nc" id="L1118">                prefixTrim(curr.getGlobalAddress());</span>
+<span class="nc" id="L1119">                continue;</span>
+<span class="nc bnc" id="L1120" title="All 2 branches missed.">            } else if (isTrimmed(curr.getGlobalAddress())) {</span>
+                // This is the case where the client tries to
+                // write a range of addresses, but before the
+                // request starts, a prefix trim request executes
+                // on this logging unit, as a consequence trimming
+                // all of, or part of the range.
+<span class="nc" id="L1126">                continue;</span>
+            }
+            else {
+<span class="nc" id="L1129">                processed.add(curr);</span>
+            }
+        }
+<span class="nc" id="L1132">        return processed;</span>
+    }
+
+    /**
+     * This method verifies that a range of entries doesn't
+     * span more than two segments and that the log addresses
+     * are ordered sequentially.
+     * @param range entries to verify
+     * @return return true if the range is valid.
+     */
+    boolean verify(List&lt;LogData&gt; range) {
+
+        // Make sure that entries are ordered sequentially
+<span class="nc" id="L1145">        long firstAddress = range.get(0).getGlobalAddress();</span>
+<span class="nc bnc" id="L1146" title="All 2 branches missed.">        for (int x = 1; x &lt; range.size(); x++) {</span>
+<span class="nc bnc" id="L1147" title="All 2 branches missed.">            if (range.get(x).getGlobalAddress() !=</span>
+                    firstAddress + x) {
+<span class="nc" id="L1149">                return false;</span>
+            }
+        }
+
+        // Check if the range spans more than two segments
+<span class="nc" id="L1154">        long lastAddress = range.get(range.size() - 1).getGlobalAddress();</span>
+<span class="nc" id="L1155">        long firstSegment = firstAddress / RECORDS_PER_LOG_FILE;</span>
+<span class="nc" id="L1156">        long endSegment = lastAddress / RECORDS_PER_LOG_FILE;</span>
+
+<span class="nc bnc" id="L1158" title="All 2 branches missed.">        if (endSegment - firstSegment &gt; 1) {</span>
+<span class="nc" id="L1159">            return false;</span>
+        }
+
+<span class="nc" id="L1162">        return true;</span>
+    }
+
+    @Override
+    public void append(List&lt;LogData&gt; range) {
+        // Remove trimmed entries
+<span class="nc" id="L1168">        List&lt;LogData&gt; entries = preprocess(range);</span>
+
+<span class="nc bnc" id="L1170" title="All 2 branches missed.">        if (entries.isEmpty()) {</span>
+<span class="nc" id="L1171">            log.info(&quot;No entries to write.&quot;);</span>
+<span class="nc" id="L1172">            return;</span>
+        }
+
+<span class="nc bnc" id="L1175" title="All 2 branches missed.">        if (!verify(entries)) {</span>
+            // Range overlaps more than two segments
+<span class="nc" id="L1177">            throw new IllegalArgumentException(&quot;Write range too large!&quot;);</span>
+        }
+
+        // check if the entries range cross a segment
+<span class="nc" id="L1181">        LogData first = entries.get(0);</span>
+<span class="nc" id="L1182">        LogData last = entries.get(entries.size() - 1);</span>
+<span class="nc" id="L1183">        SegmentHandle firstSh = getSegmentHandleForAddress(first.getGlobalAddress());</span>
+<span class="nc" id="L1184">        SegmentHandle lastSh = getSegmentHandleForAddress(last.getGlobalAddress());</span>
+
+<span class="nc" id="L1186">        List&lt;LogData&gt; segOneEntries = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L1187">        List&lt;LogData&gt; segTwoEntries = new ArrayList&lt;&gt;();</span>
+
+<span class="nc bnc" id="L1189" title="All 2 branches missed.">        for (int ind = 0; ind &lt; entries.size(); ind++) {</span>
+<span class="nc" id="L1190">            LogData curr = entries.get(ind);</span>
+
+<span class="nc bnc" id="L1192" title="All 2 branches missed.">            if (getSegment(curr) == firstSh.getSegment() &amp;&amp;</span>
+<span class="nc bnc" id="L1193" title="All 2 branches missed.">                    !firstSh.getKnownAddresses().containsKey(curr.getGlobalAddress())) {</span>
+<span class="nc" id="L1194">                segOneEntries.add(curr);</span>
+<span class="nc bnc" id="L1195" title="All 2 branches missed.">            } else if (getSegment(curr) == lastSh.getSegment() &amp;&amp;</span>
+<span class="nc bnc" id="L1196" title="All 2 branches missed.">                    !lastSh.getKnownAddresses().containsKey(curr.getGlobalAddress())) {</span>
+<span class="nc" id="L1197">                segTwoEntries.add(curr);</span>
+            }
+        }
+
+        try {
+<span class="nc bnc" id="L1202" title="All 2 branches missed.">            if (!segOneEntries.isEmpty()) {</span>
+<span class="nc" id="L1203">                Map&lt;Long, AddressMetaData&gt; firstSegAddresses = writeRecords(firstSh, segOneEntries);</span>
+<span class="nc" id="L1204">                firstSh.getKnownAddresses().putAll(firstSegAddresses);</span>
+            }
+
+<span class="nc bnc" id="L1207" title="All 2 branches missed.">            if (!segTwoEntries.isEmpty()) {</span>
+<span class="nc" id="L1208">                Map&lt;Long, AddressMetaData&gt; lastSegAddresses = writeRecords(lastSh, segTwoEntries);</span>
+<span class="nc" id="L1209">                lastSh.getKnownAddresses().putAll(lastSegAddresses);</span>
+            }
+<span class="nc" id="L1211">        } catch (IOException e) {</span>
+<span class="nc" id="L1212">            log.error(&quot;Disk_write[{}-{}]: Exception&quot;, first.getGlobalAddress(),</span>
+<span class="nc" id="L1213">                    last.getGlobalAddress(), e);</span>
+<span class="nc" id="L1214">            throw new RuntimeException(e);</span>
+        } finally {
+<span class="nc" id="L1216">            firstSh.release();</span>
+<span class="nc" id="L1217">            lastSh.release();</span>
+<span class="nc" id="L1218">        }</span>
+<span class="nc" id="L1219">    }</span>
+
+    @Override
+    public void append(long address, LogData entry) {
+<span class="nc bnc" id="L1223" title="All 2 branches missed.">        if(isTrimmed(address)) {</span>
+<span class="nc" id="L1224">            throw new OverwriteException();</span>
+        }
+
+<span class="nc" id="L1227">        SegmentHandle fh = getSegmentHandleForAddress(address);</span>
+
+        try {
+            // make sure the entry doesn't currently exist...
+            // (probably need a faster way to do this - high watermark?)
+<span class="nc bnc" id="L1232" title="All 2 branches missed.">            if (fh.getKnownAddresses().containsKey(address)</span>
+<span class="nc bnc" id="L1233" title="All 2 branches missed.">                    || fh.getTrimmedAddresses().contains(address)) {</span>
+<span class="nc bnc" id="L1234" title="All 2 branches missed.">                if (entry.getRank() == null) {</span>
+<span class="nc" id="L1235">                    throw new OverwriteException();</span>
+                } else {
+                    // the method below might throw DataOutrankedException or ValueAdoptedException
+<span class="nc" id="L1238">                    assertAppendPermittedUnsafe(address, entry);</span>
+<span class="nc" id="L1239">                    AddressMetaData addressMetaData = writeRecord(fh, address, entry);</span>
+<span class="nc" id="L1240">                    fh.getKnownAddresses().put(address, addressMetaData);</span>
+<span class="nc" id="L1241">                }</span>
+            } else {
+<span class="nc" id="L1243">                AddressMetaData addressMetaData = writeRecord(fh, address, entry);</span>
+<span class="nc" id="L1244">                fh.getKnownAddresses().put(address, addressMetaData);</span>
+            }
+<span class="nc" id="L1246">            log.trace(&quot;Disk_write[{}]: Written to disk.&quot;, address);</span>
+<span class="nc" id="L1247">        } catch (IOException e) {</span>
+<span class="nc" id="L1248">            log.error(&quot;Disk_write[{}]: Exception&quot;, address, e);</span>
+<span class="nc" id="L1249">            throw new RuntimeException(e);</span>
+        } finally {
+<span class="nc" id="L1251">            fh.release();</span>
+<span class="nc" id="L1252">        }</span>
+<span class="nc" id="L1253">    }</span>
+
+    @Override
+    public LogData read(long address) {
+<span class="nc bnc" id="L1257" title="All 2 branches missed.">        if (isTrimmed(address)) {</span>
+<span class="nc" id="L1258">            return LogData.getTrimmed(address);</span>
+        }
+<span class="nc" id="L1260">        SegmentHandle sh = getSegmentHandleForAddress(address);</span>
+
+        try {
+<span class="nc bnc" id="L1263" title="All 2 branches missed.">            if (sh.getPendingTrims().contains(address)) {</span>
+<span class="nc" id="L1264">                return LogData.getTrimmed(address);</span>
+            }
+<span class="nc" id="L1266">            return readRecord(sh, address);</span>
+<span class="nc" id="L1267">        } catch (IOException e) {</span>
+<span class="nc" id="L1268">            throw new RuntimeException(e);</span>
+        } finally {
+<span class="nc" id="L1270">            sh.release();</span>
+        }
+    }
+
+    @Override
+    public void close() {
+<span class="nc bnc" id="L1276" title="All 2 branches missed.">        for (SegmentHandle fh : writeChannels.values()) {</span>
+<span class="nc" id="L1277">            fh.close();</span>
+<span class="nc" id="L1278">        }</span>
+
+<span class="nc" id="L1280">        writeChannels = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1281">    }</span>
+
+    @Override
+    public void release(long address, LogData entry) {
+<span class="nc" id="L1285">    }</span>
+
+    /**
+     * Closes all segment handlers up to and including the handler for the endSegment.
+     *
+     * @param endSegment The segment index of the last segment up to (including) the end segment.
+     */
+    private void closeSegmentHandlers(long endSegment) {
+<span class="nc bnc" id="L1293" title="All 2 branches missed.">        for (SegmentHandle sh : writeChannels.values()) {</span>
+<span class="nc bnc" id="L1294" title="All 2 branches missed.">            if (sh.getSegment() &lt;= endSegment) {</span>
+<span class="nc bnc" id="L1295" title="All 2 branches missed.">                if (sh.getRefCount() != 0) {</span>
+<span class="nc" id="L1296">                    log.warn(&quot;closeSegmentHandlers: Segment {} is trimmed, but refCount is {},&quot;</span>
+<span class="nc" id="L1297">                                    + &quot; attempting to trim anyways&quot;, sh.getSegment(),</span>
+<span class="nc" id="L1298">                            sh.getRefCount());</span>
+                }
+<span class="nc" id="L1300">                sh.close();</span>
+<span class="nc" id="L1301">                writeChannels.remove(sh.getFileName());</span>
+            }
+<span class="nc" id="L1303">        }</span>
+<span class="nc" id="L1304">    }</span>
+
+    /**
+     * Deletes all files matching the given filter.
+     *
+     * @param fileFilter File filter to delete files.
+     */
+    private void deleteFilesMatchingFilter(FileFilter fileFilter) {
+<span class="nc" id="L1312">        int numFiles = 0;</span>
+<span class="nc" id="L1313">        long freedBytes = 0;</span>
+<span class="nc" id="L1314">        File dir = new File(logDir);</span>
+<span class="nc" id="L1315">        File[] files = dir.listFiles(fileFilter);</span>
+<span class="nc bnc" id="L1316" title="All 2 branches missed.">        for (File file : files) {</span>
+<span class="nc" id="L1317">            long delta = file.length();</span>
+
+<span class="nc bnc" id="L1319" title="All 2 branches missed.">            if (!file.delete()) {</span>
+<span class="nc" id="L1320">                log.error(&quot;deleteFilesMatchingFilter: Couldn't delete file {}&quot;, file.getName());</span>
+            } else {
+<span class="nc" id="L1322">                freedBytes += delta;</span>
+<span class="nc" id="L1323">                numFiles++;</span>
+            }
+        }
+<span class="nc" id="L1326">        log.info(&quot;deleteFilesMatchingFilter: completed, deleted {} files, freed {} bytes&quot;,</span>
+<span class="nc" id="L1327">                numFiles, freedBytes);</span>
+<span class="nc" id="L1328">    }</span>
+
+    /**
+     * Resets the Stream log.
+     * Clears all data and resets the handlers.
+     * Usage: To heal a recovering node, we require to wipe off existing data.
+     */
+    @Override
+    public void reset() {
+        // Trim all segments
+<span class="nc" id="L1338">        long endSegment = (globalTail.get() / RECORDS_PER_LOG_FILE);</span>
+<span class="nc" id="L1339">        log.warn(&quot;Global Tail:{}, endSegment={}&quot;, globalTail.get(), endSegment);</span>
+
+        // Close segments before deleting their corresponding log files
+<span class="nc" id="L1342">        closeSegmentHandlers(endSegment);</span>
+
+<span class="nc" id="L1344">        deleteFilesMatchingFilter(file -&gt; {</span>
+            try {
+<span class="nc" id="L1346">                String segmentStr = file.getName().split(&quot;\\.&quot;)[0];</span>
+<span class="nc bnc" id="L1347" title="All 2 branches missed.">                return Long.parseLong(segmentStr) &lt;= endSegment;</span>
+<span class="nc" id="L1348">            } catch (Exception e) {</span>
+<span class="nc" id="L1349">                log.warn(&quot;reset: ignoring file {}&quot;, file.getName());</span>
+<span class="nc" id="L1350">                return false;</span>
+            }
+        });
+
+<span class="nc" id="L1354">        serverContext.setStartingAddress(0L);</span>
+<span class="nc" id="L1355">        serverContext.setTailSegment(0L);</span>
+<span class="nc" id="L1356">        globalTail.set(0L);</span>
+<span class="nc" id="L1357">        initializeStartingAddress();</span>
+<span class="nc" id="L1358">        initializeMaxGlobalAddress();</span>
+
+<span class="nc" id="L1360">        log.info(&quot;reset: Completed, end segment {}&quot;, endSegment);</span>
+<span class="nc" id="L1361">    }</span>
+
+    @VisibleForTesting
+    Set&lt;FileChannel&gt; getChannelsToSync() {
+<span class="nc" id="L1365">        return channelsToSync;</span>
+    }
+
+    @VisibleForTesting
+    Collection&lt;SegmentHandle&gt; getSegmentHandles() {
+<span class="nc" id="L1370">        return writeChannels.values();</span>
+    }
+
+    public static class CompactedEntry {
+        private final LogHeader logHeader;
+        private final Collection&lt;LogEntry&gt; entries;
+
+<span class="nc" id="L1377">        public CompactedEntry(LogHeader logHeader, Collection&lt;LogEntry&gt; entries) {</span>
+<span class="nc" id="L1378">            this.logHeader = logHeader;</span>
+<span class="nc" id="L1379">            this.entries = entries;</span>
+<span class="nc" id="L1380">        }</span>
+
+        public LogHeader getLogHeader() {
+<span class="nc" id="L1383">            return logHeader;</span>
+        }
+
+        public Collection&lt;LogEntry&gt; getEntries() {
+<span class="nc" id="L1387">            return entries;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

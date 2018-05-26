@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BatchWriter.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">debian</a> &gt; <a href="../index.html" class="el_bundle">infrastructure</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.infrastructure</a> &gt; <span class="el_source">BatchWriter.java</span></div><h1>BatchWriter.java</h1><pre class="source lang-java linenums">package org.corfudb.infrastructure;
+
+import com.github.benmanes.caffeine.cache.CacheWriter;
+import com.github.benmanes.caffeine.cache.RemovalCause;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+
+import java.util.LinkedList;
+import java.util.List;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+
+import javax.annotation.Nonnull;
+
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.infrastructure.log.StreamLog;
+import org.corfudb.protocols.wireprotocol.LogData;
+import org.corfudb.runtime.exceptions.DataOutrankedException;
+import org.corfudb.runtime.exceptions.OverwriteException;
+import org.corfudb.runtime.exceptions.TrimmedException;
+
+/**
+ * BatchWriter is a class that will intercept write-through calls to batch and
+ * sync writes.
+ */
+<span class="nc" id="L29">@Slf4j</span>
+public class BatchWriter&lt;K, V&gt; implements CacheWriter&lt;K, V&gt;, AutoCloseable {
+
+    static final int BATCH_SIZE = 50;
+    private StreamLog streamLog;
+    private BlockingQueue&lt;BatchWriterOperation&gt; operationsQueue;
+<span class="nc" id="L35">    final ExecutorService writerService = Executors</span>
+<span class="nc" id="L36">            .newSingleThreadExecutor(new ThreadFactoryBuilder()</span>
+<span class="nc" id="L37">                    .setDaemon(false)</span>
+<span class="nc" id="L38">                    .setNameFormat(&quot;LogUnit-Write-Processor-%d&quot;)</span>
+<span class="nc" id="L39">                    .build());</span>
+
+    /**
+     * Returns a new BatchWriter for a stream log.
+     *
+     * @param streamLog stream log for writes (can be in memory or file)
+     */
+<span class="nc" id="L46">    public BatchWriter(StreamLog streamLog) {</span>
+<span class="nc" id="L47">        this.streamLog = streamLog;</span>
+<span class="nc" id="L48">        operationsQueue = new LinkedBlockingQueue&lt;&gt;();</span>
+<span class="nc" id="L49">        writerService.submit(this::batchWriteProcessor);</span>
+<span class="nc" id="L50">    }</span>
+
+    @Override
+    public void write(@Nonnull K key, @Nonnull V value) {
+        try {
+<span class="nc" id="L55">            CompletableFuture&lt;Void&gt; cf = new CompletableFuture();</span>
+<span class="nc" id="L56">            operationsQueue.add(new BatchWriterOperation(BatchWriterOperation.Type.WRITE,</span>
+                    (Long) key, (LogData) value, null, cf));
+<span class="nc" id="L58">            cf.get();</span>
+<span class="nc" id="L59">        } catch (Exception e) {</span>
+<span class="nc" id="L60">            log.trace(&quot;Write Exception {}&quot;, e);</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">            if (e.getCause() instanceof RuntimeException) {</span>
+<span class="nc" id="L62">                throw (RuntimeException) e.getCause();</span>
+            } else {
+<span class="nc" id="L64">                throw new RuntimeException(e);</span>
+            }
+<span class="nc" id="L66">        }</span>
+<span class="nc" id="L67">    }</span>
+
+    public void bulkWrite(List&lt;LogData&gt; entries) {
+        try {
+<span class="nc" id="L71">            CompletableFuture&lt;Void&gt; cf = new CompletableFuture();</span>
+<span class="nc" id="L72">            operationsQueue.add(new BatchWriterOperation(BatchWriterOperation.Type.RANGE_WRITE,</span>
+                    null, null, entries, cf));
+<span class="nc" id="L74">        } catch (Exception e) {</span>
+<span class="nc" id="L75">            log.trace(&quot;Write Exception {}&quot;, e);</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">            if (e.getCause() instanceof RuntimeException) {</span>
+<span class="nc" id="L77">                throw (RuntimeException) e.getCause();</span>
+            } else {
+<span class="nc" id="L79">                throw new RuntimeException(e);</span>
+            }
+<span class="nc" id="L81">        }</span>
+<span class="nc" id="L82">    }</span>
+
+    /**
+     * Trim an address from the log.
+     *
+     * @param address log address to trim
+     */
+    public void trim(@Nonnull long address) {
+        try {
+<span class="nc" id="L91">            CompletableFuture&lt;Void&gt; cf = new CompletableFuture();</span>
+<span class="nc" id="L92">            operationsQueue.add(new BatchWriterOperation(BatchWriterOperation.Type.TRIM,</span>
+<span class="nc" id="L93">                    address, null, null, cf));</span>
+<span class="nc" id="L94">            cf.get();</span>
+<span class="nc" id="L95">        } catch (Exception e) {</span>
+<span class="nc" id="L96">            throw new RuntimeException(e);</span>
+<span class="nc" id="L97">        }</span>
+<span class="nc" id="L98">    }</span>
+
+    /**
+     * Trim addresses from log up to a prefix.
+     *
+     * @param address prefix address to trim to (inclusive)
+     */
+    public void prefixTrim(@Nonnull long address) {
+        try {
+<span class="nc" id="L107">            CompletableFuture&lt;Void&gt; cf = new CompletableFuture();</span>
+<span class="nc" id="L108">            operationsQueue.add(new BatchWriterOperation(BatchWriterOperation.Type.PREFIX_TRIM,</span>
+<span class="nc" id="L109">                    address, null, null, cf));</span>
+<span class="nc" id="L110">            cf.get();</span>
+<span class="nc" id="L111">        } catch (Exception e) {</span>
+<span class="nc" id="L112">            throw new RuntimeException(e);</span>
+<span class="nc" id="L113">        }</span>
+<span class="nc" id="L114">    }</span>
+
+    @Override
+    public void delete(K key, V value, RemovalCause removalCause) {
+<span class="nc" id="L118">    }</span>
+
+    private void handleOperationResults(BatchWriterOperation operation) {
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        if (operation.getException() == null) {</span>
+<span class="nc" id="L122">            operation.getFuture().complete(null);</span>
+        } else {
+<span class="nc" id="L124">            operation.getFuture().completeExceptionally(operation.getException());</span>
+        }
+<span class="nc" id="L126">    }</span>
+
+    private void batchWriteProcessor() {
+        try {
+<span class="nc" id="L130">            BatchWriterOperation lastOp = null;</span>
+<span class="nc" id="L131">            int processed = 0;</span>
+<span class="nc" id="L132">            List&lt;BatchWriterOperation&gt; res = new LinkedList();</span>
+
+            while (true) {
+                BatchWriterOperation currOp;
+
+<span class="nc bnc" id="L137" title="All 2 branches missed.">                if (lastOp == null) {</span>
+<span class="nc" id="L138">                    currOp = operationsQueue.take();</span>
+                } else {
+<span class="nc" id="L140">                    currOp = operationsQueue.poll();</span>
+
+<span class="nc bnc" id="L142" title="All 6 branches missed.">                    if (currOp == null || processed == BATCH_SIZE</span>
+                            || currOp == BatchWriterOperation.SHUTDOWN) {
+<span class="nc" id="L144">                        streamLog.sync(true);</span>
+<span class="nc" id="L145">                        log.trace(&quot;Sync'd {} writes&quot;, processed);</span>
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">                        for (BatchWriterOperation operation : res) {</span>
+<span class="nc" id="L148">                            handleOperationResults(operation);</span>
+<span class="nc" id="L149">                        }</span>
+<span class="nc" id="L150">                        res.clear();</span>
+<span class="nc" id="L151">                        processed = 0;</span>
+                    }
+                }
+
+<span class="nc bnc" id="L155" title="All 2 branches missed.">                if (currOp == null) {</span>
+<span class="nc" id="L156">                    lastOp = null;</span>
+<span class="nc" id="L157">                    continue;</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">                } else if (currOp == BatchWriterOperation.SHUTDOWN) {</span>
+<span class="nc" id="L159">                    log.trace(&quot;Shutting down the write processor&quot;);</span>
+<span class="nc" id="L160">                    streamLog.sync(true);</span>
+<span class="nc" id="L161">                    break;</span>
+                } else {
+                    try {
+<span class="nc bnc" id="L164" title="All 5 branches missed.">                        switch (currOp.getType()) {</span>
+                            case TRIM:
+<span class="nc" id="L166">                                streamLog.trim(currOp.getAddress());</span>
+<span class="nc" id="L167">                                res.add(currOp);</span>
+<span class="nc" id="L168">                                break;</span>
+                            case PREFIX_TRIM:
+<span class="nc" id="L170">                                streamLog.prefixTrim(currOp.getAddress());</span>
+<span class="nc" id="L171">                                res.add(currOp);</span>
+<span class="nc" id="L172">                                break;</span>
+                            case WRITE:
+<span class="nc" id="L174">                                streamLog.append(currOp.getAddress(), currOp.getLogData());</span>
+<span class="nc" id="L175">                                res.add(currOp);</span>
+<span class="nc" id="L176">                                break;</span>
+                            case RANGE_WRITE:
+<span class="nc" id="L178">                                streamLog.append(currOp.getEntries());</span>
+<span class="nc" id="L179">                                res.add(currOp);</span>
+<span class="nc" id="L180">                                break;</span>
+                            default:
+<span class="nc" id="L182">                                log.warn(&quot;Unknown BatchWriterOperation {}&quot;, currOp);</span>
+                        }
+<span class="nc" id="L184">                    } catch (Exception e) {</span>
+<span class="nc" id="L185">                        currOp.setException(e);</span>
+<span class="nc" id="L186">                        res.add(currOp);</span>
+<span class="nc" id="L187">                    }</span>
+
+<span class="nc" id="L189">                    processed++;</span>
+<span class="nc" id="L190">                    lastOp = currOp;</span>
+                }
+<span class="nc" id="L192">            }</span>
+<span class="nc" id="L193">        } catch (Exception e) {</span>
+<span class="nc" id="L194">            log.error(&quot;Caught exception in the write processor {}&quot;, e);</span>
+<span class="nc" id="L195">        }</span>
+<span class="nc" id="L196">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L200">        operationsQueue.add(BatchWriterOperation.SHUTDOWN);</span>
+<span class="nc" id="L201">        writerService.shutdown();</span>
+<span class="nc" id="L202">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

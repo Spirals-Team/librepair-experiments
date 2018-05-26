@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CheckpointWriter.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">generator</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime</a> &gt; <span class="el_source">CheckpointWriter.java</span></div><h1>CheckpointWriter.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime;
+
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Iterators;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+import lombok.Getter;
+import lombok.Setter;
+
+import org.corfudb.protocols.logprotocol.CheckpointEntry;
+import org.corfudb.protocols.logprotocol.MultiSMREntry;
+import org.corfudb.protocols.logprotocol.SMREntry;
+import org.corfudb.protocols.wireprotocol.TokenResponse;
+import org.corfudb.runtime.object.CorfuCompileProxy;
+import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.object.transactions.AbstractTransactionalContext;
+import org.corfudb.runtime.object.transactions.TransactionType;
+import org.corfudb.runtime.object.transactions.TransactionalContext;
+import org.corfudb.runtime.view.StreamsView;
+import org.corfudb.util.serializer.ISerializer;
+import org.corfudb.util.serializer.Serializers;
+
+/** Checkpoint writer for SMRMaps: take a snapshot of the
+ *  object via TXBegin(), then dump the frozen object's
+ *  state into CheckpointEntry records into the object's
+ *  stream.
+ *  TODO: Generalize to all SMR objects.
+ */
+public class CheckpointWriter&lt;T extends Map&gt; {
+    /** Metadata to be stored in the CP's 'dict' map.
+     */
+    private UUID streamId;
+    private String author;
+<span class="nc" id="L46">    @Getter</span>
+    private UUID checkpointId;
+    private LocalDateTime startTime;
+    private long startAddress;
+    private long endAddress;
+<span class="nc" id="L51">    private long numEntries = 0;</span>
+<span class="nc" id="L52">    private long numBytes = 0;</span>
+
+    @SuppressWarnings(&quot;checkstyle:abbreviation&quot;)
+    final UUID checkpointStreamID;
+
+<span class="nc" id="L57">    Map&lt;CheckpointEntry.CheckpointDictKey, String&gt; mdkv = new HashMap&lt;&gt;();</span>
+
+    /** Mutator lambda to change map key.  Typically used for
+     *  testing but could also be used for type conversion, etc.
+     */
+<span class="nc" id="L62">    @Getter</span>
+<span class="nc" id="L63">    @Setter</span>
+<span class="nc" id="L64">    Function&lt;Object,Object&gt; keyMutator = (x) -&gt; x;</span>
+
+    /** Mutator lambda to change map value.  Typically used for
+     *  testing but could also be used for type conversion, etc.
+     */
+<span class="nc" id="L69">    @Getter</span>
+<span class="nc" id="L70">    @Setter</span>
+<span class="nc" id="L71">    Function&lt;Object,Object&gt; valueMutator = (x) -&gt; x;</span>
+
+    /**
+     * This option optimizes the checkpoint encoding by grouping multiple
+     * map entries into a map instead of using a single smr entry per map
+     * entry.
+     */
+<span class="nc" id="L78">    @Getter</span>
+<span class="nc" id="L79">    @Setter</span>
+    boolean enablePutAll = false;
+
+    /** Batch size: number of SMREntry in a single CONTINUATION.
+     */
+<span class="nc" id="L84">    @Getter</span>
+<span class="nc" id="L85">    @Setter</span>
+    private int batchSize = 50;
+
+    /** BiConsumer to run after every CheckpointEntry is appended to the stream.
+     */
+<span class="nc" id="L90">    @Getter</span>
+<span class="nc" id="L91">    @Setter</span>
+<span class="nc" id="L92">    BiConsumer&lt;CheckpointEntry,Long&gt; postAppendFunc = (cp, l) -&gt; { };</span>
+
+    /** Local ref to the object's runtime.
+     */
+    private CorfuRuntime rt;
+
+    /** Local ref to the stream's view.
+     */
+    StreamsView sv;
+
+    /** Local ref to the object that we're dumping.
+     *  TODO: generalize to all SMR objects.
+     */
+    private T map;
+
+<span class="nc" id="L107">    @Getter</span>
+<span class="nc" id="L108">    @Setter</span>
+    ISerializer serializer = Serializers.JSON;
+
+    /** Constructor for Checkpoint Writer for Corfu Maps.
+     * @param rt object's runtime
+     * @param streamId unique identifier of stream to checkpoint
+     * @param author checkpoint initiator
+     * @param map local reference of the map to checkpoint
+     */
+<span class="nc" id="L117">    public CheckpointWriter(CorfuRuntime rt, UUID streamId, String author, T map) {</span>
+<span class="nc" id="L118">        this.rt = rt;</span>
+<span class="nc" id="L119">        this.streamId = streamId;</span>
+<span class="nc" id="L120">        this.author = author;</span>
+<span class="nc" id="L121">        this.map = map;</span>
+<span class="nc" id="L122">        checkpointId = UUID.randomUUID();</span>
+<span class="nc" id="L123">        checkpointStreamID = CorfuRuntime.getCheckpointStreamIdFromId(streamId);</span>
+<span class="nc" id="L124">        sv = rt.getStreamsView();</span>
+<span class="nc" id="L125">    }</span>
+
+    /** Static method for all steps necessary to append checkpoint
+     *  data for a Corfu Map into its own stream.  An optimistic
+     *  read-only transaction is used to freeze the contents of
+     *  the map while the checkpoint entries are written to
+     *  the stream.
+     */
+    public List&lt;Long&gt; appendCheckpoint() {
+<span class="nc" id="L134">        return appendCheckpoint(cpw -&gt; { });</span>
+    }
+
+    /**
+     * @param setupWriter Lambda to transform the new CheckPointWriter
+     *                    object (e.g., change batch size, etc) prior
+     *                    to use.
+     * @return List of global addresses of all entries for this checkpoint.
+     */
+    public List&lt;Long&gt; appendCheckpoint(Consumer&lt;CheckpointWriter&gt; setupWriter) {
+<span class="nc" id="L144">        List&lt;Long&gt; addrs = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L145">        setupWriter.accept(this);</span>
+
+<span class="nc" id="L147">        startGlobalSnapshotTxn(rt);</span>
+        try {
+<span class="nc" id="L149">            addrs.add(startCheckpoint());</span>
+<span class="nc" id="L150">            addrs.addAll(appendObjectState());</span>
+<span class="nc" id="L151">            addrs.add(finishCheckpoint());</span>
+<span class="nc" id="L152">            return addrs;</span>
+        } finally {
+<span class="nc" id="L154">            rt.getObjectsView().TXEnd();</span>
+        }
+    }
+
+    /** Append a checkpoint START record to this object's stream.
+     *
+     *  &lt;p&gt;Corfu client transaction management, if desired, is the
+     *  caller's responsibility.&lt;/p&gt;
+     *
+     * @return Global log address of the START record.
+     */
+    public long startCheckpoint() {
+<span class="nc" id="L166">        startTime = LocalDateTime.now();</span>
+<span class="nc" id="L167">        AbstractTransactionalContext context = TransactionalContext.getCurrentContext();</span>
+<span class="nc" id="L168">        long txBeginGlobalAddress = context.getSnapshotTimestamp();</span>
+
+<span class="nc" id="L170">        this.mdkv.put(CheckpointEntry.CheckpointDictKey.START_TIME, startTime.toString());</span>
+        // Need the actual object's version
+<span class="nc" id="L172">        ICorfuSMR&lt;T&gt; corfuObject = (ICorfuSMR&lt;T&gt;) this.map;</span>
+<span class="nc" id="L173">        this.mdkv.put(CheckpointEntry.CheckpointDictKey.START_LOG_ADDRESS,</span>
+<span class="nc" id="L174">                Long.toString(corfuObject.getCorfuSMRProxy().getVersion()));</span>
+<span class="nc" id="L175">        this.mdkv.put(CheckpointEntry.CheckpointDictKey.SNAPSHOT_ADDRESS,</span>
+<span class="nc" id="L176">                Long.toString(txBeginGlobalAddress));</span>
+
+<span class="nc" id="L178">        ImmutableMap&lt;CheckpointEntry.CheckpointDictKey,String&gt; mdkv =</span>
+<span class="nc" id="L179">                ImmutableMap.copyOf(this.mdkv);</span>
+<span class="nc" id="L180">        CheckpointEntry cp = new CheckpointEntry(CheckpointEntry.CheckpointEntryType.START,</span>
+                author, checkpointId, streamId, mdkv, null);
+<span class="nc" id="L182">        startAddress = sv.append(Collections.singleton(checkpointStreamID), cp, null);</span>
+
+<span class="nc" id="L184">        postAppendFunc.accept(cp, startAddress);</span>
+<span class="nc" id="L185">        return startAddress;</span>
+    }
+
+    /** Append zero or more CONTINUATION records to this
+     *  object's stream.  Each will contain a fraction of
+     *  the state of the object that we're checkpointing
+     *  (up to batchSize items at a time).
+     *
+     *  &lt;p&gt;Corfu client transaction management, if desired, is the
+     *  caller's responsibility.&lt;/p&gt;
+     *
+     *  &lt;p&gt;The Iterators class appears to preserve the laziness
+     *  of Stream processing; we don't wish to use more
+     *  memory than strictly necessary to generate the
+     *  checkpoint.  NOTE: It would be even more useful if
+     *  the map had a lazy iterator: the eagerness of
+     *  map.keySet().stream() is not ideal, but at least
+     *  it should be much smaller than the entire map.&lt;/p&gt;
+     *
+     *  &lt;p&gt;NOTE: The postAppendFunc lambda is executed in the
+     *  current thread context, i.e., inside of a Corfu
+     *  transaction, and that transaction will be *aborted*
+     *  at the end of this function.  Any Corfu data
+     *  modifying ops will be undone by the TXAbort().&lt;/p&gt;
+     *
+     * @return Stream of global log addresses of the CONTINUATION records written.
+     */
+    public List&lt;Long&gt; appendObjectState() {
+<span class="nc" id="L213">        ImmutableMap&lt;CheckpointEntry.CheckpointDictKey,String&gt; mdkv =</span>
+<span class="nc" id="L214">                ImmutableMap.copyOf(this.mdkv);</span>
+<span class="nc" id="L215">        List&lt;Long&gt; continuationAddresses = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L217">        Class underlyingObjectType = ((CorfuCompileProxy&lt;Map&gt;)</span>
+<span class="nc" id="L218">                ((ICorfuSMR&lt;T&gt;) map).getCorfuSMRProxy())</span>
+<span class="nc" id="L219">                .getObjectType();</span>
+
+<span class="nc bnc" id="L221" title="All 2 branches missed.">        if (enablePutAll) {</span>
+<span class="nc" id="L222">            Iterable&lt;List&lt;Map.Entry&gt;&gt; partitions = Iterables.partition(map.entrySet(), batchSize);</span>
+
+<span class="nc bnc" id="L224" title="All 2 branches missed.">            for (List&lt;Map.Entry&gt; partition : partitions) {</span>
+<span class="nc" id="L225">                Map tmp = new HashMap();</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">                for (Map.Entry entry : partition) {</span>
+<span class="nc" id="L227">                    tmp.put(keyMutator.apply(entry.getKey()), valueMutator.apply(map.get(entry.getValue())));</span>
+<span class="nc" id="L228">                }</span>
+
+<span class="nc" id="L230">                SMREntry smrEntry = new SMREntry(&quot;putAll&quot;, new Object[]{tmp}, serializer</span>
+                );
+<span class="nc" id="L232">                MultiSMREntry smrEntries = new MultiSMREntry();</span>
+<span class="nc" id="L233">                smrEntries.addTo(smrEntry);</span>
+
+<span class="nc" id="L235">                CheckpointEntry cp = new CheckpointEntry(CheckpointEntry.CheckpointEntryType.CONTINUATION,</span>
+                        author, checkpointId, streamId, mdkv, smrEntries);
+
+<span class="nc" id="L238">                long pos = sv.append(Collections.singleton(checkpointStreamID), cp, null);</span>
+
+<span class="nc" id="L240">                postAppendFunc.accept(cp, pos);</span>
+<span class="nc" id="L241">                continuationAddresses.add(pos);</span>
+
+<span class="nc" id="L243">                numEntries++;</span>
+                // CheckpointEntry::serialize() has a side-effect we use
+                // for an accurate count of serialized bytes of SRMEntries.
+<span class="nc" id="L246">                numBytes += cp.getSmrEntriesBytes();</span>
+<span class="nc" id="L247">            }</span>
+<span class="nc" id="L248">        } else {</span>
+
+<span class="nc" id="L250">            Iterable&lt;List&lt;Map.Entry&gt;&gt; partitions = Iterables.partition(map.entrySet(), batchSize);</span>
+
+<span class="nc bnc" id="L252" title="All 2 branches missed.">            for (List&lt;Map.Entry&gt; partition : partitions) {</span>
+<span class="nc" id="L253">                MultiSMREntry smrEntries = new MultiSMREntry();</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">                for (Map.Entry entry : partition) {</span>
+<span class="nc" id="L255">                    smrEntries.addTo(new SMREntry(&quot;put&quot;,</span>
+<span class="nc" id="L256">                            new Object[]{keyMutator.apply(entry.getKey()),</span>
+<span class="nc" id="L257">                                    valueMutator.apply(entry.getValue())},</span>
+                            serializer));
+<span class="nc" id="L259">                }</span>
+
+<span class="nc" id="L261">                CheckpointEntry cp = new CheckpointEntry(CheckpointEntry</span>
+                        .CheckpointEntryType.CONTINUATION,
+                        author, checkpointId, streamId, mdkv, smrEntries);
+<span class="nc" id="L264">                long pos = sv.append(Collections.singleton(checkpointStreamID), cp, null);</span>
+
+<span class="nc" id="L266">                postAppendFunc.accept(cp, pos);</span>
+<span class="nc" id="L267">                continuationAddresses.add(pos);</span>
+
+<span class="nc" id="L269">                numEntries++;</span>
+                // CheckpointEntry::serialize() has a side-effect we use
+                // for an accurate count of serialized bytes of SRMEntries.
+<span class="nc" id="L272">                numBytes += cp.getSmrEntriesBytes();</span>
+
+<span class="nc" id="L274">            }</span>
+        }
+
+<span class="nc" id="L277">        return continuationAddresses;</span>
+    }
+
+    /** Append a checkpoint END record to this object's stream.
+     *
+     *  &lt;p&gt;Corfu client transaction management, if desired, is the
+     *  caller's responsibility.&lt;/p&gt;
+     *
+     * @return Global log address of the END record.
+     */
+    public long finishCheckpoint() {
+<span class="nc" id="L288">        LocalDateTime endTime = LocalDateTime.now();</span>
+<span class="nc" id="L289">        mdkv.put(CheckpointEntry.CheckpointDictKey.END_TIME, endTime.toString());</span>
+<span class="nc" id="L290">        numEntries++;</span>
+<span class="nc" id="L291">        numBytes++;</span>
+<span class="nc" id="L292">        mdkv.put(CheckpointEntry.CheckpointDictKey.ENTRY_COUNT, Long.toString(numEntries));</span>
+<span class="nc" id="L293">        mdkv.put(CheckpointEntry.CheckpointDictKey.BYTE_COUNT, Long.toString(numBytes));</span>
+
+<span class="nc" id="L295">        CheckpointEntry cp = new CheckpointEntry(CheckpointEntry.CheckpointEntryType.END,</span>
+                author, checkpointId, streamId, mdkv, null);
+
+<span class="nc" id="L298">        endAddress = sv.append(Collections.singleton(checkpointStreamID), cp, null);</span>
+
+<span class="nc" id="L300">        postAppendFunc.accept(cp, endAddress);</span>
+<span class="nc" id="L301">        return endAddress;</span>
+    }
+
+    /** Start a Global Snapshot Transaction.
+     *
+     * @param rt corfu runtime
+     * @return Global log address of the END record.
+     */
+    public static long startGlobalSnapshotTxn(CorfuRuntime rt) {
+<span class="nc" id="L310">        TokenResponse tokenResponse =</span>
+<span class="nc" id="L311">                rt.getSequencerView().nextToken(Collections.EMPTY_SET, 0);</span>
+<span class="nc" id="L312">        long globalTail = tokenResponse.getToken().getTokenValue();</span>
+<span class="nc" id="L313">        rt.getObjectsView().TXBuild()</span>
+<span class="nc" id="L314">                .setType(TransactionType.SNAPSHOT)</span>
+<span class="nc" id="L315">                .setSnapshot(globalTail)</span>
+<span class="nc" id="L316">                .begin();</span>
+<span class="nc" id="L317">        AbstractTransactionalContext context = TransactionalContext.getCurrentContext();</span>
+<span class="nc" id="L318">        return context.getSnapshotTimestamp();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

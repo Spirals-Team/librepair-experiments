@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HealNodeWorkflow.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">infrastructure</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.infrastructure.orchestrator.workflows</a> &gt; <span class="el_source">HealNodeWorkflow.java</span></div><h1>HealNodeWorkflow.java</h1><pre class="source lang-java linenums">package org.corfudb.infrastructure.orchestrator.workflows;
+
+import static org.corfudb.protocols.wireprotocol.orchestrator.OrchestratorRequestType.HEAL_NODE;
+
+import com.google.common.collect.Sets;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Set;
+
+import javax.annotation.Nonnull;
+
+import org.corfudb.infrastructure.orchestrator.Action;
+import org.corfudb.protocols.wireprotocol.orchestrator.AddNodeRequest;
+import org.corfudb.protocols.wireprotocol.orchestrator.HealNodeRequest;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.view.Layout;
+import lombok.extern.slf4j.Slf4j;
+
+/**
+ * A definition of a workflow that heals an existing unresponsive node back to the cluster.
+ * NOTE: The healing first resets this node, which erases all existing data.
+ * Then, similar to the AddNodeWorkflow, the segment is split, the node is added with all the
+ * data transferred from the existing log unit nodes and finally the segments are merged.
+ *
+ * &lt;p&gt;Created by Zeeshan on 12/8/17.
+ */
+<span class="nc" id="L28">@Slf4j</span>
+public class HealNodeWorkflow extends AddNodeWorkflow {
+
+    private final HealNodeRequest request;
+
+    public HealNodeWorkflow(HealNodeRequest healNodeRequest) {
+<span class="nc" id="L34">        super(new AddNodeRequest(healNodeRequest.getEndpoint()));</span>
+<span class="nc" id="L35">        this.request = healNodeRequest;</span>
+<span class="nc" id="L36">    }</span>
+
+    @Override
+    public String getName() {
+<span class="nc" id="L40">        return HEAL_NODE.toString();</span>
+    }
+
+    @Override
+    public List&lt;Action&gt; getActions() {
+<span class="nc" id="L45">        return Arrays.asList(new ResetNode(),</span>
+                new HealNodeToLayout(),
+                new RestoreRedundancyAndMergeSegments());
+    }
+
+    /**
+     * Resets the node's data.
+     */
+<span class="nc" id="L53">    class ResetNode extends Action {</span>
+        @Override
+        public String getName() {
+<span class="nc" id="L56">            return &quot;ResetNode&quot;;</span>
+        }
+
+        @Override
+        public void impl(@Nonnull CorfuRuntime runtime) throws Exception {
+<span class="nc" id="L61">            runtime.invalidateLayout();</span>
+<span class="nc" id="L62">            Layout layout = new Layout(runtime.getLayoutView().getLayout());</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">            if (layout.getUnresponsiveServers().contains(request.getEndpoint())) {</span>
+<span class="nc" id="L64">                runtime.getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L65">                        .getLogUnitClient(request.getEndpoint())</span>
+<span class="nc" id="L66">                        .resetLogUnit()</span>
+<span class="nc" id="L67">                        .get();</span>
+            }
+<span class="nc" id="L69">        }</span>
+    }
+
+
+    /**
+     * This action adds a new node to the layout. If it is also
+     * added as a logunit server, then in addition to adding
+     * the node the address space segment is split at the
+     * tail determined during the layout modification.
+     */
+<span class="nc" id="L79">    class HealNodeToLayout extends Action {</span>
+        @Override
+        public String getName() {
+<span class="nc" id="L82">            return &quot;HealNodeToLayout&quot;;</span>
+        }
+
+        @Override
+        public void impl(@Nonnull CorfuRuntime runtime) throws Exception {
+<span class="nc" id="L87">            Layout currentLayout = new Layout(runtime.getLayoutView().getLayout());</span>
+<span class="nc" id="L88">            runtime.getLayoutManagementView().healNode(currentLayout, request.getEndpoint());</span>
+<span class="nc" id="L89">            runtime.invalidateLayout();</span>
+<span class="nc" id="L90">            newLayout = new Layout(runtime.getLayoutView().getLayout());</span>
+<span class="nc" id="L91">        }</span>
+    }
+
+    /**
+     * This action attempts to restore redundancy for all servers across all segments
+     * starting from the oldest segment. It then collapses the segments once the set of
+     * servers in the 2 oldest subsequent segments are equal.
+     */
+<span class="nc" id="L99">    class RestoreRedundancyAndMergeSegments extends Action {</span>
+        @Nonnull
+        @Override
+        public String getName() {
+<span class="nc" id="L103">            return &quot;RestoreRedundancyAndMergeSegments&quot;;</span>
+        }
+
+        @Override
+        public void impl(@Nonnull CorfuRuntime runtime) throws Exception {
+            // Catchup all servers across all segments.
+<span class="nc bnc" id="L109" title="All 2 branches missed.">            while (newLayout.getSegments().size() &gt; 1) {</span>
+
+                // Currently the state is transferred for the complete segment.
+                // TODO: Add stripe specific transfer granularity for optimization.
+                // Get the set of servers present in the second segment but not in the first
+                // segment.
+<span class="nc" id="L115">                Set&lt;String&gt; lowRedundancyServers = Sets.difference(</span>
+<span class="nc" id="L116">                        newLayout.getSegments().get(1).getAllLogServers(),</span>
+<span class="nc" id="L117">                        newLayout.getSegments().get(0).getAllLogServers());</span>
+                // Transfer the replicated segment to the difference set calculated above.
+<span class="nc" id="L119">                stateTransfer(lowRedundancyServers, runtime, newLayout.getSegments().get(0));</span>
+<span class="nc" id="L120">                runtime.getLayoutManagementView().mergeSegments(new Layout(newLayout));</span>
+<span class="nc" id="L121">                runtime.invalidateLayout();</span>
+<span class="nc" id="L122">                newLayout = runtime.getLayoutView().getLayout();</span>
+<span class="nc" id="L123">            }</span>
+<span class="nc" id="L124">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

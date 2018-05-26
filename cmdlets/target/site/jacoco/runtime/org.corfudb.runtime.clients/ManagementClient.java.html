@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ManagementClient.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.clients</a> &gt; <span class="el_source">ManagementClient.java</span></div><h1>ManagementClient.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.clients;
+
+import java.util.Collections;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+
+import javax.annotation.Nonnull;
+
+import org.corfudb.protocols.wireprotocol.CorfuMsgType;
+import org.corfudb.protocols.wireprotocol.DetectorMsg;
+import org.corfudb.protocols.wireprotocol.NodeView;
+import org.corfudb.protocols.wireprotocol.orchestrator.AddNodeRequest;
+import org.corfudb.protocols.wireprotocol.orchestrator.CreateWorkflowResponse;
+import org.corfudb.protocols.wireprotocol.orchestrator.ForceRemoveNodeRequest;
+import org.corfudb.protocols.wireprotocol.orchestrator.HealNodeRequest;
+import org.corfudb.protocols.wireprotocol.orchestrator.OrchestratorMsg;
+import org.corfudb.protocols.wireprotocol.orchestrator.OrchestratorResponse;
+import org.corfudb.protocols.wireprotocol.orchestrator.QueryRequest;
+import org.corfudb.protocols.wireprotocol.orchestrator.QueryResponse;
+import org.corfudb.protocols.wireprotocol.orchestrator.RemoveNodeRequest;
+import org.corfudb.runtime.view.Layout;
+import org.corfudb.util.CFUtils;
+
+/**
+ * A client to the Management Server.
+ *
+ * &lt;p&gt;Failure Detection:
+ * This client allows a client to trigger failures handlers with relevant failures.
+ *
+ * &lt;p&gt;Created by zlokhandwala on 11/4/16.
+ */
+public class ManagementClient extends AbstractClient {
+
+    public ManagementClient(IClientRouter router, long epoch) {
+<span class="nc" id="L36">        super(router, epoch);</span>
+<span class="nc" id="L37">    }</span>
+
+    /**
+     * Bootstraps a management server.
+     *
+     * @param l The layout to bootstrap with.
+     * @return A completable future which will return TRUE if the
+     * bootstrap was successful, false otherwise.
+     */
+    public CompletableFuture&lt;Boolean&gt; bootstrapManagement(Layout l) {
+<span class="nc" id="L47">        return sendMessageWithFuture(CorfuMsgType.MANAGEMENT_BOOTSTRAP_REQUEST.payloadMsg(l));</span>
+    }
+
+    /**
+     * Sends the failure detected to the relevant management server.
+     *
+     * @param failedNodes The failed nodes set to be handled.
+     * @return A future which will be return TRUE if completed successfully else returns FALSE.
+     */
+    public CompletableFuture&lt;Boolean&gt; handleFailure(long detectorEpoch, Set&lt;String&gt; failedNodes) {
+<span class="nc" id="L57">        return sendMessageWithFuture(CorfuMsgType.MANAGEMENT_FAILURE_DETECTED</span>
+<span class="nc" id="L58">                .payloadMsg(new DetectorMsg(detectorEpoch, failedNodes, Collections.emptySet())));</span>
+    }
+
+    /**
+     * Sends the healed nodes detected to the relevant management server.
+     *
+     * @param healedNodes The healed nodes set to be handled.
+     * @return A future which will be return TRUE if completed successfully else returns FALSE.
+     */
+    public CompletableFuture&lt;Boolean&gt; handleHealing(long detectorEpoch, Set&lt;String&gt; healedNodes) {
+<span class="nc" id="L68">        return sendMessageWithFuture(CorfuMsgType.MANAGEMENT_HEALING_DETECTED</span>
+<span class="nc" id="L69">                .payloadMsg(new DetectorMsg(detectorEpoch, Collections.emptySet(), healedNodes)));</span>
+    }
+
+    /**
+     * Requests for a heartbeat message containing the node status.
+     *
+     * @return A future which will return the node health metrics of
+     * the node which was requested for the heartbeat.
+     */
+    public CompletableFuture&lt;NodeView&gt; sendHeartbeatRequest() {
+<span class="nc" id="L79">        return sendMessageWithFuture(CorfuMsgType.HEARTBEAT_REQUEST.msg());</span>
+    }
+
+    /**
+     * Send a add node request to an orchestrator
+     * @param endpoint the endpoint to add to the cluster
+     * @return create workflow response that contains the uuid of the workflow
+     */
+    public CreateWorkflowResponse addNodeRequest(@Nonnull String endpoint) {
+<span class="nc" id="L88">        OrchestratorMsg req = new OrchestratorMsg(new AddNodeRequest(endpoint));</span>
+<span class="nc" id="L89">        CompletableFuture&lt;OrchestratorResponse&gt; resp = sendMessageWithFuture(CorfuMsgType</span>
+                .ORCHESTRATOR_REQUEST
+<span class="nc" id="L91">                .payloadMsg(req));</span>
+<span class="nc" id="L92">        return (CreateWorkflowResponse) CFUtils.getUninterruptibly(resp).getResponse();</span>
+    }
+
+    /**
+     * Creates a workflow request to heal a node.
+     *
+     * @param endpoint          Endpoint of the node to be healed.
+     * @param isLayoutServer    True if the node to be healed is a layout server.
+     * @param isSequencerServer True if the node to be healed is a sequencer server.
+     * @param isLogUnitServer   True if the node to be healed is a logunit server.
+     * @param stripeIndex       Stripe index of the node if it is a logunit server.
+     * @return CreateWorkflowResponse which gives the workflowId.
+     */
+    public CreateWorkflowResponse healNodeRequest(@Nonnull String endpoint,
+                                                  boolean isLayoutServer,
+                                                  boolean isSequencerServer,
+                                                  boolean isLogUnitServer,
+                                                  int stripeIndex) {
+<span class="nc" id="L110">        OrchestratorMsg req = new OrchestratorMsg(</span>
+                new HealNodeRequest(endpoint,
+                        isLayoutServer,
+                        isSequencerServer,
+                        isLogUnitServer,
+                        stripeIndex));
+<span class="nc" id="L116">        CompletableFuture&lt;OrchestratorResponse&gt; resp = sendMessageWithFuture(CorfuMsgType</span>
+                .ORCHESTRATOR_REQUEST
+<span class="nc" id="L118">                .payloadMsg(req));</span>
+<span class="nc" id="L119">        return (CreateWorkflowResponse) CFUtils.getUninterruptibly(resp).getResponse();</span>
+    }
+
+    /**
+     * Query the state of a workflow on a particular orchestrator.
+     * @param workflowId the workflow to query
+     * @return Query response that contains whether the workflow is running or not
+     */
+    public QueryResponse queryRequest(@Nonnull UUID workflowId) {
+<span class="nc" id="L128">        OrchestratorMsg req = new OrchestratorMsg(new QueryRequest(workflowId));</span>
+<span class="nc" id="L129">        CompletableFuture&lt;OrchestratorResponse&gt; resp = sendMessageWithFuture(CorfuMsgType</span>
+                .ORCHESTRATOR_REQUEST
+<span class="nc" id="L131">                .payloadMsg(req));</span>
+<span class="nc" id="L132">        return (QueryResponse) CFUtils.getUninterruptibly(resp).getResponse();</span>
+    }
+
+    /**
+     * Return a workflow id for this remove operation request.
+     * @param endpoint the endpoint to remove
+     * @return uuid of the remove workflow
+     */
+    public CreateWorkflowResponse removeNode(@Nonnull String endpoint) {
+<span class="nc" id="L141">        OrchestratorMsg req = new OrchestratorMsg(new RemoveNodeRequest(endpoint));</span>
+<span class="nc" id="L142">        CompletableFuture&lt;OrchestratorResponse&gt; resp = sendMessageWithFuture(CorfuMsgType</span>
+                .ORCHESTRATOR_REQUEST
+<span class="nc" id="L144">                .payloadMsg(req));</span>
+<span class="nc" id="L145">        return (CreateWorkflowResponse) CFUtils.getUninterruptibly(resp).getResponse();</span>
+    }
+
+    /**
+     *
+     * Send a force remove node request to an orchestrator service node.
+     *
+     * @param endpoint the endpoint to force remove
+     * @return CreateWorkflowResponse
+     */
+    public CreateWorkflowResponse forceRemoveNode(@Nonnull String endpoint) {
+<span class="nc" id="L156">        OrchestratorMsg req = new OrchestratorMsg(new ForceRemoveNodeRequest(endpoint));</span>
+<span class="nc" id="L157">        CompletableFuture&lt;OrchestratorResponse&gt; resp = sendMessageWithFuture(CorfuMsgType</span>
+                .ORCHESTRATOR_REQUEST
+<span class="nc" id="L159">                .payloadMsg(req));</span>
+<span class="nc" id="L160">        return (CreateWorkflowResponse) CFUtils.getUninterruptibly(resp).getResponse();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

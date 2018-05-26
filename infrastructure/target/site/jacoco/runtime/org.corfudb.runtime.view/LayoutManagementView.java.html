@@ -1,0 +1,481 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LayoutManagementView.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">infrastructure</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.view</a> &gt; <span class="el_source">LayoutManagementView.java</span></div><h1>LayoutManagementView.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.view;
+
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+
+import javax.annotation.Nonnull;
+
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.recovery.FastObjectLoader;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.exceptions.LayoutModificationException;
+import org.corfudb.runtime.exceptions.OutrankedException;
+import org.corfudb.runtime.exceptions.QuorumUnreachableException;
+import org.corfudb.runtime.exceptions.RecoveryException;
+import org.corfudb.util.CFUtils;
+
+/**
+ * A view of the Layout Manager to manage reconfigurations of the Corfu Cluster.
+ * &lt;p&gt;
+ * &lt;p&gt;Created by zlokhandwala on 11/1/17.&lt;/p&gt;
+ */
+<span class="nc" id="L28">@Slf4j</span>
+public class LayoutManagementView extends AbstractView {
+
+<span class="nc bnc" id="L31" title="All 2 branches missed.">    public LayoutManagementView(@NonNull CorfuRuntime runtime) {</span>
+<span class="nc" id="L32">        super(runtime);</span>
+<span class="nc" id="L33">    }</span>
+
+<span class="nc" id="L35">    private volatile long prepareRank = 1L;</span>
+
+    /**
+     * On restart, if MANAGEMENT_LAYOUT exists in the local datastore.
+     * the Management Server attempts to recover the cluster from that layout.
+     *
+     * @param recoveryLayout Layout to use to recover
+     */
+    public void recoverCluster(Layout recoveryLayout)
+            throws QuorumUnreachableException, OutrankedException {
+
+<span class="nc" id="L46">        Layout newLayout = new Layout(recoveryLayout);</span>
+<span class="nc" id="L47">        newLayout.setEpoch(recoveryLayout.getEpoch() + 1);</span>
+<span class="nc" id="L48">        runLayoutReconfiguration(recoveryLayout, newLayout, true);</span>
+<span class="nc" id="L49">    }</span>
+
+    /**
+     * Takes in the existing layout and a set of failed nodes.
+     * It first generates a new layout by removing the failed nodes from the existing layout.
+     * It then seals the epoch to prevent any client from accessing the stale layout.
+     * Finally we run paxos to update all servers with the new layout.
+     *
+     * @param currentLayout The current layout
+     * @param failedServers Set of failed server addresses
+     */
+    public void handleFailure(IReconfigurationHandlerPolicy failureHandlerPolicy,
+                              Layout currentLayout,
+                              Set&lt;String&gt; failedServers)
+            throws OutrankedException, LayoutModificationException {
+
+        // Generates a new layout by removing the failed nodes from the existing layout
+<span class="nc" id="L66">        Layout newLayout = failureHandlerPolicy</span>
+<span class="nc" id="L67">                .generateLayout(currentLayout,</span>
+                        runtime,
+                        failedServers,
+<span class="nc" id="L70">                        Collections.emptySet());</span>
+<span class="nc" id="L71">        runLayoutReconfiguration(currentLayout, newLayout, false);</span>
+<span class="nc" id="L72">    }</span>
+
+    /**
+     * Bootstraps the new node with the current layout.
+     * This action is invoked as a part of the add node workflow which requires the new node
+     * to be added to the cluster to be bootstrapped with the existing layout of this cluster.
+     * This bootstraps the Layout and the Management server with the existing layout and also
+     * initiates failure handling capabilities on the management server.
+     *
+     * @param endpoint New node endpoint.
+     */
+    public void bootstrapNewNode(String endpoint) {
+
+        // Bootstrap the to-be added node with the old layout.
+<span class="nc" id="L86">        Layout layout = new Layout(runtime.getLayoutView().getLayout());</span>
+        // Ignoring call result as the call returns ACK or throws an exception.
+<span class="nc" id="L88">        CFUtils.getUninterruptibly(runtime.getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L89">                .getLayoutClient(endpoint)</span>
+<span class="nc" id="L90">                .bootstrapLayout(layout));</span>
+<span class="nc" id="L91">        CFUtils.getUninterruptibly(runtime.getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L92">                .getManagementClient(endpoint)</span>
+<span class="nc" id="L93">                .bootstrapManagement(layout));</span>
+
+<span class="nc" id="L95">        log.info(&quot;bootstrapNewNode: New node {} bootstrapped.&quot;, endpoint);</span>
+<span class="nc" id="L96">    }</span>
+
+    /**
+     * Adds a new node to the existing layout.
+     *
+     * @param currentLayout        Current layout.
+     * @param endpoint             New endpoint to be added.
+     * @param isLayoutServer       is a layout server
+     * @param isSequencerServer    is a sequencer server
+     * @param isLogUnitServer      is a log unit server
+     * @param isUnresponsiveServer is an unresponsive server
+     * @param logUnitStripeIndex   stripe index to be added into if its a log unit.
+     * @throws OutrankedException if consensus outranked.
+     */
+    public void addNode(@Nonnull Layout currentLayout,
+                        @Nonnull String endpoint,
+                        boolean isLayoutServer,
+                        boolean isSequencerServer,
+                        boolean isLogUnitServer,
+                        boolean isUnresponsiveServer,
+                        int logUnitStripeIndex)
+            throws OutrankedException {
+        Layout newLayout;
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        if (!currentLayout.getAllServers().contains(endpoint)) {</span>
+
+<span class="nc" id="L121">            sealEpoch(currentLayout);</span>
+
+<span class="nc" id="L123">            LayoutBuilder layoutBuilder = new LayoutBuilder(currentLayout);</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            if (isLayoutServer) {</span>
+<span class="nc" id="L125">                layoutBuilder.addLayoutServer(endpoint);</span>
+            }
+<span class="nc bnc" id="L127" title="All 2 branches missed.">            if (isSequencerServer) {</span>
+<span class="nc" id="L128">                layoutBuilder.addSequencerServer(endpoint);</span>
+            }
+<span class="nc bnc" id="L130" title="All 2 branches missed.">            if (isLogUnitServer) {</span>
+<span class="nc" id="L131">                Layout.LayoutSegment latestSegment =</span>
+<span class="nc" id="L132">                        currentLayout.getSegments().get(currentLayout.getSegments().size() - 1);</span>
+<span class="nc" id="L133">                layoutBuilder.addLogunitServer(logUnitStripeIndex,</span>
+<span class="nc" id="L134">                        getMaxGlobalTail(currentLayout, latestSegment),</span>
+                        endpoint);
+            }
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            if (isUnresponsiveServer) {</span>
+<span class="nc" id="L138">                layoutBuilder.addUnresponsiveServers(Collections.singleton(endpoint));</span>
+            }
+<span class="nc" id="L140">            newLayout = layoutBuilder.build();</span>
+
+<span class="nc" id="L142">            attemptConsensus(newLayout);</span>
+<span class="nc" id="L143">        } else {</span>
+<span class="nc" id="L144">            log.info(&quot;Node {} already exists in the layout, skipping.&quot;, endpoint);</span>
+<span class="nc" id="L145">            newLayout = currentLayout;</span>
+        }
+
+        // Add node is successful even if reconfigure sequencer fails.
+        // TODO: Optimize this by retrying or submitting a workflow to retry.
+<span class="nc" id="L150">        reconfigureSequencerServers(currentLayout, newLayout, false);</span>
+<span class="nc" id="L151">    }</span>
+
+    /**
+     * Heals an existing node in the layout.
+     *
+     * @param currentLayout Current layout.
+     * @param endpoint      New endpoint to be added.
+     * @throws OutrankedException if consensus outranked.
+     */
+    public void healNode(Layout currentLayout, String endpoint) throws OutrankedException {
+
+        Layout newLayout;
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        if (currentLayout.getUnresponsiveServers().contains(endpoint)) {</span>
+<span class="nc" id="L164">            sealEpoch(currentLayout);</span>
+
+<span class="nc" id="L166">            LayoutBuilder layoutBuilder = new LayoutBuilder(currentLayout);</span>
+<span class="nc" id="L167">            Layout.LayoutSegment latestSegment =</span>
+<span class="nc" id="L168">                    currentLayout.getSegments().get(currentLayout.getSegments().size() - 1);</span>
+<span class="nc" id="L169">            layoutBuilder.addLogunitServer(0,</span>
+<span class="nc" id="L170">                    getMaxGlobalTail(currentLayout, latestSegment),</span>
+                    endpoint);
+<span class="nc" id="L172">            layoutBuilder.removeUnresponsiveServers(Collections.singleton(endpoint));</span>
+<span class="nc" id="L173">            newLayout = layoutBuilder.build();</span>
+
+<span class="nc" id="L175">            attemptConsensus(newLayout);</span>
+<span class="nc" id="L176">        } else {</span>
+<span class="nc" id="L177">            log.info(&quot;Node {} already exists in the layout, skipping.&quot;, endpoint);</span>
+<span class="nc" id="L178">            newLayout = currentLayout;</span>
+        }
+
+        // Heal node is successful even if reconfigure sequencer fails.
+        // TODO: Optimize this by retrying or submitting a workflow to retry.
+<span class="nc" id="L183">        reconfigureSequencerServers(currentLayout, newLayout, false);</span>
+<span class="nc" id="L184">    }</span>
+
+    /**
+     * Attempts to merge the last 2 segments.
+     *
+     * @param currentLayout Current layout
+     * @throws OutrankedException if consensus is outranked.
+     */
+    public void mergeSegments(Layout currentLayout) throws OutrankedException {
+
+        Layout newLayout;
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (currentLayout.getSegments().size() &gt; 1) {</span>
+
+<span class="nc" id="L197">            log.info(&quot;mergeSegments: layout is {}&quot;, currentLayout);</span>
+
+<span class="nc" id="L199">            sealEpoch(currentLayout);</span>
+
+<span class="nc" id="L201">            LayoutBuilder layoutBuilder = new LayoutBuilder(currentLayout);</span>
+<span class="nc" id="L202">            newLayout = layoutBuilder</span>
+<span class="nc" id="L203">                    .mergePreviousSegment(1)</span>
+<span class="nc" id="L204">                    .build();</span>
+<span class="nc" id="L205">            attemptConsensus(newLayout);</span>
+<span class="nc" id="L206">        } else {</span>
+<span class="nc" id="L207">            log.info(&quot;mergeSegments: skipping, no segments to merge {}&quot;, currentLayout);</span>
+<span class="nc" id="L208">            newLayout = currentLayout;</span>
+        }
+<span class="nc" id="L210">        reconfigureSequencerServers(currentLayout, newLayout, false);</span>
+<span class="nc" id="L211">    }</span>
+
+    /**
+     * Add the log unit to the segment to increase redundancy. This is preceded by state transfer.
+     * Adds the specified log unit to the stripe in all segments, increments the epoch and
+     * proposes the new layout. This method is idempotent - adds the new log unit to each segment
+     * only once.
+     *
+     * @param currentLayout Current layout.
+     * @param endpoint      Endpoint to be added to the segment.
+     * @param stripeIndex   Stripe index.
+     * @throws OutrankedException if consensus is outranked.
+     */
+    public void addLogUnitReplica(@Nonnull Layout currentLayout,
+                                  @Nonnull String endpoint,
+                                  int stripeIndex) throws OutrankedException {
+<span class="nc" id="L227">        boolean isTaskDone = currentLayout.getSegments().stream()</span>
+<span class="nc" id="L228">                .map(layoutSegment -&gt; layoutSegment.getStripes().get(stripeIndex))</span>
+<span class="nc" id="L229">                .allMatch(layoutStripe -&gt; layoutStripe.getLogServers().contains(endpoint));</span>
+
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        if (!isTaskDone) {</span>
+<span class="nc" id="L232">            LayoutBuilder builder = new LayoutBuilder(currentLayout);</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">            for (int i = 0; i &lt; currentLayout.getSegments().size(); i++) {</span>
+<span class="nc" id="L234">                builder.addLogunitServerToSegment(endpoint, i, stripeIndex);</span>
+            }
+<span class="nc" id="L236">            Layout newLayout = builder.setEpoch(currentLayout.getEpoch() + 1).build();</span>
+<span class="nc" id="L237">            runLayoutReconfiguration(currentLayout, newLayout, false);</span>
+<span class="nc" id="L238">        } else {</span>
+<span class="nc" id="L239">            log.info(&quot;addLogUnitReplica: Ignoring task because {} present in all segments in {}&quot;,</span>
+                    endpoint, currentLayout);
+        }
+<span class="nc" id="L242">    }</span>
+
+    /**
+     * Best effort attempt to removes a node from the layout.
+     *
+     * @param currentLayout the layout to remove the node from
+     * @param endpoint      the node to remove
+     */
+    public void removeNode(@Nonnull Layout currentLayout,
+                           @Nonnull String endpoint) throws OutrankedException {
+
+        Layout newLayout;
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        if (currentLayout.getAllServers().contains(endpoint)) {</span>
+<span class="nc" id="L255">            LayoutBuilder builder = new LayoutBuilder(currentLayout);</span>
+<span class="nc" id="L256">            newLayout = builder.removeLayoutServer(endpoint)</span>
+<span class="nc" id="L257">                    .removeSequencerServer(endpoint)</span>
+<span class="nc" id="L258">                    .removeLogunitServer(endpoint)</span>
+<span class="nc" id="L259">                    .removeUnresponsiveServer(endpoint)</span>
+<span class="nc" id="L260">                    .setEpoch(currentLayout.getEpoch() + 1)</span>
+<span class="nc" id="L261">                    .build();</span>
+
+            // Seal after constructing the layout, so that the system
+            // isn't blocked if the builder throws an exception
+<span class="nc" id="L265">            sealEpoch(currentLayout);</span>
+
+<span class="nc" id="L267">            attemptConsensus(newLayout);</span>
+<span class="nc" id="L268">        } else {</span>
+<span class="nc" id="L269">            newLayout = currentLayout;</span>
+<span class="nc" id="L270">            log.info(&quot;removeNode: Ignoring remove node on {} because it doesn't exist in {}&quot;,</span>
+                    endpoint, currentLayout);
+        }
+
+<span class="nc" id="L274">        reconfigureSequencerServers(currentLayout, newLayout, false);</span>
+<span class="nc" id="L275">    }</span>
+
+    /**
+     * Attempts to force commit a new layout to the cluster.
+     *
+     * @param currentLayout the current layout
+     * @param forceLayout the new layout to force
+     * @throws QuorumUnreachableException
+     */
+    public void forceLayout(@Nonnull Layout currentLayout, @Nonnull Layout forceLayout) {
+        try {
+<span class="nc" id="L286">            sealEpoch(currentLayout);</span>
+<span class="nc" id="L287">        } catch (QuorumUnreachableException e) {</span>
+<span class="nc" id="L288">            log.warn(&quot;forceLayout: error while sealing &quot;, e);</span>
+<span class="nc" id="L289">        }</span>
+
+<span class="nc" id="L291">        runtime.getLayoutView().committed(forceLayout.getEpoch(), forceLayout, true);</span>
+
+<span class="nc" id="L293">        reconfigureSequencerServers(currentLayout, forceLayout, true);</span>
+<span class="nc" id="L294">    }</span>
+
+
+    /**
+     * Runs the layout reconfiguration process.
+     * Seals the layout.
+     * Runs paxos.
+     * During paxos if in recovery mode, we increment rank until committed on same epoch.
+     * If not in recovery, we fail with outrankedException.
+     * The new committed layout is then verified by invalidating the runtime.
+     * Finally we reconfigure the servers (bootstrapping sequencer.)
+     *
+     * @param currentLayout          Layout which needs to be sealed.
+     * @param newLayout              New layout to be committed.
+     * @param forceSequencerRecovery Flag. True if want to force sequencer recovery.
+     * @throws OutrankedException if consensus is outranked.
+     */
+    private void runLayoutReconfiguration(Layout currentLayout, Layout newLayout,
+                                          final boolean forceSequencerRecovery)
+            throws OutrankedException {
+
+        // Seals the incremented epoch (Assumes newLayout epoch = currentLayout epoch + 1).
+<span class="nc" id="L316">        sealEpoch(currentLayout);</span>
+
+<span class="nc" id="L318">        attemptConsensus(newLayout);</span>
+
+        //TODO: Since sequencer reset is moved after paxos. Make sure the runtime has the latest
+        //TODO: layout view and latest client router epoch. (Use quorum layout fetch.)
+        //TODO: Handle condition if primary sequencer is not marked ready, reset fails.
+        // Reconfigure servers if required
+        // Primary sequencer would be in a not-ready state if its in recovery mode.
+<span class="nc" id="L325">        reconfigureSequencerServers(currentLayout, newLayout, forceSequencerRecovery);</span>
+<span class="nc" id="L326">    }</span>
+
+    /**
+     * Seals the epoch.
+     *
+     * @param layout Layout to be sealed
+     */
+    private void sealEpoch(Layout layout) throws QuorumUnreachableException {
+<span class="nc" id="L334">        layout.setEpoch(layout.getEpoch() + 1);</span>
+<span class="nc" id="L335">        runtime.getLayoutView().getRuntimeLayout(layout).moveServersToEpoch();</span>
+<span class="nc" id="L336">    }</span>
+
+    /**
+     * Attempt consensus.
+     *
+     * @param layout Layout to propose.
+     * @throws OutrankedException if consensus is outranked.
+     */
+    private void attemptConsensus(Layout layout)
+            throws OutrankedException {
+        // Attempts to update all the layout servers with the modified layout.
+        try {
+<span class="nc" id="L348">            runtime.getLayoutView().updateLayout(layout, prepareRank);</span>
+<span class="nc" id="L349">            prepareRank = 1L;</span>
+<span class="nc" id="L350">        } catch (OutrankedException oe) {</span>
+            // Update rank since outranked.
+<span class="nc" id="L352">            log.error(&quot;Conflict in updating layout by attemptConsensus: {}&quot;, oe);</span>
+            // Update rank to be able to outrank other competition and complete paxos.
+<span class="nc" id="L354">            prepareRank = oe.getNewRank() + 1;</span>
+<span class="nc" id="L355">            throw oe;</span>
+<span class="nc" id="L356">        }</span>
+
+        // Check if our proposed layout got selected and committed.
+<span class="nc bnc" id="L359" title="All 2 branches missed.">        for (int x = 0; x &lt; runtime.getParameters().getInvalidateRetry(); x++) {</span>
+<span class="nc" id="L360">            runtime.invalidateLayout();</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">            if (runtime.getLayoutView().getLayout().equals(layout)) {</span>
+<span class="nc" id="L362">                log.info(&quot;New Layout Committed = {}&quot;, layout);</span>
+<span class="nc" id="L363">                return;</span>
+            } else {
+<span class="nc" id="L365">                log.warn(&quot;Runtime recovered with a different layout = {}&quot;,</span>
+<span class="nc" id="L366">                        runtime.getLayoutView().getLayout());</span>
+            }
+<span class="nc" id="L368">            log.warn(&quot;attemptConsensus: Checking if {} has been accepted, retry {}&quot;, layout, x);</span>
+        }
+<span class="nc" id="L370">    }</span>
+
+    /**
+     * Fetches the max global log tail from the log unit cluster. This depends on the mode of
+     * replication being used.
+     * CHAIN: Block on fetch of global log tail from the head log unitin every stripe.
+     * QUORUM: Block on fetch of global log tail from a majority in every stripe.
+     *
+     * @param layout  Latest layout to get clients to fetch tails.
+     * @param segment Latest layout segment.
+     * @return The max global log tail obtained from the log unit servers.
+     */
+    private long getMaxGlobalTail(Layout layout, Layout.LayoutSegment segment) {
+<span class="nc" id="L383">        long maxTokenRequested = 0;</span>
+
+        // Query the tail of the head log unit in every stripe.
+<span class="nc bnc" id="L386" title="All 2 branches missed.">        if (segment.getReplicationMode().equals(Layout.ReplicationMode.CHAIN_REPLICATION)) {</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">            for (Layout.LayoutStripe stripe : segment.getStripes()) {</span>
+<span class="nc" id="L388">                maxTokenRequested = Math.max(maxTokenRequested,</span>
+<span class="nc" id="L389">                        CFUtils.getUninterruptibly(</span>
+<span class="nc" id="L390">                                runtime.getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L391">                                        .getLogUnitClient(stripe.getLogServers().get(0))</span>
+<span class="nc" id="L392">                                        .getTail()));</span>
+
+<span class="nc" id="L394">            }</span>
+<span class="nc" id="L395">        } else if (segment.getReplicationMode()</span>
+<span class="nc bnc" id="L396" title="All 2 branches missed.">                .equals(Layout.ReplicationMode.QUORUM_REPLICATION)) {</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">            for (Layout.LayoutStripe stripe : segment.getStripes()) {</span>
+<span class="nc" id="L398">                CompletableFuture&lt;Long&gt;[] completableFutures = stripe.getLogServers()</span>
+<span class="nc" id="L399">                        .stream()</span>
+<span class="nc" id="L400">                        .map(s -&gt; runtime.getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L401">                                .getLogUnitClient(s).getTail())</span>
+<span class="nc" id="L402">                        .toArray(CompletableFuture[]::new);</span>
+                QuorumFuturesFactory.CompositeFuture&lt;Long&gt; quorumFuture =
+<span class="nc" id="L404">                        QuorumFuturesFactory.getQuorumFuture(Comparator.naturalOrder(),</span>
+                                completableFutures);
+<span class="nc" id="L406">                maxTokenRequested = Math.max(maxTokenRequested,</span>
+<span class="nc" id="L407">                        CFUtils.getUninterruptibly(quorumFuture));</span>
+
+<span class="nc" id="L409">            }</span>
+        }
+<span class="nc" id="L411">        return maxTokenRequested;</span>
+    }
+
+    /**
+     * Reconfigures the sequencer.
+     * If the primary sequencer has changed in the new layout,
+     * the global tail of the log units are queried and used to set
+     * the initial token of the new primary sequencer.
+     *
+     * @param originalLayout   Current layout to get the latest state of servers.
+     * @param newLayout        New Layout to be reconfigured.
+     * @param forceReconfigure Flag to force reconfiguration.
+     */
+    public void reconfigureSequencerServers(Layout originalLayout, Layout newLayout,
+                                            boolean forceReconfigure) {
+
+<span class="nc" id="L427">        long maxTokenRequested = 0L;</span>
+<span class="nc" id="L428">        Map&lt;UUID, Long&gt; streamTails = Collections.emptyMap();</span>
+<span class="nc" id="L429">        boolean bootstrapWithoutTailsUpdate = true;</span>
+
+        // Reconfigure Primary Sequencer if required
+<span class="nc bnc" id="L432" title="All 2 branches missed.">        if (forceReconfigure</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">                || !originalLayout.getSequencers().get(0).equals(newLayout.getSequencers()</span>
+<span class="nc" id="L434">                .get(0))) {</span>
+<span class="nc" id="L435">            Layout.LayoutSegment latestSegment = newLayout.getSegments()</span>
+<span class="nc" id="L436">                    .get(newLayout.getSegments().size() - 1);</span>
+<span class="nc" id="L437">            maxTokenRequested = getMaxGlobalTail(newLayout, latestSegment);</span>
+
+<span class="nc" id="L439">            FastObjectLoader fastObjectLoader = new FastObjectLoader(runtime);</span>
+<span class="nc" id="L440">            fastObjectLoader.setRecoverSequencerMode(true);</span>
+<span class="nc" id="L441">            fastObjectLoader.setLoadInCache(false);</span>
+
+            // FastSMRLoader sets the logHead based on trim mark.
+<span class="nc" id="L444">            fastObjectLoader.setLogTail(maxTokenRequested);</span>
+<span class="nc" id="L445">            fastObjectLoader.loadMaps();</span>
+<span class="nc" id="L446">            streamTails = fastObjectLoader.getStreamTails();</span>
+<span class="nc" id="L447">            verifyStreamTailsMap(streamTails);</span>
+
+            // Incrementing the maxTokenRequested value for sequencer reset.
+<span class="nc" id="L450">            maxTokenRequested++;</span>
+<span class="nc" id="L451">            bootstrapWithoutTailsUpdate = false;</span>
+        }
+
+        // Configuring the new sequencer.
+<span class="nc" id="L455">        boolean sequencerBootstrapResult = CFUtils.getUninterruptibly(</span>
+<span class="nc" id="L456">                runtime.getLayoutView().getRuntimeLayout(newLayout)</span>
+<span class="nc" id="L457">                        .getPrimarySequencerClient()</span>
+<span class="nc" id="L458">                        .bootstrap(maxTokenRequested, streamTails, newLayout.getEpoch(),</span>
+                                bootstrapWithoutTailsUpdate));
+<span class="nc bnc" id="L460" title="All 2 branches missed.">        if (sequencerBootstrapResult) {</span>
+<span class="nc" id="L461">            log.info(&quot;Sequencer bootstrap successful.&quot;);</span>
+        } else {
+<span class="nc" id="L463">            log.warn(&quot;Sequencer bootstrap failed. Already bootstrapped.&quot;);</span>
+        }
+<span class="nc" id="L465">    }</span>
+
+    /**
+     * Verifies whether there are any invalid streamTails.
+     *
+     * @param streamTails Stream tails map obtained from the fastSMRLoader.
+     */
+    private void verifyStreamTailsMap(Map&lt;UUID, Long&gt; streamTails) {
+<span class="nc bnc" id="L473" title="All 2 branches missed.">        for (Long value : streamTails.values()) {</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">            if (value &lt; 0) {</span>
+<span class="nc" id="L475">                log.error(&quot;Stream Tails map verification failed. Map = {}&quot;, streamTails);</span>
+<span class="nc" id="L476">                throw new RecoveryException(&quot;Invalid stream tails found in map.&quot;);</span>
+            }
+<span class="nc" id="L478">        }</span>
+<span class="nc" id="L479">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

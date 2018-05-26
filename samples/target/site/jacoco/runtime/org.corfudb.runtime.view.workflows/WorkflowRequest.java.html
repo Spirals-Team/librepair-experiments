@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WorkflowRequest.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">samples</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.view.workflows</a> &gt; <span class="el_source">WorkflowRequest.java</span></div><h1>WorkflowRequest.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.view.workflows;
+
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.clients.ManagementClient;
+import org.corfudb.runtime.exceptions.NetworkException;
+import org.corfudb.runtime.exceptions.WorkflowException;
+import org.corfudb.runtime.exceptions.WorkflowResultUnknownException;
+import org.corfudb.runtime.view.Layout;
+import org.corfudb.util.Sleep;
+
+import javax.annotation.Nonnull;
+import java.time.Duration;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
+
+/**
+ * An abstract class that defines a generec workflow request structure.
+ * &lt;p&gt;
+ * Created by Maithem on 1/19/18.
+ */
+<span class="nc" id="L25">@Slf4j</span>
+<span class="nc" id="L26">public abstract class WorkflowRequest {</span>
+
+    protected int retry;
+
+    protected Duration timeout;
+
+    protected Duration pollPeriod;
+
+    protected CorfuRuntime runtime;
+
+    @NonNull
+    protected String nodeForWorkflow;
+
+    /**
+     * Send a workflow request
+     *
+     * @param layout current layout
+     * @return a uuid that corresponds to the created workflow
+     */
+    protected abstract UUID sendRequest(Layout layout);
+
+    /**
+     * Select an orchestrator and return a client. Orchestrator's that
+     * are on unresponsive nodes and the affected endpoint by the workflow
+     * will not be selected.
+     *
+     * @param layout the layout that is used to select an orchestrator
+     * @return a management client that is connected to the selected
+     * orchestrator
+     */
+    protected ManagementClient getOrchestrator(Layout layout) {
+<span class="nc" id="L57">        List&lt;String&gt; activeLayoutServers = layout.getLayoutServers().stream()</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">                .filter(s -&gt; !layout.getUnresponsiveServers().contains(s)</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">                        &amp;&amp; !s.equals(nodeForWorkflow))</span>
+<span class="nc" id="L60">                .collect(Collectors.toList());</span>
+
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        if (activeLayoutServers.isEmpty()) {</span>
+<span class="nc" id="L63">            throw new WorkflowException(&quot;getOrchestrator: no available orchestrators &quot; + layout);</span>
+        }
+
+<span class="nc" id="L66">        return runtime.getLayoutView().getRuntimeLayout(layout)</span>
+<span class="nc" id="L67">                .getManagementClient(activeLayoutServers.get(0));</span>
+    }
+
+    /**
+     * Infer the completion of the request by inspecting the layout
+     *
+     * @param layout the layout to inspect
+     * @return true if the operation is reflected in the layout, otherwise
+     * return false
+     */
+    protected abstract boolean verifyRequest(Layout layout);
+
+    /**
+     * @param workflow   the workflow id to poll
+     * @param client     a client that is connected to the orchestrator that is
+     *                   running the workflow
+     * @param timeout    the total time to wait for the workflow to complete
+     * @param pollPeriod the poll period to query the completion of the workflow
+     * @throws TimeoutException if the workflow doesn't complete withint the timout
+     *                          period
+     */
+    private void waitForWorkflow(@Nonnull UUID workflow, @Nonnull ManagementClient client,
+                                 @Nonnull Duration timeout, @Nonnull Duration pollPeriod)
+            throws TimeoutException {
+<span class="nc" id="L91">        long tries = timeout.toNanos() / pollPeriod.toNanos();</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">        for (long x = 0; x &lt; tries; x++) {</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">            if (!client.queryRequest(workflow).isActive()) {</span>
+<span class="nc" id="L94">                return;</span>
+            }
+<span class="nc" id="L96">            Sleep.sleepUninterruptibly(pollPeriod);</span>
+<span class="nc" id="L97">            log.info(&quot;waitForWorkflow: waiting for {} on attempt {}&quot;, workflow, x);</span>
+        }
+<span class="nc" id="L99">        throw new TimeoutException();</span>
+    }
+
+    /**
+     * Starts executing the workflow request.
+     *
+     * This method will succeed only if the workflow executed successfully, otherwise
+     * it can throw a WorkflowResultUnknownException when the timeouts are exhauseted
+     * and the expected side effect cannot be verified.
+     *
+     * @throws WorkflowResultUnknownException when the workflow result cannot be
+     * verified.
+     */
+    public void invoke() {
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        for (int x = 0; x &lt; retry; x++) {</span>
+            try {
+<span class="nc" id="L115">                runtime.invalidateLayout();</span>
+<span class="nc" id="L116">                Layout requestLayout = new Layout(runtime.getLayoutView().getLayout());</span>
+<span class="nc" id="L117">                UUID workflowId = sendRequest(requestLayout);</span>
+<span class="nc" id="L118">                ManagementClient orchestrator = getOrchestrator(requestLayout);</span>
+
+<span class="nc" id="L120">                waitForWorkflow(workflowId, orchestrator, timeout, pollPeriod);</span>
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">                for (int y = 0; y &lt; runtime.getParameters().getInvalidateRetry(); y++) {</span>
+<span class="nc" id="L123">                    runtime.invalidateLayout();</span>
+<span class="nc" id="L124">                    Layout layoutToVerify = new Layout(runtime.getLayoutView().getLayout());</span>
+<span class="nc bnc" id="L125" title="All 2 branches missed.">                    if (verifyRequest(layoutToVerify)) {</span>
+<span class="nc" id="L126">                        log.info(&quot;WorkflowRequest: Successfully completed {}&quot;, this);</span>
+<span class="nc" id="L127">                        return;</span>
+                    }
+                }
+<span class="nc" id="L130">            } catch (NetworkException | TimeoutException e) {</span>
+<span class="nc" id="L131">                log.warn(&quot;WorkflowRequest: Network error while running {} on attempt {}&quot;, this, x, e);</span>
+<span class="nc" id="L132">                continue;</span>
+<span class="nc" id="L133">            }</span>
+<span class="nc" id="L134">            log.warn(&quot;WorkflowRequest: Retrying {} on attempt {}&quot;, this, x);</span>
+        }
+
+<span class="nc" id="L137">        throw new WorkflowResultUnknownException();</span>
+    }
+}
+
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

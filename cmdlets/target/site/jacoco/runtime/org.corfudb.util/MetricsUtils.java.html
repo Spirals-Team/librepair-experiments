@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MetricsUtils.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.util</a> &gt; <span class="el_source">MetricsUtils.java</span></div><h1>MetricsUtils.java</h1><pre class="source lang-java linenums">package org.corfudb.util;
+
+import com.codahale.metrics.Counter;
+import com.codahale.metrics.CsvReporter;
+import com.codahale.metrics.Gauge;
+import com.codahale.metrics.JmxReporter;
+import com.codahale.metrics.MetricFilter;
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.MetricSet;
+import com.codahale.metrics.Slf4jReporter;
+import com.codahale.metrics.Timer;
+import com.codahale.metrics.jvm.FileDescriptorRatioGauge;
+import com.codahale.metrics.jvm.GarbageCollectorMetricSet;
+import com.codahale.metrics.jvm.MemoryUsageGaugeSet;
+import com.codahale.metrics.jvm.ThreadStatesGaugeSet;
+import com.github.benmanes.caffeine.cache.Cache;
+import lombok.Getter;
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.util.concurrent.TimeUnit;
+
+<span class="nc" id="L25">@Slf4j</span>
+<span class="nc" id="L26">public class MetricsUtils {</span>
+<span class="nc" id="L27">    private static final FileDescriptorRatioGauge metricsJVMFdGauge =</span>
+            new FileDescriptorRatioGauge();
+<span class="nc" id="L29">    private static final MetricSet metricsJVMGC = new GarbageCollectorMetricSet();</span>
+<span class="nc" id="L30">    private static final MetricSet metricsJVMMem = new MemoryUsageGaugeSet();</span>
+<span class="nc" id="L31">    private static final MetricSet metricsJVMThread = new ThreadStatesGaugeSet();</span>
+
+    private static final String PROPERTY_CSV_INTERVAL = &quot;corfu.metrics.csv.interval&quot;;
+    private static final String PROPERTY_CSV_FOLDER = &quot;corfu.metrics.csv.folder&quot;;
+    private static final String PROPERTY_JMX_REPORTING = &quot;corfu.metrics.jmxreporting&quot;;
+    private static final String PROPERTY_LOG_INTERVAL = &quot;corfu.metrics.log.interval&quot;;
+    private static final String PROPERTY_METRICS_COLLECTION = &quot;corfu.metrics.collection&quot;;
+
+    private static final String ADDRESS_SPACE_METRIC_PREFIX = &quot;corfu.runtime.as-view&quot;;
+<span class="nc" id="L40">    private static final MetricFilter ADDRESS_SPACE_FILTER =</span>
+<span class="nc bnc" id="L41" title="All 2 branches missed.">            (name, metric) -&gt; !name.contains(ADDRESS_SPACE_METRIC_PREFIX);</span>
+
+    private static long metricsCsvInterval;
+    private static long metricsLogInterval;
+    private static String metricsCsvFolder;
+<span class="nc" id="L46">    @Getter</span>
+<span class="nc" id="L47">    private static boolean metricsCollectionEnabled = false;</span>
+<span class="nc" id="L48">    private static boolean metricsCsvReportingEnabled = false;</span>
+<span class="nc" id="L49">    private static boolean metricsJmxReportingEnabled = false;</span>
+<span class="nc" id="L50">    private static boolean metricsSlf4jReportingEnabled = false;</span>
+<span class="nc" id="L51">    private static String mpTrigger = &quot;filter-trigger&quot;; // internal use only</span>
+
+
+    /**
+     * Load metrics properties.
+     *
+     * &lt;p&gt;The expected properties from vm system properties are:
+     * &lt;ul&gt;
+     * &lt;li&gt; metricsCollectionEnabled: Boolean taken from vm corfu.metrics.collection
+     * property to enable the collection
+     * &lt;li&gt; metricsJmxReportingEnabled: Boolean taken from vm corfu.metrics.jmxreporting
+     * property to enable jmx reporting of metrics
+     * &lt;li&gt; metricsLogInterval: Integer taken from vm corfu.metrics.log.interval
+     * property for enabling and setting the intervals of reporting to log output
+     * &lt;/ul&gt;
+     *
+     * &lt;p&gt;This function will be called to set the value of metricsCollectionEnabled,
+     * metricsJmxReportingEnabled, and metricsLogInterval for reporting. The value
+     * of metricsCollectionEnabled represents the expected collection status.
+     * Slf4j reporting is enabled if metricsLogInterval is set to a positive integer
+     * representing emission intervals in seconds.
+     * Jmx reporting is enabled if metricsJmxReportingEnabled is set to {@code true}.
+     */
+    private static void loadVmProperties() {
+<span class="nc" id="L75">        metricsCollectionEnabled = Boolean.valueOf(System.getProperty(PROPERTY_METRICS_COLLECTION));</span>
+<span class="nc" id="L76">        metricsJmxReportingEnabled = Boolean.valueOf(System.getProperty(PROPERTY_JMX_REPORTING));</span>
+        try {
+<span class="nc" id="L78">            metricsLogInterval = Long.valueOf(System.getProperty(PROPERTY_LOG_INTERVAL));</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">            metricsSlf4jReportingEnabled = metricsLogInterval &gt; 0 ? true : false;</span>
+<span class="nc" id="L80">        } catch (NumberFormatException e) {</span>
+<span class="nc" id="L81">            log.warn(&quot;Extracting metrics log reporting interval property failed. &quot; +</span>
+                    &quot;Reporting to corfu metrics log is disabled&quot;);
+<span class="nc" id="L83">            metricsSlf4jReportingEnabled = false;</span>
+<span class="nc" id="L84">        }</span>
+
+        try {
+<span class="nc" id="L87">            metricsCsvInterval = Long.valueOf(System.getProperty(PROPERTY_CSV_INTERVAL));</span>
+<span class="nc" id="L88">            metricsCsvFolder = String.valueOf(System.getProperty(PROPERTY_CSV_FOLDER));</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            metricsCsvReportingEnabled = metricsCsvInterval &gt; 0 ? true : false;</span>
+<span class="nc" id="L90">        } catch (NumberFormatException e) {</span>
+<span class="nc" id="L91">            log.warn(&quot;Extracting metrics CSV reporting interval property failed. &quot; +</span>
+                    &quot;Reporting to corfu metrics csv files is disabled&quot;);
+<span class="nc" id="L93">            metricsCsvReportingEnabled = false;</span>
+<span class="nc" id="L94">        }</span>
+
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        if (!metricsCollectionEnabled) {</span>
+<span class="nc" id="L97">            metricsJmxReportingEnabled = false;</span>
+<span class="nc" id="L98">            metricsSlf4jReportingEnabled = false;</span>
+<span class="nc" id="L99">            metricsCsvReportingEnabled = false;</span>
+<span class="nc" id="L100">            log.info(&quot;Corfu metrics collection and all reporting types are disabled&quot;);</span>
+        }
+<span class="nc" id="L102">    }</span>
+
+    /**
+     * Check if the metricsReportingSetup() function has been called
+     * on 'metrics' before now.
+     *
+     * @param metrics Metric Registry
+     * @return True if metricsReportingSetup() function has been called earlier
+     */
+<span class="nc bnc" id="L111" title="All 2 branches missed.">    public static boolean isMetricsReportingSetUp(@NonNull MetricRegistry metrics) {</span>
+<span class="nc" id="L112">        return metrics.getNames().contains(mpTrigger);</span>
+    }
+
+    /**
+     * Start metrics reporting via the Dropwizard 'CsvReporter', 'JmxReporter',
+     * and 'Slf4jReporter'. Reporting can be turned on and off via the system
+     * properties described in loadVmProperties()'s docs.
+     * The report interval and report directory cannot be altered at runtime.
+     *
+     * @param metrics Metrics registry
+     */
+<span class="nc bnc" id="L123" title="All 2 branches missed.">    public static void metricsReportingSetup(@NonNull MetricRegistry metrics) {</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        if (isMetricsReportingSetUp(metrics)) return;</span>
+
+<span class="nc" id="L126">        metrics.counter(mpTrigger);</span>
+<span class="nc" id="L127">        loadVmProperties();</span>
+
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (metricsCollectionEnabled) {</span>
+<span class="nc" id="L130">            setupCsvReporting(metrics);</span>
+<span class="nc" id="L131">            setupJmxReporting(metrics);</span>
+<span class="nc" id="L132">            setupSlf4jReporting(metrics);</span>
+        }
+<span class="nc" id="L134">    }</span>
+
+    // If enabled, setup jmx reporting
+    private static void setupJmxReporting(MetricRegistry metrics) {
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        if (!metricsJmxReportingEnabled) return;</span>
+
+        // This filters noisy addressSpace metrics to have a clean JMX reporting
+<span class="nc" id="L141">        JmxReporter jmxReporter = JmxReporter.forRegistry(metrics)</span>
+<span class="nc" id="L142">                .convertDurationsTo(TimeUnit.MICROSECONDS)</span>
+<span class="nc" id="L143">                .convertRatesTo(TimeUnit.SECONDS)</span>
+<span class="nc" id="L144">                .inDomain(&quot;corfu.metrics&quot;)</span>
+<span class="nc" id="L145">                .filter(ADDRESS_SPACE_FILTER)</span>
+<span class="nc" id="L146">                .build();</span>
+<span class="nc" id="L147">        jmxReporter.start();</span>
+<span class="nc" id="L148">    }</span>
+
+    // If enabled, setup slf4j reporting
+    private static void setupSlf4jReporting(MetricRegistry metrics) {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (!metricsSlf4jReportingEnabled) return;</span>
+
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        MetricFilter mpTriggerFilter = (name, metric) -&gt; !name.equals(mpTrigger);</span>
+
+<span class="nc" id="L156">        Slf4jReporter slf4jReporter = Slf4jReporter.forRegistry(metrics)</span>
+<span class="nc" id="L157">                .convertDurationsTo(TimeUnit.MICROSECONDS)</span>
+<span class="nc" id="L158">                .convertRatesTo(TimeUnit.SECONDS)</span>
+<span class="nc" id="L159">                .outputTo(LoggerFactory.getLogger(&quot;org.corfudb.metricsdata&quot;))</span>
+<span class="nc" id="L160">                .filter(mpTriggerFilter)</span>
+<span class="nc" id="L161">                .build();</span>
+<span class="nc" id="L162">        slf4jReporter.start(metricsLogInterval, TimeUnit.SECONDS);</span>
+<span class="nc" id="L163">    }</span>
+
+    // If enabled, setup csv reporting
+    private static void setupCsvReporting(MetricRegistry metrics) {
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        if (!metricsCsvReportingEnabled) return;</span>
+
+<span class="nc" id="L169">        final File directory = new File(metricsCsvFolder);</span>
+
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        if (!directory.isDirectory() ||</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">            !directory.exists() ||</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            !directory.canWrite()) {</span>
+<span class="nc" id="L174">            log.warn(&quot;Provided CSV directory : {} doesn't exist, isn't a directory, or &quot; +</span>
+                    &quot;not accessible for writes. Disabling CSV Reporting.&quot;, directory);
+<span class="nc" id="L176">            metricsCsvReportingEnabled = false;</span>
+<span class="nc" id="L177">            return;</span>
+        }
+
+<span class="nc" id="L180">        CsvReporter csvReporter = CsvReporter.forRegistry(metrics)</span>
+<span class="nc" id="L181">                .convertDurationsTo(TimeUnit.MICROSECONDS)</span>
+<span class="nc" id="L182">                .convertRatesTo(TimeUnit.SECONDS)</span>
+<span class="nc" id="L183">                .filter(ADDRESS_SPACE_FILTER)</span>
+<span class="nc" id="L184">                .build(directory);</span>
+<span class="nc" id="L185">        csvReporter.start(metricsCsvInterval, TimeUnit.SECONDS);</span>
+<span class="nc" id="L186">    }</span>
+
+<span class="nc bnc" id="L188" title="All 2 branches missed.">    public static void addCacheGauges(@NonNull MetricRegistry metrics,</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">                                      @NonNull String name,</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">                                      @NonNull Cache cache) {</span>
+        try {
+<span class="nc" id="L192">            metrics.register(name + &quot;cache-size&quot;, (Gauge&lt;Long&gt;) () -&gt; cache.estimatedSize());</span>
+<span class="nc" id="L193">            metrics.register(name + &quot;evictions&quot;, (Gauge&lt;Long&gt;) () -&gt; cache.stats().evictionCount());</span>
+<span class="nc" id="L194">            metrics.register(name + &quot;hit-rate&quot;, (Gauge&lt;Double&gt;) () -&gt; cache.stats().hitRate());</span>
+<span class="nc" id="L195">            metrics.register(name + &quot;hits&quot;, (Gauge&lt;Long&gt;) () -&gt; cache.stats().hitCount());</span>
+<span class="nc" id="L196">            metrics.register(name + &quot;misses&quot;, (Gauge&lt;Long&gt;) () -&gt; cache.stats().missCount());</span>
+<span class="nc" id="L197">        } catch (IllegalArgumentException e) {</span>
+            // Re-registering metrics during test runs, not a problem
+<span class="nc" id="L199">        }</span>
+<span class="nc" id="L200">    }</span>
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">    public static void addJvmMetrics(@NonNull MetricRegistry metrics, String pfx) {</span>
+        try {
+<span class="nc" id="L204">            metrics.register(pfx + &quot;jvm.gc&quot;, metricsJVMGC);</span>
+<span class="nc" id="L205">            metrics.register(pfx + &quot;jvm.memory&quot;, metricsJVMMem);</span>
+<span class="nc" id="L206">            metrics.register(pfx + &quot;jvm.thread&quot;, metricsJVMThread);</span>
+<span class="nc" id="L207">            metrics.register(pfx + &quot;jvm.file-descriptors-used&quot;, metricsJVMFdGauge);</span>
+<span class="nc" id="L208">        } catch (IllegalArgumentException e) {</span>
+            // Re-registering metrics during test runs, not a problem
+<span class="nc" id="L210">        }</span>
+<span class="nc" id="L211">    }</span>
+
+<span class="nc bnc" id="L213" title="All 2 branches missed.">    public static Timer.Context getConditionalContext(@NonNull Timer t) {</span>
+<span class="nc" id="L214">        return getConditionalContext(metricsCollectionEnabled, t);</span>
+    }
+
+<span class="nc bnc" id="L217" title="All 2 branches missed.">    public static Timer.Context getConditionalContext(boolean enabled, @NonNull Timer t) {</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        return enabled ? t.time() : null;</span>
+    }
+
+    public static void stopConditionalContext(Timer.Context context) {
+<span class="nc bnc" id="L222" title="All 2 branches missed.">        if (context != null) {</span>
+<span class="nc" id="L223">            context.stop();</span>
+        }
+<span class="nc" id="L225">    }</span>
+
+<span class="nc bnc" id="L227" title="All 2 branches missed.">    public static void incConditionalCounter(boolean enabled, @NonNull Counter counter, long amount) {</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        if (enabled) {</span>
+<span class="nc" id="L229">            counter.inc(amount);</span>
+        }
+<span class="nc" id="L231">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

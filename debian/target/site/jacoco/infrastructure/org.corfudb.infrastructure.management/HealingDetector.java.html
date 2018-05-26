@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HealingDetector.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">debian</a> &gt; <a href="../index.html" class="el_bundle">infrastructure</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.infrastructure.management</a> &gt; <span class="el_source">HealingDetector.java</span></div><h1>HealingDetector.java</h1><pre class="source lang-java linenums">package org.corfudb.infrastructure.management;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nonnull;
+
+import lombok.Getter;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.protocols.wireprotocol.NodeView;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.clients.IClientRouter;
+import org.corfudb.runtime.clients.ManagementClient;
+import org.corfudb.runtime.exceptions.NetworkException;
+import org.corfudb.runtime.exceptions.WrongEpochException;
+import org.corfudb.runtime.view.Layout;
+import org.corfudb.util.Sleep;
+
+/**
+ * HealingDetector polls all the &quot;unresponsive members&quot; in the layout.
+ * Unresponsive members: All endpoints in the unresponsiveServers list in the layout.
+ * For every poll method call invoked, it starts a polling round and generates a poll report.
+ * Each polling round comprises of &quot;detectionThreshold&quot; number of iterations.
+ * - We asynchronously poll every known unresponsive member in the layout.
+ * - Poll result aggregation.
+ * - If we complete an iteration without detecting any healed nodes, we end the round.
+ * - Else we continue polling and generate the report with the healed node.
+ * The management Server ensures only one instance of this class and hence this is NOT thread safe.
+ * Created by zlokhandwala on 11/29/17.
+ */
+<span class="nc" id="L39">@Slf4j</span>
+<span class="nc" id="L40">public class HealingDetector implements IDetector {</span>
+
+    /**
+     * Number of iterations to execute to detect a healed node in a round.
+     */
+<span class="nc" id="L45">    @Getter</span>
+<span class="nc" id="L46">    @Setter</span>
+    private int detectionThreshold = 3;
+
+    /**
+     * Threshold timeout to detect healing nodes.
+     * This should be kept lower if there is no tolerance for high latency recovering nodes.
+     */
+<span class="nc" id="L53">    @Getter</span>
+<span class="nc" id="L54">    @Setter</span>
+    private long detectionPeriodDuration = 5_000L;
+
+    /**
+     * Interval between iterations in a pollRound.
+     */
+<span class="nc" id="L60">    @Getter</span>
+<span class="nc" id="L61">    @Setter</span>
+    private long interIterationInterval = 1_000;
+
+    /**
+     * Triggered on every poll.
+     * Sets up the unresponsive servers list. (All servers in the unresponsiveServers list in
+     * the layout)
+     * Executes the policy once.
+     * Checks for changes in the layout.
+     * Then polls all the servers and generates the report.
+     *
+     * @param layout Current Layout
+     */
+    public PollReport poll(@Nonnull Layout layout,
+                           @Nonnull CorfuRuntime corfuRuntime) {
+
+        // Get all unresponsive servers.
+<span class="nc" id="L78">        final List&lt;String&gt; members = new ArrayList&lt;&gt;(layout.getUnresponsiveServers());</span>
+
+<span class="nc" id="L80">        log.debug(&quot;Unresponsive members to poll, {}&quot;, members);</span>
+<span class="nc" id="L81">        Map&lt;String, IClientRouter&gt; routerMap = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L83">        members.forEach(member -&gt; {</span>
+            try {
+<span class="nc" id="L85">                IClientRouter router = corfuRuntime.getRouter(member);</span>
+<span class="nc" id="L86">                router.setTimeoutResponse(detectionPeriodDuration);</span>
+<span class="nc" id="L87">                routerMap.put(member, router);</span>
+<span class="nc" id="L88">            } catch (NetworkException ne) {</span>
+<span class="nc" id="L89">                log.debug(&quot;Error creating router for {}&quot;, member);</span>
+<span class="nc" id="L90">            }</span>
+<span class="nc" id="L91">        });</span>
+
+        // Perform polling of all unresponsive servers.
+<span class="nc" id="L94">        return new PollReport.PollReportBuilder()</span>
+<span class="nc" id="L95">                .pollEpoch(layout.getEpoch())</span>
+<span class="nc" id="L96">                .healingNodes(pollRound(members, routerMap, layout.getEpoch()))</span>
+<span class="nc" id="L97">                .build();</span>
+    }
+
+    /**
+     * Each PollRound executes &quot;detectionThreshold&quot; number of iterations and generates the
+     * poll report.
+     *
+     * @return Poll Report with detected healed nodes.
+     */
+    private Set&lt;String&gt; pollRound(List&lt;String&gt; members,
+                                  Map&lt;String, IClientRouter&gt; routerMap,
+                                  long epoch) {
+
+<span class="nc" id="L110">        Map&lt;String, Integer&gt; pollResultMap = new HashMap&lt;&gt;();</span>
+
+        // In each iteration we poll all the servers in the members list.
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        for (int iteration = 0; iteration &lt; detectionThreshold; iteration++) {</span>
+
+            // Ping all nodes and await their responses.
+<span class="nc" id="L116">            Map&lt;String, CompletableFuture&lt;NodeView&gt;&gt; pollCompletableFutures =</span>
+<span class="nc" id="L117">                    pollOnceAsync(members, routerMap, epoch);</span>
+
+            // Collect all poll responses.
+<span class="nc" id="L120">            Set&lt;String&gt; responses = collectResponsesAndVerifyEpochs(members,</span>
+                    pollCompletableFutures);
+
+            // Count unsuccessful ping responses.
+            // If we receive no responses and there are no nodes to heal,
+            // we can end the current poll round and exit.
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            if (responses.isEmpty()) {</span>
+<span class="nc" id="L127">                break;</span>
+            }
+
+<span class="nc" id="L130">            final int pollIteration = iteration;</span>
+<span class="nc" id="L131">            responses.forEach(s -&gt; pollResultMap.put(s, pollIteration));</span>
+
+<span class="nc" id="L133">            Sleep.MILLISECONDS.sleepUninterruptibly(interIterationInterval);</span>
+        }
+
+        // Check all responses and report all healed nodes.
+<span class="nc" id="L137">        return members.stream()</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">                .filter(s -&gt; pollResultMap.get(s) != null</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">                        &amp;&amp; pollResultMap.get(s) == (detectionThreshold - 1))</span>
+<span class="nc" id="L140">                .collect(Collectors.toSet());</span>
+    }
+
+    /**
+     * Poll all members servers once asynchronously and return their futures.
+     *
+     * @param members   All unresponsive members.
+     * @param routerMap Map of members corresponding to their client routers.
+     * @param epoch     Current epoch for the polling round to stamp the ping messages.
+     * @return Map of completable futures generated on their respective pings.
+     */
+    private Map&lt;String, CompletableFuture&lt;NodeView&gt;&gt; pollOnceAsync(List&lt;String&gt; members,
+                                                                   Map&lt;String, IClientRouter&gt;
+                                                                           routerMap,
+                                                                   final long epoch) {
+
+        // Poll servers for health.  All ping activity will happen in the background.
+<span class="nc" id="L157">        final Map&lt;String, CompletableFuture&lt;NodeView&gt;&gt; pollCompletableFutures = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L158">        members.forEach(s -&gt; {</span>
+            try {
+<span class="nc" id="L160">                pollCompletableFutures.put(s, new ManagementClient(routerMap.get(s), epoch)</span>
+<span class="nc" id="L161">                        .sendHeartbeatRequest());</span>
+<span class="nc" id="L162">            } catch (Exception e) {</span>
+<span class="nc" id="L163">                CompletableFuture&lt;NodeView&gt; cf = new CompletableFuture&lt;&gt;();</span>
+<span class="nc" id="L164">                cf.completeExceptionally(e);</span>
+<span class="nc" id="L165">                pollCompletableFutures.put(s, cf);</span>
+<span class="nc" id="L166">            }</span>
+<span class="nc" id="L167">        });</span>
+<span class="nc" id="L168">        return pollCompletableFutures;</span>
+    }
+
+    /**
+     * Block on all poll futures and collect the responses. There are 3 possible cases.
+     * 1. Receive a PONG. We set the responses[i] to the polling iteration number.
+     * 2. WrongEpochException is thrown. We mark as a successful response.
+     * 3. Other Exception is thrown. We do nothing. (The response[i] in this case is left behind.)
+     *
+     * @param members                All unresponsive members.
+     * @param pollCompletableFutures Map of all members corresponding to their ping completable
+     *                               futures.
+     * @return Set of all responsive nodes.
+     */
+    private Set&lt;String&gt; collectResponsesAndVerifyEpochs(List&lt;String&gt; members,
+                                                        Map&lt;String, CompletableFuture&lt;NodeView&gt;&gt;
+                                                                pollCompletableFutures) {
+        // Collect responses and increment response counters for successful pings.
+<span class="nc" id="L186">        Set&lt;String&gt; responses = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L187">        members.forEach(s -&gt; {</span>
+            try {
+<span class="nc" id="L189">                pollCompletableFutures.get(s).get();</span>
+<span class="nc" id="L190">                responses.add(s);</span>
+<span class="nc" id="L191">            } catch (Exception e) {</span>
+                // WrongEpochException signifies liveness of node.
+<span class="nc bnc" id="L193" title="All 2 branches missed.">                if (e.getCause() instanceof WrongEpochException) {</span>
+<span class="nc" id="L194">                    log.debug(&quot;collectResponsesAndVerifyEpochs: WrongEpochException for &quot;</span>
+                                    + &quot;endpoint:{}, expected epoch:{}&quot;,
+<span class="nc" id="L196">                            s, ((WrongEpochException) e.getCause()).getCorrectEpoch());</span>
+<span class="nc" id="L197">                    responses.add(s);</span>
+                }
+<span class="nc" id="L199">            }</span>
+<span class="nc" id="L200">        });</span>
+<span class="nc" id="L201">        return responses;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

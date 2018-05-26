@@ -1,0 +1,795 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>FastObjectLoader.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">infrastructure</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.recovery</a> &gt; <span class="el_source">FastObjectLoader.java</span></div><h1>FastObjectLoader.java</h1><pre class="source lang-java linenums">package org.corfudb.recovery;
+
+import javax.annotation.Nonnull;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.experimental.Accessors;
+import lombok.extern.slf4j.Slf4j;
+import org.corfudb.protocols.logprotocol.CheckpointEntry;
+import org.corfudb.protocols.logprotocol.LogEntry;
+import org.corfudb.protocols.logprotocol.MultiObjectSMREntry;
+import org.corfudb.protocols.logprotocol.SMREntry;
+import org.corfudb.protocols.wireprotocol.DataType;
+import org.corfudb.protocols.wireprotocol.ILogData;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.collections.CorfuTable;
+import org.corfudb.runtime.collections.CorfuTable.IndexRegistry;
+import org.corfudb.runtime.collections.SMRMap;
+import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuInterruptedError;
+import org.corfudb.runtime.object.CorfuCompileProxy;
+import org.corfudb.runtime.view.Address;
+import org.corfudb.runtime.view.ObjectBuilder;
+import org.corfudb.util.CFUtils;
+import org.corfudb.util.Utils;
+import org.corfudb.util.serializer.ISerializer;
+import org.corfudb.util.serializer.Serializers;
+
+import static org.corfudb.recovery.RecoveryUtils.*;
+import static org.corfudb.runtime.view.Address.isAddress;
+
+/** The FastObjectLoader reconstructs the coalesced state of SMRMaps through sequential log read
+ *
+ * This utility reads Log entries sequentially extracting the SMRUpdates from each entry
+ * and build the Maps as we go. In the presence of checkpoints, the checkpoint entries will
+ * be applied before the normal entries starting after the checkpoint start address.
+ *
+ * If used in the recoverSequencer mode, it will reconstruct the stream tails.
+ *
+ * There are two main modes, blacklist and whitelist. These two modes are mutually exclusive:
+ * In blacklist mode, we will process every streams as long as they are not in the streamToIgnore
+ * list. In whitelist mode, only the streams present in streamsToLoad will be loaded. We make
+ * sure to also include the checkpoint streams for each of them.
+ *
+ *
+ * Created by rmichoud on 6/14/17.
+ */
+
+<span class="nc" id="L63">@Slf4j</span>
+@Accessors(chain = true)
+public class FastObjectLoader {
+
+    static final long DEFAULT_BATCH_FOR_FAST_LOADER = 10;
+    static final int DEFAULT_TIMEOUT_MINUTES_FAST_LOADING = 30;
+    static final int NUMBER_OF_ATTEMPT = 3;
+    static final int STATUS_UPDATE_PACE = 10000;
+
+    private CorfuRuntime runtime;
+
+<span class="nc" id="L74">    @Setter</span>
+<span class="nc" id="L75">    @Getter</span>
+    Class defaultObjectsType = SMRMap.class;
+
+<span class="nc" id="L78">    @Setter</span>
+<span class="nc" id="L79">    @Getter</span>
+    private boolean loadInCache;
+
+<span class="nc" id="L82">    @Setter</span>
+<span class="nc" id="L83">    @Getter</span>
+    private long logHead = -1;
+
+<span class="nc" id="L86">    @Setter</span>
+<span class="nc" id="L87">    @Getter</span>
+    private long logTail = -1;
+
+<span class="nc" id="L90">    @Setter</span>
+<span class="nc" id="L91">    @Getter</span>
+    private long batchReadSize = DEFAULT_BATCH_FOR_FAST_LOADER;
+
+<span class="nc" id="L94">    @Setter</span>
+<span class="nc" id="L95">    @Getter</span>
+    private int timeoutInMinutesForLoading = DEFAULT_TIMEOUT_MINUTES_FAST_LOADING;
+
+<span class="nc" id="L98">    @Setter</span>
+<span class="nc" id="L99">    @Getter</span>
+    private boolean recoverSequencerMode;
+
+<span class="nc" id="L102">    @Setter</span>
+<span class="nc" id="L103">    @Getter</span>
+    private boolean logHasNoCheckPoint = false;
+
+<span class="nc" id="L106">    private boolean whiteList = false;</span>
+<span class="nc" id="L107">    private List&lt;UUID&gt; streamsToLoad = new ArrayList&lt;&gt;();</span>
+
+    /**
+     * Enable whiteList mode where we only reconstruct
+     * the streams provided through this api. In this mode,
+     * we will only process the streams present in streamsToLoad.
+     * All the others are ignored.
+     * @param streamsToLoad
+     */
+    public FastObjectLoader addStreamsToLoad(List&lt;String&gt; streamsToLoad) {
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (streamsToIgnore.size() != 0) {</span>
+<span class="nc" id="L118">            throw new IllegalStateException(&quot;Cannot add a whitelist when there are already streams to ignore&quot;);</span>
+        }
+
+<span class="nc" id="L121">        whiteList = true;</span>
+
+<span class="nc" id="L123">        streamsToLoad.forEach(streamName -&gt; {</span>
+<span class="nc" id="L124">            this.streamsToLoad.add(CorfuRuntime.getStreamID(streamName));</span>
+            // Generate the streamsCheckpointId (we need to allow them as well)
+<span class="nc" id="L126">            this.streamsToLoad.add(CorfuRuntime.getCheckpointStreamIdFromName(streamName));</span>
+<span class="nc" id="L127">        });</span>
+
+<span class="nc" id="L129">        return this;</span>
+    }
+
+    /**
+     * We can add streams to be ignored during the
+     * reconstruction of the state (e.g. raw streams)
+     */
+<span class="nc" id="L136">    @Getter</span>
+    private Set&lt;UUID&gt; streamsToIgnore = new HashSet&lt;&gt;();
+
+    /**
+     * We can register streams with non-default type
+     */
+<span class="nc" id="L142">    private Map&lt;UUID, ObjectBuilder&gt; customTypeStreams = new HashMap&lt;&gt;();</span>
+
+    public void addCustomTypeStream(UUID streamId, ObjectBuilder ob) {
+<span class="nc" id="L145">        customTypeStreams.put(streamId, ob);</span>
+<span class="nc" id="L146">    }</span>
+
+    /**
+     * Add an indexer to a stream (that backs a CorfuTable)
+     *
+     * @param streamName    Stream name.
+     * @param indexRegistry Index Registry.
+     */
+    public void addIndexerToCorfuTableStream(String streamName, IndexRegistry indexRegistry) {
+<span class="nc" id="L155">        UUID streamId = CorfuRuntime.getStreamID(streamName);</span>
+<span class="nc" id="L156">        ObjectBuilder ob = new ObjectBuilder(runtime).setType(CorfuTable.class)</span>
+<span class="nc" id="L157">                .setArguments(indexRegistry).setStreamID(streamId);</span>
+<span class="nc" id="L158">        addCustomTypeStream(streamId, ob);</span>
+<span class="nc" id="L159">    }</span>
+
+    private Class getStreamType(UUID streamId) {
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (customTypeStreams.containsKey(streamId)) {</span>
+<span class="nc" id="L163">            return customTypeStreams.get(streamId).getType();</span>
+        }
+
+<span class="nc" id="L166">        return defaultObjectsType;</span>
+    }
+
+    private long addressProcessed;
+
+    // In charge of summoning Corfu maps back in this world
+    private ExecutorService necromancer;
+
+    private Map&lt;UUID, StreamMetaData&gt; streamsMetaData;
+
+<span class="nc" id="L176">    @Getter</span>
+    private Map&lt;UUID, Long&gt; streamTails = new HashMap&lt;&gt;();
+
+<span class="nc" id="L179">    @Setter</span>
+<span class="nc" id="L180">    @Getter</span>
+    private int numberOfAttempt = NUMBER_OF_ATTEMPT;
+
+<span class="nc" id="L183">    private int retryIteration = 0;</span>
+    private long nextRead;
+
+    private List&lt;Future&gt; futureList;
+
+<span class="nc" id="L188">    public FastObjectLoader(@Nonnull final CorfuRuntime corfuRuntime) {</span>
+<span class="nc" id="L189">        this.runtime = corfuRuntime;</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        loadInCache = !corfuRuntime.getParameters().isCacheDisabled();</span>
+<span class="nc" id="L191">        streamsMetaData = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L192">    }</span>
+
+    public void addStreamToIgnore(String streamName) {
+        // In a whitelist mode, we cannot add streams to the blacklist
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        if (whiteList) {</span>
+<span class="nc" id="L197">            throw new IllegalStateException(&quot;Cannot add a stream to the blacklist (streamsToIgnore)&quot; +</span>
+                    &quot;in whitelist mode.&quot;);
+        }
+
+<span class="nc" id="L201">        streamsToIgnore.add(CorfuRuntime.getStreamID(streamName));</span>
+        // Ignore also checkpoint of this stream
+<span class="nc" id="L203">        streamsToIgnore.add(CorfuRuntime.getCheckpointStreamIdFromName(streamName));</span>
+<span class="nc" id="L204">    }</span>
+
+    /**
+     * Necromancer Utilities
+     *
+     * Necromancy is a supposed practice of magic involving communication with the deceased
+     * – either by summoning their spirit as an apparition or raising them bodily. This suits
+     * what this thread is tasked with, bringing back the SMR Maps from their grave (the Log).
+     *
+     */
+    private void summonNecromancer() {
+<span class="nc" id="L215">        necromancer = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder()</span>
+<span class="nc" id="L216">                .setNameFormat(&quot;necromancer-%d&quot;).build());</span>
+<span class="nc" id="L217">        futureList = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L218">    }</span>
+
+    private void invokeNecromancer(Map&lt;Long, ILogData&gt; logDataMap, BiConsumer&lt;Long, ILogData&gt; resurrectionSpell) {
+<span class="nc" id="L221">        futureList.add(necromancer.submit(() -&gt; {</span>
+<span class="nc" id="L222">            logDataMap.forEach((address, logData) -&gt; {</span>
+<span class="nc" id="L223">                resurrectionSpell.accept(address, logData);</span>
+<span class="nc" id="L224">            });</span>
+<span class="nc" id="L225">        }));</span>
+<span class="nc" id="L226">    }</span>
+
+    private void killNecromancer() {
+<span class="nc" id="L229">        necromancer.shutdown();</span>
+        try {
+<span class="nc" id="L231">            necromancer.awaitTermination(timeoutInMinutesForLoading, TimeUnit.MINUTES);</span>
+<span class="nc" id="L232">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L233">            String msg = &quot;Necromancer is taking too long to load the maps. Gave up.&quot;;</span>
+<span class="nc" id="L234">            log.error(msg);</span>
+<span class="nc" id="L235">            fail(msg);</span>
+<span class="nc" id="L236">        }</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        for (Future future : futureList) {</span>
+<span class="nc" id="L238">            CFUtils.getUninterruptibly(future);</span>
+
+<span class="nc" id="L240">        }</span>
+<span class="nc" id="L241">    }</span>
+
+    /**
+     * These two functions are called if no parameter were supplied
+     * by the user.
+     */
+    private void findAndSetLogHead() {
+<span class="nc" id="L248">         logHead = runtime.getAddressSpaceView().getTrimMark();</span>
+<span class="nc" id="L249">    }</span>
+
+    private void findAndSetLogTail() {
+<span class="nc" id="L252">        logTail = runtime.getSequencerView().nextToken(Collections.emptySet(), 0).getTokenValue();</span>
+<span class="nc" id="L253">    }</span>
+
+    private void resetAddressProcessed() {
+<span class="nc" id="L256">        addressProcessed = logHead - 1;</span>
+<span class="nc" id="L257">    }</span>
+
+    /**
+     * Book keeping of the the stream tails
+     *
+     * @param logData
+     */
+    public void updateStreamTails(long address, ILogData logData) {
+        // On checkpoint, we also need to track the stream tail of the checkpoint
+<span class="nc bnc" id="L266" title="All 2 branches missed.">        if (isCheckPointEntry(logData)) {</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">            if (logData.getCheckpointType() == CheckpointEntry.CheckpointEntryType.END &amp;&amp;</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">                    isAddress(getStartAddressOfCheckPoint(logData))) {</span>
+<span class="nc" id="L269">                streamTails.compute(logData.getCheckpointedStreamId(),</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">                        (uuid, value) -&gt; (value == null) ? getStartAddressOfCheckPoint(logData)</span>
+<span class="nc" id="L271">                            : Math.max(value, getStartAddressOfCheckPoint(logData)));</span>
+            }
+        }
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        for (UUID streamId : logData.getStreams()) {</span>
+<span class="nc" id="L275">            streamTails.compute(streamId,</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">                    (uuid, value) -&gt; (value == null) ? address : Math.max(value, address));</span>
+<span class="nc" id="L277">        }</span>
+<span class="nc" id="L278">    }</span>
+
+    /**
+     * It is a valid state to have entries that are checkpointed but the log was not fully
+     * trimmed yet. This means that some entries are at the same time in their own slot and in
+     * the checkpoint. We must avoid to process them twice.
+     *
+     * This comes especially relevant when the operation order affects the end result.
+     * (e.g. clear() operation)
+     *
+     * @param streamId stream id to validate
+     * @param entry entry under scrutinization.
+     * @return if the entry is already part of the checkpoint we started from.
+     */
+    private boolean entryAlreadyContainedInCheckpoint(UUID streamId, SMREntry entry) {
+<span class="nc bnc" id="L293" title="All 2 branches missed.">        return streamsMetaData.containsKey(streamId) &amp;&amp; entry.getEntry().getGlobalAddress() &lt;</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">                streamsMetaData.get(streamId).getHeadAddress();</span>
+    }
+
+    /**
+     * Check if this entry is relevant
+     *
+     * There are 3 cases where an entry should not be processed:
+     *   1. In whitelist mode, if the stream is not in the whitelist (streamToLoad)
+     *   2. In blacklist mode, if the stream is in the blacklist (streamToIgnore)
+     *   3. If the entry was already processed in the previous checkpoint.
+     *
+     * @param streamId identifies the Corfu stream
+     * @param entry entry to potentially apply
+     * @return if we need to apply the entry.
+     */
+    private boolean shouldEntryBeApplied(UUID streamId, SMREntry entry, boolean isCheckpointEntry) {
+        // 1.
+        // In white list mode, ignore everything that is not in the list (the list contains the streams
+        // passed by the client + derived checkpoint streams).
+<span class="nc bnc" id="L313" title="All 4 branches missed.">        if (whiteList &amp;&amp; !streamsToLoad.contains(streamId)) {</span>
+<span class="nc" id="L314">            return false;</span>
+        }
+
+        // 2.
+        // We ignore the transaction stream ID because it is a raw stream
+        // We don't want to create a Map for it.
+<span class="nc bnc" id="L320" title="All 4 branches missed.">        if (streamId == runtime.getObjectsView().TRANSACTION_STREAM_ID || streamsToIgnore.contains(streamId)) {</span>
+<span class="nc" id="L321">            return false;</span>
+        }
+
+        // 3.
+        // If the entry was already processed with the previous checkpoint.
+<span class="nc bnc" id="L326" title="All 4 branches missed.">        if (!isCheckpointEntry &amp;&amp; entryAlreadyContainedInCheckpoint(streamId, entry)) {</span>
+<span class="nc" id="L327">            return false;</span>
+        }
+
+<span class="nc" id="L330">        return true;</span>
+    }
+
+    private boolean shouldStreamBeProcessed(UUID streamId) {
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        if (whiteList) {</span>
+<span class="nc" id="L335">            return streamsToLoad.contains(streamId);</span>
+        }
+
+<span class="nc bnc" id="L338" title="All 2 branches missed.">        return !streamsToIgnore.contains(streamId);</span>
+    }
+
+    /**
+     * If none of the streams in the logData should be processed, we
+     * can simply ignore this logData.
+     *
+     * In the case of a mix of streams we need to process and other that we don't,
+     * we will still go ahead with the process.
+     *
+     * @param logData
+     * @return
+     */
+    private boolean shouldLogDataBeProcessed(ILogData logData) {
+<span class="nc" id="L352">        boolean shouldProcess = false;</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">        for (UUID id : logData.getStreams()) {</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">            if (shouldStreamBeProcessed(id)){</span>
+<span class="nc" id="L355">                shouldProcess = true;</span>
+            }
+<span class="nc" id="L357">        }</span>
+<span class="nc" id="L358">        return shouldProcess;</span>
+    }
+
+
+    /**
+     * Update the corfu object and it's underlying stream with the new entry.
+     *
+     * @param streamId identifies the Corfu stream
+     * @param entry entry to apply
+     * @param globalAddress global address of the entry
+     * @param isCheckPointEntry
+     */
+    private void applySmrEntryToStream(UUID streamId, SMREntry entry,
+                                       long globalAddress, boolean isCheckPointEntry) {
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        if (shouldEntryBeApplied(streamId, entry, isCheckPointEntry)) {</span>
+
+            // Get the serializer type from the entry
+<span class="nc" id="L375">            ISerializer serializer = Serializers.getSerializer(entry.getSerializerType().getType());</span>
+
+            // Get the type of the object we want to recreate
+<span class="nc" id="L378">            Class objectType = getStreamType(streamId);</span>
+
+            // Create an Object only for non-checkpoints
+
+            // If it is a special type, create it with the object builder
+<span class="nc bnc" id="L383" title="All 2 branches missed.">            if (customTypeStreams.containsKey(streamId)) {</span>
+<span class="nc" id="L384">                createObjectIfNotExist(customTypeStreams.get(streamId), serializer);</span>
+            }
+            else {
+<span class="nc" id="L387">                createObjectIfNotExist(runtime, streamId, serializer, objectType);</span>
+            }
+<span class="nc" id="L389">            CorfuCompileProxy cp = getCorfuCompileProxy(runtime, streamId, objectType);</span>
+<span class="nc" id="L390">            cp.getUnderlyingObject().applyUpdateToStreamUnsafe(entry, globalAddress);</span>
+        }
+<span class="nc" id="L392">    }</span>
+
+    private void applySmrEntryToStream(UUID streamId, SMREntry entry, long globalAddress) {
+<span class="nc" id="L395">        applySmrEntryToStream(streamId, entry, globalAddress, false);</span>
+
+<span class="nc" id="L397">    }</span>
+
+
+    private void updateCorfuObjectWithSmrEntry(ILogData logData, LogEntry logEntry, long globalAddress) {
+<span class="nc" id="L401">        UUID streamId = logData.getStreams().iterator().next();</span>
+<span class="nc" id="L402">        applySmrEntryToStream(streamId, (SMREntry) logEntry, globalAddress);</span>
+<span class="nc" id="L403">    }</span>
+
+    private void updateCorfuObjectWithMultiObjSmrEntry(LogEntry logEntry, long globalAddress) {
+<span class="nc" id="L406">        MultiObjectSMREntry multiObjectLogEntry = (MultiObjectSMREntry) logEntry;</span>
+<span class="nc" id="L407">        multiObjectLogEntry.getEntryMap().forEach((streamId, multiSmrEntry) -&gt; {</span>
+<span class="nc" id="L408">            multiSmrEntry.getSMRUpdates(streamId).forEach((smrEntry) -&gt; {</span>
+<span class="nc" id="L409">                applySmrEntryToStream(streamId, smrEntry, globalAddress);</span>
+<span class="nc" id="L410">            });</span>
+<span class="nc" id="L411">        });</span>
+<span class="nc" id="L412">    }</span>
+
+    private void updateCorfuObjectWithCheckPointEntry(ILogData logData, LogEntry logEntry) {
+<span class="nc" id="L415">        CheckpointEntry checkPointEntry = (CheckpointEntry) logEntry;</span>
+        // Just one stream, always
+<span class="nc" id="L417">        UUID streamId = checkPointEntry.getStreamId();</span>
+<span class="nc" id="L418">        UUID checkPointId = checkPointEntry.getCheckpointId();</span>
+
+        // We need to apply the start address for the version of the object
+<span class="nc" id="L421">        long startAddress = streamsMetaData.get(streamId)</span>
+<span class="nc" id="L422">                .getCheckPoint(checkPointId)</span>
+<span class="nc" id="L423">                .getStartAddress();</span>
+
+        // We don't know in advance if there will be smrEntries
+<span class="nc bnc" id="L426" title="All 2 branches missed.">        if (checkPointEntry.getSmrEntries() != null) {</span>
+<span class="nc" id="L427">            checkPointEntry.getSmrEntries().getSMRUpdates(streamId).forEach((smrEntry) -&gt; {</span>
+<span class="nc" id="L428">                applySmrEntryToStream(checkPointEntry.getStreamId(), smrEntry,</span>
+                        startAddress, true);
+<span class="nc" id="L430">            });</span>
+        }
+<span class="nc" id="L432">    }</span>
+
+    /**
+     * Extract log entries from logData and update the Corfu Objects
+     *
+     * @param logData LogData received from Corfu server.
+     */
+    private void updateCorfuObject(ILogData logData) {
+        LogEntry logEntry;
+        try {
+<span class="nc" id="L442">            logEntry = deserializeLogData(runtime, logData);</span>
+<span class="nc" id="L443">        } catch (InterruptedException ie) {</span>
+<span class="nc" id="L444">            throw new UnrecoverableCorfuInterruptedError(ie);</span>
+<span class="nc" id="L445">        } catch (Exception e) {</span>
+<span class="nc" id="L446">            log.error(&quot;Cannot deserialize log entry&quot; + logData.getGlobalAddress(), e);</span>
+<span class="nc" id="L447">            return;</span>
+<span class="nc" id="L448">        }</span>
+
+<span class="nc" id="L450">        long globalAddress = logData.getGlobalAddress();</span>
+
+<span class="nc bnc" id="L452" title="All 4 branches missed.">        switch (logEntry.getType()) {</span>
+            case SMR:
+<span class="nc" id="L454">                updateCorfuObjectWithSmrEntry(logData, logEntry, globalAddress);</span>
+<span class="nc" id="L455">                break;</span>
+            case MULTIOBJSMR:
+<span class="nc" id="L457">                updateCorfuObjectWithMultiObjSmrEntry(logEntry, globalAddress);</span>
+<span class="nc" id="L458">                break;</span>
+            case CHECKPOINT:
+<span class="nc" id="L460">                updateCorfuObjectWithCheckPointEntry(logData, logEntry);</span>
+<span class="nc" id="L461">                break;</span>
+            default:
+<span class="nc" id="L463">                log.warn(&quot;updateCorfuObject[address = {}]: Unknown data type&quot;);</span>
+
+        }
+<span class="nc" id="L466">    }</span>
+
+
+    /**
+     * Initialize log head and log tails
+     *
+     * If logHead and logTail has not been initialized by
+     * the user, initialize to default.
+     *
+     */
+    private void initializeHeadAndTails() {
+<span class="nc bnc" id="L477" title="All 2 branches missed.">        if (logHead &lt; 0) {</span>
+<span class="nc" id="L478">            findAndSetLogHead();</span>
+        }
+
+<span class="nc bnc" id="L481" title="All 2 branches missed.">        if (logTail &lt; 0) {</span>
+<span class="nc" id="L482">            findAndSetLogTail();</span>
+        }
+
+<span class="nc" id="L485">        resetAddressProcessed();</span>
+<span class="nc" id="L486">    }</span>
+
+    private void cleanUpForRetry() {
+<span class="nc" id="L489">        runtime.getAddressSpaceView().invalidateClientCache();</span>
+<span class="nc" id="L490">        runtime.getObjectsView().getObjectCache().clear();</span>
+<span class="nc" id="L491">        streamTails.clear();</span>
+<span class="nc" id="L492">        nextRead = logHead;</span>
+<span class="nc" id="L493">        resetAddressProcessed();</span>
+
+        // Re ask for the Head, if it changes while we were trying
+<span class="nc" id="L496">        findAndSetLogHead();</span>
+<span class="nc" id="L497">    }</span>
+    /**
+     * Increment the retry iteration.
+     *
+     * If we reached the max number of entry, throw a Runtime Exception.
+     */
+    private void handleRetry() {
+
+<span class="nc" id="L505">        retryIteration++;</span>
+<span class="nc bnc" id="L506" title="All 2 branches missed.">        if (retryIteration &gt; numberOfAttempt) {</span>
+<span class="nc" id="L507">            log.error(&quot;processLogData[]: retried {} number of times and failed&quot;, retryIteration);</span>
+<span class="nc" id="L508">            throw new RuntimeException(&quot;FastObjectLoader failed after too many retry (&quot; + retryIteration + &quot;)&quot;);</span>
+        }
+        else {
+<span class="nc" id="L511">            cleanUpForRetry();</span>
+        }
+<span class="nc" id="L513">    }</span>
+
+    /**
+     * Fail the FastObjectLoader throwing a RuntimeException
+     *
+     * @param msg message passed in the RuntimeException
+     */
+    private void fail(String msg) {
+<span class="nc" id="L521">        throw new RuntimeException(msg);</span>
+    }
+
+    /**
+     * Dispatch logData given it's type
+     *
+     * @param address
+     * @param logData
+     */
+    private void processLogData(long address, ILogData logData) {
+<span class="nc bnc" id="L531" title="All 6 branches missed.">        switch (logData.getType()) {</span>
+            case DATA:
+                // Checkpoint should have been processed first
+<span class="nc bnc" id="L534" title="All 4 branches missed.">                if (!isCheckPointEntry(logData) &amp;&amp; shouldLogDataBeProcessed(logData)) {</span>
+<span class="nc" id="L535">                    updateCorfuObject(logData);</span>
+                }
+                break;
+            case HOLE:
+<span class="nc" id="L539">                break;</span>
+            case TRIMMED:
+<span class="nc" id="L541">                break;</span>
+            case EMPTY:
+<span class="nc" id="L543">                log.warn(&quot;applyForEachAddress[address={}] is empty&quot;);</span>
+<span class="nc" id="L544">                break;</span>
+            case RANK_ONLY:
+<span class="nc" id="L546">                break;</span>
+            default:
+                break;
+        }
+<span class="nc" id="L550">    }</span>
+
+    /**
+     * When we encounter a start checkpoint, we need to create the new entry in the Stream
+     * @param address
+     * @param logData
+     * @param streamId
+     * @param checkPointId
+     * @param streamMeta
+     */
+    private void handleStartCheckPoint(long address, ILogData logData, UUID streamId,
+                                       UUID checkPointId, StreamMetaData streamMeta) {
+        try {
+<span class="nc" id="L563">            CheckpointEntry logEntry = (CheckpointEntry) deserializeLogData(runtime, logData);</span>
+<span class="nc" id="L564">            long snapshotAddress = getSnapShotAddressOfCheckPoint(logEntry);</span>
+<span class="nc" id="L565">            long startAddress = getStartAddressOfCheckPoint(logData);</span>
+
+<span class="nc" id="L567">            streamMeta.addCheckPoint(new CheckPoint(checkPointId)</span>
+<span class="nc" id="L568">                    .addAddress(address)</span>
+<span class="nc" id="L569">                    .setSnapshotAddress(snapshotAddress)</span>
+<span class="nc" id="L570">                    .setStartAddress(startAddress)</span>
+<span class="nc" id="L571">                    .setStarted(true));</span>
+
+<span class="nc" id="L573">        } catch (InterruptedException ie) {</span>
+<span class="nc" id="L574">            throw new UnrecoverableCorfuInterruptedError(ie);</span>
+<span class="nc" id="L575">        } catch (Exception e) {</span>
+<span class="nc" id="L576">            log.error(&quot;findCheckpointsInLogAddress[{}]: &quot;</span>
+<span class="nc" id="L577">                    + &quot;Couldn't get the snapshotAddress&quot;, address, e);</span>
+<span class="nc" id="L578">            fail(&quot;Couldn't get the snapshotAddress at address &quot; + address);</span>
+<span class="nc" id="L579">        }</span>
+<span class="nc" id="L580">    }</span>
+
+    /**
+     * Find if there is a checkpoint in the current logAddress
+     *
+     * If there is a checkpoint, the streamsMetadata map will be
+     * updated accordingly.
+     *
+     * We will only use the first checkpoint
+     *
+     * @param address
+     * @param logData
+     */
+    private void findCheckPointsInLogAddress(long address, ILogData logData) {
+<span class="nc bnc" id="L594" title="All 2 branches missed.">        if (logData.hasCheckpointMetadata() &amp;&amp;</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">                shouldLogDataBeProcessed(logData)) {</span>
+            // Only one stream per checkpoint
+<span class="nc" id="L597">            UUID streamId = logData.getCheckpointedStreamId();</span>
+            StreamMetaData streamMeta;
+<span class="nc" id="L599">            streamMeta = streamsMetaData.computeIfAbsent(streamId, (id) -&gt; new StreamMetaData(id));</span>
+<span class="nc" id="L600">            UUID checkPointId = logData.getCheckpointId();</span>
+
+<span class="nc bnc" id="L602" title="All 4 branches missed.">            switch (logData.getCheckpointType()) {</span>
+                case START:
+<span class="nc" id="L604">                    handleStartCheckPoint(address, logData, streamId, checkPointId, streamMeta);</span>
+
+<span class="nc" id="L606">                    break;</span>
+                case CONTINUATION:
+<span class="nc bnc" id="L608" title="All 2 branches missed.">                    if (streamMeta.checkPointExists(checkPointId)) {</span>
+<span class="nc" id="L609">                        streamMeta.getCheckPoint(checkPointId).addAddress(address);</span>
+                    }
+
+                    break;
+                case END:
+<span class="nc bnc" id="L614" title="All 2 branches missed.">                    if (streamMeta.checkPointExists(checkPointId)) {</span>
+<span class="nc" id="L615">                        streamMeta.getCheckPoint(checkPointId).setEnded(true).addAddress(address);</span>
+<span class="nc" id="L616">                        streamMeta.updateLatestCheckpointIfLater(checkPointId);</span>
+                    }
+                    break;
+                default:
+<span class="nc" id="L620">                    log.warn(&quot;findCheckPointsInLog[address = {}] Unknown checkpoint type&quot;, address);</span>
+                    break;
+            }
+        }
+<span class="nc" id="L624">    }</span>
+
+
+    /**
+     * Apply the checkPoints in parallel
+     *
+     * Since each checkpoint is mapped to a single stream, we can parallelize
+     * this operation.
+     *
+     */
+    private void resurrectCheckpoints() {
+<span class="nc" id="L635">        streamsMetaData.entrySet().parallelStream()</span>
+<span class="nc" id="L636">                .forEach(entry -&gt; {</span>
+<span class="nc" id="L637">                    CheckPoint checkPoint = entry.getValue().getLatestCheckPoint();</span>
+<span class="nc bnc" id="L638" title="All 2 branches missed.">                    if (checkPoint == null) {</span>
+<span class="nc" id="L639">                        log.info(&quot;resurrectCheckpoints[{}]: Truncated checkpoint for this stream&quot;,</span>
+<span class="nc" id="L640">                                Utils.toReadableId(entry.getKey()));</span>
+<span class="nc" id="L641">                        return;</span>
+                    }
+
+                    // For now one by one read and apply
+<span class="nc bnc" id="L645" title="All 2 branches missed.">                    for (long address : checkPoint.getAddresses()) {</span>
+<span class="nc" id="L646">                        updateCorfuObject(getLogData(runtime, loadInCache, address));</span>
+<span class="nc" id="L647">                    }</span>
+<span class="nc" id="L648">                });</span>
+<span class="nc" id="L649">    }</span>
+
+    /**
+     * This method will only resurrect the stream tails. It is used
+     * to recover a sequencer.
+     */
+    private void recoverSequencer() {
+<span class="nc" id="L656">        log.info(&quot;recoverSequencer: Resurrecting the stream tails&quot;);</span>
+<span class="nc" id="L657">        applyForEachAddress(this::updateStreamTails);</span>
+<span class="nc" id="L658">    }</span>
+
+    /**
+     * This method will use the checkpoints and the entries
+     * after checkpoints to resurrect the SMRMaps
+     */
+    private void recoverRuntime() {
+<span class="nc" id="L665">        log.info(&quot;recoverRuntime: Resurrecting the runtime&quot;);</span>
+
+        // If the user is sure that he has no checkpoint,
+        // we can just do the last step. Risky, but the flag is
+        // explicit enough.
+<span class="nc bnc" id="L670" title="All 2 branches missed.">        if (logHasNoCheckPoint) {</span>
+<span class="nc" id="L671">            applyForEachAddress(this::processLogData);</span>
+        } else {
+<span class="nc" id="L673">            applyForEachAddress(this::findCheckPointsInLogAddress);</span>
+<span class="nc" id="L674">            resurrectCheckpoints();</span>
+
+<span class="nc" id="L676">            resetAddressProcessed();</span>
+<span class="nc" id="L677">            applyForEachAddress(this::processLogData);</span>
+        }
+
+<span class="nc" id="L680">    }</span>
+
+    /**
+     * Entry point to load the SMRMaps in memory.
+     *
+     * When this function returns, the maps are fully loaded.
+     */
+    public void loadMaps() {
+<span class="nc" id="L688">        log.info(&quot;loadMaps: Starting to resurrect maps&quot;);</span>
+<span class="nc" id="L689">        initializeHeadAndTails();</span>
+
+<span class="nc bnc" id="L691" title="All 2 branches missed.">        if(recoverSequencerMode) {</span>
+<span class="nc" id="L692">            recoverSequencer();</span>
+        }
+        else {
+<span class="nc" id="L695">            recoverRuntime();</span>
+        }
+
+<span class="nc" id="L698">        log.info(&quot;loadMaps[startAddress: {}, stopAddress (included): {}, addressProcessed: {}]&quot;,</span>
+<span class="nc" id="L699">                logHead, logTail, addressProcessed);</span>
+<span class="nc" id="L700">        log.info(&quot;loadMaps: Loading successful, Corfu maps are alive!&quot;);</span>
+<span class="nc" id="L701">    }</span>
+
+
+    /**
+     * This method will apply for each address the consumer given in parameter.
+     *
+     * The Necromancer thread is used to do the heavy lifting.
+     * @param logDataProcessor
+     */
+    private void applyForEachAddress(BiConsumer&lt;Long, ILogData&gt; logDataProcessor) {
+
+<span class="nc" id="L712">        summonNecromancer();</span>
+<span class="nc" id="L713">        nextRead = logHead;</span>
+<span class="nc bnc" id="L714" title="All 2 branches missed.">        while (nextRead &lt;= logTail) {</span>
+<span class="nc" id="L715">            final long start = nextRead;</span>
+<span class="nc" id="L716">            final long stopNotIncluded = Math.min(start + batchReadSize, logTail + 1);</span>
+<span class="nc" id="L717">            nextRead = stopNotIncluded;</span>
+<span class="nc" id="L718">            final Map&lt;Long, ILogData&gt; range = getLogData(runtime, start, stopNotIncluded);</span>
+
+            // Sanity
+<span class="nc" id="L721">            boolean canProcessRange = true;</span>
+<span class="nc bnc" id="L722" title="All 2 branches missed.">            for(Map.Entry&lt;Long, ILogData&gt; entry : range.entrySet()) {</span>
+<span class="nc" id="L723">                long address = entry.getKey();</span>
+<span class="nc" id="L724">                ILogData logData = entry.getValue();</span>
+<span class="nc bnc" id="L725" title="All 2 branches missed.">                if (address != addressProcessed + 1) {</span>
+<span class="nc" id="L726">                    fail(&quot;We missed an entry. It can lead to correctness issues.&quot;);</span>
+                }
+<span class="nc" id="L728">                addressProcessed++;</span>
+
+<span class="nc bnc" id="L730" title="All 2 branches missed.">                if (logData.getType() == DataType.TRIMMED) {</span>
+<span class="nc" id="L731">                    log.warn(&quot;applyForEachAddress[{}, start={}] address is trimmed&quot;, address, logHead);</span>
+<span class="nc" id="L732">                    handleRetry();</span>
+<span class="nc" id="L733">                    canProcessRange = false;</span>
+<span class="nc" id="L734">                    break;</span>
+                }
+
+<span class="nc bnc" id="L737" title="All 2 branches missed.">                if(address % STATUS_UPDATE_PACE == 0) {</span>
+<span class="nc" id="L738">                    log.info(&quot;applyForEachAddress: read up to {}&quot;, address);</span>
+                }
+<span class="nc" id="L740">            }</span>
+<span class="nc bnc" id="L741" title="All 2 branches missed.">            if (canProcessRange) {</span>
+<span class="nc" id="L742">                invokeNecromancer(range, logDataProcessor);</span>
+            }
+<span class="nc" id="L744">        }</span>
+<span class="nc" id="L745">        killNecromancer();</span>
+<span class="nc" id="L746">    }</span>
+
+<span class="nc bnc" id="L748" title="All 34 branches missed.">    @Data</span>
+    private class CheckPoint {
+<span class="nc" id="L750">        final UUID checkPointId;</span>
+<span class="nc" id="L751">        long snapshotAddress;</span>
+<span class="nc" id="L752">        long startAddress;</span>
+<span class="nc" id="L753">        boolean ended = false;</span>
+<span class="nc" id="L754">        boolean started = false;</span>
+<span class="nc" id="L755">        List&lt;Long&gt; addresses = new ArrayList&lt;&gt;();</span>
+
+        public CheckPoint addAddress(long address) {
+<span class="nc" id="L758">            addresses.add(address);</span>
+<span class="nc" id="L759">            return this;</span>
+        }
+    }
+
+<span class="nc bnc" id="L763" title="All 30 branches missed.">    @Data</span>
+    private class StreamMetaData {
+<span class="nc" id="L765">        final UUID streamId;</span>
+<span class="nc" id="L766">        CheckPoint latestCheckPoint;</span>
+<span class="nc" id="L767">        Map&lt;UUID, CheckPoint&gt; checkPoints = new HashMap&lt;&gt;();</span>
+
+        public Long getHeadAddress() {
+<span class="nc bnc" id="L770" title="All 2 branches missed.">            return latestCheckPoint != null ? latestCheckPoint.snapshotAddress : Address.NEVER_READ;</span>
+        }
+
+        public void addCheckPoint(CheckPoint cp) {
+<span class="nc" id="L774">            checkPoints.put(cp.getCheckPointId(), cp);</span>
+<span class="nc" id="L775">        }</span>
+
+        public CheckPoint getCheckPoint(UUID checkPointId) {
+<span class="nc" id="L778">            return checkPoints.get(checkPointId);</span>
+        }
+
+        public boolean checkPointExists(UUID checkPointId) {
+<span class="nc" id="L782">            return checkPoints.containsKey(checkPointId);</span>
+        }
+
+        public void updateLatestCheckpointIfLater(UUID checkPointId) {
+<span class="nc" id="L786">            CheckPoint contender = getCheckPoint(checkPointId);</span>
+<span class="nc bnc" id="L787" title="All 2 branches missed.">            if (latestCheckPoint == null ||</span>
+<span class="nc bnc" id="L788" title="All 2 branches missed.">                    contender.getSnapshotAddress() &gt; latestCheckPoint.getSnapshotAddress()) {</span>
+<span class="nc" id="L789">                        latestCheckPoint = contender;</span>
+            }
+<span class="nc" id="L791">        }</span>
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

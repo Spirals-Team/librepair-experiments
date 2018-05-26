@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractView.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">samples</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.view</a> &gt; <span class="el_source">AbstractView.java</span></div><h1>AbstractView.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.view;
+
+import java.time.Duration;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
+
+import javax.annotation.Nonnull;
+import lombok.extern.slf4j.Slf4j;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.exceptions.NetworkException;
+import org.corfudb.runtime.exceptions.ServerNotReadyException;
+import org.corfudb.runtime.exceptions.WrongEpochException;
+import org.corfudb.runtime.exceptions.unrecoverable.SystemUnavailableError;
+import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuInterruptedError;
+import org.corfudb.util.Sleep;
+
+/**
+ * All views inherit from AbstractView.
+ *
+ * &lt;p&gt;AbstractView requires a runtime, and provides a layoutHelper function.&lt;/p&gt;
+ *
+ * &lt;p&gt;The layoutHelper function is called whenever a view tries to access a layout.
+ * If the layoutHelper catches an exception which is due to connection issues
+ * or an incorrect epoch, it asks the runtime to invalidate that layout
+ * by reporting it to a layout server, and retries the function.&lt;/p&gt;
+ *
+ * &lt;p&gt;Created by mwei on 12/10/15.&lt;/p&gt;
+ */
+<span class="nc" id="L30">@Slf4j</span>
+public abstract class AbstractView {
+
+    final CorfuRuntime runtime;
+
+<span class="nc" id="L35">    public AbstractView(@Nonnull final CorfuRuntime runtime) {</span>
+<span class="nc" id="L36">        this.runtime = runtime;</span>
+<span class="nc" id="L37">    }</span>
+
+    /**
+     * Get the current layout.
+     *
+     * @return The current layout.
+     */
+    public Layout getCurrentLayout() {
+        while (true) {
+            try {
+<span class="nc" id="L47">                return runtime.layout.get();</span>
+<span class="nc" id="L48">            } catch (Exception ex) {</span>
+<span class="nc" id="L49">                log.warn(&quot;Error executing remote call, invalidating view and retrying in {}s&quot;,</span>
+<span class="nc" id="L50">                        runtime.getParameters().getConnectionRetryRate(), ex);</span>
+<span class="nc" id="L51">                runtime.invalidateLayout();</span>
+<span class="nc" id="L52">                Sleep.sleepUninterruptibly(runtime.getParameters().getConnectionRetryRate());</span>
+<span class="nc" id="L53">            }</span>
+        }
+    }
+
+    public &lt;T, A extends RuntimeException, B extends RuntimeException, C extends RuntimeException,
+            D extends RuntimeException&gt; T layoutHelper(LayoutFunction&lt;Layout, T, A, B, C, D&gt;
+                                                               function)
+            throws A, B, C, D {
+<span class="nc" id="L61">        return layoutHelper(function, false);</span>
+    }
+
+    /**
+     * Maintains reference of the RuntimeLayout which gets invalidated if the AbstractView
+     * encounters a newer layout. (with a greater epoch)
+     */
+<span class="nc" id="L68">    private AtomicReference&lt;RuntimeLayout&gt; runtimeLayout = new AtomicReference&lt;&gt;();</span>
+
+    /**
+     * Helper function for view to retrieve layouts.
+     * This function will retry the given function indefinitely,
+     * invalidating the view if there was a exception contacting the endpoint.
+     *
+     * There is a flag to set if we want the caller to handle Runtime Exceptions. For some
+     * special cases (like writes), we need to do a bit more work upon a Runtime Exception than just retry.
+     *
+     * @param function The function to execute.
+     * @param &lt;T&gt;      The return type of the function.
+     * @param &lt;A&gt;      Any exception the function may throw.
+     * @param &lt;B&gt;      Any exception the function may throw.
+     * @param &lt;C&gt;      Any exception the function may throw.
+     * @param &lt;D&gt;      Any exception the function may throw.
+     * @param rethrowAllExceptions if all exceptions are rethrown to caller.
+     * @return The return value of the function.
+     */
+    public &lt;T, A extends RuntimeException, B extends RuntimeException, C extends RuntimeException,
+            D extends RuntimeException&gt; T layoutHelper(LayoutFunction&lt;Layout, T, A, B, C, D&gt;
+                                                                          function,
+                                                       boolean rethrowAllExceptions)
+            throws A, B, C, D {
+<span class="nc" id="L92">        runtime.beforeRpcHandler.run();</span>
+<span class="nc" id="L93">        final Duration retryRate = runtime.getParameters().getConnectionRetryRate();</span>
+<span class="nc" id="L94">        int systemDownTriggerCounter = runtime.getParameters().getSystemDownHandlerTriggerLimit();</span>
+        while (true) {
+            try {
+<span class="nc" id="L97">                final Layout layout = runtime.layout.get();</span>
+<span class="nc" id="L98">                return function.apply(runtimeLayout.updateAndGet(rLayout -&gt; {</span>
+<span class="nc bnc" id="L99" title="All 4 branches missed.">                    if (rLayout == null || rLayout.getLayout().getEpoch() != layout.getEpoch()) {</span>
+<span class="nc" id="L100">                        return new RuntimeLayout(layout, runtime);</span>
+                    }
+<span class="nc" id="L102">                    return rLayout;</span>
+                }));
+<span class="nc" id="L104">            } catch (RuntimeException re) {</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">                if (re.getCause() instanceof TimeoutException) {</span>
+<span class="nc" id="L106">                    log.warn(&quot;Timeout executing remote call, invalidating view and retrying in {}s&quot;,</span>
+                            retryRate);
+<span class="nc bnc" id="L108" title="All 2 branches missed.">                } else if (re instanceof ServerNotReadyException) {</span>
+<span class="nc" id="L109">                    log.warn(&quot;Server still not ready. Waiting for server to start &quot;</span>
+                            + &quot;accepting requests.&quot;);
+<span class="nc bnc" id="L111" title="All 2 branches missed.">                } else if (re instanceof WrongEpochException) {</span>
+<span class="nc" id="L112">                    WrongEpochException we = (WrongEpochException) re;</span>
+<span class="nc" id="L113">                    log.warn(&quot;Got a wrong epoch exception, updating epoch to {} and &quot;</span>
+<span class="nc" id="L114">                            + &quot;invalidate view&quot;, we.getCorrectEpoch());</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">                } else if (re instanceof NetworkException) {</span>
+<span class="nc" id="L116">                    log.warn(&quot;layoutHelper: System seems unavailable&quot;, re);</span>
+                } else {
+<span class="nc" id="L118">                    throw re;</span>
+                }
+<span class="nc bnc" id="L120" title="All 2 branches missed.">                if (rethrowAllExceptions) {</span>
+<span class="nc" id="L121">                    throw new RuntimeException(re);</span>
+                }
+
+                // Invoking the systemDownHandler if the client cannot connect to the server.
+<span class="nc bnc" id="L125" title="All 2 branches missed.">                if (--systemDownTriggerCounter &lt;= 0) {</span>
+<span class="nc" id="L126">                    runtime.systemDownHandler.run();</span>
+                }
+<span class="nc" id="L128">                runtime.invalidateLayout();</span>
+<span class="nc" id="L129">                Sleep.sleepUninterruptibly(retryRate);</span>
+
+<span class="nc" id="L131">            } catch (InterruptedException ie) {</span>
+<span class="nc" id="L132">                throw new UnrecoverableCorfuInterruptedError(&quot;Interrupted in layoutHelper&quot;, ie);</span>
+<span class="nc" id="L133">            } catch (ExecutionException ex) {</span>
+<span class="nc" id="L134">                log.warn(&quot;Error executing remote call, invalidating view and retrying in {} ms&quot;,</span>
+                        retryRate, ex);
+
+                // If SystemUnavailable exception is thrown by the layout.get() completable future,
+                // the exception will materialize as an ExecutionException. In that case, we need to propagate
+                // this exception.
+<span class="nc bnc" id="L140" title="All 2 branches missed.">                if (ex.getCause() instanceof SystemUnavailableError) {</span>
+<span class="nc" id="L141">                    throw (SystemUnavailableError) ex.getCause();</span>
+                }
+
+<span class="nc" id="L144">                runtime.invalidateLayout();</span>
+<span class="nc" id="L145">                Sleep.sleepUninterruptibly(retryRate);</span>
+<span class="nc" id="L146">            }</span>
+        }
+    }
+
+    @FunctionalInterface
+    public interface LayoutFunction&lt;V, R, A extends Throwable,
+            B extends Throwable, C extends Throwable, D extends Throwable&gt; {
+        R apply(RuntimeLayout l) throws A, B, C, D;
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

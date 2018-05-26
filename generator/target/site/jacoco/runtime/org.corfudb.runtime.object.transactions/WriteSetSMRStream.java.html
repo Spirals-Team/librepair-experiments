@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WriteSetSMRStream.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">generator</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.object.transactions</a> &gt; <span class="el_source">WriteSetSMRStream.java</span></div><h1>WriteSetSMRStream.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.object.transactions;
+
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Stream;
+
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.protocols.logprotocol.SMREntry;
+import org.corfudb.protocols.wireprotocol.TokenResponse;
+import org.corfudb.runtime.object.ISMRStream;
+import org.corfudb.runtime.view.Address;
+import org.corfudb.util.Utils;
+
+/**
+ * Created by mwei on 3/13/17.
+ *
+ * &lt;p&gt;SMRStreamAdapter wraps an optimistic transaction execution context, per
+ * object, with an SMRStream API.
+ *
+ * &lt;p&gt;The main purpose of wrapping the write-set of optimistic transactions as an
+ * SMRStream is to provide the abstraction of a stream of SMREntries. The
+ * SMRStream maintains for us a position in the sequence. We can consume it
+ * in a forward direction, and scroll back to previously read entries.
+ *
+ * &lt;p&gt;First, forget about nested transactions for now, and neglect the contexts
+ * stack; that is, assume the stack has size 1.
+ *
+ * &lt;p&gt;A reminder from AbstractTransactionalContext about the write-set of a
+ * transaction:
+ * * A write-set is a key component of a transaction.
+ * * We collect the write-set as a map, organized by streams.
+ * * For each stream, we record a pair:
+ * *  - a set of conflict-parameters modified by this transaction on the
+ * *  stream,
+ * *  - a list of SMR updates by this transcation on the stream.
+ * *
+ *
+ * &lt;p&gt;The implementation of the current() method looks at the write-set, picks
+ * the list of SMRentries corresponding to the current object id, and returns
+ * the entry in the list corredponding the the current SMRStream position.
+ *
+ * &lt;p&gt;previous() decrements the current SMRStream position and returns the entry
+ * corresponding to it.
+ *
+ * &lt;p&gt;RemainingUpTo() returns a list of entries.
+ *
+ * &lt;p&gt;WriteSetSMRStream does not support the full API - neither append nor seek are
+ * supported.
+ *
+ * &lt;p&gt;Enter nested transactions.
+ *
+ * &lt;p&gt;WriteSetSMRStream maintains the abstractions also across nested transactions.
+ * It supports navigating forward/backward across the SMREntries in the entire transcation stack.
+ *
+ */
+<span class="nc" id="L60">@Slf4j</span>
+@Deprecated
+@SuppressWarnings(&quot;checkstyle:abbreviationaswordinname&quot;)
+public class WriteSetSMRStream implements ISMRStream {
+
+    List&lt;AbstractTransactionalContext&gt; contexts;
+
+<span class="nc" id="L67">    int currentContext = 0;</span>
+
+    // TODO add comment
+    long currentContextPos;
+
+    // TODO add comment
+    long writePos;
+
+    // the specific stream-id for which this SMRstream wraps the write-set
+    final UUID id;
+
+    /**
+     * Returns a new WriteSetSMRStream containing transactional contexts and stream id.
+     * @param contexts  list of transactional contexts
+     * @param id  stream id
+     */
+    public WriteSetSMRStream(List&lt;AbstractTransactionalContext&gt; contexts,
+<span class="nc" id="L84">                             UUID id) {</span>
+<span class="nc" id="L85">        this.contexts = contexts;</span>
+<span class="nc" id="L86">        this.id = id;</span>
+<span class="nc" id="L87">        reset();</span>
+<span class="nc" id="L88">    }</span>
+
+    /** Return whether stream current transaction is the thread current transaction.
+     *
+     * &lt;p&gt;This is validated by checking whether the current context
+     * for this stream is the same as the current context for this thread.
+     *
+     * @return  True, if the stream current context is the thread current context.
+     *          False otherwise.
+     */
+    public boolean isStreamCurrentContextThreadCurrentContext() {
+<span class="nc" id="L99">        return contexts.get(currentContext)</span>
+<span class="nc" id="L100">                .equals(TransactionalContext.getCurrentContext());</span>
+    }
+
+    /** Return whether we are the stream for this current thread
+     *
+     * &lt;p&gt;This is validated by checking whether the root context
+     * for this stream is the same as the root context for this thread.
+     *
+     * @return  True, if the thread owns the optimistic stream
+     *          False otherwise.
+     */
+    public boolean isStreamForThisThread() {
+<span class="nc" id="L112">        return contexts.get(0)</span>
+<span class="nc" id="L113">                .equals(TransactionalContext.getRootContext());</span>
+    }
+
+    void mergeTransaction() {
+<span class="nc" id="L117">        contexts.remove(contexts.size() - 1);</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        if (currentContext == contexts.size()) {</span>
+            // recalculate the pos based on the write pointer
+            // TODO add explanation, code below very confusing!
+<span class="nc" id="L121">            long readPos = Address.maxNonAddress();</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">            for (int i = 0; i &lt; contexts.size(); i++) {</span>
+<span class="nc" id="L123">                readPos += contexts.get(i).getWriteSetEntryList(id).size();</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">                if (readPos &gt;= writePos) {</span>
+<span class="nc" id="L125">                    currentContextPos = contexts.get(i).getWriteSetEntryList(id).size()</span>
+                                        - (writePos - readPos) - 1;
+                }
+            }
+<span class="nc" id="L129">            currentContext--;</span>
+        }
+<span class="nc" id="L131">    }</span>
+
+    @Override
+    public List&lt;SMREntry&gt; remainingUpTo(long maxGlobal) {
+        // Check for any new contexts
+<span class="nc" id="L136">        if (TransactionalContext.getTransactionStack().size()</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">                &gt; contexts.size()) {</span>
+<span class="nc" id="L138">            contexts = TransactionalContext.getTransactionStackAsList();</span>
+<span class="nc" id="L139">        } else if (TransactionalContext.getTransactionStack().size()</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">                &lt; contexts.size()) {</span>
+<span class="nc" id="L141">            mergeTransaction();</span>
+        }
+<span class="nc" id="L143">        List&lt;SMREntry&gt; entryList = new LinkedList&lt;&gt;();</span>
+
+
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        for (int i = currentContext; i &lt; contexts.size(); i++) {</span>
+<span class="nc" id="L147">            final List&lt;SMREntry&gt; writeSet = contexts.get(i)</span>
+<span class="nc" id="L148">                    .getWriteSetEntryList(id);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            long readContextStart = i == currentContext ? currentContextPos + 1 : 0;</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">            for (long j = readContextStart; j &lt; writeSet.size(); j++) {</span>
+<span class="nc" id="L151">                entryList.add(writeSet.get((int) j));</span>
+<span class="nc" id="L152">                writePos++;</span>
+            }
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            if (writeSet.size() &gt; 0) {</span>
+<span class="nc" id="L155">                currentContext = i;</span>
+<span class="nc" id="L156">                currentContextPos = writeSet.size() - 1;</span>
+            }
+        }
+<span class="nc" id="L159">        return entryList;</span>
+    }
+
+    @Override
+    public List&lt;SMREntry&gt; current() {
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        if (Address.nonAddress(writePos)) {</span>
+<span class="nc" id="L165">            return null;</span>
+        }
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        if (Address.nonAddress(currentContextPos)) {</span>
+<span class="nc" id="L168">            currentContextPos = -1;</span>
+        }
+<span class="nc" id="L170">        return Collections.singletonList(contexts</span>
+<span class="nc" id="L171">                .get(currentContext)</span>
+<span class="nc" id="L172">                .getWriteSetEntryList(id)</span>
+<span class="nc" id="L173">                .get((int)(currentContextPos)));</span>
+    }
+
+    @Override
+    public List&lt;SMREntry&gt; previous() {
+<span class="nc" id="L178">        writePos--;</span>
+
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        if (writePos &lt;= Address.maxNonAddress()) {</span>
+<span class="nc" id="L181">            writePos = Address.maxNonAddress();</span>
+<span class="nc" id="L182">            return null;</span>
+        }
+
+<span class="nc" id="L185">        currentContextPos--;</span>
+        // Pop the context if we're at the beginning of it
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        if (currentContextPos &lt;= Address.maxNonAddress()) {</span>
+            do {
+<span class="nc bnc" id="L189" title="All 2 branches missed.">                if (currentContext == 0) {</span>
+<span class="nc" id="L190">                    throw new RuntimeException(</span>
+<span class="nc" id="L191">                            &quot;Attempted to pop first context (pos=&quot; + pos() + &quot;)&quot;);</span>
+                } else {
+<span class="nc" id="L193">                    currentContext--;</span>
+                }
+<span class="nc" id="L195">            } while (contexts</span>
+<span class="nc" id="L196">                    .get(currentContext)</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">                    .getWriteSetEntrySize(id) == 0);</span>
+<span class="nc" id="L198">            currentContextPos = contexts</span>
+<span class="nc" id="L199">                    .get(currentContext)</span>
+<span class="nc" id="L200">                    .getWriteSetEntrySize(id) - 1 ;</span>
+        }
+
+<span class="nc" id="L203">        return current();</span>
+    }
+
+    @Override
+    public long pos() {
+<span class="nc" id="L208">        return writePos;</span>
+    }
+
+    @Override
+    public void reset() {
+<span class="nc" id="L213">        writePos = Address.maxNonAddress();</span>
+<span class="nc" id="L214">        currentContext = 0;</span>
+<span class="nc" id="L215">        currentContextPos = Address.maxNonAddress();</span>
+<span class="nc" id="L216">    }</span>
+
+    @Override
+    public void seek(long globalAddress) {
+<span class="nc" id="L220">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public Stream&lt;SMREntry&gt; stream() {
+<span class="nc" id="L225">        return streamUpTo(Address.MAX);</span>
+    }
+
+    @Override
+    public Stream&lt;SMREntry&gt; streamUpTo(long maxGlobal) {
+<span class="nc" id="L230">        return remainingUpTo(maxGlobal)</span>
+<span class="nc" id="L231">                .stream();</span>
+    }
+
+    @Override
+    public long append(SMREntry entry,
+                       Function&lt;TokenResponse, Boolean&gt; acquisitionCallback,
+                       Function&lt;TokenResponse, Boolean&gt; deacquisitionCallback) {
+<span class="nc" id="L238">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public UUID getID() {
+<span class="nc" id="L243">        return id;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L248">        return &quot;WSSMRStream[&quot; + Utils.toReadableId(getID()) + &quot;]&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

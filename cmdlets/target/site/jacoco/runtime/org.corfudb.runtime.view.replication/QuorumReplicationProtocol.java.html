@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>QuorumReplicationProtocol.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.view.replication</a> &gt; <span class="el_source">QuorumReplicationProtocol.java</span></div><h1>QuorumReplicationProtocol.java</h1><pre class="source lang-java linenums">/**
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+package org.corfudb.runtime.view.replication;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
+import org.corfudb.protocols.wireprotocol.DataType;
+import org.corfudb.protocols.wireprotocol.ILogData;
+import org.corfudb.protocols.wireprotocol.IMetadata;
+import org.corfudb.protocols.wireprotocol.LogData;
+import org.corfudb.protocols.wireprotocol.ReadResponse;
+import org.corfudb.runtime.exceptions.DataOutrankedException;
+import org.corfudb.runtime.exceptions.HoleFillRequiredException;
+import org.corfudb.runtime.exceptions.LogUnitException;
+import org.corfudb.runtime.exceptions.OverwriteException;
+import org.corfudb.runtime.exceptions.QuorumUnreachableException;
+import org.corfudb.runtime.exceptions.TrimmedException;
+import org.corfudb.runtime.exceptions.ValueAdoptedException;
+import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuInterruptedError;
+import org.corfudb.runtime.view.QuorumFuturesFactory;
+import org.corfudb.runtime.view.RuntimeLayout;
+import org.corfudb.util.CFUtils;
+import org.corfudb.util.Holder;
+import org.corfudb.util.retry.ExponentialBackoffRetry;
+import org.corfudb.util.retry.IRetry;
+import org.corfudb.util.retry.RetryNeededException;
+
+import java.time.Duration;
+import java.util.Comparator;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+
+/**
+ * Created by kspirov on 4/23/17.
+ */
+<span class="nc" id="L44">@Slf4j</span>
+public class QuorumReplicationProtocol extends AbstractReplicationProtocol {
+
+    private static final int QUORUM_RECOVERY_READ_EXPONENTIAL_RETRY_BASE = 3;
+    private static final int QUORUM_RECOVERY_READ_EXPONENTIAL_RETRY_BACKOFF_DURATION_SECONDS = 10;
+    private static final int QUORUM_RECOVERY_READ_EXTRA_WAIT_MILLIS = 20;
+    private static final float QUORUM_RECOVERY_READ_WAIT_RANDOM_PART = .5f;
+
+<span class="nc" id="L52">    private static final Consumer&lt;ExponentialBackoffRetry&gt; WRITE_RETRY_SETTINGS = x -&gt; {</span>
+<span class="nc" id="L53">        x.setBase(QUORUM_RECOVERY_READ_EXPONENTIAL_RETRY_BASE);</span>
+<span class="nc" id="L54">        x.setExtraWait(QUORUM_RECOVERY_READ_EXTRA_WAIT_MILLIS);</span>
+<span class="nc" id="L55">        x.setBackoffDuration(Duration.ofSeconds(</span>
+                QUORUM_RECOVERY_READ_EXPONENTIAL_RETRY_BACKOFF_DURATION_SECONDS));
+<span class="nc" id="L57">        x.setRandomPortion(QUORUM_RECOVERY_READ_WAIT_RANDOM_PART);</span>
+<span class="nc" id="L58">    };</span>
+
+    public QuorumReplicationProtocol(IHoleFillPolicy holeFillPolicy) {
+<span class="nc" id="L61">        super(holeFillPolicy);</span>
+<span class="nc" id="L62">    }</span>
+
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public ILogData peek(RuntimeLayout runtimeLayout, long address) {
+<span class="nc" id="L70">        int numUnits = runtimeLayout.getLayout().getSegmentLength(address);</span>
+<span class="nc" id="L71">        log.trace(&quot;Peek[{}]: quorum {}/{}&quot;, address, numUnits, numUnits);</span>
+        try {
+<span class="nc" id="L73">            ReadResponse readResponse = null;</span>
+            try {
+<span class="nc" id="L75">                CompletableFuture&lt;ReadResponse&gt;[] futures = new CompletableFuture[numUnits];</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">                for (int i = 0; i &lt; numUnits; i++) {</span>
+<span class="nc" id="L77">                    futures[i] = runtimeLayout.getLogUnitClient(address, i).read(address);</span>
+                }
+<span class="nc" id="L79">                QuorumFuturesFactory.CompositeFuture&lt;ReadResponse&gt; future =</span>
+<span class="nc" id="L80">                        QuorumFuturesFactory.getQuorumFuture(new ReadResponseComparator(address),</span>
+                                futures);
+<span class="nc" id="L82">                readResponse = CFUtils.getUninterruptibly(future, QuorumUnreachableException.class);</span>
+<span class="nc" id="L83">            } catch (QuorumUnreachableException e) {</span>
+<span class="nc" id="L84">                log.debug(&quot;peek: Quorum unreachable: {}&quot;, e);</span>
+<span class="nc" id="L85">                return null;</span>
+<span class="nc" id="L86">            }</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">            if (readResponse != null) {</span>
+<span class="nc" id="L88">                LogData result = readResponse.getAddresses().get(address);</span>
+<span class="nc bnc" id="L89" title="All 4 branches missed.">                if (result != null &amp;&amp; !isEmptyType(result.getType())) {</span>
+<span class="nc" id="L90">                    return result;</span>
+                }
+            }
+<span class="nc" id="L93">            return null;</span>
+<span class="nc" id="L94">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L95">            throw e;</span>
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    protected void holeFill(RuntimeLayout runtimeLayout, long globalAddress) {
+<span class="nc" id="L104">        int numUnits = runtimeLayout.getLayout().getSegmentLength(globalAddress);</span>
+<span class="nc" id="L105">        log.trace(&quot;fillHole[{}]: quorum head {}/{}&quot;, globalAddress, 1, numUnits);</span>
+<span class="nc" id="L106">        try (ILogData.SerializationHandle holeData = createEmptyData(globalAddress,</span>
+                DataType.HOLE, new IMetadata.DataRank(0))) {
+<span class="nc" id="L108">            recoveryWrite(runtimeLayout, holeData.getSerialized());</span>
+<span class="nc bnc" id="L109" title="All 8 branches missed.">        }</span>
+<span class="nc" id="L110">    }</span>
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void write(RuntimeLayout runtimeLayout, ILogData data) throws OverwriteException {
+<span class="nc" id="L117">        final long globalAddress = data.getGlobalAddress();</span>
+<span class="nc" id="L118">        log.debug(&quot;Write at {} &quot; + globalAddress);</span>
+<span class="nc" id="L119">        IMetadata.DataRank rank = new IMetadata.DataRank(0);</span>
+<span class="nc" id="L120">        QuorumFuturesFactory.CompositeFuture&lt;Boolean&gt; future = null;</span>
+<span class="nc" id="L121">        data.setRank(rank);</span>
+        try {
+<span class="nc" id="L123">            try (ILogData.SerializationHandle sh =</span>
+<span class="nc" id="L124">                         data.getSerializedForm()) {</span>
+<span class="nc" id="L125">                future = getWriteFuture(runtimeLayout, sh.getSerialized());</span>
+<span class="nc" id="L126">                CFUtils.getUninterruptibly(future, QuorumUnreachableException.class,</span>
+                        OverwriteException.class, DataOutrankedException.class);
+<span class="nc bnc" id="L128" title="All 8 branches missed.">            }</span>
+<span class="nc" id="L129">        } catch (OverwriteException e) {</span>
+<span class="nc" id="L130">            log.error(&quot;Client implementation error, race in phase 1. &quot;</span>
+                    + &quot;Broken sequencer, data consistency in danger.&quot;);
+<span class="nc" id="L132">            throw e;</span>
+<span class="nc" id="L133">        } catch (LogUnitException | QuorumUnreachableException e) {</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">            if (future.containsThrowableFrom(DataOutrankedException.class)</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">                    || future.containsThrowableFrom(ValueAdoptedException.class)) {</span>
+                // we are competing with other client that writes the same data or fills a hole
+<span class="nc" id="L137">                boolean adopted = recoveryWrite(runtimeLayout, data);</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">                if (!adopted) {</span>
+<span class="nc" id="L139">                    return;</span>
+                }
+            }
+<span class="nc" id="L142">            throw new OverwriteException();</span>
+<span class="nc" id="L143">        }</span>
+<span class="nc" id="L144">    }</span>
+
+
+    private ILogData.SerializationHandle createEmptyData(
+            long position, DataType type, IMetadata.DataRank rank) {
+<span class="nc" id="L149">        ILogData data = new LogData(type);</span>
+<span class="nc" id="L150">        data.setRank(rank);</span>
+<span class="nc" id="L151">        data.setGlobalAddress(position);</span>
+<span class="nc" id="L152">        return data.getSerializedForm();</span>
+    }
+
+    private boolean isEmptyType(DataType type) {
+<span class="nc bnc" id="L156" title="All 4 branches missed.">        return type == DataType.RANK_ONLY || type == DataType.EMPTY;</span>
+    }
+
+
+    private boolean recoveryWrite(RuntimeLayout runtimeLayout, ILogData logData) {
+<span class="nc" id="L161">        long address = logData.getGlobalAddress();</span>
+<span class="nc" id="L162">        log.debug(&quot;Recovery write at {} &quot; + address);</span>
+<span class="nc" id="L163">        Holder&lt;ILogData&gt; dh = new Holder&lt;&gt;(logData);</span>
+<span class="nc" id="L164">        AtomicBoolean otherValueAdopted = new AtomicBoolean(false);</span>
+<span class="nc" id="L165">        AtomicInteger retryCount = new AtomicInteger(0);</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (logData.getRank() == null) {</span>
+<span class="nc" id="L167">            logData.setRank(new IMetadata.DataRank(0));</span>
+        }
+        try {
+<span class="nc" id="L170">            IRetry.build(ExponentialBackoffRetry.class, () -&gt; {</span>
+<span class="nc" id="L171">                QuorumFuturesFactory.CompositeFuture&lt;Boolean&gt; future = null;</span>
+                try {
+<span class="nc" id="L173">                    log.debug(&quot;Recovery write loop for {}&quot;, log);</span>
+                    // increment the rank
+<span class="nc" id="L175">                    dh.getRef().releaseBuffer();</span>
+<span class="nc" id="L176">                    dh.getRef().setRank(dh.getRef().getRank().buildHigherRank());</span>
+                    // peek for existing
+<span class="nc bnc" id="L178" title="All 2 branches missed.">                    if (retryCount.getAndIncrement() &gt; 0) {</span>
+                        try {
+<span class="nc" id="L180">                            return holeFillPolicy</span>
+<span class="nc" id="L181">                                    .peekUntilHoleFillRequired(address,</span>
+<span class="nc" id="L182">                                            a -&gt; peek(runtimeLayout, a));</span>
+<span class="nc" id="L183">                        } catch (HoleFillRequiredException e) {</span>
+<span class="nc" id="L184">                            log.debug(e.getMessage(), e);</span>
+                            // continuing
+                        }
+                    }
+                    // phase 1
+<span class="nc" id="L189">                    try (ILogData.SerializationHandle ph1 = createEmptyData(</span>
+<span class="nc" id="L190">                            dh.getRef().getGlobalAddress(),</span>
+                            DataType.RANK_ONLY,
+<span class="nc" id="L192">                            dh.getRef().getRank())) {</span>
+<span class="nc" id="L193">                        future = getWriteFuture(runtimeLayout, ph1.getSerialized());</span>
+<span class="nc" id="L194">                        CFUtils.getUninterruptibly(future, QuorumUnreachableException.class,</span>
+                                OverwriteException.class, DataOutrankedException.class);
+<span class="nc bnc" id="L196" title="All 8 branches missed.">                    } catch (LogUnitException | QuorumUnreachableException e) {</span>
+<span class="nc" id="L197">                        ReadResponse rr = getAdoptedValueWithHighestRankIfPresent(</span>
+<span class="nc" id="L198">                                address, future.getThrowables());</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">                        if (rr != null) { // check</span>
+<span class="nc" id="L200">                            LogData logDataExisting = rr.getAddresses().get(address);</span>
+<span class="nc" id="L201">                            logDataExisting.releaseBuffer();</span>
+<span class="nc" id="L202">                            logDataExisting.setRank(dh.getRef().getRank());</span>
+<span class="nc" id="L203">                            dh.setRef(logDataExisting.getSerializedForm().getSerialized());</span>
+<span class="nc" id="L204">                            otherValueAdopted.set(true);</span>
+                            // value adopted - continue on phase 2
+<span class="nc" id="L206">                        } else {</span>
+<span class="nc" id="L207">                            throw e;</span>
+                        }
+<span class="nc" id="L209">                    }</span>
+                    // phase 2 - only if exception is not thrown from phase 1
+<span class="nc" id="L211">                    future = getWriteFuture(runtimeLayout, dh.getRef());</span>
+<span class="nc" id="L212">                    CFUtils.getUninterruptibly(future, QuorumUnreachableException.class,</span>
+                            OverwriteException.class, DataOutrankedException.class);
+<span class="nc" id="L214">                    log.trace(&quot;Write done[{}]: {}&quot;, address);</span>
+<span class="nc" id="L215">                    return dh.getRef();</span>
+<span class="nc" id="L216">                } catch (QuorumUnreachableException | DataOutrankedException e) {</span>
+<span class="nc" id="L217">                    throw new RetryNeededException();</span>
+<span class="nc" id="L218">                } catch (RuntimeException e) {</span>
+<span class="nc" id="L219">                    throw e;</span>
+                }
+<span class="nc" id="L221">            }).setOptions(WRITE_RETRY_SETTINGS).run();</span>
+<span class="nc" id="L222">            return otherValueAdopted.get();</span>
+<span class="nc" id="L223">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L224">            throw new UnrecoverableCorfuInterruptedError(&quot;Recovery interrupted&quot;, e);</span>
+<span class="nc" id="L225">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L226">            throw e;</span>
+        }
+
+    }
+
+    private QuorumFuturesFactory.CompositeFuture&lt;Boolean&gt; getWriteFuture(
+            RuntimeLayout runtimeLayout, ILogData data) {
+<span class="nc" id="L233">        int numUnits = runtimeLayout.getLayout().getSegmentLength(data.getGlobalAddress());</span>
+<span class="nc" id="L234">        long globalAddress = data.getGlobalAddress();</span>
+<span class="nc" id="L235">        CompletableFuture&lt;Boolean&gt;[] futures = new CompletableFuture[numUnits];</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        for (int i = 0; i &lt; numUnits; i++) {</span>
+<span class="nc" id="L237">            log.trace(&quot;Write[{}]: quorum {}/{}&quot;, globalAddress, i + 1, numUnits);</span>
+<span class="nc" id="L238">            futures[i] = runtimeLayout.getLogUnitClient(globalAddress, i).write(data);</span>
+        }
+<span class="nc" id="L240">        QuorumFuturesFactory.CompositeFuture&lt;Boolean&gt; future =</span>
+<span class="nc" id="L241">                QuorumFuturesFactory.getQuorumFuture(Boolean::compareTo, futures,</span>
+                        OverwriteException.class, DataOutrankedException.class);
+<span class="nc" id="L243">        return future;</span>
+    }
+
+    private ReadResponse getAdoptedValueWithHighestRankIfPresent(
+            Long position, Set&lt;Throwable&gt; throwables) {
+<span class="nc" id="L248">        ReadResponse result = null;</span>
+<span class="nc" id="L249">        IMetadata.DataRank maxRank = null;</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">        for (Throwable t : throwables) {</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">            if (t instanceof ValueAdoptedException) {</span>
+<span class="nc" id="L252">                ValueAdoptedException ve = (ValueAdoptedException) t;</span>
+<span class="nc" id="L253">                ReadResponse r = ve.getReadResponse();</span>
+<span class="nc" id="L254">                LogData ld = r.getAddresses().get(position);</span>
+<span class="nc bnc" id="L255" title="All 4 branches missed.">                if (maxRank == null || maxRank.compareTo(ld.getRank()) &lt; 0) {</span>
+<span class="nc" id="L256">                    maxRank = ld.getRank();</span>
+<span class="nc" id="L257">                    result = r;</span>
+                }
+            }
+<span class="nc" id="L260">        }</span>
+<span class="nc" id="L261">        return result;</span>
+    }
+
+
+<span class="nc bnc" id="L265" title="All 8 branches missed.">    @Data</span>
+<span class="nc" id="L266">    @AllArgsConstructor</span>
+    private class ReadResponseComparator implements Comparator&lt;ReadResponse&gt; {
+<span class="nc" id="L268">        private long logPosition;</span>
+
+        @Override
+        public int compare(ReadResponse o1, ReadResponse o2) {
+<span class="nc" id="L272">            LogData ld1 = o1.getAddresses().get(logPosition);</span>
+<span class="nc" id="L273">            LogData ld2 = o2.getAddresses().get(logPosition);</span>
+<span class="nc bnc" id="L274" title="All 4 branches missed.">            if(ld1.isTrimmed() || ld2.isTrimmed()) {</span>
+<span class="nc" id="L275">                throw new TrimmedException();</span>
+            }
+<span class="nc" id="L277">            IMetadata.DataRank rank1 = ld1.getRank();</span>
+<span class="nc" id="L278">            IMetadata.DataRank rank2 = ld2.getRank();</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">            if (rank1 == null) {</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">                return rank2 == null ? 0 : 1;</span>
+            }
+<span class="nc bnc" id="L282" title="All 2 branches missed.">            if (rank2 == null) {</span>
+<span class="nc" id="L283">                return -1;</span>
+            }
+<span class="nc" id="L285">            return rank1.compareTo(rank2);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

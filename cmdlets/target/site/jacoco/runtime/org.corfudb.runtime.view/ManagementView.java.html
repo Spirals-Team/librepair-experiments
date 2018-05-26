@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ManagementView.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.view</a> &gt; <span class="el_source">ManagementView.java</span></div><h1>ManagementView.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.view;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import javax.annotation.Nonnull;
+
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.protocols.wireprotocol.NetworkMetrics;
+import org.corfudb.protocols.wireprotocol.NodeView;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.exceptions.WorkflowException;
+import org.corfudb.runtime.exceptions.WorkflowResultUnknownException;
+import org.corfudb.runtime.exceptions.WrongEpochException;
+import org.corfudb.runtime.view.ClusterStatusReport.ClusterStatus;
+import org.corfudb.runtime.view.ClusterStatusReport.NodeStatus;
+import org.corfudb.runtime.view.workflows.AddNode;
+import org.corfudb.runtime.view.workflows.ForceRemoveNode;
+import org.corfudb.runtime.view.workflows.HealNode;
+import org.corfudb.runtime.view.workflows.RemoveNode;
+import org.corfudb.util.CFUtils;
+
+/**
+ * A view of the Management Service to manage reconfigurations of the Corfu Cluster.
+ * &lt;p&gt;
+ * &lt;p&gt;Created by zlokhandwala on 11/20/17.&lt;/p&gt;
+ */
+<span class="nc" id="L40">@Slf4j</span>
+public class ManagementView extends AbstractView {
+
+    /**
+     * Number of attempts to ping a node to query the cluster status.
+     */
+    private static final int CLUSTER_STATUS_QUERY_ATTEMPTS = 3;
+
+<span class="nc bnc" id="L48" title="All 2 branches missed.">    public ManagementView(@NonNull CorfuRuntime runtime) {</span>
+<span class="nc" id="L49">        super(runtime);</span>
+<span class="nc" id="L50">    }</span>
+
+    /**
+     * Remove a node from the cluster.
+     *
+     * @param endpointToRemove Endpoint of the node to be removed from the cluster.
+     * @param retry            the number of times to retry a workflow if it fails
+     * @param timeout          total time to wait before the workflow times out
+     * @param pollPeriod       the poll interval to check whether a workflow completed or not
+     * @throws WorkflowResultUnknownException when the side affect of the operation
+     *                                        can't be determined
+     * @throws WorkflowException              when the remove operation fails
+     */
+    public void removeNode(@Nonnull String endpointToRemove, int retry,
+                           @Nonnull Duration timeout, @Nonnull Duration pollPeriod) {
+
+<span class="nc" id="L66">        new RemoveNode(endpointToRemove, runtime, retry, timeout, pollPeriod).invoke();</span>
+<span class="nc" id="L67">    }</span>
+
+    /**
+     * Force remove a node from the cluster.
+     *
+     * @param endpointToRemove Endpoint of the node to be removed from the cluster.
+     * @param retry            the number of times to retry a workflow if it fails
+     * @param timeout          total time to wait before the workflow times out
+     * @param pollPeriod       the poll interval to check whether a workflow completed or not
+     * @throws WorkflowResultUnknownException when the side affect of the operation
+     *                                        can't be determined
+     * @throws WorkflowException              when the remove operation fails
+     */
+    public void forceRemoveNode(@Nonnull String endpointToRemove, int retry,
+                                @Nonnull Duration timeout, @Nonnull Duration pollPeriod) {
+<span class="nc" id="L82">        new ForceRemoveNode(endpointToRemove, runtime, retry, timeout, pollPeriod).invoke();</span>
+<span class="nc" id="L83">    }</span>
+
+    /**
+     * Add a new node to the existing cluster.
+     *
+     * @param endpointToAdd Endpoint of the new node to be added to the cluster.
+     * @param retry         the number of times to retry a workflow if it fails
+     * @param timeout       total time to wait before the workflow times out
+     * @param pollPeriod    the poll interval to check whether a workflow completed or not
+     * @throws WorkflowResultUnknownException when the side affect of the operation
+     *                                        can't be determined
+     */
+    public void addNode(@Nonnull String endpointToAdd, int retry,
+                        @Nonnull Duration timeout, @Nonnull Duration pollPeriod) {
+<span class="nc" id="L97">        new AddNode(endpointToAdd, runtime, retry, timeout, pollPeriod)</span>
+<span class="nc" id="L98">                .invoke();</span>
+<span class="nc" id="L99">    }</span>
+
+    /**
+     * Heal an unresponsive node.
+     *
+     * @param endpointToHeal Endpoint of the new node to be healed in the cluster.
+     * @param retry          the number of times to retry a workflow if it fails
+     * @param timeout        total time to wait before the workflow times out
+     * @param pollPeriod     the poll interval to check whether a workflow completed or not
+     * @throws WorkflowResultUnknownException when the side affect of the operation
+     *                                        can't be determined
+     */
+    public void healNode(@Nonnull String endpointToHeal, int retry, @Nonnull Duration timeout,
+                         @Nonnull Duration pollPeriod) {
+<span class="nc" id="L113">        new HealNode(endpointToHeal, runtime, retry, timeout, pollPeriod).invoke();</span>
+<span class="nc" id="L114">    }</span>
+
+    /**
+     * If all the layout servers are responsive the cluster status is STABLE,
+     * if a minority of them are unresponsive then the status is DEGRADED,
+     * else the cluster is UNAVAILABLE.
+     *
+     * @param layout              Current layout on which responsiveness was checked.
+     * @param peerResponsiveNodes responsive nodes in the current layout.
+     * @return ClusterStatus
+     */
+    private ClusterStatus getLayoutServersClusterHealth(Layout layout,
+                                                        Set&lt;String&gt; peerResponsiveNodes) {
+<span class="nc" id="L127">        ClusterStatus clusterStatus = ClusterStatus.STABLE;</span>
+        // A quorum of layout servers need to be responsive for the cluster to be STABLE.
+<span class="nc" id="L129">        List&lt;String&gt; responsiveLayoutServers = new ArrayList&lt;&gt;(layout.getLayoutServers());</span>
+        // Retain only the responsive servers.
+<span class="nc" id="L131">        responsiveLayoutServers.retainAll(peerResponsiveNodes);</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        if (responsiveLayoutServers.size() != layout.getLayoutServers().size()) {</span>
+<span class="nc" id="L133">            clusterStatus = ClusterStatus.DEGRADED;</span>
+<span class="nc" id="L134">            int quorumSize = (layout.getLayoutServers().size() / 2) + 1;</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            if (responsiveLayoutServers.size() &lt; quorumSize) {</span>
+<span class="nc" id="L136">                clusterStatus = ClusterStatus.UNAVAILABLE;</span>
+            }
+        }
+<span class="nc" id="L139">        return clusterStatus;</span>
+    }
+
+    /**
+     * If the primary sequencer is unresponsive then the cluster is UNAVAILABLE.
+     *
+     * @param layout              Current layout on which responsiveness was checked.
+     * @param peerResponsiveNodes responsive nodes in the current layout.
+     * @return ClusterStatus
+     */
+    private ClusterStatus getSequencerServersClusterHealth(Layout layout,
+                                                           Set&lt;String&gt; peerResponsiveNodes) {
+        // The primary sequencer should be reachable for the cluster to be STABLE.
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        return !peerResponsiveNodes.contains(layout.getPrimarySequencer())</span>
+                ? ClusterStatus.UNAVAILABLE : ClusterStatus.STABLE;
+    }
+
+    /**
+     * Gets the log unit cluster status based on the replication protocol.
+     *
+     * @param layout              Current layout on which responsiveness was checked.
+     * @param peerResponsiveNodes responsive nodes in the current layout.
+     * @return ClusterStatus
+     */
+    private ClusterStatus getLogUnitServersClusterHealth(Layout layout,
+                                                         Set&lt;String&gt; peerResponsiveNodes) {
+        // Check the availability of the log servers in all segments as reads to all addresses
+        // should be accessible.
+<span class="nc" id="L167">        return layout.getSegments().stream()</span>
+<span class="nc" id="L168">                .map(segment -&gt; segment.getReplicationMode()</span>
+<span class="nc" id="L169">                        .getClusterHealthForSegment(segment, peerResponsiveNodes))</span>
+<span class="nc" id="L170">                .max(Comparator.comparingInt(ClusterStatus::getHealthValue))</span>
+<span class="nc" id="L171">                .get();</span>
+    }
+
+    /**
+     * Analyzes the health of the cluster based on the views of the cluster of all the
+     * ManagementAgents.
+     * STABLE: if all nodes in the layout are responsive.
+     * DEGRADED: if a minority of Layout servers
+     * or a minority of LogUnit servers - in QUORUM_REPLICATION mode only are unresponsive.
+     * UNAVAILABLE: if a majority of Layout servers or the Primary Sequencer
+     * or a node in the CHAIN_REPLICATION or a majority of nodes in QUORUM_REPLICATION is
+     * unresponsive.
+     *
+     * @param layout              Layout based on which the health is analyzed.
+     * @param peerResponsiveNodes Responsive nodes according to the management services.
+     * @return ClusterStatus
+     */
+    private ClusterStatus getClusterHealth(Layout layout, Set&lt;String&gt; peerResponsiveNodes) {
+
+<span class="nc" id="L190">        return Stream.of(getLayoutServersClusterHealth(layout, peerResponsiveNodes),</span>
+<span class="nc" id="L191">                getSequencerServersClusterHealth(layout, peerResponsiveNodes),</span>
+<span class="nc" id="L192">                getLogUnitServersClusterHealth(layout, peerResponsiveNodes))</span>
+                // Gets cluster status from the layout, sequencer and log unit clusters.
+                // The status is then aggregated by the max of the 3 statuses acquired.
+<span class="nc" id="L195">                .max(Comparator.comparingInt(ClusterStatus::getHealthValue))</span>
+<span class="nc" id="L196">                .get();</span>
+    }
+
+    /**
+     * Prunes out the unresponsive nodes as seen by the Management Agents on the Corfu nodes.
+     *
+     * @param layout      Layout based on which the health is analyzed.
+     * @param nodeViewMap Map of nodeViews from the ManagementAgents.
+     * @return Set of responsive servers as seen by the Corfu cluster nodes.
+     */
+    private Set&lt;String&gt; filterResponsiveNodes(Layout layout, Map&lt;String, NodeView&gt; nodeViewMap) {
+
+        // Using the peer views from the nodes to determine health of the cluster.
+<span class="nc" id="L209">        Set&lt;String&gt; peerResponsiveNodes = new HashSet&lt;&gt;(layout.getAllServers());</span>
+<span class="nc" id="L210">        nodeViewMap.values().stream()</span>
+<span class="nc" id="L211">                .map(NodeView::getNetworkMetrics)</span>
+                // Get all peer connectivity maps from all node views.
+<span class="nc" id="L213">                .map(NetworkMetrics::getPeerConnectivityView)</span>
+<span class="nc" id="L214">                .flatMap(stringBooleanMap -&gt; stringBooleanMap.entrySet().stream())</span>
+                // Filter out all unresponsive nodes from all the fault detectors.
+<span class="nc bnc" id="L216" title="All 2 branches missed.">                .filter(entry -&gt; !entry.getValue())</span>
+<span class="nc" id="L217">                .map(Entry::getKey)</span>
+                // Remove the unresponsive nodes from the set of all nodes.
+<span class="nc" id="L219">                .forEach(peerResponsiveNodes::remove);</span>
+<span class="nc" id="L220">        layout.getUnresponsiveServers().forEach(peerResponsiveNodes::remove);</span>
+<span class="nc" id="L221">        return peerResponsiveNodes;</span>
+    }
+
+    /**
+     * Gets the cluster status by pinging each node.
+     * These pings are then compared to the layout to decide whether the cluster is:
+     * STABLE, DEGRADED OR UNAVAILABLE.
+     * The report consists of the following:
+     * Layout - at which the report was generated.
+     * ClientServerConnectivityStatusMap - the connectivity status of this client to the cluster.
+     * ClusterStatus - Health of the Corfu cluster.
+     *
+     * @return ClusterStatusReport
+     */
+    public ClusterStatusReport getClusterStatus() {
+<span class="nc" id="L236">        RuntimeLayout runtimeLayout =</span>
+<span class="nc" id="L237">                new RuntimeLayout(runtime.getLayoutView().getLayout(), runtime);</span>
+<span class="nc" id="L238">        Layout layout = runtimeLayout.getLayout();</span>
+        // All configured nodes.
+<span class="nc" id="L240">        Set&lt;String&gt; allNodes = new HashSet&lt;&gt;(layout.getAllServers());</span>
+
+        // Counters to track heartbeat responses from nodes.
+        // A counter is incremented even if we get a WrongEpochException as the node is alive.
+<span class="nc" id="L244">        Map&lt;String, Integer&gt; counters = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L245">        allNodes.forEach(endpoint -&gt; counters.put(endpoint, 0));</span>
+
+        // Map of nodeView received from heartbeatResponses.
+<span class="nc" id="L248">        Map&lt;String, NodeView&gt; nodeViewMap = new HashMap&lt;&gt;();</span>
+
+        // Ping all nodes CLUSTER_STATUS_QUERY_ATTEMPTS times.
+        // Increment the counter map and save the NodeView response received in the
+        // heartbeat responses.
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        for (int i = 0; i &lt; CLUSTER_STATUS_QUERY_ATTEMPTS; i++) {</span>
+<span class="nc" id="L254">            Map&lt;String, CompletableFuture&lt;NodeView&gt;&gt; futureMap = new HashMap&lt;&gt;();</span>
+
+            // Ping all nodes asynchronously
+<span class="nc bnc" id="L257" title="All 2 branches missed.">            for (String endpoint : allNodes) {</span>
+<span class="nc" id="L258">                CompletableFuture&lt;NodeView&gt; cf = new CompletableFuture&lt;&gt;();</span>
+                try {
+<span class="nc" id="L260">                    cf = runtimeLayout.getManagementClient(endpoint).sendHeartbeatRequest();</span>
+<span class="nc" id="L261">                } catch (Exception e) {</span>
+                    // Requesting the heartbeat can cause NetworkException if connection cannot
+                    // be established.
+<span class="nc" id="L264">                    cf.completeExceptionally(e);</span>
+<span class="nc" id="L265">                }</span>
+<span class="nc" id="L266">                futureMap.put(endpoint, cf);</span>
+<span class="nc" id="L267">            }</span>
+
+            // Accumulate all responses.
+<span class="nc bnc" id="L270" title="All 2 branches missed.">            for (String endpoint : futureMap.keySet()) {</span>
+                try {
+<span class="nc" id="L272">                    nodeViewMap.put(endpoint, CFUtils.getUninterruptibly(futureMap.get(endpoint),</span>
+                            WrongEpochException.class));
+<span class="nc" id="L274">                    counters.computeIfPresent(endpoint, (s, count) -&gt; count + 1);</span>
+<span class="nc" id="L275">                } catch (WrongEpochException wee) {</span>
+<span class="nc" id="L276">                    counters.computeIfPresent(endpoint, (s, count) -&gt; count + 1);</span>
+<span class="nc" id="L277">                } catch (Exception ignored) {</span>
+                    // Ignore all exceptions.
+<span class="nc" id="L279">                }</span>
+<span class="nc" id="L280">            }</span>
+        }
+
+        // Using the peer views from the nodes to determine health of the cluster.
+<span class="nc" id="L284">        Set&lt;String&gt; peerResponsiveNodes = filterResponsiveNodes(layout, nodeViewMap);</span>
+
+        // Analyzes the responsive nodes as seen by the fault detectors to determine the health
+        // of the cluster.
+<span class="nc" id="L288">        ClusterStatus clusterStatus = getClusterHealth(layout, peerResponsiveNodes);</span>
+
+        // Set of all nodes which are responsive to this client.
+        // Client connectivity to the cluster.
+<span class="nc" id="L292">        Set&lt;String&gt; responsiveEndpoints = counters.entrySet().stream()</span>
+                // Only count nodes which have counter &gt; 0
+<span class="nc bnc" id="L294" title="All 2 branches missed.">                .filter(entry -&gt; entry.getValue() &gt; 0)</span>
+<span class="nc" id="L295">                .map(Entry::getKey)</span>
+<span class="nc" id="L296">                .collect(Collectors.toSet());</span>
+
+<span class="nc" id="L298">        return new ClusterStatusReport(layout, allNodes.stream()</span>
+<span class="nc" id="L299">                .collect(Collectors.toMap(o -&gt; o,</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">                        t -&gt; responsiveEndpoints.contains(t) ? NodeStatus.UP : NodeStatus.DOWN)),</span>
+                clusterStatus);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

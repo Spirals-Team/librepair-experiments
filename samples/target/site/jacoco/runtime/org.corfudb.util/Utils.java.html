@@ -1,0 +1,458 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Utils.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">samples</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.util</a> &gt; <span class="el_source">Utils.java</span></div><h1>Utils.java</h1><pre class="source lang-java linenums">package org.corfudb.util;
+
+import com.google.common.collect.Range;
+import com.google.common.collect.RangeSet;
+import io.netty.buffer.ByteBuf;
+import jdk.internal.org.objectweb.asm.ClassReader;
+import jdk.internal.org.objectweb.asm.tree.AbstractInsnNode;
+import jdk.internal.org.objectweb.asm.tree.ClassNode;
+import jdk.internal.org.objectweb.asm.tree.InsnList;
+import jdk.internal.org.objectweb.asm.tree.MethodNode;
+import jdk.internal.org.objectweb.asm.util.Printer;
+import jdk.internal.org.objectweb.asm.util.Textifier;
+import jdk.internal.org.objectweb.asm.util.TraceMethodVisitor;
+import lombok.extern.slf4j.Slf4j;
+import org.corfudb.protocols.logprotocol.LogEntry;
+import org.corfudb.protocols.logprotocol.MultiObjectSMREntry;
+import org.corfudb.protocols.wireprotocol.ILogData;
+import org.corfudb.recovery.FastObjectLoader;
+import org.corfudb.recovery.RecoveryUtils;
+import org.corfudb.runtime.CorfuRuntime;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.nio.ByteBuffer;
+import java.text.DecimalFormat;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+
+/**
+ * Created by crossbach on 5/22/15.
+ */
+<span class="nc" id="L43">@Slf4j</span>
+<span class="nc" id="L44">public class Utils {</span>
+<span class="nc" id="L45">    private static Printer printer = new Textifier();</span>
+<span class="nc" id="L46">    private static TraceMethodVisitor mp = new TraceMethodVisitor(printer);</span>
+
+<span class="nc" id="L48">    private final static char[] hexArray = &quot;0123456789ABCDEF&quot;.toCharArray();</span>
+
+    /** Convert a byte array to a hex string.
+     * Source:
+     * https://stackoverflow.com/questions/9655181/
+     * how-to-convert-a-byte-array-to-a-hex-string-in-java
+     * @param bytes Byte array to convert
+     * @return      Hex string representation.
+     */
+    public static String bytesToHex(byte[] bytes) {
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        if (bytes == null) {</span>
+<span class="nc" id="L59">            return &quot;(null)&quot;;</span>
+        }
+<span class="nc" id="L61">        char[] hexChars = new char[bytes.length * 2];</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        for ( int j = 0; j &lt; bytes.length; j++ ) {</span>
+<span class="nc" id="L63">            int v = bytes[j] &amp; 0xFF;</span>
+<span class="nc" id="L64">            hexChars[j * 2] = hexArray[v &gt;&gt;&gt; 4];</span>
+<span class="nc" id="L65">            hexChars[j * 2 + 1] = hexArray[v &amp; 0x0F];</span>
+        }
+<span class="nc" id="L67">        return new String(hexChars);</span>
+    }
+
+    public static byte[] intToBigEndianByteArray(int in) {
+<span class="nc" id="L71">        return new byte[] {</span>
+                (byte) ((in &gt;&gt; 24) &amp; 0xFF),
+                (byte) ((in &gt;&gt; 16) &amp; 0xFF),
+                (byte) ((in &gt;&gt; 8) &amp; 0xFF),
+                (byte) (in &amp; 0xFF)};
+    }
+
+
+    public static byte[] longToBigEndianByteArray(long in) {
+<span class="nc" id="L80">        return new byte[] {</span>
+                (byte) ((in &gt;&gt; 56) &amp; 0xFF),
+                (byte) ((in &gt;&gt; 48) &amp; 0xFF),
+                (byte) ((in &gt;&gt; 40) &amp; 0xFF),
+                (byte) ((in &gt;&gt; 32) &amp; 0xFF),
+                (byte) ((in &gt;&gt; 24) &amp; 0xFF),
+                (byte) ((in &gt;&gt; 16) &amp; 0xFF),
+                (byte) ((in &gt;&gt; 8) &amp; 0xFF),
+                (byte) (in &amp; 0xFF)};
+    }
+  
+    /**
+     * Print byte code.
+     * @param bytes Byte array that represents the byte code
+     * @return String representation of the byte code
+     */
+    public static String printByteCode(byte[] bytes) {
+<span class="nc" id="L97">        ClassReader cr = new ClassReader(bytes);</span>
+<span class="nc" id="L98">        ClassNode cn = new ClassNode();</span>
+<span class="nc" id="L99">        cr.accept(cn, 0);</span>
+<span class="nc" id="L100">        final List&lt;MethodNode&gt; methods = cn.methods;</span>
+<span class="nc" id="L101">        StringBuilder sb = new StringBuilder();</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        for (MethodNode m : methods) {</span>
+<span class="nc" id="L103">            InsnList inList = m.instructions;</span>
+<span class="nc" id="L104">            sb.append(m.name);</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">            for (int i = 0; i &lt; inList.size(); i++) {</span>
+<span class="nc" id="L106">                sb.append(insnToString(inList.get(i)));</span>
+            }
+<span class="nc" id="L108">        }</span>
+<span class="nc" id="L109">        return sb.toString();</span>
+    }
+
+    public static String insnToString(AbstractInsnNode insn) {
+<span class="nc" id="L113">        insn.accept(mp);</span>
+<span class="nc" id="L114">        StringWriter sw = new StringWriter();</span>
+<span class="nc" id="L115">        printer.print(new PrintWriter(sw));</span>
+<span class="nc" id="L116">        printer.getText().clear();</span>
+<span class="nc" id="L117">        return sw.toString();</span>
+    }
+
+    /**
+     * A fancy parser which parses suffixes.
+     *
+     * @param toParseObj
+     * @return
+     */
+    public static long parseLong(final Object toParseObj) {
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        if (toParseObj == null) {</span>
+<span class="nc" id="L128">            return 0;</span>
+        }
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (toParseObj instanceof Long) {</span>
+<span class="nc" id="L131">            return (Long) toParseObj;</span>
+        }
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (toParseObj instanceof Integer) {</span>
+<span class="nc" id="L134">            return (Integer) toParseObj;</span>
+        }
+<span class="nc" id="L136">        String toParse = (String) toParseObj;</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        if (toParse.matches(&quot;[0-9]*[A-Za-z]$&quot;)) {</span>
+            long multiplier;
+<span class="nc" id="L139">            char suffix = toParse.toUpperCase().charAt(toParse.length() - 1);</span>
+<span class="nc bnc" id="L140" title="All 7 branches missed.">            switch (suffix) {</span>
+                case 'E':
+<span class="nc" id="L142">                    multiplier = 1_000_000_000_000_000_000L;</span>
+<span class="nc" id="L143">                    break;</span>
+                case 'P':
+<span class="nc" id="L145">                    multiplier = 1_000_000_000_000_000L;</span>
+<span class="nc" id="L146">                    break;</span>
+                case 'T':
+<span class="nc" id="L148">                    multiplier = 1_000_000_000_000L;</span>
+<span class="nc" id="L149">                    break;</span>
+                case 'G':
+<span class="nc" id="L151">                    multiplier = 1_000_000_000L;</span>
+<span class="nc" id="L152">                    break;</span>
+                case 'M':
+<span class="nc" id="L154">                    multiplier = 1_000_000L;</span>
+<span class="nc" id="L155">                    break;</span>
+                case 'K':
+<span class="nc" id="L157">                    multiplier = 1_000L;</span>
+<span class="nc" id="L158">                    break;</span>
+                default:
+<span class="nc" id="L160">                    throw new NumberFormatException(&quot;Unknown suffix: '&quot; + suffix + &quot;'!&quot;);</span>
+            }
+<span class="nc" id="L162">            return Long.parseLong(toParse.substring(0, toParse.length() - 2)) * multiplier;</span>
+        } else {
+<span class="nc" id="L164">            return Long.parseLong(toParse);</span>
+        }
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public static &lt;T&gt; T getOption(Map&lt;String, Object&gt; optionsMap, String option, Class&lt;T&gt; type,
+                                  T defaultValue) {
+<span class="nc" id="L171">        T obj = (T) optionsMap.get(option);</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        if (type == Long.class) {</span>
+<span class="nc bnc" id="L173" title="All 4 branches missed.">            if (obj == null &amp;&amp; defaultValue != null) {</span>
+<span class="nc" id="L174">                return defaultValue;</span>
+            }
+<span class="nc" id="L176">            return (T) (Long) parseLong(obj);</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        } else if (type == Integer.class) {</span>
+<span class="nc bnc" id="L178" title="All 4 branches missed.">            if (obj == null &amp;&amp; defaultValue != null) {</span>
+<span class="nc" id="L179">                return defaultValue;</span>
+            }
+<span class="nc" id="L181">            return (T) (Integer) ((Long) parseLong(obj)).intValue();</span>
+        }
+<span class="nc bnc" id="L183" title="All 2 branches missed.">        if (obj == null) {</span>
+<span class="nc" id="L184">            return defaultValue;</span>
+        }
+<span class="nc" id="L186">        return obj;</span>
+    }
+
+    public static &lt;T&gt; T getOption(Map&lt;String, Object&gt; optionsMap, String option, Class&lt;T&gt; type) {
+<span class="nc" id="L190">        return getOption(optionsMap, option, type, null);</span>
+    }
+
+    /**
+     * Turn a range into a set of discrete longs.
+     *
+     * @param range The range to discretize.
+     * @return A set containing all the longs in that range.
+     */
+    public static Set&lt;Long&gt; discretizeRange(Range&lt;Long&gt; range) {
+<span class="nc" id="L200">        Set&lt;Long&gt; s = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        for (long l = range.lowerEndpoint(); l &lt;= range.upperEndpoint(); l++) {</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (range.contains(l)) {</span>
+<span class="nc" id="L203">                s.add(l);</span>
+            }
+        }
+<span class="nc" id="L206">        return s;</span>
+    }
+
+    /**
+     * Turn a set of ranges into a discrete set.
+     *
+     * @param ranges A set of ranges to discretize.
+     * @return A set containing all the longs in that rangeset.
+     */
+    public static Set&lt;Long&gt; discretizeRangeSet(RangeSet&lt;Long&gt; ranges) {
+<span class="nc" id="L216">        Set&lt;Long&gt; total = Collections.newSetFromMap(new ConcurrentHashMap&lt;&gt;());</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        for (Range&lt;Long&gt; r : ranges.asRanges()) {</span>
+<span class="nc" id="L218">            total.addAll(Utils.discretizeRange(r));</span>
+<span class="nc" id="L219">        }</span>
+<span class="nc" id="L220">        return total;</span>
+    }
+
+    /**
+     * Convert to byte string representation.
+     * from http://stackoverflow.com/questions/3758606/how-to-convert-byte-size-into-human-readable-format-in-java
+     *
+     * @param value The value to convert.
+     * @return A string for bytes (i.e, 10GB).
+     */
+    public static String convertToByteStringRepresentation(final long value) {
+<span class="nc" id="L231">        final long[] dividers = new long[]{1_000_000_000_000L, 1_000_000_000, 1_000_000, 1_000, 1};</span>
+<span class="nc" id="L232">        final String[] units = new String[]{&quot;TB&quot;, &quot;GB&quot;, &quot;MB&quot;, &quot;KB&quot;, &quot;B&quot;};</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (value &lt; 1) {</span>
+<span class="nc" id="L234">            throw new IllegalArgumentException(&quot;Invalid file size: &quot; + value);</span>
+        }
+<span class="nc" id="L236">        String result = null;</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        for (int i = 0; i &lt; dividers.length; i++) {</span>
+<span class="nc" id="L238">            final long divider = dividers[i];</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">            if (value &gt;= divider) {</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">                final double cresult =</span>
+                        divider &gt; 1 ? (double) value / (double) divider : (double) value;
+<span class="nc" id="L242">                result = new DecimalFormat(&quot;#,##0.#&quot;).format(cresult) + &quot; &quot; + units[i];</span>
+<span class="nc" id="L243">                break;</span>
+            }
+        }
+<span class="nc" id="L246">        return result;</span>
+    }
+
+    /**
+     * Serialize an object into a ByteBuffer.
+     * @param obj Object to serialize
+     * @return Buffer of the serialized object
+     */
+    public static ByteBuffer serialize(Object obj) {
+        try {
+            //todo: make serialization less clunky!
+<span class="nc" id="L257">            ByteArrayOutputStream baos = new ByteArrayOutputStream();</span>
+<span class="nc" id="L258">            ObjectOutputStream oos = new ObjectOutputStream(baos);</span>
+<span class="nc" id="L259">            oos.writeObject(obj);</span>
+<span class="nc" id="L260">            byte[] b = baos.toByteArray();</span>
+<span class="nc" id="L261">            oos.close();</span>
+<span class="nc" id="L262">            return ByteBuffer.wrap(b);</span>
+<span class="nc" id="L263">        } catch (IOException e) {</span>
+<span class="nc" id="L264">            throw new RuntimeException(e);</span>
+        }
+    }
+
+    /**
+     * Deserialize an object from a ByteBuffer.
+     * @param b Buffer
+     * @return Deserialized object
+     */
+    public static Object deserialize(ByteBuffer b) {
+        try {
+            //todo: make serialization less clunky!
+<span class="nc" id="L276">            ByteArrayInputStream bais = new ByteArrayInputStream(b.array());</span>
+<span class="nc" id="L277">            ObjectInputStream ois = new ObjectInputStream(bais);</span>
+<span class="nc" id="L278">            Object obj = ois.readObject();</span>
+<span class="nc" id="L279">            return obj;</span>
+<span class="nc" id="L280">        } catch (IOException e) {</span>
+<span class="nc" id="L281">            throw new RuntimeException(e);</span>
+<span class="nc" id="L282">        } catch (ClassNotFoundException ce) {</span>
+<span class="nc" id="L283">            throw new RuntimeException(ce);</span>
+        }
+    }
+
+    /**
+     * Hex dump readable contents of ByteBuf to stdout.
+     *
+     * @param b ByteBuf with readable bytes available.
+     */
+    public static void hexdump(ByteBuf b) {
+<span class="nc" id="L293">        byte[] bulk = new byte[b.readableBytes()];</span>
+<span class="nc" id="L294">        int oldReaderIndex = b.readerIndex();</span>
+<span class="nc" id="L295">        b.readBytes(bulk, 0, b.readableBytes() - 1);</span>
+<span class="nc" id="L296">        b.readerIndex(oldReaderIndex);</span>
+<span class="nc" id="L297">        hexdump(bulk);</span>
+<span class="nc" id="L298">    }</span>
+
+    /**
+     * Hex dump contents of byte[] to stdout.
+     *
+     * @param bulk Bytes.
+     */
+    public static void hexdump(byte[] bulk) {
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        if (bulk != null) {</span>
+<span class="nc" id="L307">            System.out.printf(&quot;Bulk(%d): &quot;, bulk.length);</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">            for (int i = 0; i &lt; bulk.length; i++) {</span>
+<span class="nc" id="L309">                System.out.printf(&quot;%x,&quot;, bulk[i]);</span>
+            }
+<span class="nc" id="L311">            System.out.printf(&quot;\n&quot;);</span>
+        }
+<span class="nc" id="L313">    }</span>
+
+
+    static long rotl64(long x, int r) {
+<span class="nc" id="L317">        return (x &lt;&lt; r) | (x &gt;&gt; (64 - r));</span>
+    }
+
+    static long fmix64(long k) {
+<span class="nc" id="L321">        k ^= k &gt;&gt; 33;</span>
+<span class="nc" id="L322">        k *= 0xff51afd7ed558ccdL;</span>
+<span class="nc" id="L323">        k ^= k &gt;&gt; 33;</span>
+<span class="nc" id="L324">        k *= 0xc4ceb9fe1a85ec53L;</span>
+<span class="nc" id="L325">        k ^= k &gt;&gt; 33;</span>
+<span class="nc" id="L326">        return k;</span>
+    }
+
+    /**
+     * murmer hash 3 implementation specialized for UUIDs,
+     * based on googlecode C implementation from:
+     * http://smhasher.googlecode.com/svn/trunk/MurmurHash3.cpp
+     *
+     * @param key key to hash
+     * @param seed hash seed
+     * @return hash of the key
+     */
+    public static UUID murmerhash3(UUID key, long seed) {
+<span class="nc" id="L339">        final long msb = key.getMostSignificantBits();</span>
+<span class="nc" id="L340">        final long lsb = key.getLeastSignificantBits();</span>
+<span class="nc" id="L341">        byte[] data = new byte[8];</span>
+<span class="nc" id="L342">        data[7] = (byte) (lsb &amp; 0xFF);</span>
+<span class="nc" id="L343">        data[6] = (byte) ((lsb &gt;&gt; 8) &amp; 0xFF);</span>
+<span class="nc" id="L344">        data[5] = (byte) ((lsb &gt;&gt; 16) &amp; 0xFF);</span>
+<span class="nc" id="L345">        data[4] = (byte) ((lsb &gt;&gt; 24) &amp; 0xFF);</span>
+<span class="nc" id="L346">        data[3] = (byte) (msb &amp; 0xFF);</span>
+<span class="nc" id="L347">        data[2] = (byte) ((msb &gt;&gt; 8) &amp; 0xFF);</span>
+<span class="nc" id="L348">        data[1] = (byte) ((msb &gt;&gt; 16) &amp; 0xFF);</span>
+<span class="nc" id="L349">        data[0] = (byte) ((msb &gt;&gt; 24) &amp; 0xFF);</span>
+
+<span class="nc" id="L351">        int nblocks = 2;</span>
+<span class="nc" id="L352">        long h1 = seed;</span>
+<span class="nc" id="L353">        long h2 = seed;</span>
+<span class="nc" id="L354">        long c1 = 0x87c37b91114253d5L;</span>
+<span class="nc" id="L355">        long c2 = 0x4cf5ad432745937fL;</span>
+<span class="nc" id="L356">        long[] blocks = new long[nblocks];</span>
+<span class="nc" id="L357">        blocks[0] = msb;</span>
+<span class="nc" id="L358">        blocks[1] = lsb;</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">        for (int i = 0; i &lt; nblocks; i++) {</span>
+<span class="nc" id="L360">            long k1 = blocks[i * 2 + 0];</span>
+<span class="nc" id="L361">            k1 *= c1;</span>
+<span class="nc" id="L362">            k1 = rotl64(k1, 31);</span>
+<span class="nc" id="L363">            k1 *= c2;</span>
+<span class="nc" id="L364">            h1 ^= k1;</span>
+<span class="nc" id="L365">            h1 = rotl64(h1, 27);</span>
+<span class="nc" id="L366">            h1 += h2;</span>
+<span class="nc" id="L367">            h1 = h1 * 5 + 0x52dce729;</span>
+<span class="nc" id="L368">            long k2 = blocks[i * 2 + 1];</span>
+<span class="nc" id="L369">            k2 *= c2;</span>
+<span class="nc" id="L370">            k2 = rotl64(k2, 33);</span>
+<span class="nc" id="L371">            k2 *= c1;</span>
+<span class="nc" id="L372">            h2 ^= k2;</span>
+<span class="nc" id="L373">            h2 = rotl64(h2, 31);</span>
+<span class="nc" id="L374">            h2 += h1;</span>
+<span class="nc" id="L375">            h2 = h2 * 5 + 0x38495ab5;</span>
+        }
+<span class="nc" id="L377">        h1 ^= 2;</span>
+<span class="nc" id="L378">        h2 ^= 2;</span>
+<span class="nc" id="L379">        h1 += h2;</span>
+<span class="nc" id="L380">        h2 += h1;</span>
+<span class="nc" id="L381">        h1 = fmix64(h1);</span>
+<span class="nc" id="L382">        h2 = fmix64(h2);</span>
+<span class="nc" id="L383">        h1 += h2;</span>
+<span class="nc" id="L384">        h2 += h1;</span>
+<span class="nc" id="L385">        return new UUID(h2, h1);</span>
+    }
+
+    /**
+     * simple UUID hashing, which is *not* hashing, and is effectively
+     * customized to the task of deterministically allocating new UUIDs
+     * based on a given UUID (which is necessary in the assignment of stream
+     * IDs in ICOrfuDBObjects that contain others, since syncing the log in
+     * multiple clients needs allocators to produce the same streamID/object
+     * every time).
+     *
+     * @param key key to hash
+     * @param seed seed
+     * @return hash value
+     */
+    public static UUID simpleUUIDHash(UUID key, long seed) {
+<span class="nc" id="L401">        return new UUID(key.getMostSignificantBits(),</span>
+<span class="nc" id="L402">                key.getLeastSignificantBits() + seed);</span>
+    }
+
+    public static UUID nextDeterministicUuid(UUID uuid, long seed) {
+<span class="nc" id="L406">        return simpleUUIDHash(uuid, seed);</span>
+    }
+
+
+    /** restart the JVM - borrowed from https://dzone.com/articles/programmatically-restart-java */
+    /**
+     * Sun property pointing the main class and its arguments.
+     * Might not be defined on non Hotspot VM implementations.
+     */
+    public static final String SUN_JAVA_COMMAND = &quot;sun.java.command&quot;;
+
+    /** Generates a human readable UUID string (4 hex chars) using time_mid.
+     * @param id    The UUID to parse
+     * @return      A human readable UUID string
+     */
+    public static String toReadableId(UUID id) {
+<span class="nc" id="L422">        return Long.toHexString((id.getLeastSignificantBits()) &amp; 0xFFFF);</span>
+    }
+
+    /** Print the anatomy of a LogData
+     *
+     * &lt;p&gt;Print how many streams are contained in the Metadata and
+     * how many entries per stream.
+     *
+     * &lt;p&gt;Pretty useful for understanding how the the db is being used
+     * from the application perspective.
+     *
+     * @param logData Data entry to print
+     */
+    public static void printLogAnatomy(CorfuRuntime runtime, ILogData logData) {
+<span class="nc" id="L436">        FastObjectLoader fastLoader = new FastObjectLoader(runtime);</span>
+        try {
+<span class="nc" id="L438">            LogEntry le = RecoveryUtils.deserializeLogData(runtime, logData);</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">            if (le.getType() == LogEntry.LogEntryType.SMR) {</span>
+<span class="nc" id="L440">                log.info(&quot;printLogAnatomy: Number of Streams: 1&quot;);</span>
+<span class="nc" id="L441">                log.info(&quot;printLogAnatomy: Number of Entries: 1&quot;);</span>
+<span class="nc" id="L442">                log.info(&quot;--------------------------&quot;);</span>
+<span class="nc bnc" id="L443" title="All 2 branches missed.">            } else if (le.getType() == LogEntry.LogEntryType.MULTIOBJSMR) {</span>
+<span class="nc" id="L444">                log.info(&quot;printLogAnatomy: Number of Streams: {}&quot;, logData.getStreams().size());</span>
+<span class="nc" id="L445">                ((MultiObjectSMREntry)le).getEntryMap().forEach((stream, multiSmrEntry) -&gt; {</span>
+<span class="nc" id="L446">                    log.info(&quot;printLogAnatomy: Number of Entries: {}&quot;,</span>
+<span class="nc" id="L447">                            multiSmrEntry.getSMRUpdates(stream).size());</span>
+<span class="nc" id="L448">                });</span>
+<span class="nc" id="L449">                log.info(&quot;--------------------------&quot;);</span>
+            }
+
+<span class="nc" id="L452">        } catch (Exception e) {</span>
+<span class="nc" id="L453">            log.warn(&quot;printLogAnatomy [logAddress={}] cannot be deserialized &quot;,</span>
+<span class="nc" id="L454">                    logData.getGlobalAddress());</span>
+<span class="nc" id="L455">        }</span>
+<span class="nc" id="L456">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

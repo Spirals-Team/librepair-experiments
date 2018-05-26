@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ObjectsView.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">generator</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.view</a> &gt; <span class="el_source">ObjectsView.java</span></div><h1>ObjectsView.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.view;
+
+import com.sun.xml.internal.bind.v2.TODO;
+
+import java.util.Arrays;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+import javax.annotation.Nonnull;
+
+import lombok.Data;
+import lombok.Getter;
+import lombok.NonNull;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.exceptions.AbortCause;
+import org.corfudb.runtime.exceptions.NetworkException;
+import org.corfudb.runtime.exceptions.TransactionAbortedException;
+import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuError;
+import org.corfudb.runtime.object.CorfuCompileWrapperBuilder;
+import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.object.transactions.AbstractTransactionalContext;
+import org.corfudb.runtime.object.transactions.TransactionBuilder;
+import org.corfudb.runtime.object.transactions.TransactionType;
+import org.corfudb.runtime.object.transactions.TransactionalContext;
+import org.corfudb.runtime.view.stream.IStreamView;
+import org.corfudb.util.serializer.Serializers;
+
+/**
+ * A view of the objects inside a Corfu instance.
+ * Created by mwei on 1/7/16.
+ */
+<span class="nc" id="L37">@Slf4j</span>
+public class ObjectsView extends AbstractView {
+
+    /**
+     * The Transaction stream is used to log/write successful transactions from different clients.
+     * Transaction data and meta data can be obtained by reading this stream.
+     */
+<span class="nc" id="L44">    public static UUID TRANSACTION_STREAM_ID = CorfuRuntime.getStreamID(&quot;Transaction_Stream&quot;);</span>
+
+<span class="nc" id="L46">    @Getter</span>
+<span class="nc" id="L47">    @Setter</span>
+    boolean transactionLogging = false;
+
+
+<span class="nc" id="L51">    @Getter</span>
+    Map&lt;ObjectID, Object&gt; objectCache = new ConcurrentHashMap&lt;&gt;();
+
+    public ObjectsView(@Nonnull final CorfuRuntime runtime) {
+<span class="nc" id="L55">        super(runtime);</span>
+<span class="nc" id="L56">    }</span>
+
+    /**
+     * Return an object builder which builds a new object.
+     *
+     * @return An object builder to open an object with.
+     */
+    public ObjectBuilder&lt;?&gt; build() {
+<span class="nc" id="L64">        return new ObjectBuilder(runtime);</span>
+    }
+
+    /**
+     * Creates a copy-on-append copy of an object.
+     *
+     * @param obj         The object that should be copied.
+     * @param destination The destination ID of the object to be copied.
+     * @param &lt;T&gt;         The type of the object being copied.
+     * @return A copy-on-append copy of the object.
+     */
+    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc bnc" id="L76" title="All 4 branches missed.">    public &lt;T&gt; T copy(@NonNull T obj, @NonNull UUID destination) {</span>
+<span class="nc" id="L77">        ICorfuSMR&lt;T&gt; proxy = (ICorfuSMR&lt;T&gt;)obj;</span>
+<span class="nc" id="L78">        ObjectID oid = new ObjectID(destination, proxy.getCorfuSMRProxy().getObjectType());</span>
+<span class="nc" id="L79">        return (T) objectCache.computeIfAbsent(oid, x -&gt; {</span>
+<span class="nc" id="L80">            IStreamView sv = runtime.getStreamsView().copy(proxy.getCorfuStreamID(),</span>
+<span class="nc" id="L81">                    destination, proxy.getCorfuSMRProxy().getVersion());</span>
+            try {
+<span class="nc" id="L83">                return</span>
+<span class="nc" id="L84">                        CorfuCompileWrapperBuilder.getWrapper(proxy.getCorfuSMRProxy()</span>
+<span class="nc" id="L85">                                        .getObjectType(), runtime, sv.getId(), null,</span>
+                                Serializers.JSON);
+<span class="nc" id="L87">            } catch (Exception ex) {</span>
+<span class="nc" id="L88">                throw new RuntimeException(ex);</span>
+            }
+        });
+    }
+
+    /**
+     * Creates a copy-on-append copy of an object.
+     *
+     * @param obj         The object that should be copied.
+     * @param destination The destination stream name of the object to be copied.
+     * @param &lt;T&gt;         The type of the object being copied.
+     * @return A copy-on-append copy of the object.
+     */
+    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc bnc" id="L102" title="All 4 branches missed.">    public &lt;T&gt; T copy(@NonNull T obj, @NonNull String destination) {</span>
+<span class="nc" id="L103">        return copy(obj, CorfuRuntime.getStreamID(destination));</span>
+    }
+
+    /**
+     * Begins a transaction on the current thread.
+     * Automatically selects the correct transaction strategy.
+     * Modifications to objects will not be visible
+     * to other threads or clients until TXEnd is called.
+     */
+    @SuppressWarnings({&quot;checkstyle:methodname&quot;, &quot;checkstyle:abbreviation&quot;})
+    public void TXBegin() {
+<span class="nc" id="L114">        TransactionType type = TransactionType.OPTIMISTIC;</span>
+
+        /* If it is a nested transaction, inherit type of parent */
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (TransactionalContext.isInTransaction()) {</span>
+<span class="nc" id="L118">            type = TransactionalContext.getCurrentContext().getBuilder().getType();</span>
+<span class="nc" id="L119">            log.trace(&quot;Inheriting parent's transaction type {}&quot;, type);</span>
+        }
+
+<span class="nc" id="L122">        TXBuild()</span>
+<span class="nc" id="L123">                .setType(type)</span>
+<span class="nc" id="L124">                .begin();</span>
+<span class="nc" id="L125">    }</span>
+
+    /** Builds a new transaction using the transaction
+     * builder.
+     * @return  A transaction builder to build a transaction with.
+     */
+    @SuppressWarnings({&quot;checkstyle:methodname&quot;, &quot;checkstyle:abbreviation&quot;})
+    public TransactionBuilder TXBuild() {
+<span class="nc" id="L133">        return new TransactionBuilder(runtime);</span>
+    }
+
+    /**
+     * Aborts a transaction on the current thread.
+     * Modifications to objects in the current transactional
+     * context will be discarded.
+     */
+    @SuppressWarnings({&quot;checkstyle:methodname&quot;, &quot;checkstyle:abbreviation&quot;})
+    public void TXAbort() {
+<span class="nc" id="L143">        AbstractTransactionalContext context = TransactionalContext.getCurrentContext();</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (context == null) {</span>
+<span class="nc" id="L145">            log.warn(&quot;Attempted to abort a transaction, but no transaction active!&quot;);</span>
+        } else {
+<span class="nc" id="L147">            TxResolutionInfo txInfo = new TxResolutionInfo(</span>
+<span class="nc" id="L148">                    context.getTransactionID(), context.getSnapshotTimestamp());</span>
+<span class="nc" id="L149">            context.abortTransaction(new TransactionAbortedException(</span>
+                    txInfo, null, AbortCause.USER, context));
+<span class="nc" id="L151">            TransactionalContext.removeContext();</span>
+        }
+<span class="nc" id="L153">    }</span>
+
+    /**
+     * Query whether a transaction is currently running.
+     *
+     * @return True, if called within a transactional context,
+     *         False, otherwise.
+     */
+    @SuppressWarnings({&quot;checkstyle:methodname&quot;, &quot;checkstyle:abbreviation&quot;})
+    public boolean TXActive() {
+<span class="nc" id="L163">        return TransactionalContext.isInTransaction();</span>
+    }
+
+    /**
+     * End a transaction on the current thread.
+     *
+     * @return The address of the transaction, if it commits.
+     *
+     * @throws TransactionAbortedException If the transaction could not be executed successfully.
+     */
+    @SuppressWarnings({&quot;checkstyle:methodname&quot;, &quot;checkstyle:abbreviation&quot;})
+    public long TXEnd()
+            throws TransactionAbortedException {
+<span class="nc" id="L176">        AbstractTransactionalContext context = TransactionalContext.getCurrentContext();</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        if (context == null) {</span>
+<span class="nc" id="L178">            log.warn(&quot;Attempted to end a transaction, but no transaction active!&quot;);</span>
+<span class="nc" id="L179">            return AbstractTransactionalContext.UNCOMMITTED_ADDRESS;</span>
+        } else {
+<span class="nc" id="L181">            long totalTime = System.currentTimeMillis() - context.getStartTime();</span>
+<span class="nc" id="L182">            log.trace(&quot;TXEnd[{}] time={} ms&quot;, context, totalTime);</span>
+            try {
+<span class="nc" id="L184">                return TransactionalContext.getCurrentContext().commitTransaction();</span>
+<span class="nc" id="L185">            } catch (TransactionAbortedException e) {</span>
+<span class="nc" id="L186">                log.warn(&quot;TXEnd[{}] Aborted Exception {}&quot;, context, e);</span>
+<span class="nc" id="L187">                TransactionalContext.getCurrentContext().abortTransaction(e);</span>
+<span class="nc" id="L188">                throw e;</span>
+<span class="nc" id="L189">            } catch (NetworkException e) {</span>
+<span class="nc" id="L190">                log.warn(&quot;TXEnd[{}] Network Exception {}&quot;, context, e);</span>
+                long snapshotTimestamp;
+                try {
+<span class="nc" id="L193">                    snapshotTimestamp = context.getSnapshotTimestamp();</span>
+<span class="nc" id="L194">                } catch (NetworkException ne) {</span>
+<span class="nc" id="L195">                    snapshotTimestamp = -1L;</span>
+<span class="nc" id="L196">                }</span>
+<span class="nc" id="L197">                TxResolutionInfo txInfo = new TxResolutionInfo(context.getTransactionID(),</span>
+                    snapshotTimestamp);
+<span class="nc" id="L199">                TransactionAbortedException tae = new TransactionAbortedException(txInfo,</span>
+                    null, null, AbortCause.NETWORK, e, context);
+<span class="nc" id="L201">                context.abortTransaction(tae);</span>
+<span class="nc" id="L202">                throw tae;</span>
+
+<span class="nc" id="L204">            } catch (Exception e) {</span>
+<span class="nc" id="L205">               log.error(&quot;TXEnd[{}]: Unexpected exception&quot;, context, e);</span>
+<span class="nc" id="L206">                TxResolutionInfo txInfo = new TxResolutionInfo(context.getTransactionID(),</span>
+                    -1L);
+<span class="nc" id="L208">                TransactionAbortedException tae = new TransactionAbortedException(txInfo,</span>
+                    null, null, AbortCause.UNDEFINED, e, context);
+<span class="nc" id="L210">                context.abortTransaction(tae);</span>
+<span class="nc" id="L211">                throw new UnrecoverableCorfuError(&quot;Unexpected exception during commit&quot;, e);</span>
+            } finally {
+<span class="nc" id="L213">                TransactionalContext.removeContext();</span>
+            }
+        }
+    }
+
+    /** Given a Corfu object, syncs the object to the most up to date version.
+     * If the object is not a Corfu object, this function won't do anything.
+     * @param object    The Corfu object to sync.
+     */
+    public void syncObject(Object object) {
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        if (object instanceof ICorfuSMR&lt;?&gt;) {</span>
+<span class="nc" id="L224">            ICorfuSMR&lt;?&gt; corfuObject = (ICorfuSMR&lt;?&gt;) object;</span>
+<span class="nc" id="L225">            corfuObject.getCorfuSMRProxy().sync();</span>
+        }
+<span class="nc" id="L227">    }</span>
+
+    /** Given a list of Corfu objects, syncs the objects to the most up to date
+     * version, possibly in parallel.
+     * @param objects   A list of Corfu objects to sync.
+     */
+    public void syncObject(Object... objects) {
+<span class="nc" id="L234">        Arrays.stream(objects)</span>
+<span class="nc" id="L235">                .parallel()</span>
+<span class="nc" id="L236">                .filter(x -&gt; x instanceof ICorfuSMR&lt;?&gt;)</span>
+<span class="nc" id="L237">                .map(x -&gt; (ICorfuSMR&lt;?&gt;) x)</span>
+<span class="nc" id="L238">                .forEach(x -&gt; x.getCorfuSMRProxy().sync());</span>
+<span class="nc" id="L239">    }</span>
+
+<span class="nc bnc" id="L241" title="All 22 branches missed.">    @Data</span>
+    @SuppressWarnings({&quot;checkstyle:abbreviation&quot;})
+    public static class ObjectID&lt;T&gt; {
+<span class="nc" id="L244">        final UUID streamID;</span>
+<span class="nc" id="L245">        final Class&lt;T&gt; type;</span>
+
+        public String toString() {
+<span class="nc" id="L248">            return &quot;[&quot; + streamID + &quot;, &quot; + type.getSimpleName() + &quot;]&quot;;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

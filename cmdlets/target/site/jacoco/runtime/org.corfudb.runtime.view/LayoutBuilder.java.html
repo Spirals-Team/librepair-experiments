@@ -1,0 +1,441 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LayoutBuilder.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.view</a> &gt; <span class="el_source">LayoutBuilder.java</span></div><h1>LayoutBuilder.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.view;
+
+import com.google.common.collect.Sets;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import java.util.UUID;
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.runtime.exceptions.LayoutModificationException;
+import org.corfudb.runtime.view.Layout.LayoutSegment;
+import org.corfudb.runtime.view.Layout.LayoutStripe;
+
+import javax.annotation.Nonnull;
+
+/**
+ * Allows us to make modifications to a layout.
+ *
+ * &lt;p&gt;Created by zlokhandwala on 10/12/16.
+ */
+<span class="nc" id="L24">@Slf4j</span>
+public class LayoutBuilder {
+
+    /**
+     * Updated layout.
+     */
+    private Layout layout;
+    /**
+     * Stores the epoch of the layout.
+     */
+    private long epoch;
+
+    /**
+     * Copies the attributes of the layout to make modifications.
+     *
+     * @param layout Base layout to be modified.
+     */
+<span class="nc" id="L41">    public LayoutBuilder(Layout layout) {</span>
+<span class="nc" id="L42">        this.layout = new Layout(layout);</span>
+<span class="nc" id="L43">        this.epoch = layout.getEpoch();</span>
+<span class="nc" id="L44">    }</span>
+
+    /**
+     * Set layout's epoch
+     * @param epoch epoch to set
+     * @return this builder
+     */
+    public LayoutBuilder setEpoch(long epoch) {
+<span class="nc" id="L52">        this.epoch = epoch;</span>
+<span class="nc" id="L53">        return this;</span>
+    }
+
+    /**
+     * Clears the existing unrsponsive servers.
+     *
+     * @return
+     */
+    public LayoutBuilder clearUnResponsiveServers() {
+<span class="nc" id="L62">        layout.getUnresponsiveServers().clear();</span>
+<span class="nc" id="L63">        return this;</span>
+    }
+
+    /**
+     * Adds unresponsive servers in the list.
+     *
+     * @param endpoints Endpoints to be added.
+     * @return updated LayoutBuilder including unresponsive servers
+     */
+    public LayoutBuilder addUnresponsiveServers(Set&lt;String&gt; endpoints) {
+<span class="nc" id="L73">        List&lt;String&gt; unresponsiveServers = layout.getUnresponsiveServers();</span>
+<span class="nc" id="L74">        unresponsiveServers.addAll(endpoints);</span>
+<span class="nc" id="L75">        return this;</span>
+    }
+
+    /**
+     * Removes unresponsive servers.
+     *
+     * @return
+     */
+    public LayoutBuilder removeUnresponsiveServers(Set&lt;String&gt; endpoints) {
+<span class="nc" id="L84">        layout.getUnresponsiveServers().removeAll(endpoints);</span>
+<span class="nc" id="L85">        return this;</span>
+    }
+
+    /**
+     * Removes an unresponsive server
+     * @param endpoint the endpoint of the server to remove
+     * @return this builder
+     */
+    public LayoutBuilder removeUnresponsiveServer(@Nonnull String endpoint) {
+<span class="nc" id="L94">        layout.getUnresponsiveServers().remove(endpoint);</span>
+<span class="nc" id="L95">        return this;</span>
+    }
+
+    /**
+     * Removes the Layout Server passed
+     *
+     * @param endpoint Endpoint to be removed
+     * @return Workflow manager
+     */
+    public LayoutBuilder removeLayoutServer(String endpoint) {
+
+<span class="nc" id="L106">        List&lt;String&gt; layoutServers = layout.getLayoutServers();</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        for (int i = 0; i &lt; layoutServers.size(); i++) {</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">            if (layoutServers.get(i).equals(endpoint)) {</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">                if (layoutServers.size() == 1) {</span>
+<span class="nc" id="L110">                    throw new LayoutModificationException(</span>
+                            &quot;Attempting to remove all layout servers.&quot;);
+                }
+<span class="nc" id="L113">                layoutServers.remove(i);</span>
+<span class="nc" id="L114">                return this;</span>
+            }
+        }
+<span class="nc" id="L117">        return this;</span>
+    }
+
+    /**
+     * Removes all the endpoints present in the set passed.
+     *
+     * @param endpoints Layout server endpoints to be removed from the layout.
+     * @return Workflow manager
+     */
+    public LayoutBuilder removeLayoutServers(Set&lt;String&gt; endpoints) {
+
+        // Not making changes in the original list in case of exceptions.
+        // Copy the list so that we can have an atomic result and no partial removals
+<span class="nc" id="L130">        List&lt;String&gt; modifiedLayoutServers = new ArrayList&lt;&gt;(layout.getLayoutServers());</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        for (int i = 0; i &lt; modifiedLayoutServers.size(); ) {</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">            if (endpoints.contains(modifiedLayoutServers.get(i))) {</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">                if (modifiedLayoutServers.size() == 1) {</span>
+<span class="nc" id="L134">                    throw new LayoutModificationException(</span>
+                            &quot;Attempting to remove all layout servers.&quot;);
+                }
+<span class="nc" id="L137">                modifiedLayoutServers.remove(i);</span>
+            } else {
+<span class="nc" id="L139">                i++;</span>
+            }
+        }
+<span class="nc" id="L142">        layout.getLayoutServers().retainAll(modifiedLayoutServers);</span>
+<span class="nc" id="L143">        return this;</span>
+    }
+
+    /**
+     * Adds a new layout server.
+     *
+     * @param endpoint Endpoint to be added.
+     * @return this.
+     */
+    public LayoutBuilder addLayoutServer(String endpoint) {
+<span class="nc" id="L153">        layout.getLayoutServers().add(endpoint);</span>
+<span class="nc" id="L154">        return this;</span>
+    }
+
+    /**
+     * Adds a new sequencer server.
+     *
+     * @param endpoint Endpoint to be added.
+     * @return this.
+     */
+    public LayoutBuilder addSequencerServer(String endpoint) {
+<span class="nc" id="L164">        layout.getSequencers().add(endpoint);</span>
+<span class="nc" id="L165">        return this;</span>
+    }
+
+    /**
+     * Adds a new logunit server.
+     * For every segment the start address is inclusive and the end is exclusive.
+     * The latest open segment (which has its end address as infinity) is now closed at address
+     * 'globalLogTail' (exclusive).
+     * A new segment is opened for all future writes. The segment starts at 'globalLogTail' and
+     * ends at infinity. This new segment contains the new logunit server to be added in the
+     * specified stripe.
+     *
+     * @param stripeIndex        stripe index where new endpoint should be added.
+     * @param globalLogTail      Global log tail to split segment.
+     * @param newLogunitEndpoint Endpoint to be added.
+     * @return this.
+     */
+    public LayoutBuilder addLogunitServer(int stripeIndex, long globalLogTail,
+                                          String newLogunitEndpoint) {
+<span class="nc" id="L184">        List&lt;LayoutSegment&gt; layoutSegmentList = layout.getSegments();</span>
+<span class="nc" id="L185">        LayoutSegment segmentToSplit = layoutSegmentList.remove(layoutSegmentList.size() - 1);</span>
+
+        // Close the existing segment with the provided globalLogTail.
+<span class="nc" id="L188">        LayoutSegment closedSegment = new LayoutSegment(segmentToSplit.getReplicationMode(),</span>
+<span class="nc" id="L189">                segmentToSplit.getStart(),</span>
+                globalLogTail + 1,
+<span class="nc" id="L191">                segmentToSplit.getStripes());</span>
+
+<span class="nc" id="L193">        List&lt;String&gt; logunitServerList = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L194">        logunitServerList.addAll(segmentToSplit.getStripes()</span>
+<span class="nc" id="L195">                .get(stripeIndex)</span>
+<span class="nc" id="L196">                .getLogServers());</span>
+<span class="nc" id="L197">        logunitServerList.add(newLogunitEndpoint);</span>
+
+        // Create new stripe list with the new logunit server added.
+<span class="nc" id="L200">        LayoutStripe newStripe = new LayoutStripe(logunitServerList);</span>
+<span class="nc" id="L201">        List&lt;LayoutStripe&gt; newStripeList = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L202">        newStripeList.addAll(segmentToSplit.getStripes());</span>
+<span class="nc" id="L203">        newStripeList.remove(stripeIndex);</span>
+<span class="nc" id="L204">        newStripeList.add(stripeIndex, newStripe);</span>
+
+<span class="nc" id="L206">        LayoutSegment openSegment = new LayoutSegment(segmentToSplit.getReplicationMode(),</span>
+                globalLogTail + 1,
+<span class="nc" id="L208">                segmentToSplit.getEnd(),</span>
+                newStripeList);
+<span class="nc" id="L210">        layoutSegmentList.add(layoutSegmentList.size(), closedSegment);</span>
+<span class="nc" id="L211">        layoutSegmentList.add(layoutSegmentList.size(), openSegment);</span>
+<span class="nc" id="L212">        return this;</span>
+    }
+
+    /**
+     * Add a log unit server to a specific stripe in a specific segment.
+     *
+     * @param endpoint     Endpoint to add to the log unit list.
+     * @param segmentIndex Segment to which the log unit is to be added.
+     * @param stripeIndex  Stripe to which the log unit is to be added.
+     * @return this.
+     */
+    public LayoutBuilder addLogunitServerToSegment(String endpoint,
+                                                   int segmentIndex,
+                                                   int stripeIndex) {
+<span class="nc" id="L226">        LayoutStripe stripe = layout.getSegments().get(segmentIndex).getStripes().get(stripeIndex);</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">        if (!stripe.getLogServers().contains(endpoint)) {</span>
+<span class="nc" id="L228">            stripe.getLogServers().add(endpoint);</span>
+        }
+<span class="nc" id="L230">        return this;</span>
+    }
+
+    /**
+     * Merges the specified segment and the segment before this.
+     * No addition or removal of stripes are allowed.
+     * Only 1 log unit server addition/removal allowed between segments.
+     *
+     * @param segmentIndex Segment to merge.
+     * @return this.
+     */
+    public LayoutBuilder mergePreviousSegment(int segmentIndex) {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        if (segmentIndex &lt; 1) {</span>
+<span class="nc" id="L243">            log.warn(&quot;mergePreviousSegment: No segments to merge.&quot;);</span>
+<span class="nc" id="L244">            return this;</span>
+        }
+
+<span class="nc" id="L247">        List&lt;LayoutSegment&gt; layoutSegmentList = layout.getSegments();</span>
+<span class="nc" id="L248">        if (layoutSegmentList.get(segmentIndex).start</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">                != layoutSegmentList.get(segmentIndex - 1).end) {</span>
+<span class="nc" id="L250">            throw new LayoutModificationException(&quot;Cannot merge disjoint segments.&quot;);</span>
+        }
+
+<span class="nc" id="L253">        List&lt;LayoutStripe&gt; oldSegmentStripeList = layoutSegmentList.get(segmentIndex - 1).getStripes();</span>
+<span class="nc" id="L254">        List&lt;LayoutStripe&gt; newSegmentStripeList = layoutSegmentList.get(segmentIndex).getStripes();</span>
+
+<span class="nc" id="L256">        int allowedUpdates = 1;</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">        if (oldSegmentStripeList.size() != newSegmentStripeList.size()) {</span>
+<span class="nc" id="L258">            throw new LayoutModificationException(&quot;Stripe addition/deletion not allowed.&quot;);</span>
+        }
+<span class="nc bnc" id="L260" title="All 2 branches missed.">        for (int i = 0; i &lt; oldSegmentStripeList.size(); i++) {</span>
+<span class="nc" id="L261">            Set&lt;String&gt; oldSegmentStripe =</span>
+<span class="nc" id="L262">                    new HashSet&lt;&gt;(oldSegmentStripeList.get(i).getLogServers());</span>
+<span class="nc" id="L263">            Set&lt;String&gt; newSegmentStripe =</span>
+<span class="nc" id="L264">                    new HashSet&lt;&gt;(newSegmentStripeList.get(i).getLogServers());</span>
+<span class="nc" id="L265">            Set&lt;String&gt; differences = Sets.difference(</span>
+<span class="nc" id="L266">                    Sets.union(oldSegmentStripe, newSegmentStripe),</span>
+<span class="nc" id="L267">                    Sets.intersection(oldSegmentStripe, newSegmentStripe));</span>
+<span class="nc" id="L268">            allowedUpdates = allowedUpdates - differences.size();</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">            if (allowedUpdates &lt; 0) {</span>
+<span class="nc" id="L270">                throw new LayoutModificationException(</span>
+                        &quot;At most &quot; + allowedUpdates + &quot; log unit server update allowed.&quot;);
+            }
+        }
+
+<span class="nc" id="L275">        LayoutSegment mergedSegment = new LayoutSegment(layoutSegmentList.get(segmentIndex)</span>
+<span class="nc" id="L276">                .getReplicationMode(),</span>
+<span class="nc" id="L277">                layoutSegmentList.get(segmentIndex - 1).getStart(),</span>
+<span class="nc" id="L278">                layoutSegmentList.get(segmentIndex).getEnd(),</span>
+<span class="nc" id="L279">                layoutSegmentList.get(segmentIndex).getStripes());</span>
+<span class="nc" id="L280">        layoutSegmentList.remove(segmentIndex);</span>
+<span class="nc" id="L281">        layoutSegmentList.remove(segmentIndex - 1);</span>
+<span class="nc" id="L282">        layoutSegmentList.add(segmentIndex - 1, mergedSegment);</span>
+<span class="nc" id="L283">        return this;</span>
+    }
+
+    /**
+     * Moves a responsive server to the top of the sequencer server list.
+     * If all have failed, throws exception.
+     *
+     * @param endpoints Failed endpoints.
+     * @return LayoutBuilder
+     */
+    public LayoutBuilder assignResponsiveSequencerAsPrimary(Set&lt;String&gt; endpoints) {
+
+<span class="nc" id="L295">        List&lt;String&gt; modifiedSequencerServers = new ArrayList&lt;&gt;(layout.getSequencers());</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">        for (int i = 0; i &lt; modifiedSequencerServers.size(); i++) {</span>
+<span class="nc" id="L297">            String sequencerServer = modifiedSequencerServers.get(i);</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            if (!endpoints.contains(sequencerServer)) {</span>
+<span class="nc" id="L299">                modifiedSequencerServers.remove(sequencerServer);</span>
+<span class="nc" id="L300">                modifiedSequencerServers.add(0, sequencerServer);</span>
+<span class="nc" id="L301">                layout.setSequencers(modifiedSequencerServers);</span>
+<span class="nc" id="L302">                return this;</span>
+            }
+        }
+<span class="nc" id="L305">        throw new LayoutModificationException(&quot;All sequencers failed.&quot;);</span>
+    }
+
+    /**
+     * Removes sequencer endpoint from the layout
+     *
+     * @param endpoint Sequencer server to be removed
+     * @return Workflow manager
+     */
+    public LayoutBuilder removeSequencerServer(String endpoint) {
+
+<span class="nc" id="L316">        List&lt;String&gt; sequencerServers = layout.getSequencers();</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">        for (int i = 0; i &lt; sequencerServers.size(); i++) {</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">            if (sequencerServers.get(i).equals(endpoint)) {</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">                if (sequencerServers.size() == 1) {</span>
+<span class="nc" id="L320">                    throw new LayoutModificationException(&quot;Attempting to remove all sequencers.&quot;);</span>
+                }
+<span class="nc" id="L322">                sequencerServers.remove(i);</span>
+<span class="nc" id="L323">                return this;</span>
+            }
+        }
+<span class="nc" id="L326">        return this;</span>
+    }
+
+    /**
+     * Removes sequencer endpoints from the layout
+     *
+     * @param endpoints Set of sequencer servers to be removed
+     * @return Workflow manager
+     */
+    public LayoutBuilder removeSequencerServers(Set&lt;String&gt; endpoints) {
+
+        // Not making changes in the original list in case of exceptions.
+        // Copy the list so that we can have an atomic result and no partial removals
+<span class="nc" id="L339">        List&lt;String&gt; modifiedSequencerServers = new ArrayList&lt;&gt;(layout.getSequencers());</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">        for (int i = 0; i &lt; modifiedSequencerServers.size(); ) {</span>
+<span class="nc" id="L341">            String sequencerServer = modifiedSequencerServers.get(i);</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">            if (endpoints.contains(sequencerServer)) {</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">                if (modifiedSequencerServers.size() == 1) {</span>
+<span class="nc" id="L344">                    throw new LayoutModificationException(&quot;Attempting to remove all sequencers.&quot;);</span>
+                }
+<span class="nc" id="L346">                modifiedSequencerServers.remove(i);</span>
+            } else {
+<span class="nc" id="L348">                i++;</span>
+            }
+<span class="nc" id="L350">        }</span>
+<span class="nc" id="L351">        layout.getSequencers().retainAll(modifiedSequencerServers);</span>
+<span class="nc" id="L352">        return this;</span>
+    }
+
+    /**
+     * Remove an endpoint from a segment.
+     *
+     * @param endpoint             The endpoint to remove
+     * @param layoutStripe         the stripe to remove the endpoint from
+     * @param minReplicationFactor The least number of nodes needed to
+     *                             maintain redundancy
+     */
+    public void removeFromStripe(String endpoint, LayoutStripe layoutStripe,
+                                 int minReplicationFactor) {
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        if (layoutStripe.getLogServers().remove(endpoint)) {</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">            if (layoutStripe.getLogServers().isEmpty()) {</span>
+<span class="nc" id="L367">                throw new LayoutModificationException(</span>
+                        &quot;Attempting to remove all logunit in stripe. &quot;
+                                + &quot;No replicas available.&quot;);
+            }
+
+<span class="nc bnc" id="L372" title="All 2 branches missed.">            if (layoutStripe.getLogServers().size() &lt; minReplicationFactor) {</span>
+<span class="nc" id="L373">                throw new LayoutModificationException(</span>
+                        &quot;Change will cause redundancy loss!&quot;);
+            }
+        }
+<span class="nc" id="L377">    }</span>
+
+    /**
+     * Removes the logunit endpoint from the layout.
+     *
+     * @param endpoint Log unit server to be removed
+     * @return Workflow manager
+     */
+    public LayoutBuilder removeLogunitServer(String endpoint) {
+
+<span class="nc" id="L387">        Layout tempLayout = new Layout(layout);</span>
+
+<span class="nc" id="L389">        List&lt;LayoutSegment&gt; layoutSegments = tempLayout.getSegments();</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">        for (LayoutSegment layoutSegment : layoutSegments) {</span>
+<span class="nc bnc" id="L391" title="All 2 branches missed.">            for (LayoutStripe layoutStripe : layoutSegment.getStripes()) {</span>
+<span class="nc" id="L392">                int minReplicationFactor = layoutSegment.getReplicationMode()</span>
+<span class="nc" id="L393">                        .getMinReplicationFactor(tempLayout);</span>
+<span class="nc" id="L394">                removeFromStripe(endpoint, layoutStripe, minReplicationFactor);</span>
+<span class="nc" id="L395">            }</span>
+<span class="nc" id="L396">        }</span>
+<span class="nc" id="L397">        layout = tempLayout;</span>
+<span class="nc" id="L398">        return this;</span>
+    }
+
+    /**
+     * Removes the logunit endpoints from the layout.
+     *
+     * @param endpoints Log unit servers to be removed
+     * @return Workflow manager
+     */
+    public LayoutBuilder removeLogunitServers(Set&lt;String&gt; endpoints) {
+
+<span class="nc" id="L409">        Layout tempLayout = new Layout(layout);</span>
+
+<span class="nc" id="L411">        List&lt;LayoutSegment&gt; layoutSegments = tempLayout.getSegments();</span>
+<span class="nc bnc" id="L412" title="All 2 branches missed.">        for (LayoutSegment layoutSegment : layoutSegments) {</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">            for (LayoutStripe layoutStripe : layoutSegment.getStripes()) {</span>
+<span class="nc bnc" id="L414" title="All 2 branches missed.">                for (String endpoint : endpoints) {</span>
+<span class="nc" id="L415">                    int minReplicationFactor = layoutSegment.getReplicationMode()</span>
+<span class="nc" id="L416">                            .getMinReplicationFactor(tempLayout);</span>
+<span class="nc" id="L417">                    removeFromStripe(endpoint, layoutStripe, minReplicationFactor);</span>
+<span class="nc" id="L418">                }</span>
+<span class="nc" id="L419">            }</span>
+<span class="nc" id="L420">        }</span>
+<span class="nc" id="L421">        layout = tempLayout;</span>
+<span class="nc" id="L422">        return this;</span>
+    }
+
+    /**
+     * Builds and returns the layout with the modified attributes.
+     *
+     * @return new layout
+     */
+    public Layout build() {
+<span class="nc" id="L431">        return new Layout(</span>
+<span class="nc" id="L432">                layout.getLayoutServers(),</span>
+<span class="nc" id="L433">                layout.getSequencers(),</span>
+<span class="nc" id="L434">                layout.getSegments(),</span>
+<span class="nc" id="L435">                layout.getUnresponsiveServers(),</span>
+                this.epoch,
+<span class="nc" id="L437">                layout.getClusterId());</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

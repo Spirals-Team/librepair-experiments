@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>InMemoryStreamLog.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">infrastructure</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.infrastructure.log</a> &gt; <span class="el_source">InMemoryStreamLog.java</span></div><h1>InMemoryStreamLog.java</h1><pre class="source lang-java linenums">package org.corfudb.infrastructure.log;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.corfudb.protocols.wireprotocol.LogData;
+import org.corfudb.runtime.exceptions.OverwriteException;
+
+import lombok.extern.slf4j.Slf4j;
+
+/**
+ * This class implements the StreamLog interface using a Java hash map.
+ * The stream log is only stored in-memory and not persisted.
+ * This should only be used for testing.
+ * Created by maithem on 7/21/16.
+ */
+<span class="nc" id="L21">@Slf4j</span>
+public class InMemoryStreamLog implements StreamLog, StreamLogWithRankedAddressSpace {
+
+<span class="nc" id="L24">    private final AtomicLong globalTail = new AtomicLong(0L);</span>
+    private Map&lt;Long, LogData&gt; logCache;
+    private Set&lt;Long&gt; trimmed;
+    private volatile long startingAddress;
+
+    /**
+     * Returns an object that stores a stream log in memory.
+     */
+<span class="nc" id="L32">    public InMemoryStreamLog() {</span>
+<span class="nc" id="L33">        logCache = new ConcurrentHashMap();</span>
+<span class="nc" id="L34">        trimmed = ConcurrentHashMap.newKeySet();</span>
+<span class="nc" id="L35">        startingAddress = 0;</span>
+<span class="nc" id="L36">    }</span>
+
+    @Override
+    public synchronized void append(List&lt;LogData&gt; entries) {
+<span class="nc bnc" id="L40" title="All 2 branches missed.">        for (LogData entry : entries) {</span>
+<span class="nc bnc" id="L41" title="All 4 branches missed.">            if (isTrimmed(entry.getGlobalAddress()) || logCache.containsKey(entry.getGlobalAddress())) {</span>
+<span class="nc" id="L42">                continue;</span>
+            }
+
+<span class="nc" id="L45">            logCache.put(entry.getGlobalAddress(), entry);</span>
+<span class="nc bnc" id="L46" title="All 2 branches missed.">            globalTail.getAndUpdate(maxTail -&gt; entry.getGlobalAddress() &gt; maxTail</span>
+<span class="nc" id="L47">                    ? entry.getGlobalAddress() : maxTail);</span>
+<span class="nc" id="L48">        }</span>
+<span class="nc" id="L49">    }</span>
+
+    @Override
+    public synchronized void append(long address, LogData entry) {
+<span class="nc bnc" id="L53" title="All 2 branches missed.">        if(isTrimmed(address)) {</span>
+<span class="nc" id="L54">            throw new OverwriteException();</span>
+        }
+
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        if (logCache.containsKey(address)) {</span>
+<span class="nc" id="L58">            throwLogUnitExceptionsIfNecessary(address, entry);</span>
+        }
+<span class="nc" id="L60">        logCache.put(address, entry);</span>
+
+
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        globalTail.getAndUpdate(maxTail -&gt; entry.getGlobalAddress() &gt; maxTail</span>
+<span class="nc" id="L64">                ? entry.getGlobalAddress() : maxTail);</span>
+<span class="nc" id="L65">    }</span>
+
+    private boolean isTrimmed(long address) {
+<span class="nc bnc" id="L68" title="All 2 branches missed.">        if (address &lt; startingAddress) {</span>
+<span class="nc" id="L69">            return true;</span>
+        }
+<span class="nc" id="L71">        return false;</span>
+    }
+
+    @Override
+    public synchronized void prefixTrim(long address) {
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        if (isTrimmed(address)) {</span>
+<span class="nc" id="L77">            log.warn(&quot;prefixTrim: Ignoring repeated trim {}&quot;, address);</span>
+        } else {
+<span class="nc" id="L79">            startingAddress = address + 1;</span>
+        }
+<span class="nc" id="L81">    }</span>
+
+    @Override
+    public long getGlobalTail() {
+<span class="nc" id="L85">        return globalTail.get();</span>
+    }
+
+    @Override
+    public long getTrimMark() {
+<span class="nc" id="L90">        return startingAddress;</span>
+    }
+
+    private void throwLogUnitExceptionsIfNecessary(long address, LogData entry) {
+<span class="nc bnc" id="L94" title="All 2 branches missed.">        if (entry.getRank() == null) {</span>
+<span class="nc" id="L95">            throw new OverwriteException();</span>
+        } else {
+            // the method below might throw DataOutrankedException or ValueAdoptedException
+<span class="nc" id="L98">            assertAppendPermittedUnsafe(address, entry);</span>
+        }
+<span class="nc" id="L100">    }</span>
+
+    @Override
+    public synchronized void trim(long address) {
+<span class="nc" id="L104">        trimmed.add(address);</span>
+<span class="nc" id="L105">    }</span>
+
+    @Override
+    public LogData read(long address) {
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        if (isTrimmed(address)) {</span>
+<span class="nc" id="L110">            return LogData.getTrimmed(address);</span>
+        }
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (trimmed.contains(address)) {</span>
+<span class="nc" id="L113">            return LogData.getTrimmed(address);</span>
+        }
+
+<span class="nc" id="L116">        return logCache.get(address);</span>
+    }
+
+    @Override
+    public void sync(boolean force){
+        //no-op
+<span class="nc" id="L122">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L126">        logCache = new HashMap();</span>
+<span class="nc" id="L127">    }</span>
+
+    @Override
+    public void release(long address, LogData entry) {
+        // in memory, do nothing
+<span class="nc" id="L132">    }</span>
+
+    @Override
+    public synchronized void compact() {
+        // Prefix Trim
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        for (long address : logCache.keySet()) {</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">            if (address &lt; startingAddress) {</span>
+<span class="nc" id="L139">                logCache.remove(address);</span>
+            }
+<span class="nc" id="L141">        }</span>
+
+        // Sparse trim
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        for (long address : trimmed) {</span>
+<span class="nc" id="L145">            logCache.remove(address);</span>
+<span class="nc" id="L146">        }</span>
+
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        for (long address : trimmed) {</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            if (address &lt; startingAddress) {</span>
+<span class="nc" id="L150">                trimmed.remove(address);</span>
+            }
+<span class="nc" id="L152">        }</span>
+<span class="nc" id="L153">    }</span>
+
+    @Override
+    public void reset() {
+<span class="nc" id="L157">        startingAddress = 0;</span>
+<span class="nc" id="L158">        globalTail.set(0L);</span>
+        // Clear the trimmed addresses record.
+<span class="nc" id="L160">        trimmed.clear();</span>
+        // Clearing all data from the cache.
+<span class="nc" id="L162">        logCache.clear();</span>
+<span class="nc" id="L163">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

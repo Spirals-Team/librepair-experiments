@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StreamsView.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.view</a> &gt; <span class="el_source">StreamsView.java</span></div><h1>StreamsView.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.view;
+
+import java.util.Collections;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.protocols.logprotocol.StreamCOWEntry;
+import org.corfudb.protocols.wireprotocol.ILogData;
+import org.corfudb.protocols.wireprotocol.TokenResponse;
+import org.corfudb.protocols.wireprotocol.TokenType;
+import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.exceptions.AbortCause;
+import org.corfudb.runtime.exceptions.AppendException;
+import org.corfudb.runtime.exceptions.OverwriteException;
+import org.corfudb.runtime.exceptions.StaleTokenException;
+import org.corfudb.runtime.exceptions.TransactionAbortedException;
+import org.corfudb.runtime.object.transactions.TransactionalContext;
+import org.corfudb.runtime.view.stream.IStreamView;
+import org.corfudb.util.Utils;
+
+/**
+ * Created by mwei on 12/11/15.
+ */
+<span class="nc" id="L31">@Slf4j</span>
+public class StreamsView extends AbstractView {
+
+    /**
+     * Checkpoint of streams have their own stream id derived from the
+     * stream id. We add the checkpoint suffix to the original stream id.
+     */
+    public static final String CHECKPOINT_SUFFIX = &quot;_cp&quot;;
+
+    public StreamsView(final CorfuRuntime runtime) {
+<span class="nc" id="L41">        super(runtime);</span>
+<span class="nc" id="L42">    }</span>
+
+    /**
+     * Get a view on a stream. The view has its own pointer to the stream.
+     *
+     * @param stream The UUID of the stream to get a view on.
+     * @return A view
+     */
+    public IStreamView get(UUID stream) {
+<span class="nc" id="L51">        return this.get(stream, StreamOptions.DEFAULT);</span>
+    }
+
+    /**
+     * Get a view on a stream. The view has its own pointer to the stream.
+     *
+     * @param stream The UUID of the stream to get a view on.
+     * @return A view
+     */
+    public IStreamView get(UUID stream, StreamOptions options) {
+<span class="nc" id="L61">        return runtime.getLayoutView().getLayout().getSegments().get(</span>
+<span class="nc" id="L62">                runtime.getLayoutView().getLayout().getSegments().size() - 1)</span>
+<span class="nc" id="L63">                .getReplicationMode().getStreamView(runtime, stream, options);</span>
+    }
+
+    /**
+     * Make a copy-on-append copy of a stream.
+     *
+     * @param source      The UUID of the stream to make a copy of.
+     * @param destination The UUID of the destination stream. It must not exist.
+     * @return A view
+     */
+    public IStreamView copy(UUID source, UUID destination, long timestamp) {
+<span class="nc" id="L74">        boolean written = false;</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        while (!written) {</span>
+<span class="nc" id="L76">            TokenResponse tokenResponse =</span>
+<span class="nc" id="L77">                    runtime.getSequencerView().nextToken(Collections.singleton(destination), 1);</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">            if (tokenResponse.getBackpointerMap().get(destination) != null</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">                    &amp;&amp; Address.isAddress(tokenResponse.getBackpointerMap().get(destination))) {</span>
+                // Reading from this address will cause a hole fill
+<span class="nc" id="L81">                runtime.getAddressSpaceView().read(tokenResponse.getTokenValue());</span>
+<span class="nc" id="L82">                throw new RuntimeException(&quot;Stream already exists!&quot;);</span>
+            }
+<span class="nc" id="L84">            StreamCOWEntry entry = new StreamCOWEntry(source, timestamp);</span>
+<span class="nc" id="L85">            TokenResponse cowToken = new TokenResponse(tokenResponse.getTokenValue(),</span>
+<span class="nc" id="L86">                    tokenResponse.getEpoch(), Collections.singletonMap(destination,</span>
+<span class="nc" id="L87">                    Address.COW_BACKPOINTER));</span>
+            try {
+<span class="nc" id="L89">                runtime.getAddressSpaceView().write(cowToken, entry);</span>
+<span class="nc" id="L90">                written = true;</span>
+<span class="nc" id="L91">            } catch (OverwriteException oe) {</span>
+<span class="nc" id="L92">                log.warn(&quot;hole fill during COW entry append, retrying...&quot;);</span>
+<span class="nc" id="L93">            } catch (StaleTokenException se) {</span>
+                // simply loop
+<span class="nc" id="L95">            }</span>
+<span class="nc" id="L96">        }</span>
+<span class="nc" id="L97">        return get(destination);</span>
+    }
+
+    /**
+     * Append to multiple streams simultaneously, possibly providing
+     * information on how to resolve conflicts.
+     *
+     * @param streamIDs    The streams to append to.
+     * @param object       The object to append to each stream.
+     * @param conflictInfo Conflict information for the sequencer to check.
+     * @return The address the entry was written to.
+     * @throws TransactionAbortedException If the transaction was aborted by
+     *                                     the sequencer.
+     */
+    public long append(@Nonnull Set&lt;UUID&gt; streamIDs, @Nonnull Object object,
+                       @Nullable TxResolutionInfo conflictInfo) throws TransactionAbortedException {
+
+        // Go to the sequencer, grab an initial token.
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        TokenResponse tokenResponse = conflictInfo == null</span>
+<span class="nc" id="L116">                ? runtime.getSequencerView().nextToken(streamIDs, 1) // Token w/o conflict info</span>
+<span class="nc" id="L117">                : runtime.getSequencerView().nextToken(streamIDs, 1,</span>
+                conflictInfo); // Token w/ conflict info
+
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        for (int x = 0; x &lt; runtime.getParameters().getWriteRetry(); x++) {</span>
+
+            // Is our token a valid type?
+<span class="nc bnc" id="L123" title="All 2 branches missed.">            if (tokenResponse.getRespType() == TokenType.TX_ABORT_CONFLICT) {</span>
+<span class="nc" id="L124">                throw new TransactionAbortedException(</span>
+                        conflictInfo,
+<span class="nc" id="L126">                        tokenResponse.getConflictKey(),</span>
+                        AbortCause.CONFLICT,
+<span class="nc" id="L128">                        TransactionalContext.getCurrentContext());</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">            } else if (tokenResponse.getRespType() == TokenType.TX_ABORT_NEWSEQ) {</span>
+<span class="nc" id="L130">                throw new TransactionAbortedException(</span>
+                        conflictInfo,
+<span class="nc" id="L132">                        tokenResponse.getConflictKey(),</span>
+                        AbortCause.NEW_SEQUENCER,
+<span class="nc" id="L134">                        TransactionalContext.getCurrentContext());</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            } else if (tokenResponse.getRespType() == TokenType.TX_ABORT_SEQ_OVERFLOW) {</span>
+<span class="nc" id="L136">                throw new TransactionAbortedException(</span>
+                        conflictInfo,
+<span class="nc" id="L138">                        tokenResponse.getConflictKey(),</span>
+                        AbortCause.SEQUENCER_OVERFLOW,
+<span class="nc" id="L140">                        TransactionalContext.getCurrentContext());</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            } else if (tokenResponse.getRespType() == TokenType.TX_ABORT_SEQ_TRIM) {</span>
+<span class="nc" id="L142">                throw new TransactionAbortedException(</span>
+                        conflictInfo,
+<span class="nc" id="L144">                        tokenResponse.getConflictKey(),</span>
+                        AbortCause.SEQUENCER_TRIM,
+<span class="nc" id="L146">                        TransactionalContext.getCurrentContext());</span>
+            }
+
+            // Attempt to write to the log
+            try {
+<span class="nc" id="L151">                runtime.getAddressSpaceView().write(tokenResponse, object);</span>
+                // If we're here, we succeeded, return the acquired token
+<span class="nc" id="L153">                return tokenResponse.getTokenValue();</span>
+<span class="nc" id="L154">            } catch (OverwriteException oe) {</span>
+
+                // We were overwritten, get a new token and try again.
+<span class="nc" id="L157">                log.warn(&quot;append[{}]: Overwritten after {} retries, streams {}&quot;,</span>
+<span class="nc" id="L158">                        tokenResponse.getTokenValue(),</span>
+<span class="nc" id="L159">                        x,</span>
+<span class="nc" id="L160">                        streamIDs.stream().map(Utils::toReadableId).collect(Collectors.toSet()));</span>
+
+                TokenResponse temp;
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                if (conflictInfo == null) {</span>
+                    // Token w/o conflict info
+<span class="nc" id="L165">                    temp = runtime.getSequencerView().nextToken(streamIDs, 1);</span>
+                } else {
+
+                    // On retry, check for conflicts only from the previous
+                    // attempt position
+<span class="nc" id="L170">                    conflictInfo.setSnapshotTimestamp(tokenResponse.getToken().getTokenValue());</span>
+
+                    // Token w/ conflict info
+<span class="nc" id="L173">                    temp = runtime.getSequencerView().nextToken(streamIDs,</span>
+                            1, conflictInfo);
+                }
+
+                // We need to fix the token (to use the stream addresses- may
+                // eventually be deprecated since these are no longer used)
+<span class="nc" id="L179">                tokenResponse = new TokenResponse(</span>
+<span class="nc" id="L180">                        temp.getRespType(), tokenResponse.getConflictKey(),</span>
+<span class="nc" id="L181">                        temp.getToken(), temp.getBackpointerMap());</span>
+
+<span class="nc" id="L183">            } catch (StaleTokenException se) {</span>
+                // the epoch changed from when we grabbed the token from sequencer
+<span class="nc" id="L185">                log.warn(&quot;append[{}]: StaleToken , streams {}&quot;, tokenResponse.getTokenValue(),</span>
+<span class="nc" id="L186">                        streamIDs.stream().map(Utils::toReadableId).collect(Collectors.toSet()));</span>
+
+<span class="nc" id="L188">                throw new TransactionAbortedException(</span>
+                        conflictInfo,
+<span class="nc" id="L190">                        tokenResponse.getConflictKey(),</span>
+                        AbortCause.NEW_SEQUENCER, // in the future, perhaps define a new AbortCause?
+<span class="nc" id="L192">                        TransactionalContext.getCurrentContext());</span>
+<span class="nc" id="L193">            }</span>
+        }
+
+<span class="nc" id="L196">        log.error(&quot;append[{}]: failed after {} retries , streams {}, write size {} bytes&quot;,</span>
+<span class="nc" id="L197">                tokenResponse.getTokenValue(),</span>
+<span class="nc" id="L198">                runtime.getParameters().getWriteRetry(),</span>
+<span class="nc" id="L199">                streamIDs.stream().map(Utils::toReadableId).collect(Collectors.toSet()),</span>
+<span class="nc" id="L200">                ILogData.getSerializedSize(object));</span>
+<span class="nc" id="L201">        throw new AppendException();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

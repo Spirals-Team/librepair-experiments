@@ -1,0 +1,672 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>NettyClientRouter.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">infrastructure</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.clients</a> &gt; <span class="el_source">NettyClientRouter.java</span></div><h1>NettyClientRouter.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.clients;
+
+import com.codahale.metrics.Timer;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.DefaultChannelPromise;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+import io.netty.handler.codec.LengthFieldPrepender;
+import io.netty.handler.ssl.SslContext;
+import io.netty.util.concurrent.GlobalEventExecutor;
+import lombok.Getter;
+import lombok.NonNull;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+import org.corfudb.protocols.wireprotocol.ClientHandshakeHandler;
+import org.corfudb.protocols.wireprotocol.ClientHandshakeHandler.ClientHandshakeEvent;
+import org.corfudb.protocols.wireprotocol.CorfuMsg;
+import org.corfudb.protocols.wireprotocol.CorfuMsgType;
+import org.corfudb.protocols.wireprotocol.NettyCorfuMessageDecoder;
+import org.corfudb.protocols.wireprotocol.NettyCorfuMessageEncoder;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.CorfuRuntime.CorfuRuntimeParameters;
+import org.corfudb.runtime.exceptions.NetworkException;
+import org.corfudb.runtime.exceptions.ShutdownException;
+import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuError;
+import org.corfudb.runtime.exceptions.unrecoverable.UnrecoverableCorfuInterruptedError;
+import org.corfudb.security.sasl.SaslUtils;
+import org.corfudb.security.sasl.plaintext.PlainTextSaslNettyClient;
+import org.corfudb.security.tls.SslContextConstructor;
+import org.corfudb.util.CFUtils;
+import org.corfudb.util.CorfuComponent;
+import org.corfudb.util.MetricsUtils;
+import org.corfudb.util.NodeLocator;
+import org.corfudb.util.Sleep;
+
+import javax.annotation.Nonnull;
+import javax.net.ssl.SSLException;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
+
+
+/**
+ * A client router which multiplexes operations over the Netty transport.
+ *
+ * &lt;p&gt;Created by mwei on 12/8/15.
+ */
+<span class="nc" id="L65">@Slf4j</span>
+@ChannelHandler.Sharable
+public class NettyClientRouter extends SimpleChannelInboundHandler&lt;CorfuMsg&gt;
+        implements IClientRouter {
+
+    /**
+     * New connection timeout (milliseconds).
+     */
+<span class="nc" id="L73">    @Getter</span>
+<span class="nc" id="L74">    @Setter</span>
+    public long timeoutConnect;
+
+    /**
+     * Sync call response timeout (milliseconds).
+     */
+<span class="nc" id="L80">    @Getter</span>
+<span class="nc" id="L81">    @Setter</span>
+    public long timeoutResponse;
+
+    /**
+     * Retry interval after timeout (milliseconds).
+     */
+<span class="nc" id="L87">    @Getter</span>
+<span class="nc" id="L88">    @Setter</span>
+    public long timeoutRetry;
+
+    /**
+     * The current request ID.
+     */
+<span class="nc" id="L94">    @Getter</span>
+    @Deprecated // TODO: Add replacement method that conforms to style
+    @SuppressWarnings(&quot;checkstyle:abbreviation&quot;) // Due to deprecation
+    public AtomicLong requestID;
+    /**
+     * The handlers registered to this router.
+     */
+    public Map&lt;CorfuMsgType, IClient&gt; handlerMap;
+    /**
+     * The clients registered to this router.
+     */
+    public List&lt;IClient&gt; clientList;
+
+    /**
+     * The outstanding requests on this router.
+     */
+    public Map&lt;Long, CompletableFuture&gt; outstandingRequests;
+
+    /**
+     * The currently registered channel.
+     */
+<span class="nc" id="L115">    private volatile Channel channel = null;</span>
+
+    /**
+     * The {@link EventLoopGroup} for this router which services requests.
+     */
+    public final EventLoopGroup eventLoopGroup;
+
+    /** Whether to shutdown the {@code eventLoopGroup} or not. Only applies when
+     *  a deprecated constructor (which generates its own {@link EventLoopGroup} is used.
+     */
+<span class="nc" id="L125">    private boolean shutdownEventLoop = false;</span>
+
+    /**
+     * Whether or not this router is shutdown.
+     */
+    public volatile boolean shutdown;
+
+    /** The {@link NodeLocator} which represents the remote node this
+     *  {@link NettyClientRouter} connects to.
+     */
+<span class="nc" id="L135">    @Getter</span>
+    private final NodeLocator node;
+
+    /** The {@link CorfuRuntimeParameters} used to configure the
+     *  router.
+     */
+    private final CorfuRuntimeParameters parameters;
+
+    /** A {@link CompletableFuture} which is completed when a connection,
+     *  including a successful handshake completes and messages can be sent
+     *  to the remote node.
+     */
+<span class="nc" id="L147">    @Getter</span>
+    volatile CompletableFuture&lt;Void&gt; connectionFuture;
+
+
+    private SslContext sslContext;
+<span class="nc" id="L152">    private final Map&lt;CorfuMsgType, String&gt; timerNameCache = new HashMap&lt;&gt;();</span>
+
+    /**
+     * Creates a new NettyClientRouter connected to the specified host and port with the
+     * specified tls and sasl options. The new {@link this} will attempt connection to
+     * the node until {@link this#stop()} is called.
+     *
+     * @param node           The node to connect to.
+     * @param eventLoopGroup The {@link EventLoopGroup} for servicing I/O.
+     * @param parameters     A {@link CorfuRuntimeParameters} with the desired configuration.
+     */
+    public NettyClientRouter(@Nonnull NodeLocator node,
+        @Nonnull EventLoopGroup eventLoopGroup,
+<span class="nc" id="L165">        @Nonnull CorfuRuntimeParameters parameters) {</span>
+<span class="nc" id="L166">        this.node = node;</span>
+<span class="nc" id="L167">        this.parameters = parameters;</span>
+<span class="nc" id="L168">        this.eventLoopGroup = eventLoopGroup;</span>
+
+<span class="nc" id="L170">        timeoutConnect = parameters.getConnectionTimeout().toMillis();</span>
+<span class="nc" id="L171">        timeoutResponse = parameters.getRequestTimeout().toMillis();</span>
+<span class="nc" id="L172">        timeoutRetry = parameters.getConnectionRetryRate().toMillis();</span>
+
+<span class="nc" id="L174">        connectionFuture = new CompletableFuture&lt;&gt;();</span>
+
+<span class="nc" id="L176">        handlerMap = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L177">        clientList = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L178">        requestID = new AtomicLong();</span>
+<span class="nc" id="L179">        outstandingRequests = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L180">        shutdown = true;</span>
+
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        if (parameters.isTlsEnabled()) {</span>
+            try {
+<span class="nc" id="L184">                sslContext = SslContextConstructor.constructSslContext(false,</span>
+<span class="nc" id="L185">                    parameters.getKeyStore(),</span>
+<span class="nc" id="L186">                    parameters.getKsPasswordFile(),</span>
+<span class="nc" id="L187">                    parameters.getTrustStore(),</span>
+<span class="nc" id="L188">                    parameters.getTsPasswordFile());</span>
+<span class="nc" id="L189">            } catch (SSLException e) {</span>
+<span class="nc" id="L190">                throw new UnrecoverableCorfuError(e);</span>
+<span class="nc" id="L191">            }</span>
+        }
+
+<span class="nc" id="L194">        addClient(new BaseHandler());</span>
+
+
+        // Initialize the channel
+<span class="nc" id="L198">        shutdown = false;</span>
+<span class="nc" id="L199">        Bootstrap b = new Bootstrap();</span>
+<span class="nc" id="L200">        b.group(eventLoopGroup);</span>
+<span class="nc" id="L201">        b.channel(parameters.getSocketType().getChannelClass());</span>
+<span class="nc" id="L202">        parameters.getNettyChannelOptions().forEach(b::option);</span>
+<span class="nc" id="L203">        b.handler(getChannelInitializer());</span>
+<span class="nc" id="L204">        b.option(ChannelOption.CONNECT_TIMEOUT_MILLIS,</span>
+<span class="nc" id="L205">                (int) parameters.getConnectionTimeout().toMillis());</span>
+
+        // Asynchronously connect, retrying until shut down.
+        // Once connected, connectionFuture will be completed.
+<span class="nc" id="L209">        connectAsync(b);</span>
+<span class="nc" id="L210">    }</span>
+
+    /**
+     * Add a new client to the router.
+     *
+     * @param client The client to add to the router.
+     * @return This NettyClientRouter, to support chaining and the builder pattern.
+     */
+    public IClientRouter addClient(IClient client) {
+        // Set the client's router to this instance.
+<span class="nc" id="L220">        client.setRouter(this);</span>
+
+        // Iterate through all types of CorfuMsgType, registering the handler
+<span class="nc" id="L223">        client.getHandledTypes().stream()</span>
+<span class="nc" id="L224">            .forEach(x -&gt; {</span>
+<span class="nc" id="L225">                handlerMap.put(x, client);</span>
+<span class="nc" id="L226">                log.trace(&quot;Registered {} to handle messages of type {}&quot;, client, x);</span>
+<span class="nc" id="L227">            });</span>
+
+        // Register this type
+<span class="nc" id="L230">        clientList.add(client);</span>
+<span class="nc" id="L231">        return this;</span>
+    }
+
+    /**
+     * Gets a client that matches a particular type.
+     *
+     * @param clientType The class of the client to match.
+     * @param &lt;T&gt;        The type of the client to match.
+     * @return The first client that matches that type.
+     * @throws NoSuchElementException If there are no clients matching that type.
+     */
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public &lt;T extends IClient&gt; T getClient(Class&lt;T&gt; clientType) {
+<span class="nc" id="L244">        return (T) clientList.stream()</span>
+<span class="nc" id="L245">            .filter(clientType::isInstance)</span>
+<span class="nc" id="L246">            .findFirst().get();</span>
+    }
+
+    /**
+     * {@inheritDoc}.
+     *
+     * @deprecated The router automatically starts now, so this function call is no
+     *             longer necessary
+     */
+    @Override
+    @Deprecated
+    public synchronized void start() {
+        // Do nothing, legacy call
+<span class="nc" id="L259">    }</span>
+
+    /** Get the {@link ChannelInitializer} used for initializing the Netty channel pipeline.
+     *
+     * @return A {@link ChannelInitializer} which initializes the pipeline.
+     */
+    private ChannelInitializer getChannelInitializer() {
+<span class="nc" id="L266">        return new ChannelInitializer() {</span>
+            @Override
+            protected void initChannel(@Nonnull Channel ch) throws Exception {
+<span class="nc bnc" id="L269" title="All 2 branches missed.">                if (parameters.isTlsEnabled()) {</span>
+<span class="nc" id="L270">                    ch.pipeline().addLast(&quot;ssl&quot;, sslContext.newHandler(ch.alloc()));</span>
+                }
+<span class="nc" id="L272">                ch.pipeline().addLast(new LengthFieldPrepender(4));</span>
+<span class="nc" id="L273">                ch.pipeline().addLast(new LengthFieldBasedFrameDecoder(Integer.MAX_VALUE,</span>
+                    0, 4, 0,
+                    4));
+<span class="nc bnc" id="L276" title="All 2 branches missed.">                if (parameters.isSaslPlainTextEnabled()) {</span>
+<span class="nc" id="L277">                    PlainTextSaslNettyClient saslNettyClient =</span>
+<span class="nc" id="L278">                        SaslUtils.enableSaslPlainText(parameters.getUsernameFile(),</span>
+<span class="nc" id="L279">                            parameters.getPasswordFile());</span>
+<span class="nc" id="L280">                    ch.pipeline().addLast(&quot;sasl/plain-text&quot;, saslNettyClient);</span>
+                }
+<span class="nc" id="L282">                ch.pipeline().addLast(new NettyCorfuMessageDecoder());</span>
+<span class="nc" id="L283">                ch.pipeline().addLast(new NettyCorfuMessageEncoder());</span>
+<span class="nc" id="L284">                ch.pipeline().addLast(new ClientHandshakeHandler(parameters.getClientId(),</span>
+<span class="nc" id="L285">                    node.getNodeId(), parameters.getHandshakeTimeout()));</span>
+<span class="nc" id="L286">                ch.pipeline().addLast(NettyClientRouter.this);</span>
+<span class="nc" id="L287">            }</span>
+        };
+    }
+
+    /** Add a future which reconnects the server.
+     *
+     * @param channel       The channel to use
+     * @param bootstrap     The channel bootstrap to use
+     */
+    private void addReconnectionOnCloseFuture(@Nonnull Channel channel,
+            @Nonnull Bootstrap bootstrap) {
+<span class="nc" id="L298">        channel.closeFuture().addListener((r) -&gt; {</span>
+<span class="nc" id="L299">            log.info(&quot;addReconnectionOnCloseFuture[{}]: disconnected&quot;, node);</span>
+            // Remove the current completion future, forcing clients to wait for reconnection.
+<span class="nc" id="L301">            connectionFuture = new CompletableFuture&lt;&gt;();</span>
+            // Exceptionally complete all requests that were waiting for a completion.
+<span class="nc" id="L303">            outstandingRequests.forEach((reqId, reqCompletableFuture) -&gt; {</span>
+<span class="nc" id="L304">                reqCompletableFuture.completeExceptionally(</span>
+                        new NetworkException(&quot;Disconnected&quot;, node));
+            // And also remove them.
+<span class="nc" id="L307">            outstandingRequests.remove(reqId);</span>
+<span class="nc" id="L308">            });</span>
+            // If we aren't shutdown, reconnect.
+<span class="nc bnc" id="L310" title="All 2 branches missed.">            if (!shutdown) {</span>
+<span class="nc" id="L311">                log.info(&quot;addReconnectionOnCloseFuture[{}]: reconnecting&quot;, node);</span>
+                // Asynchronously connect again.
+<span class="nc" id="L313">                connectAsync(bootstrap);</span>
+            }
+<span class="nc" id="L315">        });</span>
+<span class="nc" id="L316">    }</span>
+
+    /** Connect to a remote server asynchronously.
+     *
+     * @param bootstrap         The channel boostrap to use
+     * @return                  A {@link ChannelFuture} which is c
+     */
+    private ChannelFuture connectAsync(@Nonnull Bootstrap bootstrap) {
+        // If shutdown, return a ChannelFuture that is exceptionally completed.
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        if (shutdown) {</span>
+<span class="nc" id="L326">            return new DefaultChannelPromise(channel, GlobalEventExecutor.INSTANCE)</span>
+<span class="nc" id="L327">                .setFailure(new ShutdownException(&quot;Runtime already shutdown!&quot;));</span>
+        }
+        // Use the bootstrap to create a new channel.
+<span class="nc" id="L330">        ChannelFuture f = bootstrap.connect(node.getHost(), node.getPort());</span>
+<span class="nc" id="L331">        f.addListener((ChannelFuture cf) -&gt; channelConnectionFutureHandler(cf, bootstrap));</span>
+<span class="nc" id="L332">        return f;</span>
+    }
+
+    /** Handle when a channel is connected.
+     *
+     * @param future        The future that is completed when the channel is connected/
+     * @param bootstrap     The bootstrap to connect a new channel (used on reconnect).
+     */
+    private void channelConnectionFutureHandler(@Nonnull ChannelFuture future,
+                                                @Nonnull Bootstrap bootstrap) {
+<span class="nc bnc" id="L342" title="All 2 branches missed.">        if (future.isSuccess()) {</span>
+            // Register a future to reconnect in case we get disconnected
+<span class="nc" id="L344">            addReconnectionOnCloseFuture(future.channel(), bootstrap);</span>
+<span class="nc" id="L345">            log.info(&quot;connectAsync[{}]: Channel connected.&quot;, node);</span>
+        } else {
+            // Otherwise, the connection failed. If we're not shutdown, try reconnecting after
+            // a sleep period.
+<span class="nc bnc" id="L349" title="All 2 branches missed.">            if (!shutdown) {</span>
+<span class="nc" id="L350">                log.info(&quot;connectAsync[{}]: Channel connection failed, reconnecting...&quot;, node);</span>
+<span class="nc" id="L351">                Sleep.sleepUninterruptibly(parameters.getConnectionRetryRate());</span>
+                // Call connect, which will retry the call again.
+                // Note that this is not recursive, because it is called in the
+                // context of the handler future.
+<span class="nc" id="L355">                connectAsync(bootstrap);</span>
+            }
+        }
+<span class="nc" id="L358">    }</span>
+
+    /**
+     * Stops routing requests.
+     */
+    @Override
+    public void stop() {
+<span class="nc" id="L365">        log.debug(&quot;stop: Shutting down router for {}&quot;, node);</span>
+<span class="nc" id="L366">        shutdown = true;</span>
+<span class="nc" id="L367">        connectionFuture.completeExceptionally(new ShutdownException());</span>
+        try {
+<span class="nc" id="L369">            channel.disconnect();</span>
+<span class="nc" id="L370">            channel.close().syncUninterruptibly();</span>
+<span class="nc" id="L371">        } catch (Exception e) {</span>
+<span class="nc" id="L372">            log.error(&quot;Error in closing channel&quot;);</span>
+<span class="nc" id="L373">        }</span>
+        try {
+<span class="nc bnc" id="L375" title="All 2 branches missed.">            if (shutdownEventLoop) {</span>
+<span class="nc" id="L376">                eventLoopGroup.shutdownGracefully().sync();</span>
+            }
+<span class="nc" id="L378">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L379">            throw new UnrecoverableCorfuInterruptedError(&quot;Interrupted while stopping&quot;, e);</span>
+<span class="nc" id="L380">        }</span>
+<span class="nc" id="L381">    }</span>
+
+    /** {@inheritDoc}
+     *  @deprecated  Deprecated, stopping a router without shutting it down is no longer supported.
+     *               Please use {@link this#stop()}.
+     */
+    @Override
+    @Deprecated
+    public void stop(boolean shutdown) {
+<span class="nc" id="L390">        stop();</span>
+<span class="nc" id="L391">    }</span>
+
+    /**
+     * Send a message and get a completable future to be fulfilled by the reply.
+     *
+     * @param ctx     The channel handler context to send the message under.
+     * @param message The message to send.
+     * @param &lt;T&gt;     The type of completable to return.
+     * @return A completable future which will be fulfilled by the reply,
+     *     or a timeout in the case there is no response.
+     */
+    public &lt;T&gt; CompletableFuture&lt;T&gt; sendMessageAndGetCompletable(ChannelHandlerContext ctx,
+<span class="nc bnc" id="L403" title="All 2 branches missed.">        @NonNull CorfuMsg message) {</span>
+<span class="nc" id="L404">        boolean isEnabled = MetricsUtils.isMetricsCollectionEnabled();</span>
+
+        // Check the connection future. If connected, continue with sending the message.
+        // If timed out, return a exceptionally completed with the timeout.
+        try {
+<span class="nc" id="L409">            connectionFuture</span>
+<span class="nc" id="L410">                .get(parameters.getConnectionTimeout().toMillis(), TimeUnit.MILLISECONDS);</span>
+<span class="nc" id="L411">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L412">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L413">            throw new UnrecoverableCorfuInterruptedError(e);</span>
+<span class="nc" id="L414">        } catch (TimeoutException | ExecutionException e) {</span>
+<span class="nc" id="L415">            CompletableFuture&lt;T&gt; f = new CompletableFuture&lt;&gt;();</span>
+<span class="nc" id="L416">            f.completeExceptionally(e);</span>
+<span class="nc" id="L417">            return f;</span>
+<span class="nc" id="L418">        }</span>
+
+        // Set up the timer and context to measure request
+<span class="nc" id="L421">        final Timer roundTripMsgTimer = getTimer(message);</span>
+<span class="nc" id="L422">        final Timer.Context roundTripMsgContext = MetricsUtils</span>
+<span class="nc" id="L423">                .getConditionalContext(isEnabled, roundTripMsgTimer);</span>
+
+        // Get the next request ID.
+<span class="nc" id="L426">        final long thisRequest = requestID.getAndIncrement();</span>
+
+        // Set the message fields.
+<span class="nc" id="L429">        message.setClientID(parameters.getClientId());</span>
+<span class="nc" id="L430">        message.setRequestID(thisRequest);</span>
+
+        // Generate a future and put it in the completion table.
+<span class="nc" id="L433">        final CompletableFuture&lt;T&gt; cf = new CompletableFuture&lt;&gt;();</span>
+<span class="nc" id="L434">        outstandingRequests.put(thisRequest, cf);</span>
+
+        // Write the message out to the channel.
+<span class="nc bnc" id="L437" title="All 2 branches missed.">        if (ctx == null) {</span>
+<span class="nc" id="L438">            channel.writeAndFlush(message, channel.voidPromise());</span>
+        } else {
+<span class="nc" id="L440">            ctx.writeAndFlush(message, ctx.voidPromise());</span>
+        }
+<span class="nc" id="L442">        log.trace(&quot;Sent message: {}&quot;, message);</span>
+
+        // Generate a benchmarked future to measure the underlying request
+<span class="nc" id="L445">        final CompletableFuture&lt;T&gt; cfBenchmarked = cf.thenApply(x -&gt; {</span>
+<span class="nc" id="L446">            MetricsUtils.stopConditionalContext(roundTripMsgContext);</span>
+<span class="nc" id="L447">            return x;</span>
+        });
+
+        // Generate a timeout future, which will complete exceptionally
+        // if the main future is not completed.
+<span class="nc" id="L452">        final CompletableFuture&lt;T&gt; cfTimeout =</span>
+<span class="nc" id="L453">            CFUtils.within(cfBenchmarked, Duration.ofMillis(timeoutResponse));</span>
+<span class="nc" id="L454">        cfTimeout.exceptionally(e -&gt; {</span>
+<span class="nc" id="L455">            outstandingRequests.remove(thisRequest);</span>
+<span class="nc" id="L456">            log.debug(&quot;Remove request {} due to timeout!&quot;, thisRequest);</span>
+<span class="nc" id="L457">            return null;</span>
+        });
+<span class="nc" id="L459">        return cfTimeout;</span>
+    }
+
+    // Create a timer using appropriate cached timer names
+<span class="nc bnc" id="L463" title="All 2 branches missed.">    private Timer getTimer(@NonNull CorfuMsg message) {</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">        if (!timerNameCache.containsKey(message.getMsgType())) {</span>
+<span class="nc" id="L465">            timerNameCache.put(message.getMsgType(),</span>
+<span class="nc" id="L466">                    CorfuComponent.CR.toString() + message.getMsgType().name().toLowerCase());</span>
+        }
+
+<span class="nc" id="L469">        return CorfuRuntime.getDefaultMetrics()</span>
+<span class="nc" id="L470">                .timer(timerNameCache.get(message.getMsgType()));</span>
+    }
+
+    /**
+     * Send a one way message, without adding a completable future.
+     *
+     * @param ctx     The context to send the message under.
+     * @param message The message to send.
+     */
+    public void sendMessage(ChannelHandlerContext ctx, CorfuMsg message) {
+        // Get the next request ID.
+<span class="nc" id="L481">        final long thisRequest = requestID.getAndIncrement();</span>
+        // Set the base fields for this message.
+<span class="nc" id="L483">        message.setClientID(parameters.getClientId());</span>
+<span class="nc" id="L484">        message.setRequestID(thisRequest);</span>
+        // Write this message out on the channel.
+<span class="nc" id="L486">        channel.writeAndFlush(message, channel.voidPromise());</span>
+<span class="nc" id="L487">        log.trace(&quot;Sent one-way message: {}&quot;, message);</span>
+<span class="nc" id="L488">    }</span>
+
+
+    /**
+     * Send a netty message through this router, setting the fields in the outgoing message.
+     *
+     * @param ctx    Channel handler context to use.
+     * @param inMsg  Incoming message to respond to.
+     * @param outMsg Outgoing message.
+     */
+    public void sendResponseToServer(ChannelHandlerContext ctx, CorfuMsg inMsg, CorfuMsg outMsg) {
+<span class="nc" id="L499">        outMsg.copyBaseFields(inMsg);</span>
+<span class="nc" id="L500">        ctx.writeAndFlush(outMsg, ctx.voidPromise());</span>
+<span class="nc" id="L501">        log.trace(&quot;Sent response: {}&quot;, outMsg);</span>
+<span class="nc" id="L502">    }</span>
+
+    /**
+     * Complete a given outstanding request with a completion value.
+     *
+     * @param requestId  The request to complete.
+     * @param completion The value to complete the request with
+     * @param &lt;T&gt;        The type of the completion.
+     */
+    public &lt;T&gt; void completeRequest(long requestId, T completion) {
+        CompletableFuture&lt;T&gt; cf;
+<span class="nc bnc" id="L513" title="All 2 branches missed.">        if ((cf = (CompletableFuture&lt;T&gt;) outstandingRequests.get(requestId)) != null) {</span>
+<span class="nc" id="L514">            cf.complete(completion);</span>
+<span class="nc" id="L515">            outstandingRequests.remove(requestId);</span>
+        } else {
+<span class="nc" id="L517">            log.warn(&quot;Attempted to complete request {}, but request not outstanding!&quot;, requestId);</span>
+        }
+<span class="nc" id="L519">    }</span>
+
+    /**
+     * Exceptionally complete a request with a given cause.
+     *
+     * @param requestID The request to complete.
+     * @param cause     The cause to give for the exceptional completion.
+     */
+    public void completeExceptionally(long requestID, Throwable cause) {
+        CompletableFuture cf;
+<span class="nc bnc" id="L529" title="All 2 branches missed.">        if ((cf = outstandingRequests.get(requestID)) != null) {</span>
+<span class="nc" id="L530">            cf.completeExceptionally(cause);</span>
+<span class="nc" id="L531">            outstandingRequests.remove(requestID);</span>
+        } else {
+<span class="nc" id="L533">            log.warn(&quot;Attempted to exceptionally complete request {}, but request not outstanding!&quot;,</span>
+<span class="nc" id="L534">                requestID);</span>
+        }
+<span class="nc" id="L536">    }</span>
+
+    /**
+     * Validate the clientID of a CorfuMsg.
+     *
+     * @param msg The incoming message to validate.
+     * @return True, if the clientID is correct, but false otherwise.
+     */
+    private boolean validateClientId(CorfuMsg msg) {
+        // Check if the message is intended for us. If not, drop the message.
+<span class="nc bnc" id="L546" title="All 2 branches missed.">        if (!msg.getClientID().equals(parameters.getClientId())) {</span>
+<span class="nc" id="L547">            log.warn(&quot;Incoming message intended for client {}, our id is {}, dropping!&quot;,</span>
+<span class="nc" id="L548">                    msg.getClientID(), parameters.getClientId());</span>
+<span class="nc" id="L549">            return false;</span>
+        }
+<span class="nc" id="L551">        return true;</span>
+    }
+
+    @Override
+    protected void channelRead0(ChannelHandlerContext ctx, CorfuMsg m) throws Exception {
+        try {
+            // We get the handler for this message from the map
+<span class="nc" id="L558">            IClient handler = handlerMap.get(m.getMsgType());</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">            if (handler == null) {</span>
+                // The message was unregistered, we are dropping it.
+<span class="nc" id="L561">                log.warn(&quot;Received unregistered message {}, dropping&quot;, m);</span>
+            } else {
+<span class="nc bnc" id="L563" title="All 2 branches missed.">                if (validateClientId(m)) {</span>
+                    // Route the message to the handler.
+<span class="nc bnc" id="L565" title="All 2 branches missed.">                    if (log.isTraceEnabled()) {</span>
+<span class="nc" id="L566">                        log.trace(&quot;Message routed to {}: {}&quot;,</span>
+<span class="nc" id="L567">                                handler.getClass().getSimpleName(), m);</span>
+                    }
+<span class="nc" id="L569">                    handler.handleMessage(m, ctx);</span>
+                }
+            }
+<span class="nc" id="L572">        } catch (Exception e) {</span>
+<span class="nc" id="L573">            log.error(&quot;Exception during read!&quot;, e);</span>
+<span class="nc" id="L574">        }</span>
+<span class="nc" id="L575">    }</span>
+
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+<span class="nc" id="L579">        log.error(&quot;Exception during channel handling.&quot;, cause);</span>
+<span class="nc" id="L580">        ctx.close();</span>
+<span class="nc" id="L581">    }</span>
+
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+<span class="nc bnc" id="L585" title="All 2 branches missed.">        if (evt.equals(ClientHandshakeEvent.CONNECTED)) {</span>
+            // Handshake successful. Complete the connection future to allow
+            // clients to proceed.
+<span class="nc" id="L588">            channel = ctx.channel();</span>
+<span class="nc" id="L589">            connectionFuture.complete(null);</span>
+<span class="nc bnc" id="L590" title="All 4 branches missed.">        } else if (evt.equals(ClientHandshakeEvent.FAILED) &amp;&amp; connectionFuture.isDone()) {</span>
+            // Handshake failed. If the current completion future is complete,
+            // create a new one to unset it, causing future requests
+            // to wait.
+<span class="nc" id="L594">            connectionFuture = new CompletableFuture&lt;&gt;();</span>
+        }
+<span class="nc" id="L596">    }</span>
+
+    // region Deprecated Methods
+    // The methods below are deprecated and may be removed in a future release.
+    /**
+     * Creates a new NettyClientRouter connected to the specified endpoint.
+     *
+     * @param endpoint Endpoint to connectAsync to.
+     * @deprecated Use {@link this#NettyClientRouter(NodeLocator, CorfuRuntimeParameters)}
+     */
+    @Deprecated
+    public NettyClientRouter(String endpoint) {
+<span class="nc" id="L608">        this(endpoint.split(&quot;:&quot;)[0], Integer.parseInt(endpoint.split(&quot;:&quot;)[1]));</span>
+<span class="nc" id="L609">    }</span>
+
+    /**
+     * Creates a new NettyClientRouter connected to the specified host and port.
+     *
+     * @param host Host to connectAsync to.
+     * @param port Port to connectAsync to.
+     * @deprecated Use {@link this#NettyClientRouter(NodeLocator, CorfuRuntimeParameters)}
+     */
+    @Deprecated
+    public NettyClientRouter(String host, Integer port) {
+<span class="nc" id="L620">        this(NodeLocator.builder().host(host).port(port).build(),</span>
+<span class="nc" id="L621">            CorfuRuntimeParameters.builder().build());</span>
+<span class="nc" id="L622">    }</span>
+
+    /**
+     * Creates a new NettyClientRouter connected to the specified host and port.
+     *
+     * @param host Host to connectAsync to.
+     * @param port Port to connectAsync to.
+     * @deprecated Use {@link this#NettyClientRouter(NodeLocator, CorfuRuntimeParameters)}
+     */
+    @Deprecated
+    public NettyClientRouter(String host, Integer port, Boolean tls,
+        String keyStore, String ksPasswordFile, String trustStore,
+        String tsPasswordFile, Boolean saslPlainText, String usernameFile,
+        String passwordFile) {
+<span class="nc" id="L636">        this(NodeLocator.builder().host(host).port(port).build(),</span>
+<span class="nc" id="L637">            CorfuRuntimeParameters.builder()</span>
+<span class="nc" id="L638">                .tlsEnabled(tls)</span>
+<span class="nc" id="L639">                .keyStore(keyStore)</span>
+<span class="nc" id="L640">                .ksPasswordFile(ksPasswordFile)</span>
+<span class="nc" id="L641">                .trustStore(trustStore)</span>
+<span class="nc" id="L642">                .tsPasswordFile(tsPasswordFile)</span>
+<span class="nc" id="L643">                .saslPlainTextEnabled(saslPlainText)</span>
+<span class="nc" id="L644">                .usernameFile(usernameFile)</span>
+<span class="nc" id="L645">                .passwordFile(passwordFile)</span>
+<span class="nc" id="L646">                .build());</span>
+<span class="nc" id="L647">    }</span>
+
+    public NettyClientRouter(@Nonnull NodeLocator node,
+        @Nonnull CorfuRuntimeParameters parameters) {
+<span class="nc" id="L651">        this(node, parameters.getSocketType()</span>
+<span class="nc" id="L652">            .getGenerator().generate(Runtime.getRuntime().availableProcessors() * 2,</span>
+                new ThreadFactoryBuilder()
+<span class="nc" id="L654">                    .setDaemon(true)</span>
+<span class="nc" id="L655">                    .setNameFormat(parameters.getNettyEventLoopThreadFormat())</span>
+<span class="nc" id="L656">                    .build()), parameters);</span>
+<span class="nc" id="L657">        shutdownEventLoop = true;</span>
+<span class="nc" id="L658">    }</span>
+
+    @Deprecated
+    @Override
+    public Integer getPort() {
+<span class="nc" id="L663">        return node.getPort();</span>
+    }
+
+    @Deprecated
+    public String getHost() {
+<span class="nc" id="L668">        return node.getHost();</span>
+    }
+    // endregion
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

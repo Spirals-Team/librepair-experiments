@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SingletonResource.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">generator</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.util.concurrent</a> &gt; <span class="el_source">SingletonResource.java</span></div><h1>SingletonResource.java</h1><pre class="source lang-java linenums">package org.corfudb.util.concurrent;
+
+import java.util.concurrent.locks.StampedLock;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import javax.annotation.Nonnull;
+
+/** Utility class which implements a singleton resource pattern.
+ *
+ *  &lt;p&gt;A {@link SingletonResource} is a common resource pattern where the first thread that
+ *  needs to use a resource instantiates it. Subsequent threads should re-use the resource
+ *  instantiated by the first thread. The {@link SingletonResource#cleanup(Consumer)} allows
+ *  the developer to release resources if the resource has been instantiated (doing nothing
+ *  if no thread ever created the resource in the first place).
+ *
+ * @param &lt;T&gt;   The type of resource this {@link SingletonResource} holds.
+ */
+public class SingletonResource&lt;T&gt; {
+
+    /** The resource to be held. */
+    private T resource;
+
+    /** A generator which provides the resource. */
+    private final Supplier&lt;T&gt; generator;
+
+    /** A stamped lock which controls access to the resource. */
+    private final StampedLock lock;
+
+    /** Factory method with similar semantics as a {@link ThreadLocal}.
+     *
+     * @param generator     A method to be called when a new {@link R} is needed.
+     * @param &lt;R&gt;           The type of the resource to be provided.
+     * @return              A new {@link SingletonResource}.
+     */
+    public static &lt;R&gt; SingletonResource&lt;R&gt; withInitial(@Nonnull Supplier&lt;R&gt; generator) {
+<span class="nc" id="L36">        return new SingletonResource&lt;&gt;(generator);</span>
+    }
+
+    /** Generate a new {@link SingletonResource}.
+     *
+     * @param generator     A method to be called when a new {@link T} is needed.
+     */
+<span class="nc" id="L43">    private SingletonResource(Supplier&lt;T&gt; generator) {</span>
+<span class="nc" id="L44">        lock = new StampedLock();</span>
+<span class="nc" id="L45">        this.generator = generator;</span>
+
+<span class="nc" id="L47">    }</span>
+
+    /** Get the resource, potentially generating it by calling the {@code generator} if necessary.
+     *
+     * @return  The resource provided by this {@link SingletonResource}.
+     */
+    public T get() {
+<span class="nc" id="L54">        long ts = lock.tryOptimisticRead();</span>
+<span class="nc bnc" id="L55" title="All 6 branches missed.">        if (ts != 0 &amp;&amp; resource != null &amp;&amp; lock.validate(ts)) {</span>
+            // If the optimistic read succeeds and the resource
+            // is present, return it.
+<span class="nc" id="L58">            return resource;</span>
+        } else {
+            // Otherwise, grab a read lock (this should be rare)
+            try {
+<span class="nc" id="L62">                ts = lock.readLock();</span>
+                // The resource was present, so return it.
+<span class="nc bnc" id="L64" title="All 2 branches missed.">                if (resource != null) {</span>
+<span class="nc" id="L65">                    return resource;</span>
+                } else {
+                    // Otherwise attempt to grab a write lock so we can initialize
+                    // the resource.
+<span class="nc" id="L69">                    ts = lock.tryConvertToWriteLock(ts);</span>
+                    // Upgrading the read lock failed, so unlock and relock
+<span class="nc bnc" id="L71" title="All 2 branches missed.">                    if (ts == 0) {</span>
+<span class="nc" id="L72">                        lock.unlock(ts);</span>
+<span class="nc" id="L73">                        ts = lock.writeLock();</span>
+                    }
+<span class="nc" id="L75">                    resource = generator.get();</span>
+<span class="nc" id="L76">                    return resource;</span>
+                }
+            } finally {
+<span class="nc" id="L79">                lock.unlock(ts);</span>
+            }
+        }
+    }
+
+    /** Cleanup the resource if it has been generated. Otherwise does nothing.
+     *
+     * @param cleaner   A {@link Consumer} which is provided the resource to perform cleanup
+     *                  actions.
+     */
+    public void cleanup(@Nonnull Consumer&lt;T&gt; cleaner) {
+<span class="nc" id="L90">        long ts = lock.writeLock();</span>
+        try {
+<span class="nc bnc" id="L92" title="All 2 branches missed.">            if (resource != null) {</span>
+                // Perform cleanup actions and release the resource
+<span class="nc" id="L94">                cleaner.accept(resource);</span>
+            }
+<span class="nc" id="L96">            resource = null;</span>
+        } finally {
+<span class="nc" id="L98">            lock.unlock(ts);</span>
+<span class="nc" id="L99">        }</span>
+<span class="nc" id="L100">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

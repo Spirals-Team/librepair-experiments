@@ -1,0 +1,324 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LogUnitClient.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">runtime</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.runtime.clients</a> &gt; <span class="el_source">LogUnitClient.java</span></div><h1>LogUnitClient.java</h1><pre class="source lang-java linenums">package org.corfudb.runtime.clients;
+
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.Timer;
+import com.google.common.collect.Range;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import lombok.Getter;
+import lombok.NonNull;
+import org.corfudb.protocols.logprotocol.LogEntry;
+import org.corfudb.protocols.wireprotocol.CorfuMsgType;
+import org.corfudb.protocols.wireprotocol.DataType;
+import org.corfudb.protocols.wireprotocol.FillHoleRequest;
+import org.corfudb.protocols.wireprotocol.ILogData;
+import org.corfudb.protocols.wireprotocol.IMetadata;
+import org.corfudb.protocols.wireprotocol.LogData;
+import org.corfudb.protocols.wireprotocol.MultipleReadRequest;
+import org.corfudb.protocols.wireprotocol.RangeWriteMsg;
+import org.corfudb.protocols.wireprotocol.ReadRequest;
+import org.corfudb.protocols.wireprotocol.ReadResponse;
+import org.corfudb.protocols.wireprotocol.TrimRequest;
+import org.corfudb.protocols.wireprotocol.WriteMode;
+import org.corfudb.protocols.wireprotocol.WriteRequest;
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.exceptions.WriteSizeException;
+import org.corfudb.util.CorfuComponent;
+import org.corfudb.util.serializer.Serializers;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+
+
+/**
+ * A client to send messages to a LogUnit.
+ *
+ * &lt;p&gt;This class provides access to operations on a remote log unit.
+ * Created by mwei on 12/10/15.
+ */
+public class LogUnitClient extends AbstractClient {
+
+    public LogUnitClient(IClientRouter router, long epoch) {
+<span class="nc" id="L46">        super(router, epoch);</span>
+<span class="nc" id="L47">    }</span>
+
+    public String getHost() {
+<span class="nc" id="L50">        return getRouter().getHost();</span>
+    }
+
+    public Integer getPort() {
+<span class="nc" id="L54">        return getRouter().getPort();</span>
+    }
+
+<span class="nc" id="L57">    @Getter</span>
+<span class="nc" id="L58">    MetricRegistry metricRegistry = CorfuRuntime.getDefaultMetrics();</span>
+
+<span class="nc bnc" id="L60" title="All 2 branches missed.">    public LogUnitClient setMetricRegistry(@NonNull MetricRegistry metricRegistry) {</span>
+<span class="nc" id="L61">        this.metricRegistry = metricRegistry;</span>
+<span class="nc" id="L62">        return this;</span>
+    }
+
+    int maxWrite;
+
+    public LogUnitClient setMaxWrite(int limit) {
+<span class="nc" id="L68">        this.maxWrite = limit;</span>
+<span class="nc" id="L69">        return this;</span>
+    }
+
+    private Timer.Context getTimerContext(String opName) {
+<span class="nc" id="L73">        Timer t = getMetricRegistry().timer(</span>
+<span class="nc" id="L74">                CorfuComponent.LUC.toString()</span>
+<span class="nc" id="L75">                        + getHost() + &quot;:&quot; + getPort().toString() + &quot;-&quot; + opName);</span>
+<span class="nc" id="L76">        return t.time();</span>
+    }
+
+    /**
+     * Asynchronously write to the logging unit.
+     *
+     * @param address        The address to write to.
+     * @param streams        The streams, if any, that this write belongs to.
+     * @param rank           The rank of this write (used for quorum
+     *                       replication).
+     * @param writeObject    The object, pre-serialization, to write.
+     * @param backpointerMap The map of backpointers to write.
+     * @return A CompletableFuture which will complete with the WriteResult once the
+     *     write completes.
+     */
+    public CompletableFuture&lt;Boolean&gt; write(long address, Set&lt;UUID&gt; streams,
+                                            IMetadata.DataRank rank, Object writeObject,
+                                            Map&lt;UUID, Long&gt; backpointerMap) {
+<span class="nc" id="L94">        Timer.Context context = getTimerContext(&quot;writeObject&quot;);</span>
+<span class="nc" id="L95">        ByteBuf payload = Unpooled.buffer();</span>
+<span class="nc" id="L96">        Serializers.CORFU.serialize(writeObject, payload);</span>
+<span class="nc" id="L97">        WriteRequest wr = new WriteRequest(WriteMode.NORMAL, null, payload);</span>
+<span class="nc" id="L98">        wr.setRank(rank);</span>
+<span class="nc" id="L99">        wr.setBackpointerMap(backpointerMap);</span>
+<span class="nc" id="L100">        wr.setGlobalAddress(address);</span>
+<span class="nc" id="L101">        checkWriteSize(wr.getData());</span>
+<span class="nc" id="L102">        CompletableFuture&lt;Boolean&gt; cf = sendMessageWithFuture(CorfuMsgType.WRITE.payloadMsg(wr));</span>
+<span class="nc" id="L103">        return cf.thenApply(x -&gt; {</span>
+<span class="nc" id="L104">            context.stop();</span>
+<span class="nc" id="L105">            return x;</span>
+        });
+    }
+
+    /**
+     * Asynchronously write to the logging unit.
+     *
+     * @param payload The log data to write to the logging unit.
+     * @return A CompletableFuture which will complete with the WriteResult once the
+     *     write completes.
+     */
+    public CompletableFuture&lt;Boolean&gt; write(ILogData payload) {
+<span class="nc" id="L117">        checkWriteSize(payload);</span>
+<span class="nc" id="L118">        return sendMessageWithFuture(CorfuMsgType.WRITE.payloadMsg(new WriteRequest(payload)));</span>
+    }
+
+    /**
+     * Verify that max payload is enforced if a limit is confugred
+     *
+     * @param ld the LogData to check
+     */
+    private void checkWriteSize(ILogData ld) {
+<span class="nc bnc" id="L127" title="All 4 branches missed.">        if (maxWrite != 0 &amp;&amp; ld.getSizeEstimate() &gt; maxWrite) {</span>
+<span class="nc" id="L128">            throw new WriteSizeException(ld.getSizeEstimate(), maxWrite);</span>
+        }
+<span class="nc" id="L130">    }</span>
+
+    /**
+     * Asynchronously write an empty payload to the logging unit with ranked address space.
+     * Used from the quorum replication when filling holes or during the first phase of the
+     * recovery write.
+     *
+     * @param address The address to write to.
+     * @param type    The data type
+     * @param streams The streams, if any, that this write belongs to.
+     * @param rank    The rank of this write]
+     */
+    public CompletableFuture&lt;Boolean&gt; writeEmptyData(long address, DataType type, Set&lt;UUID&gt; streams,
+                                                     IMetadata.DataRank rank) {
+<span class="nc" id="L144">        Timer.Context context = getTimerContext(&quot;writeObject&quot;);</span>
+<span class="nc" id="L145">        LogEntry entry = new LogEntry(LogEntry.LogEntryType.NOP);</span>
+<span class="nc" id="L146">        ByteBuf payload = Unpooled.buffer();</span>
+<span class="nc" id="L147">        Serializers.CORFU.serialize(entry, payload);</span>
+<span class="nc" id="L148">        WriteRequest wr = new WriteRequest(WriteMode.NORMAL, type, null, payload);</span>
+<span class="nc" id="L149">        wr.setRank(rank);</span>
+<span class="nc" id="L150">        wr.setGlobalAddress(address);</span>
+<span class="nc" id="L151">        checkWriteSize(wr.getData());</span>
+<span class="nc" id="L152">        CompletableFuture&lt;Boolean&gt; cf = sendMessageWithFuture(CorfuMsgType.WRITE.payloadMsg(wr));</span>
+<span class="nc" id="L153">        return cf.thenApply(x -&gt; {</span>
+<span class="nc" id="L154">            context.stop();</span>
+<span class="nc" id="L155">            return x;</span>
+        });
+    }
+
+    /**
+     * Asynchronously read from the logging unit.
+     *
+     * @param address The address to read from.
+     * @return A CompletableFuture which will complete with a ReadResult once the read
+     * completes.
+     */
+    public CompletableFuture&lt;ReadResponse&gt; read(long address) {
+<span class="nc" id="L167">        Timer.Context context = getTimerContext(&quot;read&quot;);</span>
+<span class="nc" id="L168">        CompletableFuture&lt;ReadResponse&gt; cf = sendMessageWithFuture(</span>
+<span class="nc" id="L169">                CorfuMsgType.READ_REQUEST.payloadMsg(new ReadRequest(address)));</span>
+
+<span class="nc" id="L171">        return cf.thenApply(x -&gt; {</span>
+<span class="nc" id="L172">            context.stop();</span>
+<span class="nc" id="L173">            return x;</span>
+        });
+    }
+
+    /**
+     * Read data from the log unit server for a range of addresses.
+     *
+     * @param range Range of global offsets.
+     * @return CompletableFuture which returns a ReadResponse on completion.
+     */
+    public CompletableFuture&lt;ReadResponse&gt; read(Range&lt;Long&gt; range) {
+<span class="nc" id="L184">        Timer.Context context = getTimerContext(&quot;readRange&quot;);</span>
+<span class="nc" id="L185">        CompletableFuture&lt;ReadResponse&gt; cf = sendMessageWithFuture(</span>
+<span class="nc" id="L186">                CorfuMsgType.READ_REQUEST.payloadMsg(new ReadRequest(range)));</span>
+<span class="nc" id="L187">        return cf.thenApply(x -&gt; {</span>
+<span class="nc" id="L188">            context.stop();</span>
+<span class="nc" id="L189">            return x;</span>
+        });
+    }
+
+    /**
+     * Read data from the log unit server for a list of addresses.
+     *
+     * @param list list of global addresses.
+     * @return CompletableFuture which returns a ReadResponse on completion.
+     */
+    public CompletableFuture&lt;ReadResponse&gt; read(List&lt;Long&gt; list) {
+<span class="nc" id="L200">        Timer.Context context = getTimerContext(&quot;readList&quot;);</span>
+<span class="nc" id="L201">        CompletableFuture&lt;ReadResponse&gt; cf = sendMessageWithFuture(</span>
+<span class="nc" id="L202">                CorfuMsgType.MULTIPLE_READ_REQUEST.payloadMsg(new MultipleReadRequest(list)));</span>
+<span class="nc" id="L203">        return cf.thenApply(x -&gt; {</span>
+<span class="nc" id="L204">            context.stop();</span>
+<span class="nc" id="L205">            return x;</span>
+        });
+    }
+
+    /**
+     * Get the global tail maximum address the log unit has written.
+     *
+     * @return A CompletableFuture which will complete with the globalTail once
+     * received.
+     */
+    public CompletableFuture&lt;Long&gt; getTail() {
+<span class="nc" id="L216">        return sendMessageWithFuture(CorfuMsgType.TAIL_REQUEST.msg());</span>
+    }
+
+    /**
+     * Get the starting address of a loggining unit.
+     * @return A CompletableFuture for the starting address
+     */
+    public CompletableFuture&lt;Long&gt; getTrimMark() {
+<span class="nc" id="L224">        return sendMessageWithFuture(CorfuMsgType.TRIM_MARK_REQUEST.msg());</span>
+    }
+
+    /**
+     * Send a hint to the logging unit that a stream can be trimmed.
+     *
+     * @param prefix The prefix of the stream, as a global physical offset, to trim.
+     */
+    public void trim(long prefix) {
+<span class="nc" id="L233">        sendMessage(CorfuMsgType.TRIM.payloadMsg(new TrimRequest(null, prefix)));</span>
+<span class="nc" id="L234">    }</span>
+
+    /**
+     * Send a prefix trim request that will trim the log up to a certian address
+     *
+     * @param address An address to trim up to (i.e. [0, address))
+     */
+    public CompletableFuture&lt;Void&gt; prefixTrim(long address) {
+<span class="nc" id="L242">        return sendMessageWithFuture(CorfuMsgType.PREFIX_TRIM</span>
+<span class="nc" id="L243">                .payloadMsg(new TrimRequest(null, address)));</span>
+    }
+
+    /**
+     * Send a compact request that will delete the trimmed parts of the log.
+     */
+    public CompletableFuture&lt;Void&gt; compact() {
+<span class="nc" id="L250">        return sendMessageWithFuture(CorfuMsgType.COMPACT_REQUEST.msg());</span>
+    }
+
+    /**
+     * Send a flush cache request that will flush the logunit cache.
+     */
+    public CompletableFuture&lt;Void&gt; flushCache() {
+<span class="nc" id="L257">        return sendMessageWithFuture(CorfuMsgType.FLUSH_CACHE.msg());</span>
+    }
+
+    /**
+     * Fill a hole at a given address.
+     *
+     * @param address The address to fill a hole at.
+     */
+    public CompletableFuture&lt;Boolean&gt; fillHole(long address) {
+<span class="nc" id="L266">        Timer.Context context = getTimerContext(&quot;fillHole&quot;);</span>
+<span class="nc" id="L267">        CompletableFuture&lt;Boolean&gt; cf = sendMessageWithFuture(</span>
+<span class="nc" id="L268">                CorfuMsgType.FILL_HOLE.payloadMsg(new FillHoleRequest(null, address)));</span>
+<span class="nc" id="L269">        return cf.thenApply(x -&gt; {</span>
+<span class="nc" id="L270">            context.stop();</span>
+<span class="nc" id="L271">            return x;</span>
+        });
+    }
+
+    /**
+     * Fills hole at a given address for a particular streamID.
+     *
+     * @param streamID StreamID to hole fill.
+     * @param address  The address to fill a hole at.
+     */
+    @Deprecated // TODO: Add replacement method that conforms to style
+    @SuppressWarnings(&quot;checkstyle:abbreviation&quot;) // Due to deprecation
+    public CompletableFuture&lt;Boolean&gt; fillHole(UUID streamID, long address) {
+<span class="nc" id="L284">        Timer.Context context = getTimerContext(&quot;fillHole&quot;);</span>
+<span class="nc" id="L285">        CompletableFuture&lt;Boolean&gt; cf = sendMessageWithFuture(</span>
+<span class="nc" id="L286">                CorfuMsgType.FILL_HOLE.payloadMsg(new FillHoleRequest(streamID, address)));</span>
+<span class="nc" id="L287">        return cf.thenApply(x -&gt; {</span>
+<span class="nc" id="L288">            context.stop();</span>
+<span class="nc" id="L289">            return x;</span>
+        });
+    }
+
+    /**
+     * Sends a request to write a range of addresses.
+     *
+     * @param range entries to write to the logunit. Must have at least one entry.
+     * @return Completable future which returns true on success.
+     */
+    public CompletableFuture&lt;Boolean&gt; writeRange(List&lt;LogData&gt; range) {
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        if (range.isEmpty()) {</span>
+<span class="nc" id="L301">            throw new IllegalArgumentException(&quot;Can't write an empty range&quot;);</span>
+        }
+
+<span class="nc" id="L304">        long base = range.get(0).getGlobalAddress();</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        for (int x = 0; x &lt; range.size(); x++) {</span>
+<span class="nc" id="L306">            LogData curr = range.get(x);</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">            if (!curr.getGlobalAddress().equals(base + x)) {</span>
+<span class="nc" id="L308">                throw new IllegalArgumentException(&quot;Entries not in sequential order!&quot;);</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">            } else if (curr.isEmpty()) {</span>
+<span class="nc" id="L310">                throw new IllegalArgumentException(&quot;Can't write empty entries!&quot;);</span>
+            }
+        }
+<span class="nc" id="L313">        return sendMessageWithFuture(CorfuMsgType.RANGE_WRITE</span>
+<span class="nc" id="L314">                .payloadMsg(new RangeWriteMsg(range)));</span>
+    }
+
+    /**
+     * Send a reset request.
+     */
+    public CompletableFuture&lt;Boolean&gt; resetLogUnit() {
+<span class="nc" id="L321">        return sendMessageWithFuture(CorfuMsgType.RESET_LOGUNIT.msg());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

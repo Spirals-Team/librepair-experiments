@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ReconfigurationEventHandler.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">cmdlets</a> &gt; <a href="../index.html" class="el_bundle">infrastructure</a> &gt; <a href="index.source.html" class="el_package">org.corfudb.infrastructure.management</a> &gt; <span class="el_source">ReconfigurationEventHandler.java</span></div><h1>ReconfigurationEventHandler.java</h1><pre class="source lang-java linenums">package org.corfudb.infrastructure.management;
+
+import java.time.Duration;
+import java.util.Set;
+
+import javax.annotation.Nonnull;
+
+import lombok.Getter;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.view.IReconfigurationHandlerPolicy;
+import org.corfudb.runtime.view.Layout;
+
+/**
+ * The ReconfigurationEventHandler handles the trigger provided by any source
+ * or policy detecting a failure or healing in the cluster. It performs the following functions:
+ * Cluster recovery:    Recovers the cluster on trigger at startup.
+ * Handle failures:     Handles any failures in the layout based on the desired policy.
+ * Handle healing:      Handles healing of unresponsive marked nodes which are now responsive.
+ *
+ * &lt;p&gt;Created by zlokhandwala on 11/18/16.
+ */
+<span class="nc" id="L25">@Slf4j</span>
+<span class="nc" id="L26">public class ReconfigurationEventHandler {</span>
+
+<span class="nc" id="L28">    @Getter</span>
+<span class="nc" id="L29">    @Setter</span>
+<span class="nc" id="L30">    private static int workflowRetries = 3;</span>
+
+<span class="nc" id="L32">    @Getter</span>
+<span class="nc" id="L33">    @Setter</span>
+<span class="nc" id="L34">    private static Duration workflowTimeout = Duration.ofMinutes(1L);</span>
+
+    /**
+     * Recover cluster from layout.
+     *
+     * @param recoveryLayout Layout to use to recover
+     * @param corfuRuntime   Connected runtime
+     * @return True if the cluster was recovered, False otherwise
+     */
+    public boolean recoverCluster(@Nonnull Layout recoveryLayout,
+                                  @Nonnull CorfuRuntime corfuRuntime) {
+
+        try {
+<span class="nc" id="L47">            corfuRuntime.getLayoutManagementView().recoverCluster(recoveryLayout);</span>
+<span class="nc" id="L48">        } catch (Exception e) {</span>
+<span class="nc" id="L49">            log.error(&quot;Error: recovery: {}&quot;, e);</span>
+<span class="nc" id="L50">            return false;</span>
+<span class="nc" id="L51">        }</span>
+<span class="nc" id="L52">        return true;</span>
+    }
+
+    /**
+     * Takes in the existing layout and a set of failed nodes.
+     * It first generates a new layout by removing the failed nodes from the existing layout.
+     * It then seals the epoch to prevent any client from accessing the stale layout.
+     * Finally we run paxos to update all servers with the new layout.
+     *
+     * @param currentLayout The current layout
+     * @param corfuRuntime  Connected corfu runtime instance
+     * @param failedServers Set of failed server addresses
+     */
+    public boolean handleFailure(@Nonnull IReconfigurationHandlerPolicy failureHandlerPolicy,
+                                 @Nonnull Layout currentLayout,
+                                 @Nonnull CorfuRuntime corfuRuntime,
+                                 @Nonnull Set&lt;String&gt; failedServers) {
+        try {
+<span class="nc" id="L70">            corfuRuntime.getLayoutManagementView().handleFailure(failureHandlerPolicy,</span>
+                    currentLayout, failedServers);
+<span class="nc" id="L72">            return true;</span>
+<span class="nc" id="L73">        } catch (Exception e) {</span>
+<span class="nc" id="L74">            log.error(&quot;Error: handleFailure: {}&quot;, e);</span>
+<span class="nc" id="L75">            return false;</span>
+        }
+    }
+
+    /**
+     * Takes in the existing layout and a set of healed nodes.
+     * The LayoutManagementView launches a workflow to heal the specified node. This call is
+     * blocked until the workflow is completed or aborted.
+     * The node is healed and added back to the layout with all components enabled i.e., with its
+     * layout, sequencer and log unit server enabled and as an active participant in the
+     * data replication view.
+     *
+     * @param runtime           Connected corfu runtime instance
+     * @param healedServers     Set of healed server addresses
+     * @param retryQueryTimeout Timeout to poll for workflow status.
+     */
+    public boolean handleHealing(@Nonnull IReconfigurationHandlerPolicy failureHandlerPolicy,
+                                 @Nonnull CorfuRuntime runtime,
+                                 @Nonnull Set&lt;String&gt; healedServers,
+                                 @Nonnull Duration retryQueryTimeout) {
+        try {
+<span class="nc bnc" id="L96" title="All 2 branches missed.">            for (String healedServer : healedServers) {</span>
+<span class="nc" id="L97">                runtime.getManagementView().healNode(</span>
+                        healedServer,
+                        workflowRetries,
+                        workflowTimeout,
+                        retryQueryTimeout);
+<span class="nc" id="L102">            }</span>
+<span class="nc" id="L103">            return true;</span>
+<span class="nc" id="L104">        } catch (Exception e) {</span>
+<span class="nc" id="L105">            log.error(&quot;Error: handleHealing: {}&quot;, e);</span>
+<span class="nc" id="L106">            return false;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>
