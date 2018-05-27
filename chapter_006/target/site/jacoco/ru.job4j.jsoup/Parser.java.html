@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Parser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">chapter_006</a> &gt; <a href="index.source.html" class="el_package">ru.job4j.jsoup</a> &gt; <span class="el_source">Parser.java</span></div><h1>Parser.java</h1><pre class="source lang-java linenums">package ru.job4j.jsoup;
+
+import org.apache.log4j.Logger;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+import ru.job4j.sql.SQLConnect;
+import java.io.IOException;
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.*;
+
+/**
+ * @author Michael Hodkov
+ * @version $Id$
+ * @since 0.1
+ */
+public class Parser {
+<span class="nc" id="L21">    private static Logger log = Logger.getLogger(Parser.class);</span>
+    private final Setup setup;
+    private final SQLConnect connect;
+    private final MySQLReq sqlReq;
+    private final int hour;
+    private final static int DEFAULT_STOP = 10;
+
+
+<span class="nc" id="L29">    public Parser() {</span>
+<span class="nc" id="L30">        this.setup = new Setup(&quot;chapter_006/parser.ini&quot;);</span>
+<span class="nc bnc" id="L31" title="All 2 branches missed.">        if (setup.isFlagProvlem()) {</span>
+<span class="nc" id="L32">            connect = null;</span>
+<span class="nc" id="L33">            sqlReq = null;</span>
+<span class="nc" id="L34">            hour = 0;</span>
+<span class="nc" id="L35">            return;</span>
+        }
+<span class="nc" id="L37">        connect = new SQLConnect(setup.getUrl(), setup.getLogin(), setup.getPassword(), true);</span>
+<span class="nc" id="L38">        sqlReq = new MySQLReq(connect.getConnection());</span>
+<span class="nc" id="L39">        sqlReq.createTable();</span>
+<span class="nc" id="L40">        hour = setup.getHour();</span>
+<span class="nc" id="L41">        start();</span>
+<span class="nc" id="L42">    }</span>
+
+    private void start() {
+<span class="nc" id="L45">        new Thread(new Runnable() {</span>
+            @Override
+            public void run() {
+<span class="nc" id="L48">                long sleep = hour * 3600000;</span>
+<span class="nc bnc" id="L49" title="All 2 branches missed.">                while (!Thread.interrupted()) {</span>
+                    for (;;) {
+<span class="nc" id="L51">                        log.info(&quot;Start work&quot;);</span>
+<span class="nc" id="L52">                        work();</span>
+<span class="nc bnc" id="L53" title="All 2 branches missed.">                        if (Thread.currentThread().isInterrupted()) {</span>
+<span class="nc" id="L54">                            break;</span>
+                        }
+                        try {
+<span class="nc" id="L57">                            log.info(String.format(&quot;Sleep: %d hour&quot;, hour));</span>
+<span class="nc" id="L58">                            Thread.sleep(sleep);</span>
+<span class="nc" id="L59">                        } catch (InterruptedException e) {</span>
+<span class="nc" id="L60">                            log.error(e);</span>
+<span class="nc" id="L61">                        }</span>
+                    }
+                    break;
+                }
+<span class="nc" id="L65">                stop();</span>
+<span class="nc" id="L66">            }</span>
+<span class="nc" id="L67">        }).start();</span>
+<span class="nc" id="L68">    }</span>
+
+    private Date getStopLine() {
+        Date stopLine;
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        if (sqlReq.isEmptyBD()) {</span>
+<span class="nc" id="L73">            stopLine = firstDayOfYear();</span>
+//            stopLine = fiveYearsAgo();
+        } else {
+<span class="nc" id="L76">            stopLine = sqlReq.lastJob();</span>
+        }
+<span class="nc" id="L78">        return stopLine;</span>
+    }
+
+    private void work() {
+        Elements elements;
+<span class="nc" id="L83">        Date stopLine = getStopLine();</span>
+<span class="nc" id="L84">        log.info(String.format(&quot;Stop search data: %s&quot;, stopLine));</span>
+<span class="nc" id="L85">        int countAdd = 0;</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        for (String url: setup.getJobUrls()) {</span>
+<span class="nc" id="L87">            int indexPage = 1;</span>
+<span class="nc" id="L88">            int stopCount = 0;</span>
+            do {
+<span class="nc" id="L90">                Document document = jsoupConnect(String.format(&quot;%s%d&quot;, url, indexPage++));</span>
+<span class="nc" id="L91">                elements = document.getElementsByClass(&quot;postslisttopic&quot;);</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">                for (Element element : elements) {</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">                    if (isJavaJob(element.text())) {</span>
+<span class="nc bnc" id="L94" title="All 2 branches missed.">                        if (!testAndAddUrlJob(element.select(&quot;a&quot;).attr(&quot;href&quot;), stopLine)) {</span>
+<span class="nc" id="L95">                            stopCount++;</span>
+                        } else {
+<span class="nc" id="L97">                            stopCount = 0;</span>
+<span class="nc" id="L98">                            countAdd++;</span>
+                        }
+                    }
+<span class="nc" id="L101">                }</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">                if (stopCount &gt; DEFAULT_STOP) {</span>
+<span class="nc" id="L103">                    break;</span>
+                }
+<span class="nc bnc" id="L105" title="All 2 branches missed.">            } while (elements.size() &gt; 0);</span>
+<span class="nc" id="L106">        }</span>
+<span class="nc" id="L107">        log.info(String.format(&quot;Add: %d&quot;, countAdd));</span>
+<span class="nc" id="L108">    }</span>
+
+    private boolean testAndAddUrlJob(String url, Date stopLine) {
+<span class="nc" id="L111">        Document document = jsoupConnect(url);</span>
+<span class="nc" id="L112">        String title = document.title()</span>
+<span class="nc" id="L113">                .replace(&quot; / Вакансии / Sql.ru&quot;, &quot;&quot;)</span>
+<span class="nc" id="L114">                .replace(&quot; / Работа / Sql.ru&quot;, &quot;&quot;);</span>
+<span class="nc" id="L115">        Elements elements = document.getElementsByClass(&quot;msgBody&quot;);</span>
+<span class="nc" id="L116">        String text = elements.get(1).text();</span>
+<span class="nc" id="L117">        elements = document.getElementsByClass(&quot;msgFooter&quot;);</span>
+<span class="nc" id="L118">        Date time = correctTime(elements.get(0).text());</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        if (time.after(stopLine)) {</span>
+<span class="nc" id="L120">            sqlReq.add(url, title, text, time);</span>
+<span class="nc" id="L121">            return true;</span>
+        } else {
+<span class="nc" id="L123">            return false;</span>
+        }
+    }
+
+    private boolean isSPB(String text) {
+<span class="nc" id="L128">        text = text.toLowerCase();</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (text.contains(&quot;санкт-петербург&quot;)) {</span>
+<span class="nc" id="L130">            return true;</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        } else if (text.contains(&quot;спб&quot;)) {</span>
+<span class="nc" id="L132">            return true;</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        } else if (text.contains(&quot;питер&quot;)) {</span>
+<span class="nc" id="L134">            return true;</span>
+        }
+<span class="nc" id="L136">        return false;</span>
+    }
+
+    private Date correctTime(String time) {
+<span class="nc" id="L140">        time = time.substring(0, time.indexOf(&quot;[&quot;) - 1);</span>
+<span class="nc" id="L141">        Date date = null;</span>
+<span class="nc" id="L142">        DateFormat format = new SimpleDateFormat(&quot;d MMM yy&quot;);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (time.contains(&quot;вчера&quot;)) {</span>
+<span class="nc" id="L144">            time = time.replace(&quot;вчера&quot;, format.format(minusDay()));</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        } else if (time.contains(&quot;сегодня&quot;)) {</span>
+<span class="nc" id="L146">            time = time.replace(&quot;сегодня&quot;, format.format(new Date()));</span>
+        }
+<span class="nc" id="L148">        format = new SimpleDateFormat(&quot;d MMM yy, HH:mm&quot;);</span>
+        try {
+<span class="nc" id="L150">            date = format.parse(time);</span>
+<span class="nc" id="L151">        } catch (ParseException e) {</span>
+<span class="nc" id="L152">            log.error(e);</span>
+<span class="nc" id="L153">        }</span>
+<span class="nc" id="L154">        return date;</span>
+    }
+
+    private Date minusDay() {
+<span class="nc" id="L158">        Calendar cal = Calendar.getInstance();</span>
+<span class="nc" id="L159">        cal.add(Calendar.DATE, -1);</span>
+<span class="nc" id="L160">        return cal.getTime();</span>
+    }
+
+    private Date minusHour(int value) {
+<span class="nc" id="L164">        Calendar cal = Calendar.getInstance();</span>
+<span class="nc" id="L165">        cal.add(Calendar.HOUR, -value);</span>
+<span class="nc" id="L166">        return cal.getTime();</span>
+    }
+
+    private Date fiveYearsAgo() {
+<span class="nc" id="L170">        Calendar cal = new GregorianCalendar(2013, 1, 1);</span>
+<span class="nc" id="L171">        return cal.getTime();</span>
+    }
+
+    private Date firstDayOfYear() {
+<span class="nc" id="L175">        DateFormat format = new SimpleDateFormat(&quot;yyyy&quot;);</span>
+<span class="nc" id="L176">        Date date = null;</span>
+        try {
+<span class="nc" id="L178">            date = format.parse(format.format(new Date()));</span>
+<span class="nc" id="L179">        } catch (ParseException e) {</span>
+<span class="nc" id="L180">            log.error(e);</span>
+<span class="nc" id="L181">        }</span>
+<span class="nc" id="L182">        return date;</span>
+    }
+
+    private boolean isJavaJob(String text) {
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (!text.toLowerCase().contains(&quot;java&quot;)) {</span>
+<span class="nc" id="L187">            return false;</span>
+        } else {
+<span class="nc" id="L189">            text = text.toLowerCase().replace(&quot;java script&quot;, &quot;&quot;).replace(&quot;javascript&quot;, &quot;&quot;);</span>
+        }
+<span class="nc" id="L191">        return text.contains(&quot;java&quot;);</span>
+    }
+
+    private void stop() {
+<span class="nc" id="L195">        connect.close();</span>
+<span class="nc" id="L196">    }</span>
+
+    private Document jsoupConnect(String url) {
+        try {
+<span class="nc" id="L200">            return Jsoup.connect(url).get();</span>
+<span class="nc" id="L201">        } catch (IOException e) {</span>
+<span class="nc" id="L202">            log.error(String.format(&quot;Error: connect url %s %s&quot;, url, e));</span>
+        }
+<span class="nc" id="L204">        return null;</span>
+    }
+
+    public static void main(String[] args) throws Exception {
+<span class="nc" id="L208">        Parser parser = new Parser();</span>
+<span class="nc" id="L209">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

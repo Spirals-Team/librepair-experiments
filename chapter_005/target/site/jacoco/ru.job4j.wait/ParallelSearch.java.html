@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ParallelSearch.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">chapter_005</a> &gt; <a href="index.source.html" class="el_package">ru.job4j.wait</a> &gt; <span class="el_source">ParallelSearch.java</span></div><h1>ParallelSearch.java</h1><pre class="source lang-java linenums">package ru.job4j.wait;
+
+import net.jcip.annotations.GuardedBy;
+import net.jcip.annotations.ThreadSafe;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Queue;
+
+/**
+ * @author Michael Hodkov
+ * @version $Id$
+ * @since 0.1
+ */
+@ThreadSafe
+public class ParallelSearch {
+    private final String root;
+    private final String text;
+    private final List&lt;String&gt; exts;
+<span class="nc" id="L25">    volatile boolean finish = false;</span>
+
+<span class="nc" id="L27">    @GuardedBy(&quot;this&quot;)</span>
+    private final Queue&lt;String&gt; files = new LinkedList&lt;&gt;();
+
+<span class="nc" id="L30">    @GuardedBy(&quot;this&quot;)</span>
+    private final List&lt;String&gt; paths = new ArrayList&lt;&gt;();
+
+<span class="nc" id="L33">    public ParallelSearch(String root, String text, List&lt;String&gt; exts) {</span>
+<span class="nc" id="L34">        this.root = root;</span>
+<span class="nc" id="L35">        this.text = text;</span>
+<span class="nc" id="L36">        this.exts = exts;</span>
+<span class="nc" id="L37">    }</span>
+
+    public void init() {
+<span class="nc" id="L40">        Thread search = new Thread() {</span>
+            @Override
+            public void run() {
+<span class="nc" id="L43">                Path path = Paths.get(root);</span>
+                try {
+<span class="nc" id="L45">                    Files.walkFileTree(path, new MyFileVisitor());</span>
+<span class="nc" id="L46">                } catch (IOException e1) {</span>
+<span class="nc" id="L47">                    e1.printStackTrace();</span>
+<span class="nc" id="L48">                }</span>
+<span class="nc" id="L49">                finish = true;</span>
+<span class="nc" id="L50">                synchronized (files) {</span>
+<span class="nc" id="L51">                    files.notify();</span>
+<span class="nc" id="L52">                }</span>
+<span class="nc" id="L53">            }</span>
+        };
+<span class="nc" id="L55">        Thread read = new Thread() {</span>
+            @Override
+            public void run() {
+                Path path;
+<span class="nc bnc" id="L59" title="All 2 branches missed.">                while (!finish) {</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">                    if (!files.isEmpty()) {</span>
+<span class="nc" id="L61">                        synchronized (files) {</span>
+<span class="nc" id="L62">                            path = Paths.get(files.poll());</span>
+<span class="nc" id="L63">                        }</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">                        if (Files.isReadable(path)) {</span>
+                            try {
+<span class="nc" id="L66">                                String content = new String(Files.readAllBytes(path));</span>
+<span class="nc bnc" id="L67" title="All 4 branches missed.">                                if (text != null &amp;&amp; content.indexOf(text) != -1) {</span>
+<span class="nc" id="L68">                                    synchronized (paths) {</span>
+<span class="nc" id="L69">                                        paths.add(path.toString());</span>
+<span class="nc" id="L70">                                    }</span>
+                                }
+<span class="nc" id="L72">                            } catch (IOException e) {</span>
+<span class="nc" id="L73">                                e.printStackTrace();</span>
+<span class="nc" id="L74">                            }</span>
+                        }
+                    } else {
+                        try {
+<span class="nc" id="L78">                            synchronized (files) {</span>
+<span class="nc" id="L79">                                files.wait();</span>
+<span class="nc" id="L80">                            }</span>
+<span class="nc" id="L81">                        } catch (InterruptedException e) {</span>
+<span class="nc" id="L82">                            e.printStackTrace();</span>
+<span class="nc" id="L83">                        }</span>
+                    }
+                }
+<span class="nc" id="L86">            }</span>
+        };
+<span class="nc" id="L88">        search.start();</span>
+<span class="nc" id="L89">        read.start();</span>
+        try {
+<span class="nc" id="L91">            search.join();</span>
+<span class="nc" id="L92">            read.join();</span>
+<span class="nc" id="L93">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L94">            e.printStackTrace();</span>
+<span class="nc" id="L95">        }</span>
+<span class="nc" id="L96">    }</span>
+
+    synchronized List&lt;String&gt; result() {
+<span class="nc" id="L99">        return this.paths;</span>
+    }
+
+<span class="nc" id="L102">    class MyFileVisitor implements FileVisitor&lt;Object&gt; {</span>
+        @Override
+        public FileVisitResult preVisitDirectory(Object dir, BasicFileAttributes attrs) throws IOException {
+<span class="nc" id="L105">            return FileVisitResult.CONTINUE;</span>
+        }
+
+        @Override
+        public FileVisitResult visitFile(Object file, BasicFileAttributes attrs) throws IOException {
+<span class="nc bnc" id="L110" title="All 2 branches missed.">            for (String ends : exts) {</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">                if (file.toString().endsWith(ends)) {</span>
+<span class="nc" id="L112">                    synchronized (files) {</span>
+<span class="nc" id="L113">                        files.add(file.toString());</span>
+<span class="nc" id="L114">                        files.notify();</span>
+<span class="nc" id="L115">                    }</span>
+<span class="nc" id="L116">                    break;</span>
+                }
+<span class="nc" id="L118">            }</span>
+<span class="nc" id="L119">            return FileVisitResult.CONTINUE;</span>
+        }
+
+        @Override
+        public FileVisitResult visitFileFailed(Object file, IOException exc) throws IOException {
+<span class="nc" id="L124">            return FileVisitResult.CONTINUE;</span>
+        }
+
+        @Override
+        public FileVisitResult postVisitDirectory(Object dir, IOException exc) throws IOException {
+<span class="nc" id="L129">            return FileVisitResult.CONTINUE;</span>
+        }
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+<span class="nc" id="L134">        List&lt;String&gt; ext = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L135">        ext.add(&quot;.txt&quot;);</span>
+
+<span class="nc" id="L137">        ParallelSearch search = new ParallelSearch(&quot;C:\\&quot;, &quot;t&quot;, ext);</span>
+<span class="nc" id="L138">        search.init();</span>
+<span class="nc" id="L139">        List&lt;String&gt; list = search.result();</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        for (String s : list) {</span>
+<span class="nc" id="L141">            System.out.println(s);</span>
+<span class="nc" id="L142">        }</span>
+
+<span class="nc" id="L144">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>
