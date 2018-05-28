@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GraphiteUdpStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">spf4j-jacoco-aggregate</a> &gt; <a href="../index.html" class="el_bundle">spf4j-core</a> &gt; <a href="index.source.html" class="el_package">org.spf4j.perf.impl.ms.graphite</a> &gt; <span class="el_source">GraphiteUdpStore.java</span></div><h1>GraphiteUdpStore.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2017, Zoltan Farkas All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * Additionally licensed with:
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.spf4j.perf.impl.ms.graphite;
+
+import com.google.common.base.Charsets;
+import com.google.common.base.Throwables;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
+import java.nio.channels.DatagramChannel;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import javax.annotation.Nullable;
+import org.spf4j.base.HandlerNano;
+import org.spf4j.base.Strings;
+import org.spf4j.base.UncheckedExecutionException;
+import org.spf4j.base.UncheckedTimeoutException;
+import org.spf4j.failsafe.RetryPolicy;
+import org.spf4j.io.ByteArrayBuilder;
+import org.spf4j.perf.MeasurementsInfo;
+import org.spf4j.perf.MeasurementStore;
+import org.spf4j.perf.impl.ms.Id2Info;
+import org.spf4j.recyclable.ObjectCreationException;
+import org.spf4j.recyclable.ObjectDisposeException;
+import org.spf4j.recyclable.RecyclingSupplier;
+import org.spf4j.recyclable.Template;
+import org.spf4j.recyclable.impl.RecyclingSupplierBuilder;
+
+/**
+ *
+ * @author zoly
+ */
+public final class GraphiteUdpStore implements MeasurementStore {
+
+  public static final int MAX_UDP_MSG_SIZE = 512;
+
+  private final RecyclingSupplier&lt;DatagramChannel&gt; datagramChannelSupplier;
+
+  private final InetSocketAddress address;
+
+  private static class DatagramChannelSupplierFactory implements RecyclingSupplier.Factory&lt;DatagramChannel&gt; {
+
+    private final InetSocketAddress address;
+
+<span class="nc" id="L79">    DatagramChannelSupplierFactory(final InetSocketAddress address) {</span>
+<span class="nc" id="L80">      this.address = address;</span>
+<span class="nc" id="L81">    }</span>
+
+    @Override
+    public DatagramChannel create() throws ObjectCreationException {
+      DatagramChannel datagramChannel;
+      try {
+<span class="nc" id="L87">        datagramChannel = DatagramChannel.open();</span>
+<span class="nc" id="L88">      } catch (IOException ex) {</span>
+<span class="nc" id="L89">        throw new ObjectCreationException(ex);</span>
+<span class="nc" id="L90">      }</span>
+      try {
+<span class="nc" id="L92">        datagramChannel.connect(address);</span>
+<span class="nc" id="L93">        return datagramChannel;</span>
+<span class="nc" id="L94">      } catch (IOException ex) {</span>
+        try {
+<span class="nc" id="L96">          datagramChannel.close();</span>
+<span class="nc" id="L97">        } catch (IOException ex1) {</span>
+<span class="nc" id="L98">          ex1.addSuppressed(ex);</span>
+<span class="nc" id="L99">          throw new ObjectCreationException(ex1);</span>
+<span class="nc" id="L100">        }</span>
+<span class="nc" id="L101">        throw new ObjectCreationException(ex);</span>
+      }
+    }
+
+    @Override
+    public void dispose(final DatagramChannel object) throws ObjectDisposeException {
+      try {
+<span class="nc" id="L108">        object.close();</span>
+<span class="nc" id="L109">      } catch (IOException ex) {</span>
+<span class="nc" id="L110">        throw new ObjectDisposeException(ex);</span>
+<span class="nc" id="L111">      }</span>
+<span class="nc" id="L112">    }</span>
+
+    @Override
+    public boolean validate(final DatagramChannel object, final Exception e) throws Exception {
+<span class="nc bnc" id="L116" title="All 4 branches missed.">      return e == null || !(Throwables.getRootCause(e) instanceof IOException);</span>
+    }
+
+  }
+
+  public GraphiteUdpStore(final String hostPort) throws ObjectCreationException, URISyntaxException {
+<span class="nc" id="L122">    this(new URI(&quot;graphiteUdp://&quot; + hostPort));</span>
+<span class="nc" id="L123">  }</span>
+
+  public GraphiteUdpStore(final URI uri) throws ObjectCreationException {
+<span class="nc" id="L126">    this(uri.getHost(), uri.getPort());</span>
+<span class="nc" id="L127">  }</span>
+
+<span class="nc" id="L129">  public GraphiteUdpStore(final String hostName, final int port) throws ObjectCreationException {</span>
+<span class="nc" id="L130">    address = new InetSocketAddress(hostName, port);</span>
+<span class="nc" id="L131">    datagramChannelSupplier = new RecyclingSupplierBuilder&lt;&gt;(1,</span>
+<span class="nc" id="L132">            new DatagramChannelSupplierFactory(address)).build();</span>
+<span class="nc" id="L133">  }</span>
+
+  @Override
+  public void flush() {
+    // No buffering yet
+<span class="nc" id="L138">  }</span>
+
+  @Override
+  public long alocateMeasurements(final MeasurementsInfo measurement, final int sampleTimeMillis) {
+<span class="nc" id="L142">    return Id2Info.getId(measurement);</span>
+  }
+
+  @Override
+  @SuppressFBWarnings(&quot;BED_BOGUS_EXCEPTION_DECLARATION&quot;) // fb nonsense
+  public void saveMeasurements(final long tableId,
+          final long timeStampMillis, final long... measurements) throws IOException {
+
+    try {
+<span class="nc" id="L151">      Template.doOnSupplied(new HandlerImpl(measurements, Id2Info.getInfo(tableId), timeStampMillis),</span>
+              1, TimeUnit.MINUTES,
+<span class="nc" id="L153">              datagramChannelSupplier, RetryPolicy.defaultPolicy(), IOException.class);</span>
+<span class="nc" id="L154">    } catch (TimeoutException ex) {</span>
+<span class="nc" id="L155">      throw new UncheckedTimeoutException(ex);</span>
+<span class="nc" id="L156">    } catch (InterruptedException ex) {</span>
+<span class="nc" id="L157">      Thread.currentThread().interrupt();</span>
+<span class="nc" id="L158">    }</span>
+
+<span class="nc" id="L160">  }</span>
+
+  /**
+   * Write with the plaintext protocol: https://graphite.readthedocs.io/en/0.9.10/feeding-carbon.html
+   *
+   * @param measurementInfo measuremrnt info
+   * @param measurementName measurement name
+   * @param measurement measurement value
+   * @param timeStampMillis timestamp millis since epoch.
+   * @param os the output writer to write to.
+   * @throws IOException
+   */
+  public static void writeMetric(final MeasurementsInfo measurementInfo, final String measurementName,
+          final long measurement, final long timeStampMillis, final Writer os)
+          throws IOException {
+<span class="nc" id="L175">    Strings.writeReplaceWhitespaces(measurementInfo.getMeasuredEntity().toString(), '-', os);</span>
+<span class="nc" id="L176">    os.append('/');</span>
+<span class="nc" id="L177">    Strings.writeReplaceWhitespaces(measurementName, '-', os);</span>
+<span class="nc" id="L178">    os.append(' ');</span>
+<span class="nc" id="L179">    os.append(Long.toString(measurement));</span>
+<span class="nc" id="L180">    os.append(' ');</span>
+<span class="nc" id="L181">    os.append(Long.toString(timeStampMillis));</span>
+<span class="nc" id="L182">    os.append('\n');</span>
+<span class="nc" id="L183">  }</span>
+
+  @Override
+  public String toString() {
+<span class="nc" id="L187">    return &quot;GraphiteUdpStore{address=&quot; + address + '}';</span>
+  }
+
+  @Override
+  public void close() {
+    try {
+<span class="nc" id="L193">      datagramChannelSupplier.dispose();</span>
+<span class="nc" id="L194">    } catch (ObjectDisposeException | InterruptedException ex) {</span>
+<span class="nc" id="L195">      throw new UncheckedExecutionException(ex);</span>
+<span class="nc" id="L196">    }</span>
+<span class="nc" id="L197">  }</span>
+
+  private static class HandlerImpl implements HandlerNano&lt;DatagramChannel, Void, IOException&gt; {
+
+    private final long[] measurements;
+    private final MeasurementsInfo measurementInfo;
+    private final long timeStampMillis;
+
+    HandlerImpl(final long[] measurements, final MeasurementsInfo measurementInfo,
+<span class="nc" id="L206">            final long timeStampMillis) {</span>
+<span class="nc" id="L207">      this.measurements = measurements;</span>
+<span class="nc" id="L208">      this.measurementInfo = measurementInfo;</span>
+<span class="nc" id="L209">      this.timeStampMillis = timeStampMillis;</span>
+<span class="nc" id="L210">    }</span>
+
+    @Override
+    @Nullable
+    public Void handle(final DatagramChannel datagramChannel, final long deadline) throws IOException {
+<span class="nc" id="L215">      try (ByteArrayBuilder bos = new ByteArrayBuilder();</span>
+<span class="nc" id="L216">              OutputStreamWriter os = new OutputStreamWriter(bos, Charsets.UTF_8)) {</span>
+
+<span class="nc" id="L218">        int msgStart = 0;</span>
+<span class="nc" id="L219">        int msgEnd = 0;</span>
+<span class="nc" id="L220">        int prevEnd = 0;</span>
+
+<span class="nc bnc" id="L222" title="All 2 branches missed.">        for (int i = 0; i &lt; measurements.length; i++) {</span>
+<span class="nc" id="L223">          writeMetric(measurementInfo, measurementInfo.getMeasurementName(i),</span>
+                  measurements[i], timeStampMillis, os);
+<span class="nc" id="L225">          os.flush();</span>
+<span class="nc" id="L226">          msgEnd = bos.size();</span>
+<span class="nc" id="L227">          int length = msgEnd - msgStart;</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">          if (length &gt; MAX_UDP_MSG_SIZE) {</span>
+<span class="nc" id="L229">            ByteBuffer byteBuffer = ByteBuffer.wrap(bos.getBuffer(), msgStart, prevEnd - msgStart);</span>
+<span class="nc" id="L230">            datagramChannel.write(byteBuffer);</span>
+<span class="nc" id="L231">            msgStart = prevEnd;</span>
+          }
+<span class="nc" id="L233">          prevEnd = msgEnd;</span>
+        }
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        if (msgEnd &gt; msgStart) {</span>
+<span class="nc" id="L236">          ByteBuffer byteBuffer = ByteBuffer.wrap(bos.getBuffer(), msgStart, msgEnd - msgStart);</span>
+<span class="nc" id="L237">          datagramChannel.write(byteBuffer);</span>
+        }
+      }
+<span class="nc" id="L240">      return null;</span>
+    }
+  }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

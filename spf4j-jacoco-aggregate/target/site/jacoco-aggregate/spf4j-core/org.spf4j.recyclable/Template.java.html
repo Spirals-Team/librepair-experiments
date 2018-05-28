@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Template.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">spf4j-jacoco-aggregate</a> &gt; <a href="../index.html" class="el_bundle">spf4j-core</a> &gt; <a href="index.source.html" class="el_package">org.spf4j.recyclable</a> &gt; <span class="el_source">Template.java</span></div><h1>Template.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2017, Zoltan Farkas All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * Additionally licensed with:
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.spf4j.recyclable;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import org.spf4j.base.ExecutionContext;
+import org.spf4j.base.ExecutionContexts;
+import org.spf4j.base.HandlerNano;
+import org.spf4j.base.Throwables;
+import org.spf4j.base.UncheckedExecutionException;
+import org.spf4j.failsafe.RetryPolicy;
+
+//CHECKSTYLE IGNORE RedundantThrows FOR NEXT 2000 LINES
+public final class Template&lt;T, R, E extends Exception&gt; {
+
+  private final RecyclingSupplier&lt;T&gt; pool;
+  private final Class&lt;E&gt; exClass;
+  private final RetryPolicy&lt;R, Callable&lt;? extends R&gt;&gt; retryPolicy;
+
+  public Template(final RecyclingSupplier&lt;T&gt; pool, final RetryPolicy&lt;R, Callable&lt;? extends R&gt;&gt; retryPolicy,
+<span class="nc" id="L53">          final Class&lt;E&gt; exClass) {</span>
+<span class="nc" id="L54">    this.pool = pool;</span>
+<span class="nc" id="L55">    this.exClass = exClass;</span>
+<span class="nc" id="L56">    this.retryPolicy = retryPolicy;</span>
+<span class="nc" id="L57">  }</span>
+
+  public R doOnSupplied(final HandlerNano&lt;T, R, E&gt; handler, final long timeout, final TimeUnit tu)
+          throws InterruptedException, E, TimeoutException {
+<span class="nc" id="L61">    return doOnSupplied(handler, timeout, tu, pool, retryPolicy, exClass);</span>
+  }
+
+  public static &lt;T, R, E extends Exception&gt; R doOnSupplied(final HandlerNano&lt;T, R, E&gt; handler,
+          final long timeout, final TimeUnit tu,
+          final RecyclingSupplier&lt;T&gt; pool, final RetryPolicy&lt;R, Callable&lt;? extends R&gt;&gt; retryPolicy,
+          final Class&lt;E&gt; exClass)
+          throws E, InterruptedException, TimeoutException {
+<span class="nc" id="L69">    try (ExecutionContext ctx = ExecutionContexts.start(handler.toString(), timeout, tu)) {</span>
+<span class="nc" id="L70">      return retryPolicy.call(new Callable&lt;R&gt;() {</span>
+        @Override
+        public R call()
+                throws InterruptedException, TimeoutException, E {
+          try {
+<span class="nc" id="L75">            return Template.doOnSupplied(handler, pool, ctx.getDeadlineNanos(), exClass);</span>
+<span class="nc" id="L76">          } catch (ObjectCreationException | ObjectBorrowException ex) {</span>
+<span class="nc" id="L77">            throw new UncheckedExecutionException(ex);</span>
+          }
+        }
+<span class="nc" id="L80">      }, exClass, ctx.getDeadlineNanos());</span>
+    }
+  }
+
+  //findbugs does not know about supress in spf4j
+  @SuppressFBWarnings(&quot;LEST_LOST_EXCEPTION_STACK_TRACE&quot;)
+  private static &lt;T, R, E extends Exception&gt; R doOnSupplied(final HandlerNano&lt;T, R, E&gt; handler,
+          final RecyclingSupplier&lt;T&gt; pool, final long deadlineNanos, final Class&lt;E&gt; exClass)
+          throws E, ObjectCreationException, ObjectBorrowException, InterruptedException, TimeoutException {
+<span class="nc" id="L89">    T object = pool.get();</span>
+    R result;
+    try {
+<span class="nc" id="L92">      result = handler.handle(object, deadlineNanos);</span>
+<span class="nc" id="L93">    } catch (RuntimeException e) {</span>
+      try {
+<span class="nc" id="L95">        pool.recycle(object, e);</span>
+<span class="nc" id="L96">      } catch (RuntimeException ex) {</span>
+<span class="nc" id="L97">        throw Throwables.suppress(ex, e);</span>
+<span class="nc" id="L98">      }</span>
+<span class="nc" id="L99">      throw e;</span>
+<span class="nc" id="L100">    } catch (Exception e) {</span>
+      try {
+<span class="nc" id="L102">        pool.recycle(object, e);</span>
+<span class="nc" id="L103">      } catch (RuntimeException ex) {</span>
+<span class="nc" id="L104">        throw Throwables.suppress(ex, e);</span>
+<span class="nc" id="L105">      }</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">      if (exClass.isAssignableFrom(e.getClass())) {</span>
+<span class="nc" id="L107">        throw (E) e;</span>
+      } else {
+<span class="nc" id="L109">        throw new UncheckedExecutionException(e);</span>
+      }
+<span class="nc" id="L111">    }</span>
+<span class="nc" id="L112">    pool.recycle(object, null);</span>
+<span class="nc" id="L113">    return result;</span>
+  }
+
+  @Override
+  public String toString() {
+<span class="nc" id="L118">    return &quot;Template{&quot; + &quot;pool=&quot; + pool + &quot;, exClass=&quot; + exClass + &quot;, retryPolicy=&quot; + retryPolicy + '}';</span>
+  }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

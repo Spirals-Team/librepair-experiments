@@ -1,0 +1,371 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>DynamicMBeanBuilder.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">spf4j-jacoco-aggregate</a> &gt; <a href="../index.html" class="el_bundle">spf4j-core</a> &gt; <a href="index.source.html" class="el_package">org.spf4j.jmx</a> &gt; <span class="el_source">DynamicMBeanBuilder.java</span></div><h1>DynamicMBeanBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2017, Zoltan Farkas All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * Additionally licensed with:
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.spf4j.jmx;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.NotSerializableException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.annotation.ParametersAreNonnullByDefault;
+import javax.management.ObjectName;
+import org.spf4j.base.Reflections;
+import org.spf4j.base.Strings;
+
+/**
+ * A JMX managed bean Builder.
+ *
+ * @author Zoltan Farkas
+ */
+@ParametersAreNonnullByDefault
+@SuppressFBWarnings(&quot;FCCD_FIND_CLASS_CIRCULAR_DEPENDENCY&quot;)
+public final class DynamicMBeanBuilder {
+
+  private final Map&lt;String, ExportedValue&lt;?&gt;&gt; exportedAttributes;
+
+  private final Map&lt;String, ExportedOperation&gt; exportedOps;
+
+<span class="nc" id="L63">  public DynamicMBeanBuilder() {</span>
+<span class="nc" id="L64">    exportedAttributes = new HashMap&lt;&gt;(8);</span>
+<span class="nc" id="L65">    exportedOps = new HashMap&lt;&gt;(4);</span>
+<span class="nc" id="L66">  }</span>
+
+  public static DynamicMBeanBuilder newBuilder() {
+<span class="nc" id="L69">    return new DynamicMBeanBuilder();</span>
+  }
+
+  public DynamicMBeanBuilder withOperation(final ExportedOperation operation) {
+<span class="nc bnc" id="L73" title="All 2 branches missed.">    if (exportedOps.put(operation.getName(), operation) != null) {</span>
+<span class="nc" id="L74">       throw new IllegalArgumentException(&quot;Duplicate operation: &quot; + operation);</span>
+    }
+<span class="nc" id="L76">    return this;</span>
+  }
+
+  public DynamicMBeanBuilder withAttribute(final ExportedValue&lt;?&gt; val) {
+<span class="nc bnc" id="L80" title="All 2 branches missed.">    if (exportedAttributes.put(val.getName(), val) != null) {</span>
+<span class="nc" id="L81">      throw new IllegalArgumentException(&quot;Duplicate attribute: &quot; + val);</span>
+    }
+<span class="nc" id="L83">    return this;</span>
+  }
+
+  public DynamicMBeanBuilder withAttributes(final ExportedValue&lt;?&gt;... vals) {
+<span class="nc bnc" id="L87" title="All 2 branches missed.">    for (ExportedValue&lt;?&gt; ev : vals) {</span>
+<span class="nc" id="L88">      withAttribute(ev);</span>
+    }
+<span class="nc" id="L90">    return this;</span>
+  }
+
+  public DynamicMBeanBuilder withAttributes(final Map&lt;String, Object&gt; mapAttributes) {
+<span class="nc bnc" id="L94" title="All 2 branches missed.">    for (Map.Entry&lt;String, Object&gt; entry : mapAttributes.entrySet()) {</span>
+<span class="nc" id="L95">      String key = entry.getKey();</span>
+<span class="nc bnc" id="L96" title="All 4 branches missed.">      if (key == null || key.isEmpty()) {</span>
+<span class="nc" id="L97">        continue; // do not exportAgg crap namep mapAttributes.</span>
+      }
+      try {
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (exportedAttributes.put(key, new MapExportedValue(mapAttributes, null, key, entry.getValue())) != null) {</span>
+<span class="nc" id="L101">          throw new IllegalArgumentException(&quot;Duplicate attribute: &quot; + key);</span>
+        }
+<span class="nc" id="L103">      } catch (NotSerializableException ex) {</span>
+<span class="nc" id="L104">        throw new IllegalArgumentException(&quot;Unable to export map entry via JMX: &quot; + entry, ex);</span>
+<span class="nc" id="L105">      }</span>
+<span class="nc" id="L106">    }</span>
+<span class="nc" id="L107">    return this;</span>
+  }
+
+  /**
+   * add all exported (with @JmxExport) attributes and operations of the object.
+   * @param object
+   * @return
+   */
+  public DynamicMBeanBuilder withJmxExportObject(final Object object) {
+<span class="nc" id="L116">    final Map&lt;String, ExportedValue&lt;?&gt;&gt; attrs = new HashMap&lt;&gt;(4);</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">    if (object instanceof Class) {</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">      for (Method method : ((Class&lt;?&gt;) object).getMethods()) {</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        if (method.isSynthetic()) {</span>
+<span class="nc" id="L120">          continue;</span>
+        }
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (Modifier.isStatic(method.getModifiers())) {</span>
+<span class="nc" id="L123">          JmxExport annot = method.getAnnotation(JmxExport.class);</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">          if (annot != null) {</span>
+<span class="nc" id="L125">            exportMethod(method, null, attrs, exportedOps, annot);</span>
+          }
+        }
+      }
+    } else {
+<span class="nc" id="L130">      final Class&lt;? extends Object&gt; oClass = object.getClass();</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">      for (Method method : oClass.getMethods()) {</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        if (method.isSynthetic()) {</span>
+<span class="nc" id="L133">          continue;</span>
+        }
+<span class="nc" id="L135">        JmxExport annot = method.getAnnotation(JmxExport.class);</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        if (annot != null) {</span>
+<span class="nc" id="L137">          exportMethod(method, object, attrs, exportedOps, annot);</span>
+        }
+      }
+    }
+<span class="nc" id="L141">    Collection&lt;ExportedValue&lt;?&gt;&gt; values = attrs.values();</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">    for (ExportedValue expVal : values) {</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">      if (!((BeanExportedValue) expVal).isValid()) {</span>
+<span class="nc" id="L144">        throw new IllegalArgumentException(&quot;If setter is exported, getter must be exported as well &quot; + expVal);</span>
+      }
+<span class="nc" id="L146">    }</span>
+<span class="nc" id="L147">    exportedAttributes.putAll(attrs);</span>
+<span class="nc" id="L148">    return this;</span>
+  }
+
+  /**
+   * add all exported (with @JmxExport) attributes and operations of the objects.
+   * @param objects
+   * @return
+   */
+  public DynamicMBeanBuilder withJmxExportObjects(final Object... objects) {
+<span class="nc bnc" id="L157" title="All 2 branches missed.">    for (Object object : objects) {</span>
+<span class="nc" id="L158">      withJmxExportObject(object);</span>
+    }
+<span class="nc" id="L160">    return this;</span>
+  }
+
+  /**
+   * Build the dynamic mbean.
+   * @param packageName
+   * @param mbeanName
+   * @return dynamic mbean or null if no exportable attributes or operations are present.
+   */
+  @Nullable
+  public ExportedValuesMBean build(final String packageName, final String mbeanName) {
+<span class="nc bnc" id="L171" title="All 4 branches missed.">    if (exportedAttributes.isEmpty() &amp;&amp; exportedOps.isEmpty()) {</span>
+<span class="nc" id="L172">      return null;</span>
+    }
+<span class="nc" id="L174">    ObjectName objectName = ExportedValuesMBean.createObjectName(packageName, mbeanName);</span>
+<span class="nc" id="L175">    return new ExportedValuesMBean(objectName, exportedAttributes, exportedOps);</span>
+  }
+
+  /**
+   * Create a dynamic bean with extends the toExtend mbean with the attributes and operations from thsi builder.
+   * @param toExtend
+   * @return
+   */
+  @Nonnull
+  public ExportedValuesMBean extend(@Nonnull final ExportedValuesMBean toExtend) {
+<span class="nc bnc" id="L185" title="All 4 branches missed.">    if (exportedAttributes.isEmpty() &amp;&amp; exportedOps.isEmpty()) {</span>
+<span class="nc" id="L186">      return toExtend;</span>
+    }
+<span class="nc" id="L188">    return new ExportedValuesMBean(toExtend, exportedAttributes, exportedOps);</span>
+  }
+
+
+  /**
+   * extend existing Mbean registered with provided packageName and mbeanName
+   * @param packageName
+   * @param mbeanName
+   * @return null is nothing was registered.
+   */
+  @Nullable
+  public ExportedValuesMBean extend(final String packageName, final String mbeanName) {
+<span class="nc bnc" id="L200" title="All 4 branches missed.">    if (exportedAttributes.isEmpty() &amp;&amp; exportedOps.isEmpty()) {</span>
+<span class="nc" id="L201">      return null;</span>
+    }
+<span class="nc" id="L203">    ObjectName objectName = ExportedValuesMBean.createObjectName(packageName, mbeanName);</span>
+<span class="nc" id="L204">    synchronized (Registry.class) {</span>
+<span class="nc" id="L205">      ExportedValuesMBean existing = (ExportedValuesMBean) Registry.unregister(objectName);</span>
+      ExportedValuesMBean mbean;
+<span class="nc bnc" id="L207" title="All 2 branches missed.">      if (existing == null) {</span>
+<span class="nc" id="L208">        mbean = new ExportedValuesMBean(objectName, exportedAttributes, exportedOps);</span>
+      } else {
+<span class="nc" id="L210">        mbean = new ExportedValuesMBean(existing, exportedAttributes, exportedOps);</span>
+      }
+<span class="nc" id="L212">      Registry.registerMBean(objectName, mbean);</span>
+<span class="nc" id="L213">      return mbean;</span>
+    }
+
+  }
+
+  public boolean isEmpty() {
+<span class="nc bnc" id="L219" title="All 4 branches missed.">    return exportedAttributes.isEmpty() &amp;&amp; exportedOps.isEmpty();</span>
+  }
+
+  /**
+   * Replace mbean registered with packageName and mbeanName with a mbean constructed by this builder.
+   * @param packageName
+   * @param mbeanName
+   * @return the MBean that was registered.
+   */
+  @Nonnull
+  public ExportedValuesMBean replace(final String packageName, final String mbeanName) {
+<span class="nc bnc" id="L230" title="All 2 branches missed.">    if (isEmpty()) {</span>
+<span class="nc" id="L231">      throw new IllegalArgumentException(&quot;Nothing to register &quot; + this);</span>
+    }
+<span class="nc" id="L233">    ObjectName objectName = ExportedValuesMBean.createObjectName(packageName, mbeanName);</span>
+<span class="nc" id="L234">    ExportedValuesMBean mbean = new ExportedValuesMBean(objectName, exportedAttributes, exportedOps);</span>
+<span class="nc" id="L235">    Registry.registerMBean(objectName, mbean);</span>
+<span class="nc" id="L236">    return mbean;</span>
+  }
+
+  @Nullable
+  public ExportedValuesMBean replaceIfExports(final String packageName, final String mbeanName) {
+<span class="nc bnc" id="L241" title="All 2 branches missed.">    if (isEmpty()) {</span>
+<span class="nc" id="L242">      return null;</span>
+    }
+<span class="nc" id="L244">    ObjectName objectName = ExportedValuesMBean.createObjectName(packageName, mbeanName);</span>
+<span class="nc" id="L245">    ExportedValuesMBean mbean = new ExportedValuesMBean(objectName, exportedAttributes, exportedOps);</span>
+<span class="nc" id="L246">    Registry.registerMBean(objectName, mbean);</span>
+<span class="nc" id="L247">    return mbean;</span>
+  }
+
+
+  /**
+   * register a mbean.
+   * @param packageName
+   * @param mbeanName
+   * @return  and a dinamic bean instance that was registered otherwise.
+   * @throws InstanceAlreadyExistsException is a instance already exists.
+   */
+  @Nonnull
+  public ExportedValuesMBean register(final String packageName, final String mbeanName) {
+<span class="nc bnc" id="L260" title="All 2 branches missed.">    if (isEmpty()) {</span>
+<span class="nc" id="L261">      throw new IllegalArgumentException(&quot;Nothing to register &quot; + this);</span>
+    }
+<span class="nc" id="L263">    ObjectName objectName = ExportedValuesMBean.createObjectName(packageName, mbeanName);</span>
+<span class="nc" id="L264">    ExportedValuesMBean mbean = new ExportedValuesMBean(objectName, exportedAttributes, exportedOps);</span>
+<span class="nc" id="L265">    Registry.registerIfNotExistsMBean(objectName, mbean);</span>
+<span class="nc" id="L266">    return mbean;</span>
+  }
+
+
+  @Nullable
+  public ExportedValuesMBean registerIfExports(final String packageName, final String mbeanName) {
+<span class="nc bnc" id="L272" title="All 2 branches missed.">    if (isEmpty()) {</span>
+<span class="nc" id="L273">      return null;</span>
+    }
+<span class="nc" id="L275">    ObjectName objectName = ExportedValuesMBean.createObjectName(packageName, mbeanName);</span>
+<span class="nc" id="L276">    ExportedValuesMBean mbean = new ExportedValuesMBean(objectName, exportedAttributes, exportedOps);</span>
+<span class="nc" id="L277">    Registry.registerIfNotExistsMBean(objectName, mbean);</span>
+<span class="nc" id="L278">    return mbean;</span>
+  }
+
+
+
+static void exportMethod(final Method method,
+          @Nullable final Object object, final Map&lt;String, ExportedValue&lt;?&gt;&gt; exportedAttributes,
+          final Map&lt;String, ExportedOperation&gt; exportedOps, final JmxExport annot) {
+<span class="nc" id="L286">    AccessController.doPrivileged((PrivilegedAction&lt;Void&gt;) () -&gt; {</span>
+<span class="nc" id="L287">      method.setAccessible(true);</span>
+<span class="nc" id="L288">      return null;</span>
+    });
+<span class="nc" id="L290">    String methodName = method.getName();</span>
+<span class="nc" id="L291">    int nrParams = method.getParameterCount();</span>
+<span class="nc bnc" id="L292" title="All 4 branches missed.">    if (nrParams == 0 &amp;&amp; methodName.startsWith(&quot;get&quot;)) {</span>
+<span class="nc" id="L293">      String valueName = methodName.substring(&quot;get&quot;.length());</span>
+<span class="nc" id="L294">      valueName = Strings.withFirstCharLower(valueName);</span>
+<span class="nc" id="L295">      addGetter(valueName, exportedAttributes, annot, method, object);</span>
+<span class="nc bnc" id="L296" title="All 4 branches missed.">    } else if (nrParams == 0 &amp;&amp; methodName.startsWith(&quot;is&quot;)) {</span>
+<span class="nc" id="L297">      String valueName = methodName.substring(&quot;is&quot;.length());</span>
+<span class="nc" id="L298">      valueName = Strings.withFirstCharLower(valueName);</span>
+<span class="nc" id="L299">      addGetter(valueName, exportedAttributes, annot, method, object);</span>
+<span class="nc bnc" id="L300" title="All 4 branches missed.">    } else if (nrParams == 1 &amp;&amp; methodName.startsWith(&quot;set&quot;)) {</span>
+<span class="nc" id="L301">      addSetter(methodName, exportedAttributes, method, object, annot);</span>
+    } else {
+<span class="nc" id="L303">      String opName = methodName;</span>
+<span class="nc" id="L304">      String nameOverwrite = annot.value();</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">      if (!&quot;&quot;.equals(nameOverwrite)) {</span>
+<span class="nc" id="L306">        opName = nameOverwrite;</span>
+      }
+<span class="nc" id="L308">      ExportedOperation existing = exportedOps.put(opName, new ExportedOperationImpl(opName,</span>
+<span class="nc" id="L309">              annot.description(), method, object, annot.mapOpenType()));</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">      if (existing != null) {</span>
+<span class="nc" id="L311">        throw new IllegalArgumentException(&quot;exporting operations with same name not supported: &quot; + opName);</span>
+      }
+    }
+<span class="nc" id="L314">  }</span>
+
+  private static void addSetter(final String methodName, final Map&lt;String, ExportedValue&lt;?&gt;&gt; exportedAttributes,
+          final Method method, final Object object, final JmxExport annot) {
+<span class="nc" id="L318">    String customName = annot.value();</span>
+    String valueName;
+<span class="nc bnc" id="L320" title="All 2 branches missed.">    if (&quot;&quot;.equals(customName)) {</span>
+<span class="nc" id="L321">      valueName = methodName.substring(&quot;set&quot;.length());</span>
+<span class="nc" id="L322">      valueName = Strings.withFirstCharLower(valueName);</span>
+    } else {
+<span class="nc" id="L324">      valueName = customName;</span>
+    }
+
+<span class="nc" id="L327">    BeanExportedValue existing = (BeanExportedValue) exportedAttributes.get(valueName);</span>
+<span class="nc" id="L328">    Class&lt;?&gt; parameterType = Reflections.getParameterTypes(method)[0];</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">    if (existing == null) {</span>
+<span class="nc" id="L330">      existing = new BeanExportedValue(valueName, null,</span>
+<span class="nc" id="L331">              null, method, object, parameterType, annot.mapOpenType());</span>
+    } else {
+<span class="nc bnc" id="L333" title="All 2 branches missed.">      if (existing.getValueType() != parameterType) {</span>
+<span class="nc" id="L334">        throw new IllegalArgumentException(</span>
+                &quot;Getter and setter icorrectly defined &quot; + existing + ' ' + method);
+      }
+<span class="nc" id="L337">      existing = existing.withSetter(method);</span>
+    }
+<span class="nc" id="L339">    exportedAttributes.put(valueName, existing);</span>
+<span class="nc" id="L340">  }</span>
+
+  private static void addGetter(final String pvalueName,
+          final Map&lt;String, ExportedValue&lt;?&gt;&gt; exported,
+          final JmxExport annot, final Method method, final Object object) {
+<span class="nc" id="L345">    String customName = annot.value();</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">    String valueName = &quot;&quot;.equals(customName) ? pvalueName : customName;</span>
+<span class="nc" id="L347">    BeanExportedValue existing = (BeanExportedValue) exported.get(valueName);</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">    if (existing == null) {</span>
+<span class="nc" id="L349">      existing = new BeanExportedValue(</span>
+<span class="nc" id="L350">              valueName, annot.description(),</span>
+<span class="nc" id="L351">              method, null, object, method.getGenericReturnType(), annot.mapOpenType());</span>
+    } else {
+<span class="nc bnc" id="L353" title="All 2 branches missed.">      if (existing.getValueType() != method.getReturnType()) {</span>
+<span class="nc" id="L354">        throw new IllegalArgumentException(</span>
+                &quot;Getter and setter icorrectly defined &quot; + existing + ' ' + method);
+      }
+<span class="nc" id="L357">      existing = existing.withGetter(method, annot.description());</span>
+    }
+<span class="nc" id="L359">    exported.put(valueName, existing);</span>
+<span class="nc" id="L360">  }</span>
+
+  @Override
+  public String toString() {
+<span class="nc" id="L364">    return &quot;MBeanBuilder{&quot; + &quot;exportedAttributes=&quot; + exportedAttributes</span>
+            + &quot;, exportedOps=&quot; + exportedOps + '}';
+  }
+
+
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>
