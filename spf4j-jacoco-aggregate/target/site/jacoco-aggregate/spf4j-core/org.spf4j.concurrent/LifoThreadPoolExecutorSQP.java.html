@@ -1,0 +1,640 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LifoThreadPoolExecutorSQP.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">spf4j-jacoco-aggregate</a> &gt; <a href="../index.html" class="el_bundle">spf4j-core</a> &gt; <a href="index.source.html" class="el_package">org.spf4j.concurrent</a> &gt; <span class="el_source">LifoThreadPoolExecutorSQP.java</span></div><h1>LifoThreadPoolExecutorSQP.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2017, Zoltan Farkas All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * Additionally licensed with:
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.spf4j.concurrent;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import gnu.trove.set.hash.THashSet;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Queue;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.AbstractExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
+import javax.annotation.CheckReturnValue;
+import javax.annotation.Nullable;
+import javax.annotation.ParametersAreNonnullByDefault;
+import javax.annotation.concurrent.GuardedBy;
+import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
+import org.spf4j.base.AbstractRunnable;
+import org.spf4j.base.TimeSource;
+import org.spf4j.base.Timing;
+import org.spf4j.base.UncheckedExecutionException;
+import static org.spf4j.concurrent.RejectedExecutionHandler.REJECT_EXCEPTION_EXEC_HANDLER;
+import org.spf4j.ds.ZArrayDequeue;
+import org.spf4j.jmx.JmxExport;
+import org.spf4j.jmx.Registry;
+import org.spf4j.stackmonitor.StackTrace;
+//CHECKSTYLE:OFF
+import sun.misc.Contended;
+//CHECKSTYLE:ON
+
+/**
+ *
+ * Lifo scheduled java thread pool, based on talk: http://applicative.acm.org/speaker-BenMaurer.html This implementation
+ * behaves differently compared with a java Thread pool in that it prefers to spawn a thread if possible instead of
+ * queueing tasks.
+ *
+ * See LifoThreadPoolBuilder for conveniently constructing pools
+ *
+ * There are 3 data structures involved in the transfer of tasks to Threads.
+ *
+ * 1) Task Queue - a classic FIFO queue. RW controlled by a reentrant lock. only non-blockng read operations are done on
+ * this queue 2) Available Thread Queue - a classic LIFO queue, a thread end up here when there is nothing to process.
+ * 3) A &quot;UnitQueue&quot;, is a queue with a capacity on 1, which a thread will listen on while in the available thread queue.
+ *
+ * @author zoly
+ */
+@ParametersAreNonnullByDefault
+@SuppressFBWarnings({&quot;MDM_THREAD_PRIORITIES&quot;, &quot;MDM_WAIT_WITHOUT_TIMEOUT&quot;})
+public final class LifoThreadPoolExecutorSQP extends AbstractExecutorService implements LifoThreadPool {
+
+
+<span class="nc" id="L87">  private static final Logger LOG = LoggerFactory.getLogger(LifoThreadPoolExecutorSQP.class);</span>
+  /**
+   * when a thread survives due core size, this the minimum wait time that core threads will wait for. worker threads
+   * have a maximum time they are idle, after which they are retired... in case a user configures a thread pool with
+   * idle times less than min wait, the core threads will have to have a minimum wait time to avoid spinning and hogging
+   * the CPU. this value is used only when the max idle time of the pool is smaller, and it interferes with thread
+   * retirement in that case... I do not see that case as a useful pooling case to be worth trying to optimize it...
+   */
+<span class="nc" id="L95">  static final long CORE_MINWAIT_NANOS = Long.getLong(&quot;spf4j.lifoTp.coreMaxWaitNanos&quot;, 1000000000);</span>
+
+<span class="nc" id="L97">  static final int LL_THRESHOLD = Integer.getInteger(&quot;spf4j.lifoTp.llQueueSizeThreshold&quot;, 64000);</span>
+
+  @GuardedBy(&quot;stateLock&quot;)
+  private final Queue&lt;Runnable&gt; taskQueue;
+
+  @GuardedBy(&quot;stateLock&quot;)
+  private final ZArrayDequeue&lt;QueuedThread&gt; threadQueue;
+
+  private final int maxIdleTimeMillis;
+
+  private final int maxThreadCount;
+
+  @GuardedBy(&quot;stateLock&quot;)
+  private final PoolState state;
+
+  private final ReentrantLock stateLock;
+
+  private final Condition stateCondition;
+
+  private final int queueSizeLimit;
+
+  private final String poolName;
+
+  private final RejectedExecutionHandler rejectionHandler;
+
+  private final boolean daemonThreads;
+
+  private final int threadPriority;
+
+  public LifoThreadPoolExecutorSQP(final int maxNrThreads, final String name) {
+<span class="nc" id="L127">    this(name, 0, maxNrThreads, 5000, 0);</span>
+<span class="nc" id="L128">  }</span>
+
+
+  public LifoThreadPoolExecutorSQP(final String poolName, final int coreSize,
+          final int maxSize, final int maxIdleTimeMillis,
+          final int queueSize, final boolean daemonThreads) {
+<span class="nc" id="L134">    this(poolName, coreSize, maxSize, maxIdleTimeMillis,</span>
+<span class="nc" id="L135">            new ArrayDeque&lt;Runnable&gt;(Math.min(queueSize, LL_THRESHOLD)),</span>
+            queueSize, daemonThreads, REJECT_EXCEPTION_EXEC_HANDLER);
+<span class="nc" id="L137">  }</span>
+
+  public LifoThreadPoolExecutorSQP(final String poolName, final int coreSize,
+          final int maxSize, final int maxIdleTimeMillis,
+          final int queueSizeLimit) {
+<span class="nc" id="L142">    this(poolName, coreSize, maxSize, maxIdleTimeMillis,</span>
+<span class="nc" id="L143">            new ArrayDeque&lt;Runnable&gt;(Math.min(queueSizeLimit, LL_THRESHOLD)),</span>
+            queueSizeLimit, false, REJECT_EXCEPTION_EXEC_HANDLER);
+<span class="nc" id="L145">  }</span>
+
+  public LifoThreadPoolExecutorSQP(final String poolName, final int coreSize,
+          final int maxSize, final int maxIdleTimeMillis, final Queue&lt;Runnable&gt; taskQueue,
+          final int queueSizeLimit, final boolean daemonThreads,
+          final RejectedExecutionHandler rejectionHandler) {
+<span class="nc" id="L151">    this(poolName, coreSize, maxSize, maxIdleTimeMillis, taskQueue, queueSizeLimit, daemonThreads,</span>
+            rejectionHandler, Thread.NORM_PRIORITY);
+<span class="nc" id="L153">  }</span>
+
+  public LifoThreadPoolExecutorSQP(final String poolName, final int coreSize,
+          final int maxSize, final int maxIdleTimeMillis, final Queue&lt;Runnable&gt; taskQueue,
+          final int queueSizeLimit, final boolean daemonThreads,
+          final RejectedExecutionHandler rejectionHandler,
+<span class="nc" id="L159">          final int threadPriority) {</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">    if (coreSize &gt; maxSize) {</span>
+<span class="nc" id="L161">      throw new IllegalArgumentException(&quot;Core size must be smaller than max size &quot; + coreSize</span>
+              + &quot; &lt; &quot; + maxSize);
+    }
+<span class="nc bnc" id="L164" title="All 8 branches missed.">    if (coreSize &lt; 0 || maxSize &lt; 0 || maxIdleTimeMillis &lt; 0 || queueSizeLimit &lt; 0) {</span>
+<span class="nc" id="L165">      throw new IllegalArgumentException(&quot;All numberic TP configs must be positive values: &quot;</span>
+              + coreSize + &quot;, &quot; + maxSize + &quot;, &quot; + maxIdleTimeMillis
+              + &quot;, &quot; + queueSizeLimit);
+    }
+<span class="nc" id="L169">    this.rejectionHandler = rejectionHandler;</span>
+<span class="nc" id="L170">    this.poolName = poolName;</span>
+<span class="nc" id="L171">    this.maxIdleTimeMillis = maxIdleTimeMillis;</span>
+<span class="nc" id="L172">    this.taskQueue = taskQueue;</span>
+<span class="nc" id="L173">    this.queueSizeLimit = queueSizeLimit;</span>
+<span class="nc" id="L174">    this.threadQueue = new ZArrayDequeue&lt;&gt;(Math.min(1024, maxSize));</span>
+<span class="nc" id="L175">    this.threadPriority = threadPriority;</span>
+<span class="nc" id="L176">    state = new PoolState(coreSize, new THashSet&lt;QueuedThread&gt;(Math.min(maxSize, 2048)));</span>
+<span class="nc" id="L177">    this.stateLock = new ReentrantLock();</span>
+<span class="nc" id="L178">    this.stateCondition = stateLock.newCondition();</span>
+<span class="nc" id="L179">    this.daemonThreads = daemonThreads;</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">    for (int i = 0; i &lt; coreSize; i++) {</span>
+<span class="nc" id="L181">      QueuedThread qt = new QueuedThread(poolName, threadQueue,</span>
+              taskQueue, maxIdleTimeMillis, null, state, stateLock, stateCondition);
+<span class="nc" id="L183">      qt.setDaemon(daemonThreads);</span>
+<span class="nc" id="L184">      qt.setPriority(threadPriority);</span>
+<span class="nc" id="L185">      state.addThread(qt);</span>
+<span class="nc" id="L186">      qt.start();</span>
+    }
+<span class="nc" id="L188">    maxThreadCount = maxSize;</span>
+<span class="nc" id="L189">  }</span>
+
+  @Override
+  public void exportJmx() {
+<span class="nc" id="L193">    Registry.export(LifoThreadPoolExecutorSQP.class.getName(), poolName, this);</span>
+<span class="nc" id="L194">  }</span>
+
+  @Override
+  @SuppressFBWarnings(value = {&quot;MDM_WAIT_WITHOUT_TIMEOUT&quot;, &quot;MDM_LOCK_ISLOCKED&quot;, &quot;UL_UNRELEASED_LOCK_EXCEPTION_PATH&quot;},
+          justification = &quot;no blocking is done while holding the lock,&quot;
+          + &quot; lock is released on all paths, findbugs just cannot figure it out...&quot;)
+  public void execute(final Runnable command) {
+<span class="nc" id="L201">    boolean reject = false;</span>
+<span class="nc" id="L202">    stateLock.lock();</span>
+    try {
+<span class="nc bnc" id="L204" title="All 2 branches missed.">      if (state.isShutdown()) {</span>
+        // if shutting down, reject
+<span class="nc" id="L206">        stateLock.unlock();</span>
+<span class="nc" id="L207">        this.rejectionHandler.rejectedExecution(command, this);</span>
+<span class="nc" id="L208">        return;</span>
+      }
+<span class="nc" id="L210">      QueuedThread nqt = threadQueue.pollLast();</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">      if (nqt != null) {</span>
+<span class="nc" id="L212">        nqt.runNext(command);</span>
+<span class="nc" id="L213">        stateLock.unlock();</span>
+<span class="nc" id="L214">        return;</span>
+      }
+<span class="nc" id="L216">      int tc = state.getThreadCount();</span>
+      // was not able to submit to an existing available thread, will attempt to create a new thread.
+<span class="nc bnc" id="L218" title="All 2 branches missed.">      if (tc &lt; maxThreadCount) {</span>
+        QueuedThread qt;
+        try {
+<span class="nc" id="L221">          qt = new QueuedThread(poolName, threadQueue, taskQueue, maxIdleTimeMillis, command,</span>
+                  state, stateLock, stateCondition);
+<span class="nc" id="L223">          qt.setDaemon(daemonThreads);</span>
+<span class="nc" id="L224">          qt.setPriority(threadPriority);</span>
+<span class="nc" id="L225">          state.addThread(qt);</span>
+        } finally {
+<span class="nc" id="L227">          stateLock.unlock();</span>
+        }
+<span class="nc" id="L229">        qt.start();</span>
+<span class="nc" id="L230">        return;</span>
+      }
+      // was not able to submit to an existing available thread, reached the maxThread limit.
+      // will attempt to queue the task, and reject if unable to
+<span class="nc bnc" id="L234" title="All 4 branches missed.">      reject = taskQueue.size() &gt;= queueSizeLimit || !taskQueue.offer(command);</span>
+<span class="nc" id="L235">    } catch (Throwable t) {</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">      if (stateLock.isHeldByCurrentThread()) {</span>
+<span class="nc" id="L237">        stateLock.unlock();</span>
+      }
+<span class="nc" id="L239">      throw t;</span>
+<span class="nc" id="L240">    }</span>
+<span class="nc" id="L241">    stateLock.unlock();</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">    if (reject) {</span>
+<span class="nc" id="L243">      rejectionHandler.rejectedExecution(command, this);</span>
+    }
+<span class="nc" id="L245">  }</span>
+
+  @Override
+  @SuppressFBWarnings(&quot;MDM_WAIT_WITHOUT_TIMEOUT&quot;)
+  public void shutdown() {
+<span class="nc" id="L250">    stateLock.lock();</span>
+    try {
+<span class="nc bnc" id="L252" title="All 2 branches missed.">      if (!state.isShutdown()) {</span>
+<span class="nc" id="L253">        state.setShutdown(true); // set the shutdown flag, to reject new submissions.</span>
+        QueuedThread th;
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        while ((th = threadQueue.pollLast()) != null) {</span>
+<span class="nc" id="L256">          th.signal(); // signal all waiting threads, so thay can start going down.</span>
+        }
+      }
+    } finally {
+<span class="nc" id="L260">      stateLock.unlock();</span>
+    }
+<span class="nc" id="L262">  }</span>
+
+  @Override
+  public boolean awaitTermination(final long time, final TimeUnit unit) throws InterruptedException {
+<span class="nc" id="L266">    long deadlinenanos = TimeSource.nanoTime() + unit.toNanos(time);</span>
+    int threadCount;
+<span class="nc" id="L268">    stateLock.lock();</span>
+    try {
+<span class="nc bnc" id="L270" title="All 2 branches missed.">      if (!state.isShutdown()) {</span>
+<span class="nc" id="L271">        throw new IllegalStateException(&quot;Threadpool is not is shutdown mode &quot; + this);</span>
+      }
+<span class="nc" id="L273">      threadCount = state.getThreadCount();</span>
+<span class="nc" id="L274">      long timeoutNs = deadlinenanos - TimeSource.nanoTime();</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">      while (threadCount &gt; 0) {</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">        if (timeoutNs &gt; 0) {</span>
+<span class="nc" id="L277">          timeoutNs = stateCondition.awaitNanos(timeoutNs);</span>
+        } else {
+          break;
+        }
+<span class="nc" id="L281">        threadCount = state.getThreadCount();</span>
+      }
+    } finally {
+<span class="nc" id="L284">      stateLock.unlock();</span>
+    }
+<span class="nc bnc" id="L286" title="All 2 branches missed.">    return threadCount == 0;</span>
+  }
+
+  @Override
+  public List&lt;Runnable&gt; shutdownNow() {
+<span class="nc" id="L291">    shutdown(); // shutdown</span>
+<span class="nc" id="L292">    stateLock.lock();</span>
+    try {
+<span class="nc" id="L294">      state.interruptAll(); // interrupt all running threads.</span>
+<span class="nc" id="L295">      return new ArrayList&lt;&gt;(taskQueue);</span>
+    } finally {
+<span class="nc" id="L297">      stateLock.unlock();</span>
+    }
+  }
+
+  @Override
+  @JmxExport
+  public boolean isShutdown() {
+<span class="nc" id="L304">    stateLock.lock();</span>
+    try {
+<span class="nc" id="L306">      return state.isShutdown();</span>
+    } finally {
+<span class="nc" id="L308">      stateLock.unlock();</span>
+    }
+  }
+
+  @JmxExport
+  @Override
+  public boolean isDaemonThreads() {
+<span class="nc" id="L315">    return daemonThreads;</span>
+  }
+
+  @Override
+  @JmxExport
+  public boolean isTerminated() {
+<span class="nc" id="L321">    stateLock.lock();</span>
+    try {
+<span class="nc bnc" id="L323" title="All 4 branches missed.">      return state.isShutdown() &amp;&amp; state.getThreadCount() == 0;</span>
+    } finally {
+<span class="nc" id="L325">      stateLock.unlock();</span>
+    }
+  }
+
+  @JmxExport
+  @Override
+  public int getThreadCount() {
+<span class="nc" id="L332">    stateLock.lock();</span>
+    try {
+<span class="nc" id="L334">      return state.getThreadCount();</span>
+    } finally {
+<span class="nc" id="L336">      stateLock.unlock();</span>
+    }
+  }
+
+  @JmxExport
+  @Override
+  public int getMaxThreadCount() {
+<span class="nc" id="L343">    return maxThreadCount;</span>
+  }
+
+  @Override
+  public ReentrantLock getStateLock() {
+<span class="nc" id="L348">    return stateLock;</span>
+  }
+
+  @JmxExport
+  @SuppressFBWarnings(value = &quot;MDM_WAIT_WITHOUT_TIMEOUT&quot;,
+          justification = &quot;Holders of this lock will not block&quot;)
+  @Override
+  public int getNrQueuedTasks() {
+<span class="nc" id="L356">    stateLock.lock();</span>
+    try {
+<span class="nc" id="L358">      return taskQueue.size();</span>
+    } finally {
+<span class="nc" id="L360">      stateLock.unlock();</span>
+    }
+  }
+
+  @JmxExport
+  @Override
+  public int getQueueSizeLimit() {
+<span class="nc" id="L367">    return queueSizeLimit;</span>
+  }
+
+  @Override
+  public void unregisterJmx() {
+<span class="nc" id="L372">    Registry.unregister(LifoThreadPoolExecutorSQP.class.getName(), poolName);</span>
+<span class="nc" id="L373">  }</span>
+
+  @SuppressFBWarnings(&quot;NO_NOTIFY_NOT_NOTIFYALL&quot;)
+  private static final class QueuedThread extends Thread {
+
+<span class="nc" id="L378">    private static final AtomicInteger COUNT = new AtomicInteger();</span>
+
+    private final ZArrayDequeue&lt;QueuedThread&gt; threadQueue;
+
+    private final Queue&lt;Runnable&gt; taskQueue;
+
+    private final int maxIdleTimeMillis;
+
+    @GuardedBy(&quot;poolStateLock&quot;)
+    private final PoolState state;
+
+    private long lastRunNanos;
+
+    private final ReentrantLock poolStateLock;
+
+    private final Condition poolStateCondition;
+
+    private final Condition submitCondition;
+
+    @Contended
+    private Runnable toRun;
+
+    QueuedThread(final String nameBase, final ZArrayDequeue&lt;QueuedThread&gt; threadQueue,
+            final Queue&lt;Runnable&gt; taskQueue, final int maxIdleTimeMillis,
+            @Nullable final Runnable runFirst, final PoolState state,
+            final ReentrantLock submitMonitor, final Condition submitCondition) {
+<span class="nc" id="L404">      super(nameBase + COUNT.getAndIncrement());</span>
+<span class="nc" id="L405">      this.threadQueue = threadQueue;</span>
+<span class="nc" id="L406">      this.taskQueue = taskQueue;</span>
+<span class="nc" id="L407">      this.maxIdleTimeMillis = maxIdleTimeMillis;</span>
+<span class="nc" id="L408">      this.state = state;</span>
+<span class="nc" id="L409">      this.lastRunNanos = TimeSource.nanoTime();</span>
+<span class="nc" id="L410">      this.poolStateLock = submitMonitor;</span>
+<span class="nc" id="L411">      this.submitCondition = submitMonitor.newCondition();</span>
+<span class="nc" id="L412">      this.poolStateCondition = submitCondition;</span>
+<span class="nc" id="L413">      this.toRun = runFirst;</span>
+<span class="nc" id="L414">    }</span>
+
+    /**
+     * will return false when this thread is not running anymore...
+     *
+     * @param runnable
+     * @return
+     */
+    @CheckReturnValue
+    @SuppressFBWarnings(&quot;MDM_SIGNAL_NOT_SIGNALALL&quot;) // Only one thread will away on this condition
+    private void runNext(final Runnable runnable) {
+<span class="nc" id="L425">        toRun = runnable;</span>
+<span class="nc" id="L426">        submitCondition.signal();</span>
+<span class="nc" id="L427">    }</span>
+
+    @SuppressFBWarnings
+    private void signal() {
+<span class="nc" id="L431">      runNext(AbstractRunnable.NOP);</span>
+<span class="nc" id="L432">    }</span>
+
+    @Override
+    public void run() {
+<span class="nc bnc" id="L436" title="All 2 branches missed.">      if (toRun != null) {</span>
+        try {
+<span class="nc" id="L438">          run(toRun);</span>
+        } finally {
+<span class="nc" id="L440">          toRun = null;</span>
+        }
+      }
+<span class="nc" id="L443">      doRun(TimeUnit.MILLISECONDS.toNanos(maxIdleTimeMillis));</span>
+<span class="nc" id="L444">    }</span>
+
+    @SuppressFBWarnings({&quot;MDM_LOCK_ISLOCKED&quot;, &quot;UL_UNRELEASED_LOCK&quot;})
+    private void doRun(final long maxIdleNanos) {
+      try {
+        while (true) {
+<span class="nc" id="L450">          poolStateLock.lock();</span>
+<span class="nc" id="L451">          Runnable poll = taskQueue.poll();</span>
+<span class="nc bnc" id="L452" title="All 2 branches missed.">          if (poll != null) {</span>
+<span class="nc" id="L453">            poolStateLock.unlock();</span>
+<span class="nc" id="L454">            run(poll);</span>
+          } else { // nothing in the queue, will put the thread to thread queue.
+<span class="nc bnc" id="L456" title="All 2 branches missed.">            if (state.isShutdown()) {</span>
+<span class="nc" id="L457">              removeThread();</span>
+<span class="nc" id="L458">              break;</span>
+            }
+<span class="nc" id="L460">            long timeoutNanos = lastRunNanos + maxIdleNanos - TimeSource.nanoTime();</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">            if (timeoutNanos &lt;= 0) { // Thread was idle more than it should</span>
+<span class="nc" id="L462">              final int tc = state.getThreadCount();</span>
+<span class="nc bnc" id="L463" title="All 2 branches missed.">              if (tc &gt; state.getCoreThreads()) { // can we terminate.</span>
+<span class="nc" id="L464">                removeThread();</span>
+<span class="nc" id="L465">                break;</span>
+              } else { // this is a core thread for now.
+<span class="nc" id="L467">                timeoutNanos = CORE_MINWAIT_NANOS;</span>
+              }
+            }
+<span class="nc" id="L470">            int ptr = threadQueue.addLastAndGetPtr(this);</span>
+            try {
+<span class="nc" id="L472">              timeoutNanos = submitCondition.awaitNanos(timeoutNanos);</span>
+<span class="nc" id="L473">            } catch (InterruptedException ex) {</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">              if (state.isShutdown()) {</span>
+<span class="nc" id="L475">                removeThread();</span>
+<span class="nc" id="L476">                break;</span>
+              }
+<span class="nc" id="L478">            }</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">            if (toRun != null) {</span>
+<span class="nc" id="L480">                poolStateLock.unlock();</span>
+                try {
+<span class="nc" id="L482">                  run(toRun);</span>
+                } finally {
+<span class="nc" id="L484">                  toRun = null;</span>
+                }
+            } else {
+<span class="nc" id="L487">                threadQueue.delete(ptr, this);</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">                if (timeoutNanos &lt;= 0) {</span>
+<span class="nc" id="L489">                  final int tc = state.getThreadCount();</span>
+<span class="nc bnc" id="L490" title="All 4 branches missed.">                  if (state.isShutdown() || tc &gt; state.getCoreThreads()) {</span>
+<span class="nc" id="L491">                    removeThread();</span>
+<span class="nc" id="L492">                    break;</span>
+                  }
+                }
+<span class="nc" id="L495">                poolStateLock.unlock();</span>
+            }
+          }
+<span class="nc" id="L498">        }</span>
+<span class="nc" id="L499">      } catch (Throwable t) {</span>
+<span class="nc" id="L500">        LOG.error(&quot;Unexpected exception&quot;, t);</span>
+<span class="nc bnc" id="L501" title="All 2 branches missed.">        if (poolStateLock.isHeldByCurrentThread()) {</span>
+<span class="nc" id="L502">          poolStateLock.unlock();</span>
+        }
+<span class="nc" id="L504">        throw t;</span>
+<span class="nc" id="L505">      }</span>
+
+<span class="nc" id="L507">    }</span>
+
+    private void removeThread() {
+<span class="nc" id="L510">      state.removeThread(this);</span>
+<span class="nc" id="L511">      poolStateCondition.signalAll();</span>
+<span class="nc" id="L512">      poolStateLock.unlock();</span>
+<span class="nc" id="L513">    }</span>
+
+    private void run(final Runnable runnable) {
+      try {
+<span class="nc" id="L517">        runnable.run();</span>
+<span class="nc" id="L518">      }  catch (Throwable e) {</span>
+          // Will run the thread uncaught handlers
+          // but will continue the thread running unless a uncaught handler throws an exception
+<span class="nc" id="L521">          final Thread.UncaughtExceptionHandler uexh = this.getUncaughtExceptionHandler();</span>
+          try {
+<span class="nc" id="L523">            uexh.uncaughtException(this, e);</span>
+<span class="nc" id="L524">          } catch (RuntimeException ex) {</span>
+<span class="nc" id="L525">            ex.addSuppressed(e);</span>
+<span class="nc" id="L526">            throw new UncheckedExecutionException(&quot;Uncaught exception handler blew up: &quot; + uexh, ex);</span>
+<span class="nc" id="L527">          }</span>
+      } finally {
+<span class="nc" id="L529">        lastRunNanos = TimeSource.nanoTime();</span>
+      }
+<span class="nc" id="L531">    }</span>
+
+    @Override
+    public String toString() {
+      StackTraceElement[] stackTrace;
+      try {
+<span class="nc" id="L537">        stackTrace = this.getStackTrace();</span>
+<span class="nc" id="L538">      } catch (RuntimeException ex) {</span>
+<span class="nc" id="L539">        stackTrace = StackTrace.EMPTY_STACK_TRACE;</span>
+<span class="nc" id="L540">      }</span>
+<span class="nc" id="L541">      return &quot;QueuedThread{name = &quot; + getName() + &quot;, lastRunNanos=&quot;</span>
+<span class="nc" id="L542">              + Timing.getCurrentTiming().fromNanoTimeToInstant(lastRunNanos)</span>
+<span class="nc" id="L543">              + &quot;, stack =&quot; + Arrays.toString(stackTrace)</span>
+              + &quot;, toRun = &quot; + toRun + '}';
+    }
+
+  }
+
+  private static final class PoolState {
+
+    private boolean shutdown;
+
+    private final int coreThreads;
+
+    private final Set&lt;QueuedThread&gt; allThreads;
+
+<span class="nc" id="L557">    PoolState(final int thnr, final Set&lt;QueuedThread&gt; allThreads) {</span>
+<span class="nc" id="L558">      this.shutdown = false;</span>
+<span class="nc" id="L559">      this.coreThreads = thnr;</span>
+<span class="nc" id="L560">      this.allThreads = allThreads;</span>
+<span class="nc" id="L561">    }</span>
+
+    public void addThread(final QueuedThread thread) {
+<span class="nc bnc" id="L564" title="All 2 branches missed.">      if (!allThreads.add(thread)) {</span>
+<span class="nc" id="L565">        throw new IllegalStateException(&quot;Attempting to add a thread twice: &quot; + thread);</span>
+      }
+<span class="nc" id="L567">      LOG.debug(&quot;Started thread {}&quot;, thread.getName());</span>
+<span class="nc" id="L568">    }</span>
+
+    public void removeThread(final QueuedThread thread) {
+<span class="nc bnc" id="L571" title="All 2 branches missed.">      if (!allThreads.remove(thread)) {</span>
+<span class="nc" id="L572">        throw new IllegalStateException(&quot;Removing thread failed: &quot; + thread);</span>
+      }
+<span class="nc" id="L574">      LOG.debug(&quot;Terminating thread {}&quot;, thread.getName());</span>
+<span class="nc" id="L575">    }</span>
+
+    public void interruptAll() {
+<span class="nc bnc" id="L578" title="All 2 branches missed.">      for (Thread thread : allThreads) {</span>
+<span class="nc" id="L579">        thread.interrupt();</span>
+<span class="nc" id="L580">      }</span>
+<span class="nc" id="L581">    }</span>
+
+    public int getCoreThreads() {
+<span class="nc" id="L584">      return coreThreads;</span>
+    }
+
+
+    public boolean isShutdown() {
+<span class="nc" id="L589">      return shutdown;</span>
+    }
+
+    public void setShutdown(final boolean shutdown) {
+<span class="nc" id="L593">      this.shutdown = shutdown;</span>
+<span class="nc" id="L594">    }</span>
+
+    public int getThreadCount() {
+<span class="nc" id="L597">      return allThreads.size();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L602">      return &quot;ExecState{&quot; + &quot;shutdown=&quot; + shutdown + &quot;, threadCount=&quot;</span>
+<span class="nc" id="L603">              + allThreads.size() + '}';</span>
+    }
+
+  }
+
+  @Override
+  public String toString() {
+<span class="nc" id="L610">    return &quot;LifoThreadPoolExecutorSQP{&quot; + &quot;threadQueue=&quot; + threadQueue + &quot;, maxIdleTimeMillis=&quot;</span>
+            + maxIdleTimeMillis + &quot;, maxThreadCount=&quot; + maxThreadCount + &quot;, state=&quot; + state
+            + &quot;, submitMonitor=&quot; + stateLock + &quot;, queueCapacity=&quot; + queueSizeLimit
+            + &quot;, poolName=&quot; + poolName + '}';
+  }
+
+  @Override
+  public Queue&lt;Runnable&gt; getTaskQueue() {
+<span class="nc" id="L618">    return taskQueue;</span>
+  }
+
+  @JmxExport
+  @Override
+  public int getMaxIdleTimeMillis() {
+<span class="nc" id="L624">    return maxIdleTimeMillis;</span>
+  }
+
+  @JmxExport
+  @Override
+  public String getPoolName() {
+<span class="nc" id="L630">    return poolName;</span>
+  }
+
+  @JmxExport
+  @Override
+  public int getThreadPriority() {
+<span class="nc" id="L636">    return threadPriority;</span>
+  }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

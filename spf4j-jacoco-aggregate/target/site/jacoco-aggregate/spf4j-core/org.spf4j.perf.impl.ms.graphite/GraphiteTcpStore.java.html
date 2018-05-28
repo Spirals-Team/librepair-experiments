@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GraphiteTcpStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">spf4j-jacoco-aggregate</a> &gt; <a href="../index.html" class="el_bundle">spf4j-core</a> &gt; <a href="index.source.html" class="el_package">org.spf4j.perf.impl.ms.graphite</a> &gt; <span class="el_source">GraphiteTcpStore.java</span></div><h1>GraphiteTcpStore.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2017, Zoltan Farkas All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * Additionally licensed with:
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.spf4j.perf.impl.ms.graphite;
+
+import com.google.common.base.Charsets;
+import com.google.common.base.Throwables;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import javax.annotation.Nullable;
+import javax.net.SocketFactory;
+import org.spf4j.base.HandlerNano;
+import org.spf4j.base.UncheckedExecutionException;
+import org.spf4j.base.UncheckedTimeoutException;
+import org.spf4j.failsafe.RetryPolicy;
+import org.spf4j.perf.MeasurementsInfo;
+import org.spf4j.perf.MeasurementStore;
+import org.spf4j.perf.impl.ms.Id2Info;
+import static org.spf4j.perf.impl.ms.graphite.GraphiteUdpStore.writeMetric;
+import org.spf4j.recyclable.ObjectCreationException;
+import org.spf4j.recyclable.ObjectDisposeException;
+import org.spf4j.recyclable.RecyclingSupplier;
+import org.spf4j.recyclable.Template;
+import org.spf4j.recyclable.impl.RecyclingSupplierBuilder;
+
+/**
+ *
+ * @author zoly
+ */
+public final class GraphiteTcpStore implements MeasurementStore {
+
+  private final RecyclingSupplier&lt;Writer&gt; socketWriterSupplier;
+
+  private final InetSocketAddress address;
+
+  private static class WriterSupplierFactory implements RecyclingSupplier.Factory&lt;Writer&gt; {
+
+    private final String hostName;
+    private final int port;
+    private final SocketFactory socketFactory;
+
+<span class="nc" id="L79">    WriterSupplierFactory(final SocketFactory socketFactory, final String hostName, final int port) {</span>
+<span class="nc" id="L80">      this.hostName = hostName;</span>
+<span class="nc" id="L81">      this.port = port;</span>
+<span class="nc" id="L82">      this.socketFactory = socketFactory;</span>
+<span class="nc" id="L83">    }</span>
+
+    @Override
+    public Writer create() throws ObjectCreationException {
+      Socket socket;
+      try {
+<span class="nc" id="L89">        socket = socketFactory.createSocket(hostName, port);</span>
+<span class="nc" id="L90">      } catch (IOException ex) {</span>
+<span class="nc" id="L91">        throw new ObjectCreationException(ex);</span>
+<span class="nc" id="L92">      }</span>
+      try {
+<span class="nc" id="L94">        return new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8));</span>
+<span class="nc" id="L95">      } catch (IOException ex) {</span>
+        try {
+<span class="nc" id="L97">          socket.close();</span>
+<span class="nc" id="L98">        } catch (IOException ex1) {</span>
+<span class="nc" id="L99">          ex1.addSuppressed(ex);</span>
+<span class="nc" id="L100">          throw new ObjectCreationException(ex1);</span>
+<span class="nc" id="L101">        }</span>
+<span class="nc" id="L102">        throw new ObjectCreationException(ex);</span>
+      }
+    }
+
+    @Override
+    public void dispose(final Writer object) throws ObjectDisposeException {
+      try {
+<span class="nc" id="L109">        object.close();</span>
+<span class="nc" id="L110">      } catch (IOException ex) {</span>
+<span class="nc" id="L111">        throw new ObjectDisposeException(ex);</span>
+<span class="nc" id="L112">      }</span>
+<span class="nc" id="L113">    }</span>
+
+    @Override
+    public boolean validate(final Writer object, final Exception e) {
+<span class="nc bnc" id="L117" title="All 4 branches missed.">      return e == null || !(Throwables.getRootCause(e) instanceof IOException);</span>
+    }
+
+  }
+
+  public GraphiteTcpStore(final String hostPort) throws ObjectCreationException, URISyntaxException {
+<span class="nc" id="L123">    this(new URI(&quot;graphiteTcp://&quot; + hostPort));</span>
+<span class="nc" id="L124">  }</span>
+
+  public GraphiteTcpStore(final URI uri) throws ObjectCreationException {
+<span class="nc" id="L127">    this(uri.getHost(), uri.getPort());</span>
+<span class="nc" id="L128">  }</span>
+
+  public GraphiteTcpStore(final String hostName, final int port) throws ObjectCreationException {
+<span class="nc" id="L131">    this(hostName, port, SocketFactory.getDefault());</span>
+<span class="nc" id="L132">  }</span>
+
+  public GraphiteTcpStore(final String hostName, final int port, final SocketFactory socketFactory)
+<span class="nc" id="L135">          throws ObjectCreationException {</span>
+<span class="nc" id="L136">    address = new InetSocketAddress(hostName, port);</span>
+<span class="nc" id="L137">    socketWriterSupplier = new RecyclingSupplierBuilder&lt;&gt;(1,</span>
+<span class="nc" id="L138">            new WriterSupplierFactory(socketFactory, hostName, port)).build();</span>
+<span class="nc" id="L139">  }</span>
+
+  @Override
+  public long alocateMeasurements(final MeasurementsInfo measurement, final int sampleTimeMillis) {
+<span class="nc" id="L143">    return Id2Info.getId(measurement);</span>
+  }
+
+  @Override
+  @SuppressFBWarnings(&quot;BED_BOGUS_EXCEPTION_DECLARATION&quot;) // fb nonsense
+  public void saveMeasurements(final long tableId,
+          final long timeStampMillis, final long... measurements) throws IOException {
+    try {
+<span class="nc" id="L151">      Template.doOnSupplied(new HandlerImpl(measurements, Id2Info.getInfo(tableId), timeStampMillis),</span>
+              1, TimeUnit.MINUTES,
+<span class="nc" id="L153">              socketWriterSupplier, RetryPolicy.defaultPolicy(), IOException.class);</span>
+<span class="nc" id="L154">    } catch (InterruptedException ex) {</span>
+<span class="nc" id="L155">      Thread.currentThread().interrupt();</span>
+<span class="nc" id="L156">      return;</span>
+<span class="nc" id="L157">    } catch (TimeoutException ex) {</span>
+<span class="nc" id="L158">      throw new UncheckedTimeoutException(ex);</span>
+<span class="nc" id="L159">    }</span>
+<span class="nc" id="L160">  }</span>
+
+  @Override
+  public String toString() {
+<span class="nc" id="L164">    return &quot;GraphiteTcpStore{address=&quot; + address + '}';</span>
+  }
+
+  @Override
+  public void close() {
+    try {
+<span class="nc" id="L170">      socketWriterSupplier.dispose();</span>
+<span class="nc" id="L171">    } catch (ObjectDisposeException | InterruptedException ex) {</span>
+<span class="nc" id="L172">      throw new UncheckedExecutionException(ex);</span>
+<span class="nc" id="L173">    }</span>
+<span class="nc" id="L174">  }</span>
+
+  private static class HandlerImpl implements HandlerNano&lt;Writer, Void, IOException&gt; {
+
+    private final long[] measurements;
+    private final MeasurementsInfo measurementInfo;
+    private final long timeStampMillis;
+
+    HandlerImpl(final long[] measurements, final MeasurementsInfo measurementInfo,
+<span class="nc" id="L183">            final long timeStampMillis) {</span>
+<span class="nc" id="L184">      this.measurements = measurements;</span>
+<span class="nc" id="L185">      this.measurementInfo = measurementInfo;</span>
+<span class="nc" id="L186">      this.timeStampMillis = timeStampMillis;</span>
+<span class="nc" id="L187">    }</span>
+
+    @Override
+    @Nullable
+    public Void handle(final Writer socketWriter, final long deadline) throws IOException {
+<span class="nc bnc" id="L192" title="All 2 branches missed.">      for (int i = 0; i &lt; measurements.length; i++) {</span>
+<span class="nc" id="L193">        writeMetric(measurementInfo, measurementInfo.getMeasurementName(i),</span>
+                measurements[i], timeStampMillis, socketWriter);
+      }
+<span class="nc" id="L196">      socketWriter.flush();</span>
+<span class="nc" id="L197">      return null;</span>
+    }
+  }
+
+  @Override
+  public void flush() {
+    // No buffering yet
+<span class="nc" id="L204">  }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

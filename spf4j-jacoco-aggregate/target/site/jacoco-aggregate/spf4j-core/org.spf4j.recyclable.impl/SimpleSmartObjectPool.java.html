@@ -1,0 +1,386 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SimpleSmartObjectPool.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">spf4j-jacoco-aggregate</a> &gt; <a href="../index.html" class="el_bundle">spf4j-core</a> &gt; <a href="index.source.html" class="el_package">org.spf4j.recyclable.impl</a> &gt; <span class="el_source">SimpleSmartObjectPool.java</span></div><h1>SimpleSmartObjectPool.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2017, Zoltan Farkas All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * Additionally licensed with:
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.spf4j.recyclable.impl;
+
+import com.google.common.collect.LinkedHashMultimap;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map.Entry;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
+import javax.annotation.CheckReturnValue;
+import org.spf4j.base.Either;
+import org.spf4j.base.ExecutionContexts;
+import org.spf4j.base.Pair;
+import org.spf4j.base.Throwables;
+import org.spf4j.base.TimeSource;
+import org.spf4j.recyclable.ObjectBorower;
+import org.spf4j.recyclable.ObjectBorower.Action;
+import org.spf4j.recyclable.ObjectCreationException;
+import org.spf4j.recyclable.ObjectDisposeException;
+import org.spf4j.recyclable.RecyclingSupplier;
+import org.spf4j.recyclable.SmartRecyclingSupplier;
+
+/**
+ * @author zoly
+ */
+final class SimpleSmartObjectPool&lt;T&gt; implements SmartRecyclingSupplier&lt;T&gt; {
+
+  private int maxSize;
+  private int waitingForReturn;
+  private final LinkedHashMultimap&lt;ObjectBorower&lt;T&gt;, T&gt; borrowedObjects;
+  private final List&lt;T&gt; availableObjects;
+  private final ReentrantLock lock;
+  private final Condition available;
+  private final RecyclingSupplier.Factory&lt;T&gt; factory;
+  private T sample;
+
+  SimpleSmartObjectPool(final int initialSize, final int maxSize,
+          final RecyclingSupplier.Factory&lt;T&gt; factory, final boolean fair)
+<span class="nc" id="L74">          throws ObjectCreationException {</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">    if (maxSize &lt; 1) {</span>
+<span class="nc" id="L76">      throw new IllegalArgumentException(&quot;Invalid pool size: &quot; + maxSize);</span>
+    }
+<span class="nc" id="L78">    this.maxSize = maxSize;</span>
+<span class="nc" id="L79">    this.factory = factory;</span>
+<span class="nc" id="L80">    this.lock = new ReentrantLock(fair);</span>
+<span class="nc" id="L81">    this.available = this.lock.newCondition();</span>
+<span class="nc" id="L82">    this.borrowedObjects = LinkedHashMultimap.create();</span>
+<span class="nc" id="L83">    this.availableObjects = new ArrayList&lt;&gt;(initialSize);</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">    for (int i = 0; i &lt; initialSize; i++) {</span>
+<span class="nc" id="L85">      availableObjects.add(factory.create());</span>
+    }
+<span class="nc" id="L87">    waitingForReturn = 0;</span>
+<span class="nc" id="L88">    this.sample = factory.create();</span>
+<span class="nc" id="L89">  }</span>
+
+  @Override
+  @SuppressFBWarnings({&quot;RV_RETURN_VALUE_IGNORED_BAD_PRACTICE&quot;, &quot;PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS&quot;})
+  public T get(final ObjectBorower borower) throws InterruptedException,
+          TimeoutException, ObjectCreationException {
+<span class="nc" id="L95">    lock.lock();</span>
+    try {
+<span class="nc bnc" id="L97" title="All 2 branches missed.">      if (maxSize &lt;= 0) {</span>
+<span class="nc" id="L98">        throw new IllegalStateException(&quot;Pool closed, noting available for &quot; + borower);</span>
+      }
+<span class="nc" id="L100">      int nrAvailable = availableObjects.size();</span>
+      // trying to be fair here, if others are already waiting, we will not get one.
+<span class="nc bnc" id="L102" title="All 2 branches missed.">      if (nrAvailable - waitingForReturn &gt; 0) {</span>
+<span class="nc" id="L103">        Iterator&lt;T&gt; it = availableObjects.iterator();</span>
+<span class="nc" id="L104">        T object = it.next();</span>
+<span class="nc" id="L105">        it.remove();</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        if (!borrowedObjects.put(borower, object)) {</span>
+<span class="nc" id="L107">          throw new IllegalStateException(&quot;Cannot borrow &quot; + object + &quot;, &quot; + borrowedObjects);</span>
+        }
+<span class="nc" id="L109">        return object;</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">      } else if (borrowedObjects.size()  + nrAvailable &lt; maxSize) {</span>
+<span class="nc" id="L111">        T object = factory.create();</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (!borrowedObjects.put(borower, object)) {</span>
+<span class="nc" id="L113">          throw new IllegalStateException(&quot;Cannot borrow &quot; + object + &quot;, &quot; + borrowedObjects);</span>
+        }
+<span class="nc" id="L115">        return object;</span>
+      } else {
+        // try to reclaim object from borrowers
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        for (ObjectBorower&lt;T&gt; b : borrowedObjects.keySet()) {</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">          if (borower != b) {</span>
+<span class="nc" id="L120">            T object = b.tryReturnObjectIfNotInUse();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if (object != null) {</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">              if (!borrowedObjects.remove(b, object)) {</span>
+<span class="nc" id="L123">                throw new IllegalStateException(&quot;Returned Object hasn't been borrowed &quot; + object);</span>
+              }
+<span class="nc bnc" id="L125" title="All 2 branches missed.">              if (!borrowedObjects.put(borower, object)) {</span>
+<span class="nc" id="L126">                throw new IllegalStateException(&quot;Cannot borrow &quot; + object + &quot;, &quot; + borrowedObjects);</span>
+              }
+<span class="nc" id="L128">              return object;</span>
+            }
+          }
+<span class="nc" id="L131">        }</span>
+        // evrything in use, try to place a return request
+<span class="nc" id="L133">        boolean requestMade = false;</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        while (!requestMade) {</span>
+<span class="nc" id="L135">          boolean hasValidBorowers = false;</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">          for (ObjectBorower&lt;T&gt; b : borrowedObjects.keySet()) {</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            if (borower != b) {</span>
+<span class="nc" id="L138">              hasValidBorowers = true;</span>
+<span class="nc" id="L139">              Either&lt;ObjectBorower.Action, T&gt; objOrPromise = b.tryRequestReturnObject();</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">              if (objOrPromise.isRight()) {</span>
+<span class="nc" id="L141">                T obj = objOrPromise.getRight();</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                if (!borrowedObjects.remove(b, obj)) {</span>
+<span class="nc" id="L143">                  throw new IllegalStateException(&quot;Returned Object &quot; + obj</span>
+                          + &quot; hasn't been borrowed: &quot; + borrowedObjects);
+                }
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">                if (!borrowedObjects.put(borower, obj)) {</span>
+<span class="nc" id="L148">                  throw new IllegalStateException(&quot;Cannot boroow &quot; + obj + &quot;, &quot; + borrowedObjects);</span>
+                }
+<span class="nc" id="L150">                return obj;</span>
+              } else {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">                requestMade = objOrPromise.getLeft() == Action.REQUEST_MADE;</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">                if (requestMade) {</span>
+<span class="nc" id="L154">                  break;</span>
+                }
+              }
+            }
+<span class="nc" id="L158">          }</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">          if (!hasValidBorowers) {</span>
+<span class="nc" id="L160">            throw new IllegalStateException(&quot;Borrower asks for more than possible &quot; + borower);</span>
+          }
+<span class="nc bnc" id="L162" title="All 2 branches missed.">          if (!requestMade) {</span>
+            // probably was unable to acquire the locks
+            do {
+<span class="nc" id="L165">              available.await(1, TimeUnit.MILLISECONDS);</span>
+<span class="nc" id="L166">              long millisToDeadline = ExecutionContexts.getTimeRelativeToDeadline(TimeUnit.MILLISECONDS);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">              if (millisToDeadline &lt; 0) {</span>
+<span class="nc" id="L168">                throw new TimeoutException(&quot;Object wait timeout expired by &quot; + (-millisToDeadline));</span>
+              }
+<span class="nc bnc" id="L170" title="All 2 branches missed.">            } while (borrowedObjects.isEmpty());</span>
+          }
+<span class="nc" id="L172">        }</span>
+<span class="nc" id="L173">        waitingForReturn++;</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        while (availableObjects.isEmpty()) {</span>
+<span class="nc" id="L175">          long waitTime = ExecutionContexts.getTimeToDeadline(TimeUnit.MILLISECONDS);</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">          if (!available.await(waitTime, TimeUnit.MILLISECONDS)) {</span>
+<span class="nc" id="L177">            throw new TimeoutException(&quot;Object wait timeout expired, waitTime = &quot; + waitTime);</span>
+          }
+<span class="nc" id="L179">        }</span>
+<span class="nc" id="L180">        waitingForReturn--;</span>
+<span class="nc" id="L181">        Iterator&lt;T&gt; it = availableObjects.iterator();</span>
+<span class="nc" id="L182">        T objectT = it.next();</span>
+<span class="nc" id="L183">        it.remove();</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (!borrowedObjects.put(borower, objectT)) {</span>
+<span class="nc" id="L185">          throw new IllegalStateException(&quot;Cannot borrow &quot; + objectT + &quot;, &quot; + borrowedObjects);</span>
+        }
+<span class="nc" id="L187">        return objectT;</span>
+
+      }
+    } finally {
+<span class="nc" id="L191">      lock.unlock();</span>
+    }
+  }
+
+  @Override
+  public void recycle(final T object, final ObjectBorower borower) {
+<span class="nc" id="L197">    lock.lock();</span>
+    try {
+<span class="nc bnc" id="L199" title="All 2 branches missed.">      if (!borrowedObjects.remove(borower, object)) {</span>
+        // returned somebody else's objOrPromise.
+<span class="nc" id="L201">        Entry&lt;ObjectBorower&lt;T&gt;, T&gt; foundEntry = null;</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        for (Entry&lt;ObjectBorower&lt;T&gt;, T&gt; entry : borrowedObjects.entries()) {</span>
+<span class="nc" id="L203">          final ObjectBorower&lt;T&gt; lb = entry.getKey();</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">          if (lb == borower) {</span>
+<span class="nc" id="L205">            continue;</span>
+          }
+<span class="nc bnc" id="L207" title="All 2 branches missed.">          if (lb.nevermind(entry.getValue())) {</span>
+<span class="nc" id="L208">            foundEntry = entry;</span>
+<span class="nc" id="L209">            break;</span>
+          }
+<span class="nc" id="L211">        }</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        if (foundEntry == null) {</span>
+<span class="nc" id="L213">          throw new IllegalStateException(&quot;Object &quot; + object + &quot; has not been borrowed from this pool&quot;);</span>
+        } else {
+<span class="nc bnc" id="L215" title="All 2 branches missed.">          if (!borrowedObjects.remove(foundEntry.getKey(), foundEntry.getValue())) {</span>
+<span class="nc" id="L216">            throw new IllegalStateException(&quot;Should have removed &quot; + foundEntry);</span>
+          }
+        }
+      }
+<span class="nc" id="L220">      availableObjects.add(object);</span>
+<span class="nc" id="L221">      available.signalAll();</span>
+    } finally {
+<span class="nc" id="L223">      lock.unlock();</span>
+    }
+<span class="nc" id="L225">  }</span>
+
+  @Override
+  public boolean tryDispose(final long timeoutMillis) throws ObjectDisposeException, InterruptedException {
+<span class="nc" id="L229">    factory.dispose(sample);</span>
+<span class="nc" id="L230">    long deadlineNanos = TimeSource.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);</span>
+<span class="nc" id="L231">    lock.lock();</span>
+    try {
+<span class="nc" id="L233">      maxSize = 0;</span>
+<span class="nc" id="L234">      List&lt;Pair&lt;ObjectBorower&lt;T&gt;, T&gt;&gt; returnedObjects = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">      for (Entry&lt;ObjectBorower&lt;T&gt;, Collection&lt;T&gt;&gt; b : borrowedObjects.asMap().entrySet()) {</span>
+<span class="nc" id="L236">        ObjectBorower&lt;T&gt; borrower = b.getKey();</span>
+<span class="nc" id="L237">        final int nrObjects = b.getValue().size();</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        for (int i = 0; i &lt; nrObjects; i++) {</span>
+<span class="nc" id="L239">          Either&lt;Action, T&gt; object = borrower.tryRequestReturnObject();</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">          if (object.isRight()) {</span>
+<span class="nc" id="L241">            returnedObjects.add(Pair.of(borrower, object.getRight()));</span>
+          }
+        }
+<span class="nc" id="L244">      }</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">      for (Pair&lt;ObjectBorower&lt;T&gt;, T&gt; objectAndBorrower : returnedObjects) {</span>
+<span class="nc" id="L246">        T object = objectAndBorrower.getSecond();</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (!borrowedObjects.remove(objectAndBorrower.getFirst(), object)) {</span>
+<span class="nc" id="L248">          throw new IllegalStateException(&quot;Returned Object hasn't been borrowed &quot; + object);</span>
+        }
+<span class="nc" id="L250">        availableObjects.add(object);</span>
+<span class="nc" id="L251">      }</span>
+<span class="nc" id="L252">      ObjectDisposeException exception = disposeReturnedObjects(null);</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">      while (!borrowedObjects.isEmpty()) {</span>
+<span class="nc" id="L254">        long waitTimeNanos = deadlineNanos - TimeSource.nanoTime();</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        if (waitTimeNanos &lt;= 0) {</span>
+<span class="nc" id="L256">          return false;</span>
+        }
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        if (!available.await(waitTimeNanos, TimeUnit.NANOSECONDS)) {</span>
+<span class="nc" id="L259">          return false;</span>
+        }
+<span class="nc" id="L261">        exception = disposeReturnedObjects(exception);</span>
+<span class="nc" id="L262">      }</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">      if (exception != null) {</span>
+<span class="nc" id="L264">        throw exception;</span>
+      }
+<span class="nc" id="L266">      return true;</span>
+<span class="nc" id="L267">    } catch (InterruptedException | RuntimeException e) {</span>
+<span class="nc" id="L268">      throw e;</span>
+    } finally {
+<span class="nc" id="L270">      lock.unlock();</span>
+    }
+  }
+
+  @CheckReturnValue
+  private ObjectDisposeException disposeReturnedObjects(final ObjectDisposeException exception) {
+<span class="nc" id="L276">    ObjectDisposeException result = exception;</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">    for (T obj : availableObjects) {</span>
+      try {
+<span class="nc" id="L279">        factory.dispose(obj);</span>
+<span class="nc" id="L280">      } catch (ObjectDisposeException ex) {</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">        if (result == null) {</span>
+<span class="nc" id="L282">          result = ex;</span>
+        } else {
+<span class="nc" id="L284">          result = Throwables.suppress(ex, result);</span>
+        }
+<span class="nc" id="L286">      } catch (Exception ex) {</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        if (result == null) {</span>
+<span class="nc" id="L288">          result = new ObjectDisposeException(ex);</span>
+        } else {
+<span class="nc" id="L290">          result = Throwables.suppress(new ObjectDisposeException(ex), result);</span>
+        }
+<span class="nc" id="L292">      }</span>
+<span class="nc" id="L293">    }</span>
+<span class="nc" id="L294">    availableObjects.clear();</span>
+<span class="nc" id="L295">    return result;</span>
+  }
+
+  @SuppressFBWarnings(&quot;EXS_EXCEPTION_SOFTENING_HAS_CHECKED&quot;)
+  @Override
+  public boolean scan(final ScanHandler&lt;T&gt; handler) throws Exception {
+<span class="nc" id="L301">    lock.lock();</span>
+<span class="nc" id="L302">    Exception resEx = null;</span>
+    try {
+<span class="nc bnc" id="L304" title="All 2 branches missed.">      for (ObjectBorower&lt;T&gt; objectBorower : borrowedObjects.keySet()) {</span>
+        try {
+<span class="nc bnc" id="L306" title="All 2 branches missed.">          if (!objectBorower.scan(handler)) {</span>
+<span class="nc" id="L307">            return false;</span>
+          }
+<span class="nc" id="L309">        } catch (Exception e) {</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">          if (resEx == null) {</span>
+<span class="nc" id="L311">            resEx = e;</span>
+          } else {
+<span class="nc" id="L313">            resEx = Throwables.suppress(e, resEx);</span>
+          }
+<span class="nc" id="L315">        }</span>
+
+<span class="nc" id="L317">        Collection&lt;T&gt; returned = objectBorower.tryReturnObjectsIfNotNeededAnymore();</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">        for (T ro : returned) {</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">          if (!borrowedObjects.remove(objectBorower, ro)) {</span>
+<span class="nc" id="L320">            throw new IllegalStateException(&quot;Object returned hasn't been borrowed&quot; + ro);</span>
+          }
+<span class="nc" id="L322">          availableObjects.add(ro);</span>
+<span class="nc" id="L323">        }</span>
+
+<span class="nc" id="L325">      }</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">      for (T object : availableObjects) {</span>
+        try {
+<span class="nc bnc" id="L328" title="All 2 branches missed.">          if (!handler.handle(object)) {</span>
+<span class="nc" id="L329">            return false;</span>
+          }
+<span class="nc" id="L331">        } catch (Exception e) {</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">          if (resEx == null) {</span>
+<span class="nc" id="L333">            resEx = e;</span>
+          } else {
+<span class="nc" id="L335">            resEx = Throwables.suppress(e, resEx);</span>
+          }
+<span class="nc" id="L337">        }</span>
+<span class="nc" id="L338">      }</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">      if (resEx != null) {</span>
+<span class="nc" id="L340">        throw resEx;</span>
+      }
+<span class="nc" id="L342">      return true;</span>
+    } finally {
+<span class="nc" id="L344">      lock.unlock();</span>
+    }
+  }
+
+  @SuppressFBWarnings(&quot;RV_RETURN_VALUE_IGNORED&quot;)
+  public void requestReturnFromBorrowersIfNotInUse() throws InterruptedException {
+<span class="nc" id="L350">    lock.lock();</span>
+    try {
+<span class="nc" id="L352">      List&lt;Pair&lt;ObjectBorower&lt;T&gt;, T&gt;&gt; returnedObjects = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">      for (ObjectBorower&lt;T&gt; b : borrowedObjects.keySet()) {</span>
+<span class="nc" id="L354">        Collection&lt;T&gt; objects = b.tryReturnObjectsIfNotInUse();</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">        for (T object : objects) {</span>
+<span class="nc" id="L356">          returnedObjects.add(Pair.of(b, object));</span>
+<span class="nc" id="L357">        }</span>
+<span class="nc" id="L358">      }</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">      for (Pair&lt;ObjectBorower&lt;T&gt;, T&gt; ro : returnedObjects) {</span>
+<span class="nc" id="L360">        T object = ro.getSecond();</span>
+<span class="nc" id="L361">        borrowedObjects.remove(ro.getFirst(), object);</span>
+<span class="nc" id="L362">        availableObjects.add(object);</span>
+<span class="nc" id="L363">      }</span>
+    } finally {
+<span class="nc" id="L365">      lock.unlock();</span>
+    }
+<span class="nc" id="L367">  }</span>
+
+  @Override
+  public String toString() {
+<span class="nc" id="L371">    lock.lock();</span>
+    try {
+<span class="nc" id="L373">      return &quot;SimpleSmartObjectPool{&quot; + &quot;maxSize=&quot; + maxSize + &quot;, borrowedObjects=&quot;</span>
+              + borrowedObjects + &quot;, availableObjects=&quot; + availableObjects
+              + &quot;, factory=&quot; + factory + '}';
+    } finally {
+<span class="nc" id="L377">      lock.unlock();</span>
+    }
+  }
+
+  @Override
+  public T getSample() {
+<span class="nc" id="L383">    return sample;</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>

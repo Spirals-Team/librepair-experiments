@@ -1,0 +1,541 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Strings.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">spf4j-jacoco-aggregate</a> &gt; <a href="../index.html" class="el_bundle">spf4j-core</a> &gt; <a href="index.source.html" class="el_package">org.spf4j.base</a> &gt; <span class="el_source">Strings.java</span></div><h1>Strings.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2017, Zoltan Farkas All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ *
+ * Additionally licensed with:
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.spf4j.base;
+
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CoderResult;
+import java.nio.charset.CodingErrorAction;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
+import javax.annotation.Nonnull;
+//CHECKSTYLE:OFF
+import sun.nio.cs.ArrayDecoder;
+import sun.nio.cs.ArrayEncoder;
+//CHECKSTYLE:ON
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.nio.charset.StandardCharsets;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.annotation.Nullable;
+
+/**
+ *
+ * @author zoly
+ */
+@SuppressFBWarnings(&quot;IICU_INCORRECT_INTERNAL_CLASS_USE&quot;)
+public final class Strings {
+
+  private static final MethodHandle CHARS_FIELD_GET;
+
+  //String(char[] value, boolean share) {
+  private static final MethodHandle PROTECTED_STR_CONSTR_HANDLE;
+  private static final Class&lt;?&gt;[] PROTECTED_STR_CONSTR_PARAM_TYPES;
+
+<span class="nc" id="L74">  public static final String EOL = System.getProperty(&quot;line.separator&quot;, &quot;\n&quot;);</span>
+
+<span class="nc" id="L76">  private static final String[][] JAVA_CTRL_CHARS_UNESCAPE = {</span>
+    {&quot;\\b&quot;, &quot;\b&quot;},
+    {&quot;\\n&quot;, &quot;\n&quot;},
+    {&quot;\\t&quot;, &quot;\t&quot;},
+    {&quot;\\f&quot;, &quot;\f&quot;},
+    {&quot;\\r&quot;, &quot;\r&quot;}
+  };
+
+<span class="nc" id="L84">  private static final CharSequenceTranslator UNESCAPE_JAVA</span>
+          = new AggregateTranslator(
+                  new OctalUnescaper(),
+                  new UnicodeUnescaper(),
+                  new LookupTranslator(JAVA_CTRL_CHARS_UNESCAPE),
+                  new LookupTranslator(
+                          new String[][]{
+                            {&quot;\\\\&quot;, &quot;\\&quot;},
+                            {&quot;\\\&quot;&quot;, &quot;\&quot;&quot;},
+                            {&quot;\\'&quot;, &quot;'&quot;},
+                            {&quot;\\&quot;, &quot;&quot;}
+                          })
+          );
+
+
+
+<span class="nc" id="L100">  private static final boolean LENIENT_CODING = Boolean.getBoolean(&quot;spf4j.encoding.lenient&quot;);</span>
+
+<span class="nc" id="L102">  private static final ThreadLocal&lt;CharsetDecoder&gt; UTF8_DECODER = new ThreadLocal&lt;CharsetDecoder&gt;() {</span>
+
+    @Override
+    protected CharsetDecoder initialValue() {
+<span class="nc" id="L106">      return createUtf8Decoder();</span>
+    }
+
+  };
+
+<span class="nc" id="L111">  private static final ThreadLocal&lt;CharsetEncoder&gt; UTF8_ENCODER = new ThreadLocal&lt;CharsetEncoder&gt;() {</span>
+
+    @Override
+    protected CharsetEncoder initialValue() {
+<span class="nc" id="L115">      return createUtf8Encoder();</span>
+    }
+
+  };
+
+  private Strings() {
+  }
+
+  /**
+   * @deprecated use CharSequences.distance instead.
+   */
+  @Deprecated
+  public static int distance(@Nonnull final String s1, @Nonnull final String s2) {
+<span class="nc" id="L128">    return CharSequences.distance(s1, s2);</span>
+  }
+
+  @Nullable
+  public static String unescape(@Nullable final String what) {
+<span class="nc" id="L133">    return UNESCAPE_JAVA.translate(what);</span>
+  }
+
+  public static boolean contains(final String string, final char... chars) {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">    for (char c : chars) {</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">      if (string.indexOf(c) &gt;= 0) {</span>
+<span class="nc" id="L139">        return true;</span>
+      }
+    }
+<span class="nc" id="L142">    return false;</span>
+  }
+
+  /**
+   * @deprecated use CharSequences.containsAnyChar instead.
+   */
+  @Deprecated
+  public static boolean contains(final CharSequence string, final char... chars) {
+<span class="nc" id="L150">    return CharSequences.containsAnyChar(string, chars);</span>
+  }
+
+  public static String withFirstCharLower(final String str) {
+<span class="nc bnc" id="L154" title="All 2 branches missed.">    if (str.isEmpty()) {</span>
+<span class="nc" id="L155">      return str;</span>
+    }
+<span class="nc bnc" id="L157" title="All 2 branches missed.">    if (Character.isLowerCase(str.charAt(0))) {</span>
+<span class="nc" id="L158">      return str;</span>
+    }
+<span class="nc" id="L160">    int l = str.length();</span>
+<span class="nc" id="L161">    StringBuilder result = new StringBuilder(l);</span>
+<span class="nc" id="L162">    result.append(Character.toLowerCase(str.charAt(0)));</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">    for (int i = 1; i &lt; l; i++) {</span>
+<span class="nc" id="L164">      result.append(str.charAt(i));</span>
+    }
+<span class="nc" id="L166">    return result.toString();</span>
+  }
+
+  public static void writeReplaceWhitespaces(final String str, final char replacement, final Appendable writer)
+          throws IOException {
+<span class="nc bnc" id="L171" title="All 2 branches missed.">    for (char c : steal(str)) {</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">      if (Character.isWhitespace(c)) {</span>
+<span class="nc" id="L173">        writer.append(replacement);</span>
+      } else {
+<span class="nc" id="L175">        writer.append(c);</span>
+      }
+    }
+<span class="nc" id="L178">  }</span>
+
+  static {
+<span class="nc" id="L181">    Field charsField = AccessController.doPrivileged(new PrivilegedAction&lt;Field&gt;() {</span>
+      @Override
+      public Field run() {
+        Field charsField;
+        try {
+<span class="nc" id="L186">          charsField = String.class.getDeclaredField(&quot;value&quot;);</span>
+<span class="nc" id="L187">          charsField.setAccessible(true);</span>
+<span class="nc" id="L188">        } catch (NoSuchFieldException ex) {</span>
+<span class="nc" id="L189">          Logger.getLogger(Strings.class.getName()).log(Level.INFO,</span>
+                  &quot;char array stealing from String not supported&quot;, ex);
+<span class="nc" id="L191">          charsField = null;</span>
+<span class="nc" id="L192">        }</span>
+<span class="nc" id="L193">        return charsField;</span>
+      }
+    });
+<span class="nc" id="L196">    MethodHandles.Lookup lookup = MethodHandles.lookup();</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">    if (charsField != null) {</span>
+      try {
+<span class="nc" id="L199">        CHARS_FIELD_GET = lookup.unreflectGetter(charsField);</span>
+<span class="nc" id="L200">      } catch (IllegalAccessException ex) {</span>
+<span class="nc" id="L201">        throw new ExceptionInInitializerError(ex);</span>
+<span class="nc" id="L202">      }</span>
+    } else {
+<span class="nc" id="L204">      CHARS_FIELD_GET = null;</span>
+    }
+
+    // up until u45 String(int offset, int count, char value[]) {
+    // u45 reverted to: String(char[] value, boolean share) {
+<span class="nc" id="L209">    Constructor&lt;String&gt; prConstr = AccessController.doPrivileged(</span>
+<span class="nc" id="L210">            new PrivilegedAction&lt;Constructor&lt;String&gt;&gt;() {</span>
+      @Override
+      public Constructor&lt;String&gt; run() {
+        Constructor&lt;String&gt; constr;
+        try {
+<span class="nc" id="L215">          constr = String.class.getDeclaredConstructor(char[].class, boolean.class);</span>
+<span class="nc" id="L216">          constr.setAccessible(true);</span>
+<span class="nc" id="L217">        } catch (NoSuchMethodException ex) {</span>
+          try {
+<span class="nc" id="L219">            constr = String.class.getDeclaredConstructor(int.class, int.class, char[].class);</span>
+<span class="nc" id="L220">            constr.setAccessible(true);</span>
+<span class="nc" id="L221">          } catch (NoSuchMethodException ex2) {</span>
+<span class="nc" id="L222">            ex2.addSuppressed(ex);</span>
+<span class="nc" id="L223">            Logger.getLogger(Strings.class.getName()).log(Level.INFO,</span>
+                    &quot;building String from char[] fast not supported&quot;, ex2);
+<span class="nc" id="L225">            constr = null;</span>
+<span class="nc" id="L226">          }</span>
+<span class="nc" id="L227">        }</span>
+<span class="nc" id="L228">        return constr;</span>
+      }
+    });
+
+<span class="nc bnc" id="L232" title="All 2 branches missed.">    if (prConstr == null) {</span>
+<span class="nc" id="L233">      PROTECTED_STR_CONSTR_PARAM_TYPES = null;</span>
+<span class="nc" id="L234">      PROTECTED_STR_CONSTR_HANDLE = null;</span>
+    } else {
+<span class="nc" id="L236">      PROTECTED_STR_CONSTR_PARAM_TYPES = prConstr.getParameterTypes();</span>
+      try {
+<span class="nc" id="L238">        PROTECTED_STR_CONSTR_HANDLE = lookup.unreflectConstructor(prConstr);</span>
+<span class="nc" id="L239">      } catch (IllegalAccessException ex) {</span>
+<span class="nc" id="L240">        throw new ExceptionInInitializerError(ex);</span>
+<span class="nc" id="L241">      }</span>
+    }
+<span class="nc" id="L243">  }</span>
+
+  /**
+   * Steal the underlying character array of a String.
+   *
+   * @param str
+   * @return
+   */
+  public static char[] steal(final String str) {
+<span class="nc bnc" id="L252" title="All 2 branches missed.">    if (CHARS_FIELD_GET == null) {</span>
+<span class="nc" id="L253">      return str.toCharArray();</span>
+    } else {
+      try {
+<span class="nc" id="L256">        return (char[]) CHARS_FIELD_GET.invokeExact(str);</span>
+<span class="nc" id="L257">      } catch (Throwable ex) {</span>
+<span class="nc" id="L258">        UnknownError err = new UnknownError(&quot;Error while stealing String char array&quot;);</span>
+<span class="nc" id="L259">        err.addSuppressed(ex);</span>
+<span class="nc" id="L260">        throw err;</span>
+      }
+    }
+  }
+
+  /**
+   * Create a String based on the provided character array. No copy of the array is made.
+   *
+   * @param chars
+   * @return
+   */
+  public static String wrap(final char[] chars) {
+<span class="nc bnc" id="L272" title="All 2 branches missed.">    if (PROTECTED_STR_CONSTR_PARAM_TYPES != null) {</span>
+      try {
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        if (PROTECTED_STR_CONSTR_PARAM_TYPES.length == 3) {</span>
+<span class="nc" id="L275">          return (String) PROTECTED_STR_CONSTR_HANDLE.invokeExact(0, chars.length, chars);</span>
+        } else {
+<span class="nc" id="L277">          return (String) PROTECTED_STR_CONSTR_HANDLE.invokeExact(chars, true);</span>
+        }
+<span class="nc" id="L279">      } catch (Throwable ex) {</span>
+<span class="nc" id="L280">        UnknownError err = new UnknownError(&quot;Error while wrapping String char array&quot;);</span>
+<span class="nc" id="L281">        err.addSuppressed(ex);</span>
+<span class="nc" id="L282">        throw err;</span>
+      }
+    } else {
+<span class="nc" id="L285">      return new String(chars);</span>
+    }
+  }
+
+  public static CharsetEncoder createUtf8Encoder() {
+<span class="nc bnc" id="L290" title="All 2 branches missed.">    if (LENIENT_CODING) {</span>
+<span class="nc" id="L291">      return StandardCharsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPLACE)</span>
+<span class="nc" id="L292">              .onUnmappableCharacter(CodingErrorAction.REPLACE);</span>
+    } else {
+<span class="nc" id="L294">      return StandardCharsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)</span>
+<span class="nc" id="L295">              .onUnmappableCharacter(CodingErrorAction.REPORT);</span>
+    }
+  }
+
+
+  public static CharsetDecoder createUtf8Decoder() {
+<span class="nc bnc" id="L301" title="All 2 branches missed.">    if (LENIENT_CODING) {</span>
+<span class="nc" id="L302">      return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPLACE)</span>
+<span class="nc" id="L303">              .onUnmappableCharacter(CodingErrorAction.REPLACE);</span>
+    } else {
+<span class="nc" id="L305">      return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)</span>
+<span class="nc" id="L306">              .onUnmappableCharacter(CodingErrorAction.REPORT);</span>
+    }
+  }
+
+  public static CharsetEncoder getUTF8CharsetEncoder() {
+<span class="nc" id="L311">    return UTF8_ENCODER.get();</span>
+  }
+
+  public static CharsetDecoder getUTF8CharsetDecoder() {
+<span class="nc" id="L315">    return UTF8_DECODER.get();</span>
+  }
+
+  @SuppressFBWarnings(&quot;SUA_SUSPICIOUS_UNINITIALIZED_ARRAY&quot;)
+  public static byte[] encode(final CharsetEncoder ce, final char[] ca, final int off, final int len) {
+<span class="nc bnc" id="L320" title="All 2 branches missed.">    if (len == 0) {</span>
+<span class="nc" id="L321">      return Arrays.EMPTY_BYTE_ARRAY;</span>
+    }
+<span class="nc" id="L323">    byte[] ba = TLScratch.getBytesTmp(getmaxNrBytes(ce, len));</span>
+<span class="nc" id="L324">    int nrBytes = encode(ce, ca, off, len, ba);</span>
+<span class="nc" id="L325">    return java.util.Arrays.copyOf(ba, nrBytes);</span>
+  }
+
+  public static int getmaxNrBytes(final CharsetEncoder ce, final int nrChars) {
+<span class="nc" id="L329">    return (int) (nrChars * (double) ce.maxBytesPerChar());</span>
+  }
+
+  public static int encode(final CharsetEncoder ce, final char[] ca, final int off, final int len,
+          final byte[] targetArray) {
+<span class="nc bnc" id="L334" title="All 2 branches missed.">    if (len == 0) {</span>
+<span class="nc" id="L335">      return 0;</span>
+    }
+<span class="nc bnc" id="L337" title="All 2 branches missed.">    if (ce instanceof ArrayEncoder) {</span>
+<span class="nc" id="L338">      return ((ArrayEncoder) ce).encode(ca, off, len, targetArray);</span>
+    } else {
+<span class="nc" id="L340">      ce.reset();</span>
+<span class="nc" id="L341">      ByteBuffer bb = ByteBuffer.wrap(targetArray);</span>
+<span class="nc" id="L342">      CharBuffer cb = CharBuffer.wrap(ca, off, len);</span>
+      try {
+<span class="nc" id="L344">        CoderResult cr = ce.encode(cb, bb, true);</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (!cr.isUnderflow()) {</span>
+<span class="nc" id="L346">          cr.throwException();</span>
+        }
+<span class="nc" id="L348">        cr = ce.flush(bb);</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">        if (!cr.isUnderflow()) {</span>
+<span class="nc" id="L350">          cr.throwException();</span>
+        }
+<span class="nc" id="L352">      } catch (CharacterCodingException x) {</span>
+<span class="nc" id="L353">        throw new InternalError(&quot;Should never throw a CharacterCodingException, probably a JVM issue&quot;, x);</span>
+<span class="nc" id="L354">      }</span>
+<span class="nc" id="L355">      return bb.position();</span>
+    }
+  }
+
+  @SuppressFBWarnings(&quot;SUA_SUSPICIOUS_UNINITIALIZED_ARRAY&quot;)
+  public static String decode(final CharsetDecoder cd, final byte[] ba, final int off, final int len) {
+<span class="nc bnc" id="L361" title="All 2 branches missed.">    if (len == 0) {</span>
+<span class="nc" id="L362">      return &quot;&quot;;</span>
+    }
+<span class="nc" id="L364">    int en = (int) (len * (double) cd.maxCharsPerByte());</span>
+<span class="nc" id="L365">    char[] ca = TLScratch.getCharsTmp(en);</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">    if (cd instanceof ArrayDecoder) {</span>
+<span class="nc" id="L367">      int clen = ((ArrayDecoder) cd).decode(ba, off, len, ca);</span>
+<span class="nc" id="L368">      return new String(ca, 0, clen);</span>
+    }
+<span class="nc" id="L370">    cd.reset();</span>
+<span class="nc" id="L371">    ByteBuffer bb = ByteBuffer.wrap(ba, off, len);</span>
+<span class="nc" id="L372">    CharBuffer cb = CharBuffer.wrap(ca);</span>
+    try {
+<span class="nc" id="L374">      CoderResult cr = cd.decode(bb, cb, true);</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">      if (!cr.isUnderflow()) {</span>
+<span class="nc" id="L376">        cr.throwException();</span>
+      }
+<span class="nc" id="L378">      cr = cd.flush(cb);</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">      if (!cr.isUnderflow()) {</span>
+<span class="nc" id="L380">        cr.throwException();</span>
+      }
+<span class="nc" id="L382">    } catch (CharacterCodingException x) {</span>
+<span class="nc" id="L383">      throw new UncheckedIOException(x);</span>
+<span class="nc" id="L384">    }</span>
+<span class="nc" id="L385">    return new String(ca, 0, cb.position());</span>
+  }
+
+  /**
+   * Optimized UTF8 decoder.
+   *
+   * Here is a benchmark comparison with the JDK implementation (see EncodingBenchmark.java in the benchmark project):
+   *
+   * EncodingBenchmark.stringDecode thrpt 10 16759798.463 ± 343505.144 ops/s EncodingBenchmark.fastStringDecode thrpt 10
+   * 17413298.464 ± 301756.867 ops/s
+   *
+   *
+   * @param bytes
+   * @return
+   */
+  public static String fromUtf8(final byte[] bytes) {
+<span class="nc" id="L401">    return decode(UTF8_DECODER.get(), bytes, 0, bytes.length);</span>
+  }
+
+  public static String fromUtf8(final byte[] bytes, final int startIdx, final int length) {
+<span class="nc" id="L405">    return decode(UTF8_DECODER.get(), bytes, startIdx, length);</span>
+  }
+
+  /**
+   * Optimized UTF8 string encoder.
+   *
+   * comparison with the stock JDK implementation (see EncodingBenchmark.java in the benchmark project):
+   *
+   * EncodingBenchmark.stringEncode thrpt 10 9481668.776 ± 252543.135 ops/s EncodingBenchmark.fastStringEncode thrpt 10
+   * 22469383.612 ± 898677.892 ops/s
+   *
+   * @param str
+   * @return
+   */
+  public static byte[] toUtf8(final String str) {
+<span class="nc" id="L420">    final char[] chars = steal(str);</span>
+<span class="nc" id="L421">    return encode(UTF8_ENCODER.get(), chars, 0, chars.length);</span>
+  }
+
+  /**
+   * @deprecated use CharSequences.compare
+   */
+  @Deprecated
+  public static int compareTo(@Nonnull final CharSequence s, @Nonnull final CharSequence t) {
+<span class="nc" id="L429">    return CharSequences.compareTo(s, t);</span>
+  }
+
+  @Deprecated
+  public static boolean equals(@Nonnull final CharSequence s, @Nonnull final CharSequence t) {
+<span class="nc" id="L434">    return CharSequences.equals(s, t);</span>
+  }
+
+  @Deprecated
+  public static int hashcode(final CharSequence cs) {
+<span class="nc" id="L439">    return CharSequences.hashcode(cs);</span>
+  }
+
+  @Deprecated
+  public static CharSequence subSequence(final CharSequence seq, final int startIdx, final int endIdx) {
+<span class="nc" id="L444">    return CharSequences.subSequence(seq, startIdx, endIdx);</span>
+  }
+
+  @Deprecated
+  public static boolean endsWith(final CharSequence qc, final CharSequence with) {
+<span class="nc" id="L449">    return CharSequences.endsWith(qc, with);</span>
+  }
+
+  /**
+   * Utility method to escape java strings to json strings.
+   *
+   * @param toEscape - the java string to escape.
+   * @param jsonString - the destination json String builder.
+   */
+  @Deprecated
+  public static void escapeJsonString(@Nonnull final String toEscape, final StringBuilder jsonString) {
+<span class="nc" id="L460">    AppendableUtils.escapeJsonString(toEscape, jsonString);</span>
+<span class="nc" id="L461">  }</span>
+
+  @Deprecated
+  public static void escapeJsonString(@Nonnull final String toEscape, final Appendable jsonString)
+          throws IOException {
+<span class="nc" id="L466">    AppendableUtils.escapeJsonString(toEscape, jsonString);</span>
+<span class="nc" id="L467">  }</span>
+
+  @Deprecated
+  public static void appendJsonStringEscapedChar(final char c, final StringBuilder jsonString) {
+<span class="nc" id="L471">    AppendableUtils.appendJsonStringEscapedChar(c, jsonString);</span>
+<span class="nc" id="L472">  }</span>
+
+  @Deprecated
+  public static void appendJsonStringEscapedChar(final char c, final Appendable jsonString) throws IOException {
+<span class="nc" id="L476">    AppendableUtils.appendJsonStringEscapedChar(c, jsonString);</span>
+<span class="nc" id="L477">  }</span>
+
+  @Deprecated
+  public static void appendUnsignedString(final StringBuilder sb, final long nr, final int shift) {
+<span class="nc" id="L481">    AppendableUtils.appendUnsignedString(sb, nr, shift);</span>
+<span class="nc" id="L482">  }</span>
+
+  @Deprecated
+  public static void appendUnsignedString(final StringBuilder sb, final int nr, final int shift) {
+<span class="nc" id="L486">    AppendableUtils.appendUnsignedString(sb, nr, shift);</span>
+<span class="nc" id="L487">  }</span>
+
+  @Deprecated
+  public static void appendUnsignedStringPadded(final StringBuilder sb, final int nr, final int shift,
+          final int padTo) {
+<span class="nc" id="L492">    AppendableUtils.appendUnsignedStringPadded(sb, nr, shift, padTo);</span>
+<span class="nc" id="L493">  }</span>
+
+  @Deprecated
+  public static void appendUnsignedStringPadded(final Appendable sb, final int nr, final int shift,
+          final int padTo) throws IOException {
+<span class="nc" id="L498">    AppendableUtils.appendUnsignedStringPadded(sb, nr, shift, padTo);</span>
+<span class="nc" id="L499">  }</span>
+
+  @Deprecated
+  public static void appendSpaces(final Appendable to, final int nrSpaces) throws IOException {
+<span class="nc" id="L503">    AppendableUtils.appendSpaces(to, nrSpaces);</span>
+<span class="nc" id="L504">  }</span>
+
+  @Deprecated
+  public static void appendSpaces(final StringBuilder to, final int nrSpaces) {
+<span class="nc" id="L508">    AppendableUtils.appendSpaces(to, nrSpaces);</span>
+<span class="nc" id="L509">  }</span>
+
+  /**
+   * @deprecated use CharSequences.regionMatches.
+   */
+  @Deprecated
+  public static boolean regionMatches(final CharSequence t, final int toffset,
+          final CharSequence other, final int ooffset, final int plen) {
+<span class="nc" id="L517">    return CharSequences.regionMatches(t, toffset, other, ooffset, plen);</span>
+  }
+
+  public static String truncate(@Nonnull final String value, final int length) {
+<span class="nc bnc" id="L521" title="All 2 branches missed.">    if (value.length() &gt; length) {</span>
+<span class="nc" id="L522">      return value.substring(0, length);</span>
+    } else {
+<span class="nc" id="L524">      return value;</span>
+    }
+  }
+
+  @Nonnull
+  public static String commonPrefix(@Nonnull final CharSequence... strs) {
+<span class="nc bnc" id="L530" title="All 2 branches missed.">    if (strs.length &lt;= 0) {</span>
+<span class="nc" id="L531">      throw new IllegalArgumentException(&quot;Must have at least 1 string &quot; + java.util.Arrays.toString(strs));</span>
+     }
+<span class="nc" id="L533">    CharSequence common = strs[0];</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">    for (int i = 1; i &lt; strs.length; i++) {</span>
+<span class="nc" id="L535">      common = com.google.common.base.Strings.commonPrefix(common, strs[i]);</span>
+    }
+<span class="nc" id="L537">    return common.toString();</span>
+  }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.0.201801022044</span></div></body></html>
