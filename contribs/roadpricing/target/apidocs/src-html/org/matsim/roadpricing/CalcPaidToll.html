@@ -1,0 +1,452 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> * CalcPaidToll.java<a name="line.3"></a>
+<span class="sourceLineNo">004</span> *                                                                         *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> * *********************************************************************** *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> *                                                                         *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> * copyright       : (C) 2007 by the members listed in the COPYING,        *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> *                   LICENSE and WARRANTY file.                            *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> * email           : info at matsim dot org                                *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> *                                                                         *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> * *********************************************************************** *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *                                                                         *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   (at your option) any later version.                                   *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> *                                                                         *<a name="line.18"></a>
+<span class="sourceLineNo">019</span> * *********************************************************************** */<a name="line.19"></a>
+<span class="sourceLineNo">020</span><a name="line.20"></a>
+<span class="sourceLineNo">021</span>package org.matsim.roadpricing;<a name="line.21"></a>
+<span class="sourceLineNo">022</span><a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.util.TreeMap;<a name="line.23"></a>
+<span class="sourceLineNo">024</span><a name="line.24"></a>
+<span class="sourceLineNo">025</span>import javax.inject.Inject;<a name="line.25"></a>
+<span class="sourceLineNo">026</span><a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.apache.log4j.Logger;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.api.core.v01.Id;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.api.core.v01.events.LinkEnterEvent;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.api.core.v01.events.PersonMoneyEvent;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.api.core.v01.events.VehicleLeavesTrafficEvent;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.api.core.v01.events.VehicleEntersTrafficEvent;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.api.core.v01.events.handler.LinkEnterEventHandler;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.api.core.v01.events.handler.VehicleLeavesTrafficEventHandler;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.api.core.v01.events.handler.VehicleEntersTrafficEventHandler;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.api.core.v01.network.Link;<a name="line.36"></a>
+<span class="sourceLineNo">037</span>import org.matsim.api.core.v01.network.Network;<a name="line.37"></a>
+<span class="sourceLineNo">038</span>import org.matsim.api.core.v01.population.Person;<a name="line.38"></a>
+<span class="sourceLineNo">039</span>import org.matsim.core.api.experimental.events.EventsManager;<a name="line.39"></a>
+<span class="sourceLineNo">040</span>import org.matsim.core.events.algorithms.Vehicle2DriverEventHandler;<a name="line.40"></a>
+<span class="sourceLineNo">041</span>import org.matsim.roadpricing.RoadPricingSchemeImpl.Cost;<a name="line.41"></a>
+<span class="sourceLineNo">042</span><a name="line.42"></a>
+<span class="sourceLineNo">043</span>/**<a name="line.43"></a>
+<span class="sourceLineNo">044</span> * Calculates the toll agents pay during a simulation by analyzing events. <a name="line.44"></a>
+<span class="sourceLineNo">045</span> * Add an instance of this class as an EventHandler.<a name="line.45"></a>
+<span class="sourceLineNo">046</span> * <a name="line.46"></a>
+<span class="sourceLineNo">047</span> * Users of this class can get to the amounts which have to be paid by the <a name="line.47"></a>
+<span class="sourceLineNo">048</span> * agents by using the getter methods and/or by asking for a stream of <a name="line.48"></a>
+<span class="sourceLineNo">049</span> * AgentMoneyEvent instances.<a name="line.49"></a>
+<span class="sourceLineNo">050</span> *<a name="line.50"></a>
+<span class="sourceLineNo">051</span> * @author mrieser<a name="line.51"></a>
+<span class="sourceLineNo">052</span> */<a name="line.52"></a>
+<span class="sourceLineNo">053</span>public final class CalcPaidToll implements LinkEnterEventHandler, VehicleEntersTrafficEventHandler, VehicleLeavesTrafficEventHandler {<a name="line.53"></a>
+<span class="sourceLineNo">054</span><a name="line.54"></a>
+<span class="sourceLineNo">055</span>        Logger log = Logger.getLogger( CalcPaidToll.class ) ;<a name="line.55"></a>
+<span class="sourceLineNo">056</span><a name="line.56"></a>
+<span class="sourceLineNo">057</span>        static class AgentTollInfo {<a name="line.57"></a>
+<span class="sourceLineNo">058</span>                public double toll = 0.0;<a name="line.58"></a>
+<span class="sourceLineNo">059</span>                public boolean insideCordonArea = true;<a name="line.59"></a>
+<span class="sourceLineNo">060</span>        }<a name="line.60"></a>
+<span class="sourceLineNo">061</span><a name="line.61"></a>
+<span class="sourceLineNo">062</span>        final RoadPricingScheme scheme;<a name="line.62"></a>
+<span class="sourceLineNo">063</span>        final TreeMap&lt;Id&lt;Person&gt;, AgentTollInfo&gt; agents = new TreeMap&lt;&gt;();<a name="line.63"></a>
+<span class="sourceLineNo">064</span>        private final Network network;<a name="line.64"></a>
+<span class="sourceLineNo">065</span><a name="line.65"></a>
+<span class="sourceLineNo">066</span>        private final TollBehaviourI handler;<a name="line.66"></a>
+<span class="sourceLineNo">067</span>        private Vehicle2DriverEventHandler delegate = new Vehicle2DriverEventHandler();<a name="line.67"></a>
+<span class="sourceLineNo">068</span><a name="line.68"></a>
+<span class="sourceLineNo">069</span>    @Inject<a name="line.69"></a>
+<span class="sourceLineNo">070</span>        CalcPaidToll(final Network network, final RoadPricingScheme scheme, EventsManager events ) {<a name="line.70"></a>
+<span class="sourceLineNo">071</span>                super();<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                events.addHandler(this);<a name="line.72"></a>
+<span class="sourceLineNo">073</span>                this.network = network;<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                this.scheme = scheme;<a name="line.74"></a>
+<span class="sourceLineNo">075</span>                if (RoadPricingScheme.TOLL_TYPE_DISTANCE.equals(scheme.getType())) {<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                        this.handler = new DistanceTollBehaviour(events);<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                        log.info("just instantiated DistanceTollBehavior") ;<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                } else if (RoadPricingScheme.TOLL_TYPE_AREA.equals(scheme.getType())) {<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                        this.handler = new AreaTollBehaviour(events);<a name="line.79"></a>
+<span class="sourceLineNo">080</span>                        log.info("just instantiated AreaTollBehavior") ;<a name="line.80"></a>
+<span class="sourceLineNo">081</span>                        log.warn("area toll does not work if you have different toll amounts on different " +<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                                        "links.  Make sure you get what you want.  kai, mar'12");<a name="line.82"></a>
+<span class="sourceLineNo">083</span>                } else if (RoadPricingScheme.TOLL_TYPE_CORDON.equals(scheme.getType())) {<a name="line.83"></a>
+<span class="sourceLineNo">084</span>                        this.handler = new CordonTollBehaviour(events);<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                        log.info("just instantiated CordonTollBehavior") ;<a name="line.85"></a>
+<span class="sourceLineNo">086</span>                        log.warn("cordon toll only charges at transition from untolled to tolled. " +<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                                        "Make sure this is what you want. kai, mar'12") ;<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                } else if (RoadPricingScheme.TOLL_TYPE_LINK.equals(scheme.getType())) {<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                        this.handler = new LinkTollBehaviour(events);<a name="line.89"></a>
+<span class="sourceLineNo">090</span>                        log.info("just instantiated LinkTollBehavior") ;<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                } else {<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                        throw new IllegalArgumentException("RoadPricingScheme of type \"" + scheme.getType() + "\" is not supported.");<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                }<a name="line.93"></a>
+<span class="sourceLineNo">094</span>        }<a name="line.94"></a>
+<span class="sourceLineNo">095</span><a name="line.95"></a>
+<span class="sourceLineNo">096</span>        @Override<a name="line.96"></a>
+<span class="sourceLineNo">097</span>        public void handleEvent(final LinkEnterEvent event) {<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                Link link = this.network.getLinks().get(event.getLinkId());<a name="line.98"></a>
+<span class="sourceLineNo">099</span>                this.handler.handleEvent(event, link);<a name="line.99"></a>
+<span class="sourceLineNo">100</span>        }<a name="line.100"></a>
+<span class="sourceLineNo">101</span><a name="line.101"></a>
+<span class="sourceLineNo">102</span>        @Override<a name="line.102"></a>
+<span class="sourceLineNo">103</span>        public void handleEvent(final VehicleEntersTrafficEvent event) {<a name="line.103"></a>
+<span class="sourceLineNo">104</span>                delegate.handleEvent(event);<a name="line.104"></a>
+<span class="sourceLineNo">105</span>                <a name="line.105"></a>
+<span class="sourceLineNo">106</span>                Link link = this.network.getLinks().get(event.getLinkId());<a name="line.106"></a>
+<span class="sourceLineNo">107</span>                if (handler instanceof DistanceTollBehaviour || handler instanceof LinkTollBehaviour) {<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                        /* we do not handle wait2link-events for these tolls, because the agent<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                         * should not pay twice for this link, and he (likely) paid already when<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                         * arriving at this link.  */<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                        return;<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                } else {<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                        // Just like a LinkEnterEvent<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                        this.handler.handleEvent(new LinkEnterEvent(event.getTime(), event.getVehicleId(), event.getLinkId()), link);<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                }<a name="line.115"></a>
+<span class="sourceLineNo">116</span>        }<a name="line.116"></a>
+<span class="sourceLineNo">117</span><a name="line.117"></a>
+<span class="sourceLineNo">118</span>        /**<a name="line.118"></a>
+<span class="sourceLineNo">119</span>         * Sends {@link PersonMoneyEvent}s for all agents that must pay a toll.<a name="line.119"></a>
+<span class="sourceLineNo">120</span>         * This method should usually be called at the end before of an iteration.<a name="line.120"></a>
+<span class="sourceLineNo">121</span>         *<a name="line.121"></a>
+<span class="sourceLineNo">122</span>         * &lt;strong&gt;Important note: &lt;/strong&gt;Do not call this method twice without<a name="line.122"></a>
+<span class="sourceLineNo">123</span>         * calling {@link #reset(int)} in between. Otherwise modules listening to<a name="line.123"></a>
+<span class="sourceLineNo">124</span>         * AgentMoneyEvents will hear them twice, i.e. the toll-disutility<a name="line.124"></a>
+<span class="sourceLineNo">125</span>         * may be added twice to the agents' score!<a name="line.125"></a>
+<span class="sourceLineNo">126</span>         *<a name="line.126"></a>
+<span class="sourceLineNo">127</span>         * @param time the current time the generated events are associated with<a name="line.127"></a>
+<span class="sourceLineNo">128</span>         * @param events the {@link EventsManager} collection, the generated events are sent to for processing<a name="line.128"></a>
+<span class="sourceLineNo">129</span>         */<a name="line.129"></a>
+<span class="sourceLineNo">130</span>//      public void sendMoneyEvents(final double time, final EventsManager events) {<a name="line.130"></a>
+<span class="sourceLineNo">131</span>//              // public is currently needed. kai, sep'13<a name="line.131"></a>
+<span class="sourceLineNo">132</span>//<a name="line.132"></a>
+<span class="sourceLineNo">133</span>//              for (Map.Entry&lt;Id&lt;Person&gt;, AgentTollInfo&gt; entries : this.agents.entrySet()) {<a name="line.133"></a>
+<span class="sourceLineNo">134</span>//                      events.processEvent(new PersonMoneyEvent(time, entries.getKey(), -entries.getValue().toll));<a name="line.134"></a>
+<span class="sourceLineNo">135</span>//              }<a name="line.135"></a>
+<span class="sourceLineNo">136</span>//      }<a name="line.136"></a>
+<span class="sourceLineNo">137</span><a name="line.137"></a>
+<span class="sourceLineNo">138</span>        @Override<a name="line.138"></a>
+<span class="sourceLineNo">139</span>        public void reset(final int iteration) {<a name="line.139"></a>
+<span class="sourceLineNo">140</span>                this.agents.clear();<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                delegate.reset(iteration);<a name="line.141"></a>
+<span class="sourceLineNo">142</span>        }<a name="line.142"></a>
+<span class="sourceLineNo">143</span><a name="line.143"></a>
+<span class="sourceLineNo">144</span><a name="line.144"></a>
+<span class="sourceLineNo">145</span>        /**<a name="line.145"></a>
+<span class="sourceLineNo">146</span>         * Returns the toll the specified agent has paid in the course of the<a name="line.146"></a>
+<span class="sourceLineNo">147</span>         * simulation so far.<a name="line.147"></a>
+<span class="sourceLineNo">148</span>         *<a name="line.148"></a>
+<span class="sourceLineNo">149</span>         * @param agentId<a name="line.149"></a>
+<span class="sourceLineNo">150</span>         * @return The toll paid by the specified agent, 0.0 if no toll was paid.<a name="line.150"></a>
+<span class="sourceLineNo">151</span>         */<a name="line.151"></a>
+<span class="sourceLineNo">152</span>        double getAgentToll(final Id&lt;Person&gt; agentId) {<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                AgentTollInfo info = this.agents.get(agentId);<a name="line.153"></a>
+<span class="sourceLineNo">154</span>                if (info == null) {<a name="line.154"></a>
+<span class="sourceLineNo">155</span>                        return 0.0;<a name="line.155"></a>
+<span class="sourceLineNo">156</span>                }<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                return info.toll;<a name="line.157"></a>
+<span class="sourceLineNo">158</span>        }<a name="line.158"></a>
+<span class="sourceLineNo">159</span><a name="line.159"></a>
+<span class="sourceLineNo">160</span>        /**<a name="line.160"></a>
+<span class="sourceLineNo">161</span>         * @return The toll paid by all the agents.<a name="line.161"></a>
+<span class="sourceLineNo">162</span>         */<a name="line.162"></a>
+<span class="sourceLineNo">163</span>        public double getAllAgentsToll() {<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                // public is currently needed. kai, sep'13<a name="line.164"></a>
+<span class="sourceLineNo">165</span><a name="line.165"></a>
+<span class="sourceLineNo">166</span>                double tolls = 0;<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                for (AgentTollInfo ai : this.agents.values()) {<a name="line.167"></a>
+<span class="sourceLineNo">168</span>                        tolls += (ai == null) ? 0.0 : ai.toll;<a name="line.168"></a>
+<span class="sourceLineNo">169</span>                }<a name="line.169"></a>
+<span class="sourceLineNo">170</span>                return tolls;<a name="line.170"></a>
+<span class="sourceLineNo">171</span>        }<a name="line.171"></a>
+<span class="sourceLineNo">172</span><a name="line.172"></a>
+<span class="sourceLineNo">173</span>        /**<a name="line.173"></a>
+<span class="sourceLineNo">174</span>         * @return The Number of all the Drawees.<a name="line.174"></a>
+<span class="sourceLineNo">175</span>         */<a name="line.175"></a>
+<span class="sourceLineNo">176</span>        public int getDraweesNr() {<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                // public is currently needed. kai, sep'13<a name="line.177"></a>
+<span class="sourceLineNo">178</span><a name="line.178"></a>
+<span class="sourceLineNo">179</span>                int dwCnt = 0;<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                for (AgentTollInfo ai : this.agents.values()) {<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                        if ((ai != null) &amp;&amp; (ai.toll &gt; 0.0)) {<a name="line.181"></a>
+<span class="sourceLineNo">182</span>                                dwCnt++;<a name="line.182"></a>
+<span class="sourceLineNo">183</span>                        }<a name="line.183"></a>
+<span class="sourceLineNo">184</span>                }<a name="line.184"></a>
+<span class="sourceLineNo">185</span>                return dwCnt;<a name="line.185"></a>
+<span class="sourceLineNo">186</span>        }<a name="line.186"></a>
+<span class="sourceLineNo">187</span><a name="line.187"></a>
+<span class="sourceLineNo">188</span>        /**<a name="line.188"></a>
+<span class="sourceLineNo">189</span>         * A simple interface to implement different toll schemes.<a name="line.189"></a>
+<span class="sourceLineNo">190</span>         */<a name="line.190"></a>
+<span class="sourceLineNo">191</span>        private interface TollBehaviourI {<a name="line.191"></a>
+<span class="sourceLineNo">192</span>                public void handleEvent(LinkEnterEvent event, Link link );<a name="line.192"></a>
+<span class="sourceLineNo">193</span>        }<a name="line.193"></a>
+<span class="sourceLineNo">194</span><a name="line.194"></a>
+<span class="sourceLineNo">195</span>        /**<a name="line.195"></a>
+<span class="sourceLineNo">196</span>         * Handles the calculation of the distance toll. If an agent enters a link at<a name="line.196"></a>
+<span class="sourceLineNo">197</span>         * a time the toll has to be paid, the toll amount is added to the agent. The<a name="line.197"></a>
+<span class="sourceLineNo">198</span>         * agent does not have to pay the toll for a link if it starts on the link,<a name="line.198"></a>
+<span class="sourceLineNo">199</span>         * as it may have paid already when arriving on the link.<a name="line.199"></a>
+<span class="sourceLineNo">200</span>         */<a name="line.200"></a>
+<span class="sourceLineNo">201</span>        class DistanceTollBehaviour implements TollBehaviourI {<a name="line.201"></a>
+<span class="sourceLineNo">202</span>                private EventsManager events;<a name="line.202"></a>
+<span class="sourceLineNo">203</span>                /**<a name="line.203"></a>
+<span class="sourceLineNo">204</span>                 * @param events The EventsManager to send money events<a name="line.204"></a>
+<span class="sourceLineNo">205</span>                 */<a name="line.205"></a>
+<span class="sourceLineNo">206</span>                public DistanceTollBehaviour(EventsManager events) {<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                        this.events = events;<a name="line.207"></a>
+<span class="sourceLineNo">208</span>                }<a name="line.208"></a>
+<span class="sourceLineNo">209</span><a name="line.209"></a>
+<span class="sourceLineNo">210</span>                @Override<a name="line.210"></a>
+<span class="sourceLineNo">211</span>                public void handleEvent(final LinkEnterEvent event, final Link link) {<a name="line.211"></a>
+<span class="sourceLineNo">212</span>                        Id&lt;Person&gt; driverId = delegate.getDriverOfVehicle(event.getVehicleId());<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                        Cost cost = CalcPaidToll.this.scheme.getLinkCostInfo(link.getId(),<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                                        event.getTime(), driverId, event.getVehicleId());<a name="line.214"></a>
+<span class="sourceLineNo">215</span>                        if (cost != null) {<a name="line.215"></a>
+<span class="sourceLineNo">216</span>                                double newToll = link.getLength() * cost.amount;<a name="line.216"></a>
+<span class="sourceLineNo">217</span>                                AgentTollInfo info = CalcPaidToll.this.agents.get(driverId);<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                                if (info == null) {<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                                        /* The agent is not yet "registered". */<a name="line.219"></a>
+<span class="sourceLineNo">220</span>                                        <a name="line.220"></a>
+<span class="sourceLineNo">221</span>                                        /* Generate a "registration object. */<a name="line.221"></a>
+<span class="sourceLineNo">222</span>                                        info = new AgentTollInfo();<a name="line.222"></a>
+<span class="sourceLineNo">223</span>                                        <a name="line.223"></a>
+<span class="sourceLineNo">224</span>                                        /* Register it. */<a name="line.224"></a>
+<span class="sourceLineNo">225</span>                                        CalcPaidToll.this.agents.put(driverId, info);<a name="line.225"></a>
+<span class="sourceLineNo">226</span>                                }<a name="line.226"></a>
+<span class="sourceLineNo">227</span>                                info.toll += newToll;<a name="line.227"></a>
+<span class="sourceLineNo">228</span>                                events.processEvent(new PersonMoneyEvent(event.getTime(),driverId,-newToll));<a name="line.228"></a>
+<span class="sourceLineNo">229</span><a name="line.229"></a>
+<span class="sourceLineNo">230</span>                        }<a name="line.230"></a>
+<span class="sourceLineNo">231</span>                }<a name="line.231"></a>
+<span class="sourceLineNo">232</span>        }<a name="line.232"></a>
+<span class="sourceLineNo">233</span><a name="line.233"></a>
+<span class="sourceLineNo">234</span>        <a name="line.234"></a>
+<span class="sourceLineNo">235</span>        class LinkTollBehaviour implements TollBehaviourI {<a name="line.235"></a>
+<span class="sourceLineNo">236</span>                private EventsManager events;<a name="line.236"></a>
+<span class="sourceLineNo">237</span>                /**<a name="line.237"></a>
+<span class="sourceLineNo">238</span>                 * @param events The EventsManager to send money events<a name="line.238"></a>
+<span class="sourceLineNo">239</span>                 */<a name="line.239"></a>
+<span class="sourceLineNo">240</span>                public LinkTollBehaviour(EventsManager events) {<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                        this.events = events;<a name="line.241"></a>
+<span class="sourceLineNo">242</span><a name="line.242"></a>
+<span class="sourceLineNo">243</span>                }<a name="line.243"></a>
+<span class="sourceLineNo">244</span><a name="line.244"></a>
+<span class="sourceLineNo">245</span>                @Override<a name="line.245"></a>
+<span class="sourceLineNo">246</span>                public void handleEvent(final LinkEnterEvent event, final Link link) {<a name="line.246"></a>
+<span class="sourceLineNo">247</span><a name="line.247"></a>
+<span class="sourceLineNo">248</span>                        Id&lt;Person&gt; driverId = delegate.getDriverOfVehicle(event.getVehicleId());<a name="line.248"></a>
+<span class="sourceLineNo">249</span>                        <a name="line.249"></a>
+<span class="sourceLineNo">250</span>                        Cost cost = CalcPaidToll.this.scheme.getLinkCostInfo(link.getId(), event.getTime(), driverId, event.getVehicleId() );<a name="line.250"></a>
+<span class="sourceLineNo">251</span>                        if (cost != null) {<a name="line.251"></a>
+<span class="sourceLineNo">252</span><a name="line.252"></a>
+<span class="sourceLineNo">253</span>                                AgentTollInfo info = CalcPaidToll.this.agents.get(driverId);<a name="line.253"></a>
+<span class="sourceLineNo">254</span>                                if (info == null) {<a name="line.254"></a>
+<span class="sourceLineNo">255</span>                                        /* The agent is not yet "registered" */<a name="line.255"></a>
+<span class="sourceLineNo">256</span><a name="line.256"></a>
+<span class="sourceLineNo">257</span>                                        /* Generate a "registration object" */<a name="line.257"></a>
+<span class="sourceLineNo">258</span>                                        info = new AgentTollInfo();<a name="line.258"></a>
+<span class="sourceLineNo">259</span><a name="line.259"></a>
+<span class="sourceLineNo">260</span>                                        /* Register it. */<a name="line.260"></a>
+<span class="sourceLineNo">261</span>                                        CalcPaidToll.this.agents.put(driverId, info);<a name="line.261"></a>
+<span class="sourceLineNo">262</span>                                }<a name="line.262"></a>
+<span class="sourceLineNo">263</span>                                info.toll += cost.amount;<a name="line.263"></a>
+<span class="sourceLineNo">264</span>                                events.processEvent(new PersonMoneyEvent(event.getTime(),driverId,-cost.amount));<a name="line.264"></a>
+<span class="sourceLineNo">265</span>                        }<a name="line.265"></a>
+<span class="sourceLineNo">266</span>                }<a name="line.266"></a>
+<span class="sourceLineNo">267</span>        }<a name="line.267"></a>
+<span class="sourceLineNo">268</span><a name="line.268"></a>
+<span class="sourceLineNo">269</span>        /** Handles the calculation of the area toll. Whenever the agent is seen on<a name="line.269"></a>
+<span class="sourceLineNo">270</span>         * one of the tolled link, the constant toll amount has to be paid once.<a name="line.270"></a>
+<span class="sourceLineNo">271</span>         * &lt;br&gt;<a name="line.271"></a>
+<span class="sourceLineNo">272</span>         * Design comments:<a name="line.272"></a>
+<span class="sourceLineNo">273</span>         * &lt;ul&gt;<a name="line.273"></a>
+<span class="sourceLineNo">274</span>         *              &lt;li&gt; This implementation becomes a problem if someone tries to <a name="line.274"></a>
+<span class="sourceLineNo">275</span>         *                       implement more than one area which do not share the same flat <a name="line.275"></a>
+<span class="sourceLineNo">276</span>         *                       fee.  kai, mar'12<a name="line.276"></a>
+<span class="sourceLineNo">277</span>         * &lt;/ul&gt; <a name="line.277"></a>
+<span class="sourceLineNo">278</span>         */<a name="line.278"></a>
+<span class="sourceLineNo">279</span>        class AreaTollBehaviour implements TollBehaviourI {<a name="line.279"></a>
+<span class="sourceLineNo">280</span>                private EventsManager events;<a name="line.280"></a>
+<span class="sourceLineNo">281</span>                /**<a name="line.281"></a>
+<span class="sourceLineNo">282</span>                 * @param events The EventsManager to send money events<a name="line.282"></a>
+<span class="sourceLineNo">283</span>                 */<a name="line.283"></a>
+<span class="sourceLineNo">284</span>                public AreaTollBehaviour(EventsManager events) {<a name="line.284"></a>
+<span class="sourceLineNo">285</span>                        this.events = events;<a name="line.285"></a>
+<span class="sourceLineNo">286</span>                }<a name="line.286"></a>
+<span class="sourceLineNo">287</span><a name="line.287"></a>
+<span class="sourceLineNo">288</span>                @Override<a name="line.288"></a>
+<span class="sourceLineNo">289</span>                public void handleEvent(final LinkEnterEvent event, final Link link) {<a name="line.289"></a>
+<span class="sourceLineNo">290</span>                        Id&lt;Person&gt; driverId = delegate.getDriverOfVehicle(event.getVehicleId());<a name="line.290"></a>
+<span class="sourceLineNo">291</span>                        Cost cost = CalcPaidToll.this.scheme.getLinkCostInfo(link.getId(), event.getTime(), driverId, event.getVehicleId() );<a name="line.291"></a>
+<span class="sourceLineNo">292</span>                        if (cost != null) {<a name="line.292"></a>
+<span class="sourceLineNo">293</span>                                AgentTollInfo info = CalcPaidToll.this.agents.get(driverId);<a name="line.293"></a>
+<span class="sourceLineNo">294</span>                                if (info == null) {<a name="line.294"></a>
+<span class="sourceLineNo">295</span>                                        /* The agent is not yet "registered" */<a name="line.295"></a>
+<span class="sourceLineNo">296</span><a name="line.296"></a>
+<span class="sourceLineNo">297</span>                                        /* Generate a "registration object" */<a name="line.297"></a>
+<span class="sourceLineNo">298</span>                                        info = new AgentTollInfo();<a name="line.298"></a>
+<span class="sourceLineNo">299</span><a name="line.299"></a>
+<span class="sourceLineNo">300</span>                                        /* Register it. */<a name="line.300"></a>
+<span class="sourceLineNo">301</span>                                        CalcPaidToll.this.agents.put(driverId, info);<a name="line.301"></a>
+<span class="sourceLineNo">302</span><a name="line.302"></a>
+<span class="sourceLineNo">303</span>                                        /* The toll amount comes from the current link, but should <a name="line.303"></a>
+<span class="sourceLineNo">304</span>                                         * be the same for all links. */<a name="line.304"></a>
+<span class="sourceLineNo">305</span>                                        info.toll = cost.amount;<a name="line.305"></a>
+<span class="sourceLineNo">306</span>                                        events.processEvent(new PersonMoneyEvent(event.getTime(),driverId,-cost.amount));<a name="line.306"></a>
+<span class="sourceLineNo">307</span>                                }<a name="line.307"></a>
+<span class="sourceLineNo">308</span>                        }<a name="line.308"></a>
+<span class="sourceLineNo">309</span>                }<a name="line.309"></a>
+<span class="sourceLineNo">310</span>        }<a name="line.310"></a>
+<span class="sourceLineNo">311</span><a name="line.311"></a>
+<span class="sourceLineNo">312</span>        /**<a name="line.312"></a>
+<span class="sourceLineNo">313</span>         * Handles the calculation of the cordon toll. An agent has only to pay if he<a name="line.313"></a>
+<span class="sourceLineNo">314</span>         * crosses the cordon from the outside to the inside.<a name="line.314"></a>
+<span class="sourceLineNo">315</span>         */<a name="line.315"></a>
+<span class="sourceLineNo">316</span>        class CordonTollBehaviour implements TollBehaviourI {<a name="line.316"></a>
+<span class="sourceLineNo">317</span>                private EventsManager events;<a name="line.317"></a>
+<span class="sourceLineNo">318</span>                /**<a name="line.318"></a>
+<span class="sourceLineNo">319</span>                 * @param events The EventsManager to send money events<a name="line.319"></a>
+<span class="sourceLineNo">320</span>                 */<a name="line.320"></a>
+<span class="sourceLineNo">321</span>                public CordonTollBehaviour(EventsManager events) {<a name="line.321"></a>
+<span class="sourceLineNo">322</span>                        this.events = events;<a name="line.322"></a>
+<span class="sourceLineNo">323</span>                }<a name="line.323"></a>
+<span class="sourceLineNo">324</span><a name="line.324"></a>
+<span class="sourceLineNo">325</span>                @Override<a name="line.325"></a>
+<span class="sourceLineNo">326</span>                public void handleEvent(final LinkEnterEvent event, final Link link) {<a name="line.326"></a>
+<span class="sourceLineNo">327</span>                        Id&lt;Person&gt; driverId = delegate.getDriverOfVehicle(event.getVehicleId());<a name="line.327"></a>
+<span class="sourceLineNo">328</span>                        Cost cost = CalcPaidToll.this.scheme.getLinkCostInfo(link.getId(), event.getTime(), driverId, event.getVehicleId() );<a name="line.328"></a>
+<span class="sourceLineNo">329</span>                        if (cost != null) {<a name="line.329"></a>
+<span class="sourceLineNo">330</span>                                // this is a link inside the toll area.<a name="line.330"></a>
+<span class="sourceLineNo">331</span>                                // [[I guess this assumes that all links inside the cordon are listed in the toll scheme, similar to an area<a name="line.331"></a>
+<span class="sourceLineNo">332</span>                                // toll.  Conventionally, one would not do it in this way, but one would just name those links where<a name="line.332"></a>
+<span class="sourceLineNo">333</span>                                // the cordon toll is charged.  kai, mar'12]]<a name="line.333"></a>
+<span class="sourceLineNo">334</span>                                AgentTollInfo info = CalcPaidToll.this.agents.get(driverId);<a name="line.334"></a>
+<span class="sourceLineNo">335</span>                                if (info == null) {<a name="line.335"></a>
+<span class="sourceLineNo">336</span>                                        // (the agent is not yet "registered")<a name="line.336"></a>
+<span class="sourceLineNo">337</span>                                        // [[yyyy this would refer to any toll, so if we have two cordons, it does not work.  kai, mar'12]]<a name="line.337"></a>
+<span class="sourceLineNo">338</span><a name="line.338"></a>
+<span class="sourceLineNo">339</span>                                        // generate a "registration object":<a name="line.339"></a>
+<span class="sourceLineNo">340</span>                                        info = new AgentTollInfo();<a name="line.340"></a>
+<span class="sourceLineNo">341</span><a name="line.341"></a>
+<span class="sourceLineNo">342</span>                                        // register it:<a name="line.342"></a>
+<span class="sourceLineNo">343</span>                                        CalcPaidToll.this.agents.put(driverId, info);<a name="line.343"></a>
+<span class="sourceLineNo">344</span><a name="line.344"></a>
+<span class="sourceLineNo">345</span>                                        // we start in the area, do not toll:<a name="line.345"></a>
+<span class="sourceLineNo">346</span>                                        info.toll = 0.0;<a name="line.346"></a>
+<span class="sourceLineNo">347</span><a name="line.347"></a>
+<span class="sourceLineNo">348</span>                                        // info.insideCordonArea is implicitly initialized with `true'. kai, mar'12<a name="line.348"></a>
+<span class="sourceLineNo">349</span>                                } else if (!info.insideCordonArea) {<a name="line.349"></a>
+<span class="sourceLineNo">350</span>                                        // (info is != null, and insideCordonArea is false)<a name="line.350"></a>
+<span class="sourceLineNo">351</span>                                        // agent was outside before, now inside the toll area --&gt; agent has to pay<a name="line.351"></a>
+<span class="sourceLineNo">352</span>                                        info.insideCordonArea = true;<a name="line.352"></a>
+<span class="sourceLineNo">353</span>                                        info.toll += cost.amount;<a name="line.353"></a>
+<span class="sourceLineNo">354</span>                                        events.processEvent(new PersonMoneyEvent(event.getTime(),driverId,-cost.amount));<a name="line.354"></a>
+<span class="sourceLineNo">355</span>                                }<a name="line.355"></a>
+<span class="sourceLineNo">356</span>                                // else: agent was already in toll area, does not have to pay again (this implementation is a bit unusual!)<a name="line.356"></a>
+<span class="sourceLineNo">357</span>                        } else {<a name="line.357"></a>
+<span class="sourceLineNo">358</span>                                // this is a link outside the toll area; just need to memorize that the agent is outside the toll area.<a name="line.358"></a>
+<span class="sourceLineNo">359</span>                                AgentTollInfo info = CalcPaidToll.this.agents.get(driverId);<a name="line.359"></a>
+<span class="sourceLineNo">360</span>                                if (info == null) {<a name="line.360"></a>
+<span class="sourceLineNo">361</span>                                        // (the agent is not yet "registered")<a name="line.361"></a>
+<span class="sourceLineNo">362</span><a name="line.362"></a>
+<span class="sourceLineNo">363</span>                                        // generate a "registration object":<a name="line.363"></a>
+<span class="sourceLineNo">364</span>                                        info = new AgentTollInfo();<a name="line.364"></a>
+<span class="sourceLineNo">365</span><a name="line.365"></a>
+<span class="sourceLineNo">366</span>                                        // register it:<a name="line.366"></a>
+<span class="sourceLineNo">367</span>                                        CalcPaidToll.this.agents.put(driverId, info);<a name="line.367"></a>
+<span class="sourceLineNo">368</span>                                }<a name="line.368"></a>
+<span class="sourceLineNo">369</span>                                // memorize that agent is outside toll area:<a name="line.369"></a>
+<span class="sourceLineNo">370</span>                                info.insideCordonArea = false;<a name="line.370"></a>
+<span class="sourceLineNo">371</span>                        }<a name="line.371"></a>
+<span class="sourceLineNo">372</span>                }<a name="line.372"></a>
+<span class="sourceLineNo">373</span>        }<a name="line.373"></a>
+<span class="sourceLineNo">374</span><a name="line.374"></a>
+<span class="sourceLineNo">375</span>        @Override<a name="line.375"></a>
+<span class="sourceLineNo">376</span>        public void handleEvent(VehicleLeavesTrafficEvent event) {<a name="line.376"></a>
+<span class="sourceLineNo">377</span>                delegate.handleEvent(event);<a name="line.377"></a>
+<span class="sourceLineNo">378</span>        }<a name="line.378"></a>
+<span class="sourceLineNo">379</span><a name="line.379"></a>
+<span class="sourceLineNo">380</span>}<a name="line.380"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

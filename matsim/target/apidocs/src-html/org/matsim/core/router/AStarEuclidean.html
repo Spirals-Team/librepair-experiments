@@ -1,0 +1,336 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> * AStarEuclidean.java<a name="line.3"></a>
+<span class="sourceLineNo">004</span> *                                                                         *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> * *********************************************************************** *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> *                                                                         *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> * copyright       : (C) 2007 by the members listed in the COPYING,        *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> *                   LICENSE and WARRANTY file.                            *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> * email           : info at matsim dot org                                *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> *                                                                         *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> * *********************************************************************** *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *                                                                         *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   (at your option) any later version.                                   *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> *                                                                         *<a name="line.18"></a>
+<span class="sourceLineNo">019</span> * *********************************************************************** */<a name="line.19"></a>
+<span class="sourceLineNo">020</span><a name="line.20"></a>
+<span class="sourceLineNo">021</span>package org.matsim.core.router;<a name="line.21"></a>
+<span class="sourceLineNo">022</span><a name="line.22"></a>
+<span class="sourceLineNo">023</span>import org.apache.log4j.Logger;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import org.matsim.api.core.v01.network.Link;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import org.matsim.api.core.v01.network.Network;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import org.matsim.api.core.v01.network.Node;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.matsim.core.router.util.*;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.core.utils.collections.RouterPriorityQueue;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.core.utils.geometry.CoordUtils;<a name="line.29"></a>
+<span class="sourceLineNo">030</span><a name="line.30"></a>
+<span class="sourceLineNo">031</span>/**<a name="line.31"></a>
+<span class="sourceLineNo">032</span> * Implements the &lt;a href="http://en.wikipedia.org/wiki/A%2A"&gt;A* router algorithm&lt;/a&gt;<a name="line.32"></a>
+<span class="sourceLineNo">033</span> * for a given NetworkLayer by using the euclidean distance divided by the<a name="line.33"></a>
+<span class="sourceLineNo">034</span> * maximal free speed per length unit as the heuristic estimate during routing.<a name="line.34"></a>
+<span class="sourceLineNo">035</span> *<a name="line.35"></a>
+<span class="sourceLineNo">036</span> * AStarEuclidean about 3 times faster than Dijkstra.&lt;br /&gt;<a name="line.36"></a>
+<span class="sourceLineNo">037</span> *<a name="line.37"></a>
+<span class="sourceLineNo">038</span> * &lt;p&gt;For every router, there exists a class which computes some<a name="line.38"></a>
+<span class="sourceLineNo">039</span> * preprocessing data and is passed to the router class<a name="line.39"></a>
+<span class="sourceLineNo">040</span> * constructor in order to accelerate the routing procedure.<a name="line.40"></a>
+<span class="sourceLineNo">041</span> * The one used for AStarEuclidean is org.matsim.demandmodeling.router.util.PreProcessEuclidean.&lt;br /&gt;<a name="line.41"></a>
+<span class="sourceLineNo">042</span> *<a name="line.42"></a>
+<span class="sourceLineNo">043</span> * Network conditions:&lt;br /&gt;<a name="line.43"></a>
+<span class="sourceLineNo">044</span> * &lt;ul&gt;<a name="line.44"></a>
+<span class="sourceLineNo">045</span> * &lt;li&gt;The same as for Dijkstra: The link cost must be non-negative,<a name="line.45"></a>
+<span class="sourceLineNo">046</span> * otherwise Dijkstra does not work.&lt;/li&gt;<a name="line.46"></a>
+<span class="sourceLineNo">047</span> * &lt;li&gt;The length stored in the links must be greater or equal to the euclidean distance of the<a name="line.47"></a>
+<span class="sourceLineNo">048</span> * link's start and end node, otherwise the algorithm is not guaranteed to deliver least-cost paths.<a name="line.48"></a>
+<span class="sourceLineNo">049</span> * In this case PreProcessEuclidean gives out a warning message.&lt;/li&gt;<a name="line.49"></a>
+<span class="sourceLineNo">050</span> * &lt;li&gt;The CostCalculator which calculates the cost for each link must implement the TravelMinCost<a name="line.50"></a>
+<span class="sourceLineNo">051</span> * interface, i.e. it must implement the function getLinkMinimumTravelCost(Link link).<a name="line.51"></a>
+<span class="sourceLineNo">052</span> * The TravelTimeCalculator class does implement it.&lt;/li&gt;&lt;/p&gt;<a name="line.52"></a>
+<span class="sourceLineNo">053</span> * &lt;p&gt;&lt;code&gt; PreProcessEuclidean.run() &lt;/code&gt;is very fast and needs (almost) no additional<a name="line.53"></a>
+<span class="sourceLineNo">054</span> * memory.&lt;code&gt;&lt;br /&gt;<a name="line.54"></a>
+<span class="sourceLineNo">055</span> * &lt;/code&gt; Code Example:&lt;code&gt;&lt;br /&gt;<a name="line.55"></a>
+<span class="sourceLineNo">056</span> * TravelMinCost costFunction = ...&lt;br /&gt;<a name="line.56"></a>
+<span class="sourceLineNo">057</span> * PreProcessEuclidean preProcessData = new PreProcessEuclidean(costFunction);&lt;br /&gt;<a name="line.57"></a>
+<span class="sourceLineNo">058</span> * preProcessData.run(network);&lt;br /&gt;...&lt;br /&gt;<a name="line.58"></a>
+<span class="sourceLineNo">059</span> * LeastCostPathCalculator routingAlgo = new AStarEuclidean(network, preProcessData);&lt;br /&gt;<a name="line.59"></a>
+<span class="sourceLineNo">060</span> * ...&lt;/code&gt;&lt;/p&gt;<a name="line.60"></a>
+<span class="sourceLineNo">061</span> * &lt;p&gt;A note about the so-called overdo factor: You can drastically accelerate the routing of<a name="line.61"></a>
+<span class="sourceLineNo">062</span> * AStarEuclidean by providing an overdo factor &amp;gt; 1 (e.g. 1.5, 2 or 3). In this case,<a name="line.62"></a>
+<span class="sourceLineNo">063</span> * AStarEuclidean does not calculate least-cost paths anymore but tends to deliver distance-minimal<a name="line.63"></a>
+<span class="sourceLineNo">064</span> * paths. The greater the overdo factor, the faster the algorithm but the more the calculated routes<a name="line.64"></a>
+<span class="sourceLineNo">065</span> * diverge from the least-cost ones.&lt;br /&gt;<a name="line.65"></a>
+<span class="sourceLineNo">066</span> * A typical invocation then looks like this:&lt;br&gt;<a name="line.66"></a>
+<span class="sourceLineNo">067</span> * &lt;code&gt;LeastCostPathCalculator routingAlgo = new AStarEuclidean(network, preProcessData, 2);&lt;/code&gt;<a name="line.67"></a>
+<span class="sourceLineNo">068</span> * &lt;br /&gt;<a name="line.68"></a>
+<span class="sourceLineNo">069</span> * @see org.matsim.core.router.util.PreProcessEuclidean<a name="line.69"></a>
+<span class="sourceLineNo">070</span> * @see org.matsim.core.router.Dijkstra<a name="line.70"></a>
+<span class="sourceLineNo">071</span> * @see org.matsim.core.router.AStarLandmarks<a name="line.71"></a>
+<span class="sourceLineNo">072</span> * @author lnicolas<a name="line.72"></a>
+<span class="sourceLineNo">073</span> */<a name="line.73"></a>
+<span class="sourceLineNo">074</span>public class AStarEuclidean extends Dijkstra {<a name="line.74"></a>
+<span class="sourceLineNo">075</span>        private static final Logger log = Logger.getLogger( AStarEuclidean.class ) ;<a name="line.75"></a>
+<span class="sourceLineNo">076</span><a name="line.76"></a>
+<span class="sourceLineNo">077</span>        protected final double overdoFactor;<a name="line.77"></a>
+<span class="sourceLineNo">078</span><a name="line.78"></a>
+<span class="sourceLineNo">079</span>        private double minTravelCostPerLength;<a name="line.79"></a>
+<span class="sourceLineNo">080</span><a name="line.80"></a>
+<span class="sourceLineNo">081</span>        /**<a name="line.81"></a>
+<span class="sourceLineNo">082</span>         * Default constructor; sets the overdo factor to 1.<a name="line.82"></a>
+<span class="sourceLineNo">083</span>         * @param network<a name="line.83"></a>
+<span class="sourceLineNo">084</span>         * @param preProcessData<a name="line.84"></a>
+<span class="sourceLineNo">085</span>         * @param timeFunction<a name="line.85"></a>
+<span class="sourceLineNo">086</span>         */<a name="line.86"></a>
+<span class="sourceLineNo">087</span>        AStarEuclidean(final Network network, final PreProcessEuclidean preProcessData,<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                        final TravelTime timeFunction) {<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                this(network, preProcessData, timeFunction, 1);<a name="line.89"></a>
+<span class="sourceLineNo">090</span>        }<a name="line.90"></a>
+<span class="sourceLineNo">091</span><a name="line.91"></a>
+<span class="sourceLineNo">092</span>        /**<a name="line.92"></a>
+<span class="sourceLineNo">093</span>         * @param network Where we do the routing.<a name="line.93"></a>
+<span class="sourceLineNo">094</span>         * @param preProcessData The pre-process data (containing the landmarks etc.).<a name="line.94"></a>
+<span class="sourceLineNo">095</span>         * @param timeFunction Determines the travel time on each link.<a name="line.95"></a>
+<span class="sourceLineNo">096</span>         * @param overdoFactor The factor which is multiplied with the output of the A* heuristic function. The higher <a name="line.96"></a>
+<span class="sourceLineNo">097</span>         * the overdo factor the greedier the router, i.e. it visits less nodes during routing and is thus faster, but <a name="line.97"></a>
+<span class="sourceLineNo">098</span>         * for an overdo factor &gt; 1, it is not guaranteed that the router returns the least-cost paths. Rather it tends <a name="line.98"></a>
+<span class="sourceLineNo">099</span>         * to return distance-minimal paths.<a name="line.99"></a>
+<span class="sourceLineNo">100</span>         */<a name="line.100"></a>
+<span class="sourceLineNo">101</span>        AStarEuclidean(final Network network, final PreProcessEuclidean preProcessData,<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                        final TravelTime timeFunction, final double overdoFactor) {<a name="line.102"></a>
+<span class="sourceLineNo">103</span>                this(network, preProcessData, preProcessData.getCostFunction(),<a name="line.103"></a>
+<span class="sourceLineNo">104</span>                                timeFunction, overdoFactor);<a name="line.104"></a>
+<span class="sourceLineNo">105</span>        }<a name="line.105"></a>
+<span class="sourceLineNo">106</span><a name="line.106"></a>
+<span class="sourceLineNo">107</span>        /**<a name="line.107"></a>
+<span class="sourceLineNo">108</span>         * @param network Where we do the routing.<a name="line.108"></a>
+<span class="sourceLineNo">109</span>         * @param preProcessData The pre-process data (containing the landmarks etc.).<a name="line.109"></a>
+<span class="sourceLineNo">110</span>         * @param timeFunction Determines the travel time on each link.<a name="line.110"></a>
+<span class="sourceLineNo">111</span>         * @param costFunction Calculates the travel cost on links.<a name="line.111"></a>
+<span class="sourceLineNo">112</span>         * @param overdoFactor The factor which is multiplied with the output of the A* heuristic function. The higher <a name="line.112"></a>
+<span class="sourceLineNo">113</span>         * the overdo factor the greedier the router, i.e. it visits less nodes during routing and is thus faster, but <a name="line.113"></a>
+<span class="sourceLineNo">114</span>         * for an overdo factor &gt; 1, it is not guaranteed that the router returns the least-cost paths. Rather it tends <a name="line.114"></a>
+<span class="sourceLineNo">115</span>         * to return distance-minimal paths.<a name="line.115"></a>
+<span class="sourceLineNo">116</span>         */<a name="line.116"></a>
+<span class="sourceLineNo">117</span>        AStarEuclidean(final Network network,<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                        final PreProcessEuclidean preProcessData,<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                        final TravelDisutility costFunction, final TravelTime timeFunction, final double overdoFactor) {<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                super(network, costFunction, timeFunction, preProcessData);<a name="line.120"></a>
+<span class="sourceLineNo">121</span><a name="line.121"></a>
+<span class="sourceLineNo">122</span>                setMinTravelCostPerLength(preProcessData.getMinTravelCostPerLength());<a name="line.122"></a>
+<span class="sourceLineNo">123</span><a name="line.123"></a>
+<span class="sourceLineNo">124</span>                this.overdoFactor = overdoFactor;<a name="line.124"></a>
+<span class="sourceLineNo">125</span>        }<a name="line.125"></a>
+<span class="sourceLineNo">126</span><a name="line.126"></a>
+<span class="sourceLineNo">127</span>        /**<a name="line.127"></a>
+<span class="sourceLineNo">128</span>         * Initializes the first node of a route.<a name="line.128"></a>
+<span class="sourceLineNo">129</span>         *<a name="line.129"></a>
+<span class="sourceLineNo">130</span>         * @param fromNode<a name="line.130"></a>
+<span class="sourceLineNo">131</span>         *            The Node to be initialized.<a name="line.131"></a>
+<span class="sourceLineNo">132</span>         * @param toNode<a name="line.132"></a>
+<span class="sourceLineNo">133</span>         *            The Node at which the route should end.<a name="line.133"></a>
+<span class="sourceLineNo">134</span>         * @param pendingNodes<a name="line.134"></a>
+<span class="sourceLineNo">135</span>         *            The pending nodes so far.<a name="line.135"></a>
+<span class="sourceLineNo">136</span>         * @param toNode<a name="line.136"></a>
+<span class="sourceLineNo">137</span>         *            The Node at which the route should end.<a name="line.137"></a>
+<span class="sourceLineNo">138</span>         * @param startTime<a name="line.138"></a>
+<span class="sourceLineNo">139</span>         *            The time we start routing.<a name="line.139"></a>
+<span class="sourceLineNo">140</span>         */<a name="line.140"></a>
+<span class="sourceLineNo">141</span>        @Override<a name="line.141"></a>
+<span class="sourceLineNo">142</span>        protected void initFromNode(final Node fromNode, final Node toNode, final double startTime, final RouterPriorityQueue&lt;Node&gt; pendingNodes) {<a name="line.142"></a>
+<span class="sourceLineNo">143</span>                AStarNodeData data = getData(fromNode);<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                visitNode(fromNode, data, pendingNodes, startTime, 0, null);<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                data.setExpectedRemainingCost(estimateRemainingTravelCost(fromNode, toNode));<a name="line.145"></a>
+<span class="sourceLineNo">146</span>        }<a name="line.146"></a>
+<span class="sourceLineNo">147</span><a name="line.147"></a>
+<span class="sourceLineNo">148</span>        @Override<a name="line.148"></a>
+<span class="sourceLineNo">149</span>        protected boolean addToPendingNodes(final Link l, final Node n, final RouterPriorityQueue&lt;Node&gt; pendingNodes,<a name="line.149"></a>
+<span class="sourceLineNo">150</span>                        final double currTime, final double currCost, final Node toNode) {<a name="line.150"></a>
+<span class="sourceLineNo">151</span><a name="line.151"></a>
+<span class="sourceLineNo">152</span>                final double travelTime = this.timeFunction.getLinkTravelTime(l, currTime, this.person, this.vehicle);<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                final double travelCost = this.costFunction.getLinkTravelDisutility(l, currTime, this.person, this.vehicle);            <a name="line.153"></a>
+<span class="sourceLineNo">154</span>                final AStarNodeData data = getData(n);<a name="line.154"></a>
+<span class="sourceLineNo">155</span>                if (!data.isVisited(getIterationId())) {<a name="line.155"></a>
+<span class="sourceLineNo">156</span>                        double remainingTravelCost = estimateRemainingTravelCost(n, toNode);<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                        visitNode(n, data, pendingNodes, currTime + travelTime, currCost + travelCost, remainingTravelCost, l);<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                        return true;<a name="line.158"></a>
+<span class="sourceLineNo">159</span>                }<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                <a name="line.160"></a>
+<span class="sourceLineNo">161</span>                final double nCost = data.getCost();<a name="line.161"></a>
+<span class="sourceLineNo">162</span>                final double totalCost = currCost + travelCost;<a name="line.162"></a>
+<span class="sourceLineNo">163</span>                if (totalCost &lt; nCost) {<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                        revisitNode(n, data, pendingNodes, currTime + travelTime, totalCost, l);<a name="line.164"></a>
+<span class="sourceLineNo">165</span>                        return true;<a name="line.165"></a>
+<span class="sourceLineNo">166</span>                } else if (totalCost == nCost) {<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                        // Special case: a node can be reached from two links with exactly the same costs.<a name="line.167"></a>
+<span class="sourceLineNo">168</span>                        // Decide based on the linkId which one to take... just have to common criteria to be deterministic.<a name="line.168"></a>
+<span class="sourceLineNo">169</span>                        <a name="line.169"></a>
+<span class="sourceLineNo">170</span>                        if ( totalCost==0. ) {<a name="line.170"></a>
+<span class="sourceLineNo">171</span>                                log.warn( "finding totalCost=" + totalCost + "; this will often (or always?) lead to a null " +<a name="line.171"></a>
+<span class="sourceLineNo">172</span>                                                                  "pointer exception later.  In my own case, it was related to a network " +<a name="line.172"></a>
+<span class="sourceLineNo">173</span>                                                                  "having freespeed infinity at places.  kai, jan'18") ;<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                        }<a name="line.174"></a>
+<span class="sourceLineNo">175</span>                        <a name="line.175"></a>
+<span class="sourceLineNo">176</span>                        if (data.getPrevLink().getId().compareTo(l.getId()) &gt; 0) {<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                                revisitNode(n, data, pendingNodes, currTime + travelTime, totalCost, l);<a name="line.177"></a>
+<span class="sourceLineNo">178</span>                                return true;<a name="line.178"></a>
+<span class="sourceLineNo">179</span>                        }<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                }<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                return false;<a name="line.181"></a>
+<span class="sourceLineNo">182</span>        }<a name="line.182"></a>
+<span class="sourceLineNo">183</span><a name="line.183"></a>
+<span class="sourceLineNo">184</span>        /**<a name="line.184"></a>
+<span class="sourceLineNo">185</span>         * Inserts the given Node n into the pendingNodes queue and updates its time and cost information.<a name="line.185"></a>
+<span class="sourceLineNo">186</span>         * <a name="line.186"></a>
+<span class="sourceLineNo">187</span>         * @param n The Node that is revisited.<a name="line.187"></a>
+<span class="sourceLineNo">188</span>         * @param data The data for node.<a name="line.188"></a>
+<span class="sourceLineNo">189</span>         * @param pendingNodes The nodes visited and not processed yet.<a name="line.189"></a>
+<span class="sourceLineNo">190</span>         * @param time The time of the visit of n.<a name="line.190"></a>
+<span class="sourceLineNo">191</span>         * @param cost The accumulated cost at the time of the visit of n.<a name="line.191"></a>
+<span class="sourceLineNo">192</span>         * @param expectedRemainingCost The expected remaining travel cost when<a name="line.192"></a>
+<span class="sourceLineNo">193</span>         * traveling from n to the target node of the route.<a name="line.193"></a>
+<span class="sourceLineNo">194</span>         * @param outLink The link from which we came visiting n.<a name="line.194"></a>
+<span class="sourceLineNo">195</span>         */<a name="line.195"></a>
+<span class="sourceLineNo">196</span>        private void visitNode(final Node n, final AStarNodeData data, final RouterPriorityQueue&lt;Node&gt; pendingNodes, <a name="line.196"></a>
+<span class="sourceLineNo">197</span>                        final double time, final double cost, final double expectedRemainingCost, final Link outLink) {<a name="line.197"></a>
+<span class="sourceLineNo">198</span>                data.setExpectedRemainingCost(expectedRemainingCost);<a name="line.198"></a>
+<span class="sourceLineNo">199</span>                super.visitNode(n, data, pendingNodes, time, cost, outLink);<a name="line.199"></a>
+<span class="sourceLineNo">200</span>        }<a name="line.200"></a>
+<span class="sourceLineNo">201</span>        <a name="line.201"></a>
+<span class="sourceLineNo">202</span>        /**<a name="line.202"></a>
+<span class="sourceLineNo">203</span>         * @return The overdo factor used.<a name="line.203"></a>
+<span class="sourceLineNo">204</span>         */<a name="line.204"></a>
+<span class="sourceLineNo">205</span>        public double getOverdoFactor() {<a name="line.205"></a>
+<span class="sourceLineNo">206</span>                return this.overdoFactor;<a name="line.206"></a>
+<span class="sourceLineNo">207</span>        }<a name="line.207"></a>
+<span class="sourceLineNo">208</span><a name="line.208"></a>
+<span class="sourceLineNo">209</span>        /**<a name="line.209"></a>
+<span class="sourceLineNo">210</span>         * Estimates the remaining travel cost from fromNode to toNode using the euclidean distance between them.<a name="line.210"></a>
+<span class="sourceLineNo">211</span>         * <a name="line.211"></a>
+<span class="sourceLineNo">212</span>         * @param fromNode The first node.<a name="line.212"></a>
+<span class="sourceLineNo">213</span>         * @param toNode The second node.<a name="line.213"></a>
+<span class="sourceLineNo">214</span>         * @return The travel cost when traveling between the two given nodes.<a name="line.214"></a>
+<span class="sourceLineNo">215</span>         */<a name="line.215"></a>
+<span class="sourceLineNo">216</span>        protected double estimateRemainingTravelCost(final Node fromNode, final Node toNode) {<a name="line.216"></a>
+<span class="sourceLineNo">217</span>                double dist = CoordUtils.calcEuclideanDistance(fromNode.getCoord(), toNode.getCoord()) * getMinTravelCostPerLength();<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                return dist * this.overdoFactor;<a name="line.218"></a>
+<span class="sourceLineNo">219</span>        }<a name="line.219"></a>
+<span class="sourceLineNo">220</span><a name="line.220"></a>
+<span class="sourceLineNo">221</span>        /**<a name="line.221"></a>
+<span class="sourceLineNo">222</span>         * Returns the data for the given Node. Creates a new AStarNodeData if none exists yet.<a name="line.222"></a>
+<span class="sourceLineNo">223</span>         *<a name="line.223"></a>
+<span class="sourceLineNo">224</span>         * @param n The node for which to return the data for..<a name="line.224"></a>
+<span class="sourceLineNo">225</span>         * @return The data to the given Node<a name="line.225"></a>
+<span class="sourceLineNo">226</span>         */<a name="line.226"></a>
+<span class="sourceLineNo">227</span>        @Override<a name="line.227"></a>
+<span class="sourceLineNo">228</span>        protected AStarNodeData getData(final Node n) {<a name="line.228"></a>
+<span class="sourceLineNo">229</span>                return (AStarNodeData) super.getData(n);<a name="line.229"></a>
+<span class="sourceLineNo">230</span>        }<a name="line.230"></a>
+<span class="sourceLineNo">231</span><a name="line.231"></a>
+<span class="sourceLineNo">232</span>        @Override<a name="line.232"></a>
+<span class="sourceLineNo">233</span>        protected AStarNodeData createNodeData() {<a name="line.233"></a>
+<span class="sourceLineNo">234</span>                return new AStarNodeData();<a name="line.234"></a>
+<span class="sourceLineNo">235</span>        }<a name="line.235"></a>
+<span class="sourceLineNo">236</span>        <a name="line.236"></a>
+<span class="sourceLineNo">237</span>        /**<a name="line.237"></a>
+<span class="sourceLineNo">238</span>         * Sets minTravelCostPerLength to the given value.<a name="line.238"></a>
+<span class="sourceLineNo">239</span>         * <a name="line.239"></a>
+<span class="sourceLineNo">240</span>         * @param minTravelCostPerLength<a name="line.240"></a>
+<span class="sourceLineNo">241</span>         *            the minTravelCostPerLength to set<a name="line.241"></a>
+<span class="sourceLineNo">242</span>         */<a name="line.242"></a>
+<span class="sourceLineNo">243</span>        /*package*/ void setMinTravelCostPerLength(final double minTravelCostPerLength) {<a name="line.243"></a>
+<span class="sourceLineNo">244</span>                this.minTravelCostPerLength = minTravelCostPerLength;<a name="line.244"></a>
+<span class="sourceLineNo">245</span>        }<a name="line.245"></a>
+<span class="sourceLineNo">246</span><a name="line.246"></a>
+<span class="sourceLineNo">247</span>        /**<a name="line.247"></a>
+<span class="sourceLineNo">248</span>         * Returns the minimal travel cost per length unit on a link in the network.<a name="line.248"></a>
+<span class="sourceLineNo">249</span>         * <a name="line.249"></a>
+<span class="sourceLineNo">250</span>         * @return the minimal travel cost per length unit on a link in the network.<a name="line.250"></a>
+<span class="sourceLineNo">251</span>         */<a name="line.251"></a>
+<span class="sourceLineNo">252</span>        public final double getMinTravelCostPerLength() {<a name="line.252"></a>
+<span class="sourceLineNo">253</span>                return this.minTravelCostPerLength;<a name="line.253"></a>
+<span class="sourceLineNo">254</span>        }<a name="line.254"></a>
+<span class="sourceLineNo">255</span><a name="line.255"></a>
+<span class="sourceLineNo">256</span>        /**<a name="line.256"></a>
+<span class="sourceLineNo">257</span>         * The value used to sort the pending nodes during routing. This implementation compares the total <a name="line.257"></a>
+<span class="sourceLineNo">258</span>         * estimated remaining travel cost to sort the nodes in the pending nodes queue during routing.<a name="line.258"></a>
+<span class="sourceLineNo">259</span>         */<a name="line.259"></a>
+<span class="sourceLineNo">260</span>        @Override<a name="line.260"></a>
+<span class="sourceLineNo">261</span>        protected double getPriority(final DijkstraNodeData data) {<a name="line.261"></a>
+<span class="sourceLineNo">262</span>                return ((AStarNodeData) data).getExpectedCost();<a name="line.262"></a>
+<span class="sourceLineNo">263</span>        }<a name="line.263"></a>
+<span class="sourceLineNo">264</span>}<a name="line.264"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,332 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*                                                   *<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2013 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span><a name="line.19"></a>
+<span class="sourceLineNo">020</span>package org.matsim.contrib.accessibility;<a name="line.20"></a>
+<span class="sourceLineNo">021</span><a name="line.21"></a>
+<span class="sourceLineNo">022</span>import java.util.ArrayList;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.util.HashMap;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import java.util.LinkedHashMap;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import java.util.Map;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import java.util.Set;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import java.util.concurrent.ConcurrentHashMap;<a name="line.27"></a>
+<span class="sourceLineNo">028</span><a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.apache.log4j.Logger;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.api.core.v01.Id;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.api.core.v01.Scenario;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.api.core.v01.TransportMode;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.api.core.v01.network.Network;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.api.core.v01.network.Node;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.contrib.accessibility.AccessibilityConfigGroup.AccessibilityMeasureType;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.contrib.accessibility.interfaces.FacilityDataExchangeInterface;<a name="line.36"></a>
+<span class="sourceLineNo">037</span>import org.matsim.contrib.accessibility.utils.AggregationObject;<a name="line.37"></a>
+<span class="sourceLineNo">038</span>import org.matsim.contrib.accessibility.utils.ProgressBar;<a name="line.38"></a>
+<span class="sourceLineNo">039</span>import org.matsim.core.config.ConfigUtils;<a name="line.39"></a>
+<span class="sourceLineNo">040</span>import org.matsim.core.config.groups.PlanCalcScoreConfigGroup;<a name="line.40"></a>
+<span class="sourceLineNo">041</span>import org.matsim.core.gbl.Gbl;<a name="line.41"></a>
+<span class="sourceLineNo">042</span>import org.matsim.core.network.NetworkUtils;<a name="line.42"></a>
+<span class="sourceLineNo">043</span>import org.matsim.facilities.ActivityFacilities;<a name="line.43"></a>
+<span class="sourceLineNo">044</span>import org.matsim.facilities.ActivityFacilitiesImpl;<a name="line.44"></a>
+<span class="sourceLineNo">045</span>import org.matsim.facilities.ActivityFacility;<a name="line.45"></a>
+<span class="sourceLineNo">046</span><a name="line.46"></a>
+<span class="sourceLineNo">047</span>/**<a name="line.47"></a>
+<span class="sourceLineNo">048</span> * @author thomas, nagel, dziemke<a name="line.48"></a>
+<span class="sourceLineNo">049</span> */<a name="line.49"></a>
+<span class="sourceLineNo">050</span>public final class AccessibilityCalculator {<a name="line.50"></a>
+<span class="sourceLineNo">051</span>        private static final Logger LOG = Logger.getLogger(AccessibilityCalculator.class);<a name="line.51"></a>
+<span class="sourceLineNo">052</span><a name="line.52"></a>
+<span class="sourceLineNo">053</span>        private final ActivityFacilities measuringPoints;<a name="line.53"></a>
+<span class="sourceLineNo">054</span>        private final Map&lt;String, AccessibilityContributionCalculator&gt; calculators = new LinkedHashMap&lt;&gt;();<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        // (test may depend on that this is a "Linked" Hash Map. kai, dec'16)<a name="line.55"></a>
+<span class="sourceLineNo">056</span>        <a name="line.56"></a>
+<span class="sourceLineNo">057</span>        private final PlanCalcScoreConfigGroup cnScoringGroup;<a name="line.57"></a>
+<span class="sourceLineNo">058</span>        private final AccessibilityConfigGroup acg;<a name="line.58"></a>
+<span class="sourceLineNo">059</span>        private final Network network;<a name="line.59"></a>
+<span class="sourceLineNo">060</span>        private final double walkSpeed_m_h;<a name="line.60"></a>
+<span class="sourceLineNo">061</span><a name="line.61"></a>
+<span class="sourceLineNo">062</span>        private final ArrayList&lt;FacilityDataExchangeInterface&gt; zoneDataExchangeListeners = new ArrayList&lt;&gt;();<a name="line.62"></a>
+<span class="sourceLineNo">063</span>        <a name="line.63"></a>
+<span class="sourceLineNo">064</span><a name="line.64"></a>
+<span class="sourceLineNo">065</span>        public AccessibilityCalculator(Scenario scenario, ActivityFacilities measuringPoints) {<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                this.network = scenario.getNetwork();<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                this.measuringPoints = measuringPoints;<a name="line.67"></a>
+<span class="sourceLineNo">068</span>                this.acg = ConfigUtils.addOrGetModule(scenario.getConfig(), AccessibilityConfigGroup.GROUP_NAME, AccessibilityConfigGroup.class);<a name="line.68"></a>
+<span class="sourceLineNo">069</span>                this.cnScoringGroup = scenario.getConfig().planCalcScore();<a name="line.69"></a>
+<span class="sourceLineNo">070</span><a name="line.70"></a>
+<span class="sourceLineNo">071</span>                if (cnScoringGroup.getOrCreateModeParams(TransportMode.car).getMarginalUtilityOfDistance() != 0.) {<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                        LOG.error("marginal utility of distance for car different from zero but not used in accessibility computations");<a name="line.72"></a>
+<span class="sourceLineNo">073</span>                }<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                if (cnScoringGroup.getOrCreateModeParams(TransportMode.pt).getMarginalUtilityOfDistance() != 0.) {<a name="line.74"></a>
+<span class="sourceLineNo">075</span>                        LOG.error("marginal utility of distance for pt different from zero but not used in accessibility computations");<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                }<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                if (cnScoringGroup.getOrCreateModeParams(TransportMode.bike).getMonetaryDistanceRate() != 0.) {<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                        LOG.error("monetary distance cost rate for bike different from zero but not used in accessibility computations");<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                }<a name="line.79"></a>
+<span class="sourceLineNo">080</span>                if (cnScoringGroup.getOrCreateModeParams(TransportMode.walk).getMonetaryDistanceRate() != 0.) {<a name="line.80"></a>
+<span class="sourceLineNo">081</span>                        LOG.error("monetary distance cost rate for walk different from zero but not used in accessibility computations");<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                }<a name="line.82"></a>
+<span class="sourceLineNo">083</span><a name="line.83"></a>
+<span class="sourceLineNo">084</span>                this.walkSpeed_m_h = scenario.getConfig().plansCalcRoute().getTeleportedModeSpeeds().get(TransportMode.walk) * 3600.;<a name="line.84"></a>
+<span class="sourceLineNo">085</span>        }<a name="line.85"></a>
+<span class="sourceLineNo">086</span>        <a name="line.86"></a>
+<span class="sourceLineNo">087</span>        public final void computeAccessibilities(Double departureTime, ActivityFacilities opportunities) {<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                AggregationObject[] aggregatedOpportunities = aggregateOpportunities(opportunities, network);<a name="line.88"></a>
+<span class="sourceLineNo">089</span><a name="line.89"></a>
+<span class="sourceLineNo">090</span>                Map&lt;String,Double&gt; expSums = new HashMap&lt;&gt;();<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                for (String mode : calculators.keySet()) {<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                        expSums.put(mode, 0.);<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                }<a name="line.93"></a>
+<span class="sourceLineNo">094</span><a name="line.94"></a>
+<span class="sourceLineNo">095</span>                // Condense measuring points (origins) that have the same nearest node on the network<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                Map&lt;Id&lt;Node&gt;, ArrayList&lt;ActivityFacility&gt;&gt; aggregatedOrigins = aggregateMeasurePointsWithSameNearestNode();<a name="line.96"></a>
+<span class="sourceLineNo">097</span><a name="line.97"></a>
+<span class="sourceLineNo">098</span>                LOG.info("Iterating over all aggregated measuring points...");<a name="line.98"></a>
+<span class="sourceLineNo">099</span>                ProgressBar progressBar = new ProgressBar(aggregatedOrigins.size());<a name="line.99"></a>
+<span class="sourceLineNo">100</span>                <a name="line.100"></a>
+<span class="sourceLineNo">101</span>                // Go through all nodes (keys) that have a measuring point (origin) assigned<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                for (Id&lt;Node&gt; nodeId : aggregatedOrigins.keySet()) {<a name="line.102"></a>
+<span class="sourceLineNo">103</span>                        progressBar.update();<a name="line.103"></a>
+<span class="sourceLineNo">104</span><a name="line.104"></a>
+<span class="sourceLineNo">105</span>                        Node fromNode = network.getNodes().get(nodeId);<a name="line.105"></a>
+<span class="sourceLineNo">106</span><a name="line.106"></a>
+<span class="sourceLineNo">107</span>                        for (AccessibilityContributionCalculator calculator : calculators.values()) {<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                                Gbl.assertNotNull(calculator);<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                                calculator.notifyNewOriginNode(fromNode, departureTime);<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                        }<a name="line.110"></a>
+<span class="sourceLineNo">111</span><a name="line.111"></a>
+<span class="sourceLineNo">112</span>                        // Get list with measuring points that are assigned to "fromNode"<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                        // Go through all measuring points assigned to current node<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                        for (ActivityFacility origin : aggregatedOrigins.get(nodeId)) {<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                                assert(origin.getCoord() != null);<a name="line.115"></a>
+<span class="sourceLineNo">116</span><a name="line.116"></a>
+<span class="sourceLineNo">117</span>                                for (String key : expSums.keySet()) { // Is it really necessary to reset here?<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                                        expSums.put(key, 0.);<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                                }<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                                <a name="line.120"></a>
+<span class="sourceLineNo">121</span>                                // Gbl.assertIf(aggregatedOpportunities.length &gt; 0);<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                                // yyyyyy a test fails when this line is made active; cannot say why an execution path where there are now opportunities can make sense for a test.  kai, mar'17<a name="line.122"></a>
+<span class="sourceLineNo">123</span>                                <a name="line.123"></a>
+<span class="sourceLineNo">124</span>                                // Go through all aggregated facilities (i.e. network nodes to which at least one facility is assigned)<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                                for (final AggregationObject aggregatedFacility : aggregatedOpportunities) {<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                                        // Go through all calculators<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                                        for (String mode : calculators.keySet()) {<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                                                final double expVhk = calculators.get(mode).computeContributionOfOpportunity(origin, aggregatedFacility, departureTime);<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                                                expSums.put(mode, expSums.get(mode) + expVhk);<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                                        }<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                                }<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                                // What does the aggregation of the starting locations save if we do the just ended loop for all starting<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                                // points separately anyways? Answer: The trees need to be computed only once. (But one could save more.) kai, feb'14<a name="line.133"></a>
+<span class="sourceLineNo">134</span><a name="line.134"></a>
+<span class="sourceLineNo">135</span>                                // aggregated value<a name="line.135"></a>
+<span class="sourceLineNo">136</span>                                Map&lt;String, Double&gt; accessibilities  = new LinkedHashMap&lt;&gt;();<a name="line.136"></a>
+<span class="sourceLineNo">137</span><a name="line.137"></a>
+<span class="sourceLineNo">138</span>                                for (String mode : calculators.keySet()) {<a name="line.138"></a>
+<span class="sourceLineNo">139</span>                                        if (acg.getAccessibilityMeasureType() == AccessibilityMeasureType.logSum) {<a name="line.139"></a>
+<span class="sourceLineNo">140</span>                                                accessibilities.put(mode, (1/this.cnScoringGroup.getBrainExpBeta()) * Math.log(expSums.get(mode)));<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                                        } else if (acg.getAccessibilityMeasureType() == AccessibilityMeasureType.rawSum) {<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                                                // this was used by IVT within SustainCity. Not sure if we should maintain this; they could, after all, just exp the log results. kai, may'15<a name="line.142"></a>
+<span class="sourceLineNo">143</span>                                                // The above comment is from the time when the switch "isUsingRawSumsWithoutLn" was a "special case". I think the question is<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                                                // now resolved as "rawSum" has become one of the "AccessibilityMeasureType" options aiming to provide a means to use<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                                                // other potentially useful measure types. dz, july'17<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                                                accessibilities.put(mode, expSums.get(mode));<a name="line.146"></a>
+<span class="sourceLineNo">147</span>                                        } else if (acg.getAccessibilityMeasureType() == AccessibilityMeasureType.gravity) {<a name="line.147"></a>
+<span class="sourceLineNo">148</span>                                                throw new IllegalArgumentException("This accessibility measure is not yet implemented.");<a name="line.148"></a>
+<span class="sourceLineNo">149</span>                                        } else {<a name="line.149"></a>
+<span class="sourceLineNo">150</span>                                                throw new IllegalArgumentException("No valid accessibility measure type chosen.");<a name="line.150"></a>
+<span class="sourceLineNo">151</span>                                        }<a name="line.151"></a>
+<span class="sourceLineNo">152</span>                                }<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                                <a name="line.153"></a>
+<span class="sourceLineNo">154</span>                                for (FacilityDataExchangeInterface zoneDataExchangeInterface : this.zoneDataExchangeListeners) {<a name="line.154"></a>
+<span class="sourceLineNo">155</span>                                        zoneDataExchangeInterface.setFacilityAccessibilities(origin, departureTime, accessibilities);<a name="line.155"></a>
+<span class="sourceLineNo">156</span>                                }<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                        }<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                }<a name="line.158"></a>
+<span class="sourceLineNo">159</span>                for (FacilityDataExchangeInterface zoneDataExchangeInterface : this.zoneDataExchangeListeners) {<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                        zoneDataExchangeInterface.finish();<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                }<a name="line.161"></a>
+<span class="sourceLineNo">162</span>        }<a name="line.162"></a>
+<span class="sourceLineNo">163</span>        <a name="line.163"></a>
+<span class="sourceLineNo">164</span>        /**<a name="line.164"></a>
+<span class="sourceLineNo">165</span>         * Aggregates disutilities Vjk to get from node j to all k that are attached to j and assign sum(Vjk) is to node j.<a name="line.165"></a>
+<span class="sourceLineNo">166</span>         * <a name="line.166"></a>
+<span class="sourceLineNo">167</span>         *     j---k1 <a name="line.167"></a>
+<span class="sourceLineNo">168</span>         *     |\<a name="line.168"></a>
+<span class="sourceLineNo">169</span>         *     | \<a name="line.169"></a>
+<span class="sourceLineNo">170</span>         *     k2 k3<a name="line.170"></a>
+<span class="sourceLineNo">171</span>         */<a name="line.171"></a>
+<span class="sourceLineNo">172</span>        private final AggregationObject[] aggregateOpportunities(final ActivityFacilities opportunities, Network network) {<a name="line.172"></a>
+<span class="sourceLineNo">173</span>                // yyyy this method ignores the "capacities" of the facilities. kai, mar'14<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                // for now, we decided not to add "capacities" as it is not needed for current projects. dz, feb'16<a name="line.174"></a>
+<span class="sourceLineNo">175</span><a name="line.175"></a>
+<span class="sourceLineNo">176</span>                LOG.info("Aggregating " + opportunities.getFacilities().size() + " opportunities with identical nearest node...");<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                Map&lt;Id&lt;Node&gt;, AggregationObject&gt; opportunityClusterMap = new ConcurrentHashMap&lt;&gt;();<a name="line.177"></a>
+<span class="sourceLineNo">178</span>                ProgressBar progressBar = new ProgressBar(opportunities.getFacilities().size());<a name="line.178"></a>
+<span class="sourceLineNo">179</span><a name="line.179"></a>
+<span class="sourceLineNo">180</span>                for (ActivityFacility opportunity : opportunities.getFacilities().values()) {<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                        progressBar.update();<a name="line.181"></a>
+<span class="sourceLineNo">182</span><a name="line.182"></a>
+<span class="sourceLineNo">183</span>                        Node nearestNode = NetworkUtils.getNearestNode(network, opportunity.getCoord());<a name="line.183"></a>
+<span class="sourceLineNo">184</span>                        double distance_m = NetworkUtils.getEuclideanDistance(opportunity.getCoord(), nearestNode.getCoord());<a name="line.184"></a>
+<span class="sourceLineNo">185</span>                        <a name="line.185"></a>
+<span class="sourceLineNo">186</span>                        // in MATSim this is [utils/h]: cnScoringGroup.getTravelingWalk_utils_hr() - cnScoringGroup.getPerforming_utils_hr()<a name="line.186"></a>
+<span class="sourceLineNo">187</span>                        double walkBetaTT_utils_h = this.cnScoringGroup.getModes().get(TransportMode.walk).getMarginalUtilityOfTraveling()<a name="line.187"></a>
+<span class="sourceLineNo">188</span>                                        - this.cnScoringGroup.getPerforming_utils_hr(); // default values: -12 = (-6.) - (6.)<a name="line.188"></a>
+<span class="sourceLineNo">189</span>                        double VjkWalkTravelTime = walkBetaTT_utils_h * (distance_m / this.walkSpeed_m_h);<a name="line.189"></a>
+<span class="sourceLineNo">190</span>                        // System.out.println("VjkWalkTravelTime = " + VjkWalkTravelTime);<a name="line.190"></a>
+<span class="sourceLineNo">191</span>                        <a name="line.191"></a>
+<span class="sourceLineNo">192</span>                        // in MATSim this is 0 !!! since getMonetaryDistanceCostRateWalk doesn't exist:<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                        double walkBetaTD_utils_m = cnScoringGroup.getModes().get(TransportMode.walk).getMarginalUtilityOfDistance(); // default value: 0.<a name="line.193"></a>
+<span class="sourceLineNo">194</span>                        double VjkWalkDistance = walkBetaTD_utils_m * distance_m;<a name="line.194"></a>
+<span class="sourceLineNo">195</span>                        // System.out.println("VjkWalkDistance = " + VjkWalkDistance);<a name="line.195"></a>
+<span class="sourceLineNo">196</span>                        <a name="line.196"></a>
+<span class="sourceLineNo">197</span>                        double expVjk = Math.exp(this.cnScoringGroup.getBrainExpBeta() * (VjkWalkTravelTime + VjkWalkDistance));<a name="line.197"></a>
+<span class="sourceLineNo">198</span><a name="line.198"></a>
+<span class="sourceLineNo">199</span>                        // add Vjk to sum<a name="line.199"></a>
+<span class="sourceLineNo">200</span>                        AggregationObject jco = opportunityClusterMap.get(nearestNode.getId()); // Why "jco"?<a name="line.200"></a>
+<span class="sourceLineNo">201</span>                        if (jco == null) {<a name="line.201"></a>
+<span class="sourceLineNo">202</span>                                jco = new AggregationObject(opportunity.getId(), null, null, nearestNode, 0.); // Important: Initialize with zero!<a name="line.202"></a>
+<span class="sourceLineNo">203</span>                                // This is a bit counter-intuitive. The first opportunity is added twice to the aggregation object, but the first time with zero<a name="line.203"></a>
+<span class="sourceLineNo">204</span>                                // "impact". Leave it as is for the time being as urbanSim code uses this, dz, july'17<a name="line.204"></a>
+<span class="sourceLineNo">205</span>                                opportunityClusterMap.put(nearestNode.getId(), jco); <a name="line.205"></a>
+<span class="sourceLineNo">206</span>                        }<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                        if (acg.getUseOpportunityWeights()) {<a name="line.207"></a>
+<span class="sourceLineNo">208</span>                                if (opportunity.getCustomAttributes().get("weight") == null) {<a name="line.208"></a>
+<span class="sourceLineNo">209</span>                                        throw new RuntimeException("If option \"useOpportunityWeights\" is used, the facilities must have an attribute with key \"weight\"");<a name="line.209"></a>
+<span class="sourceLineNo">210</span>                                } else {<a name="line.210"></a>
+<span class="sourceLineNo">211</span>                                        double weight = (double) opportunity.getCustomAttributes().get("weight");<a name="line.211"></a>
+<span class="sourceLineNo">212</span>                                        jco.addObject(opportunity.getId(), expVjk * Math.pow(weight, acg.getWeightExponent()));<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                                }<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                        } else {<a name="line.214"></a>
+<span class="sourceLineNo">215</span>                                jco.addObject(opportunity.getId(), expVjk);<a name="line.215"></a>
+<span class="sourceLineNo">216</span>                        }<a name="line.216"></a>
+<span class="sourceLineNo">217</span>//                      LOG.info("--- numberOfObjects = " + jco.getNumberOfObjects() + " --- objectIds = " + jco.getObjectIds());<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                }<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                LOG.warn("Here is an error in the aggregation! Fix this soon with other changes that alter test reults!");<a name="line.219"></a>
+<span class="sourceLineNo">220</span>                LOG.info("Aggregated " + opportunities.getFacilities().size() + " opportunities to " + opportunityClusterMap.size() + " nodes.");<a name="line.220"></a>
+<span class="sourceLineNo">221</span>                return opportunityClusterMap.values().toArray(new AggregationObject[opportunityClusterMap.size()]);<a name="line.221"></a>
+<span class="sourceLineNo">222</span>        }<a name="line.222"></a>
+<span class="sourceLineNo">223</span><a name="line.223"></a>
+<span class="sourceLineNo">224</span>        private Map&lt;Id&lt;Node&gt;, ArrayList&lt;ActivityFacility&gt;&gt; aggregateMeasurePointsWithSameNearestNode() {<a name="line.224"></a>
+<span class="sourceLineNo">225</span>                Map&lt;Id&lt;Node&gt;,ArrayList&lt;ActivityFacility&gt;&gt; aggregatedOrigins = new ConcurrentHashMap&lt;&gt;();<a name="line.225"></a>
+<span class="sourceLineNo">226</span><a name="line.226"></a>
+<span class="sourceLineNo">227</span>                Gbl.assertNotNull(measuringPoints);<a name="line.227"></a>
+<span class="sourceLineNo">228</span>                Gbl.assertNotNull(measuringPoints.getFacilities()) ;<a name="line.228"></a>
+<span class="sourceLineNo">229</span>                for (ActivityFacility measuringPoint : measuringPoints.getFacilities().values()) {<a name="line.229"></a>
+<span class="sourceLineNo">230</span><a name="line.230"></a>
+<span class="sourceLineNo">231</span>                        // Determine nearest network node (from- or toNode) based on the link<a name="line.231"></a>
+<span class="sourceLineNo">232</span>                        Node nearestNode = NetworkUtils.getCloserNodeOnLink(measuringPoint.getCoord(),  NetworkUtils.getNearestLinkExactly(network, measuringPoint.getCoord()));<a name="line.232"></a>
+<span class="sourceLineNo">233</span>                        Id&lt;Node&gt; nearestNodeId = nearestNode.getId();<a name="line.233"></a>
+<span class="sourceLineNo">234</span><a name="line.234"></a>
+<span class="sourceLineNo">235</span>                        // Create new entry if key does not exist!<a name="line.235"></a>
+<span class="sourceLineNo">236</span>                        if(!aggregatedOrigins.containsKey(nearestNodeId)) {<a name="line.236"></a>
+<span class="sourceLineNo">237</span>                                aggregatedOrigins.put(nearestNodeId, new ArrayList&lt;ActivityFacility&gt;());<a name="line.237"></a>
+<span class="sourceLineNo">238</span>                        }<a name="line.238"></a>
+<span class="sourceLineNo">239</span>                        // Assign measure point (origin) to it's nearest node<a name="line.239"></a>
+<span class="sourceLineNo">240</span>                        aggregatedOrigins.get(nearestNodeId).add(measuringPoint);<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                }<a name="line.241"></a>
+<span class="sourceLineNo">242</span>                LOG.info("Number of measuring points: " + measuringPoints.getFacilities().values().size());<a name="line.242"></a>
+<span class="sourceLineNo">243</span>                LOG.info("Number of aggregated measuring points: " + aggregatedOrigins.size());<a name="line.243"></a>
+<span class="sourceLineNo">244</span>                return aggregatedOrigins;<a name="line.244"></a>
+<span class="sourceLineNo">245</span>        }<a name="line.245"></a>
+<span class="sourceLineNo">246</span><a name="line.246"></a>
+<span class="sourceLineNo">247</span>        public final void putAccessibilityContributionCalculator(String mode, AccessibilityContributionCalculator calculator) {<a name="line.247"></a>
+<span class="sourceLineNo">248</span>                LOG.info("Adding accessibility contribution calculator for " + mode + ".");<a name="line.248"></a>
+<span class="sourceLineNo">249</span>                Gbl.assertNotNull(calculator);<a name="line.249"></a>
+<span class="sourceLineNo">250</span>                this.calculators.put(mode , calculator) ;<a name="line.250"></a>
+<span class="sourceLineNo">251</span>        }<a name="line.251"></a>
+<span class="sourceLineNo">252</span><a name="line.252"></a>
+<span class="sourceLineNo">253</span>        public Set&lt;String&gt; getModes() {<a name="line.253"></a>
+<span class="sourceLineNo">254</span>                return this.calculators.keySet() ;<a name="line.254"></a>
+<span class="sourceLineNo">255</span>        }<a name="line.255"></a>
+<span class="sourceLineNo">256</span>        <a name="line.256"></a>
+<span class="sourceLineNo">257</span>        public void addFacilityDataExchangeListener(FacilityDataExchangeInterface listener){<a name="line.257"></a>
+<span class="sourceLineNo">258</span>                this.zoneDataExchangeListeners.add(listener);<a name="line.258"></a>
+<span class="sourceLineNo">259</span>        }<a name="line.259"></a>
+<span class="sourceLineNo">260</span>}<a name="line.260"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

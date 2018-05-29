@@ -1,0 +1,235 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>package org.matsim.core.scoring;<a name="line.1"></a>
+<span class="sourceLineNo">002</span><a name="line.2"></a>
+<span class="sourceLineNo">003</span>import org.apache.log4j.Logger;<a name="line.3"></a>
+<span class="sourceLineNo">004</span>import org.matsim.api.core.v01.events.Event;<a name="line.4"></a>
+<span class="sourceLineNo">005</span>import org.matsim.api.core.v01.population.Activity;<a name="line.5"></a>
+<span class="sourceLineNo">006</span>import org.matsim.api.core.v01.population.Leg;<a name="line.6"></a>
+<span class="sourceLineNo">007</span>import org.matsim.core.utils.misc.Time;<a name="line.7"></a>
+<span class="sourceLineNo">008</span><a name="line.8"></a>
+<span class="sourceLineNo">009</span>import java.util.ArrayList;<a name="line.9"></a>
+<span class="sourceLineNo">010</span><a name="line.10"></a>
+<span class="sourceLineNo">011</span>public final class SumScoringFunction implements ScoringFunction {<a name="line.11"></a>
+<span class="sourceLineNo">012</span><a name="line.12"></a>
+<span class="sourceLineNo">013</span>        public interface BasicScoring {<a name="line.13"></a>
+<span class="sourceLineNo">014</span>                public void finish();<a name="line.14"></a>
+<span class="sourceLineNo">015</span>                public double getScore();<a name="line.15"></a>
+<span class="sourceLineNo">016</span>        }<a name="line.16"></a>
+<span class="sourceLineNo">017</span><a name="line.17"></a>
+<span class="sourceLineNo">018</span>        public interface ActivityScoring extends BasicScoring {<a name="line.18"></a>
+<span class="sourceLineNo">019</span>                void handleFirstActivity(final Activity act);<a name="line.19"></a>
+<span class="sourceLineNo">020</span>                void handleActivity(final Activity act);<a name="line.20"></a>
+<span class="sourceLineNo">021</span>                void handleLastActivity(final Activity act);<a name="line.21"></a>
+<span class="sourceLineNo">022</span>        }<a name="line.22"></a>
+<span class="sourceLineNo">023</span><a name="line.23"></a>
+<span class="sourceLineNo">024</span>        public interface LegScoring extends BasicScoring {<a name="line.24"></a>
+<span class="sourceLineNo">025</span>                void handleLeg(final Leg leg);<a name="line.25"></a>
+<span class="sourceLineNo">026</span>        }<a name="line.26"></a>
+<span class="sourceLineNo">027</span><a name="line.27"></a>
+<span class="sourceLineNo">028</span>        public interface MoneyScoring extends BasicScoring {<a name="line.28"></a>
+<span class="sourceLineNo">029</span>                void addMoney(final double amount);<a name="line.29"></a>
+<span class="sourceLineNo">030</span>        }<a name="line.30"></a>
+<span class="sourceLineNo">031</span><a name="line.31"></a>
+<span class="sourceLineNo">032</span>        public interface AgentStuckScoring extends BasicScoring {<a name="line.32"></a>
+<span class="sourceLineNo">033</span>                void agentStuck(final double time);<a name="line.33"></a>
+<span class="sourceLineNo">034</span>        }<a name="line.34"></a>
+<span class="sourceLineNo">035</span><a name="line.35"></a>
+<span class="sourceLineNo">036</span>        /**<a name="line.36"></a>
+<span class="sourceLineNo">037</span>         * NOTE: Despite its somewhat misleading name, only Events that at the same time implement HasPersonId are passed <a name="line.37"></a>
+<span class="sourceLineNo">038</span>         * through this interface.  This excludes, in particular, LinkEnterEvent and LinkLeaveEvent.  This was done for performance reasons,<a name="line.38"></a>
+<span class="sourceLineNo">039</span>         * since passing those events to all handlers imposes a significant additional burden.  See comments in <a name="line.39"></a>
+<span class="sourceLineNo">040</span>         * and implementation of the handleEvent <a name="line.40"></a>
+<span class="sourceLineNo">041</span>         * method in {@link EventsToScore}. (yyyyyy Those comments, and possibly also the events filtering, have gone<a name="line.41"></a>
+<span class="sourceLineNo">042</span>         * from EventsToScore in commit e718809884cac6a86bdc35ea2a03c10195d37c69 .  I don't know if the performance consequences<a name="line.42"></a>
+<span class="sourceLineNo">043</span>         * were tested.) <a name="line.43"></a>
+<span class="sourceLineNo">044</span>         * <a name="line.44"></a>
+<span class="sourceLineNo">045</span>         * @author nagel<a name="line.45"></a>
+<span class="sourceLineNo">046</span>         */<a name="line.46"></a>
+<span class="sourceLineNo">047</span>        public interface ArbitraryEventScoring extends BasicScoring {<a name="line.47"></a>
+<span class="sourceLineNo">048</span>                void handleEvent( final Event event ) ;<a name="line.48"></a>
+<span class="sourceLineNo">049</span>        }<a name="line.49"></a>
+<span class="sourceLineNo">050</span><a name="line.50"></a>
+<span class="sourceLineNo">051</span>        private static Logger log = Logger.getLogger(SumScoringFunction.class);<a name="line.51"></a>
+<span class="sourceLineNo">052</span><a name="line.52"></a>
+<span class="sourceLineNo">053</span>        private ArrayList&lt;BasicScoring&gt; basicScoringFunctions = new ArrayList&lt;BasicScoring&gt;();<a name="line.53"></a>
+<span class="sourceLineNo">054</span>        private ArrayList&lt;ActivityScoring&gt; activityScoringFunctions = new ArrayList&lt;ActivityScoring&gt;();<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        private ArrayList&lt;MoneyScoring&gt; moneyScoringFunctions = new ArrayList&lt;MoneyScoring&gt;();<a name="line.55"></a>
+<span class="sourceLineNo">056</span>        private ArrayList&lt;LegScoring&gt; legScoringFunctions = new ArrayList&lt;LegScoring&gt;();<a name="line.56"></a>
+<span class="sourceLineNo">057</span>        private ArrayList&lt;AgentStuckScoring&gt; agentStuckScoringFunctions = new ArrayList&lt;AgentStuckScoring&gt;();<a name="line.57"></a>
+<span class="sourceLineNo">058</span>        private ArrayList&lt;ArbitraryEventScoring&gt; arbtraryEventScoringFunctions = new ArrayList&lt;ArbitraryEventScoring&gt;() ;<a name="line.58"></a>
+<span class="sourceLineNo">059</span><a name="line.59"></a>
+<span class="sourceLineNo">060</span>        @Override<a name="line.60"></a>
+<span class="sourceLineNo">061</span>        public final void handleActivity(Activity activity) {<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                double startTime = activity.getStartTime();<a name="line.62"></a>
+<span class="sourceLineNo">063</span>                double endTime = activity.getEndTime();<a name="line.63"></a>
+<span class="sourceLineNo">064</span>                if (startTime == Time.UNDEFINED_TIME &amp;&amp; endTime != Time.UNDEFINED_TIME) {<a name="line.64"></a>
+<span class="sourceLineNo">065</span>                        for (ActivityScoring activityScoringFunction : activityScoringFunctions) {<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                                activityScoringFunction.handleFirstActivity(activity);<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                        }<a name="line.67"></a>
+<span class="sourceLineNo">068</span>                } else if (startTime != Time.UNDEFINED_TIME &amp;&amp; endTime != Time.UNDEFINED_TIME) {<a name="line.68"></a>
+<span class="sourceLineNo">069</span>                        for (ActivityScoring activityScoringFunction : activityScoringFunctions) {<a name="line.69"></a>
+<span class="sourceLineNo">070</span>                                activityScoringFunction.handleActivity(activity);<a name="line.70"></a>
+<span class="sourceLineNo">071</span>                        }<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                } else if (startTime != Time.UNDEFINED_TIME &amp;&amp; endTime == Time.UNDEFINED_TIME) {<a name="line.72"></a>
+<span class="sourceLineNo">073</span>                        for (ActivityScoring activityScoringFunction : activityScoringFunctions) {<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                                activityScoringFunction.handleLastActivity(activity);<a name="line.74"></a>
+<span class="sourceLineNo">075</span>                        }<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                } else {<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                        throw new RuntimeException("Trying to score an activity without start or end time. Should not happen.");        <a name="line.77"></a>
+<span class="sourceLineNo">078</span>                }<a name="line.78"></a>
+<span class="sourceLineNo">079</span>        }<a name="line.79"></a>
+<span class="sourceLineNo">080</span><a name="line.80"></a>
+<span class="sourceLineNo">081</span>        @Override<a name="line.81"></a>
+<span class="sourceLineNo">082</span>        public final void handleLeg(Leg leg) {<a name="line.82"></a>
+<span class="sourceLineNo">083</span>                for (LegScoring legScoringFunction : legScoringFunctions) {<a name="line.83"></a>
+<span class="sourceLineNo">084</span>                        legScoringFunction.handleLeg(leg);<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                }<a name="line.85"></a>
+<span class="sourceLineNo">086</span>        }<a name="line.86"></a>
+<span class="sourceLineNo">087</span><a name="line.87"></a>
+<span class="sourceLineNo">088</span>        @Override<a name="line.88"></a>
+<span class="sourceLineNo">089</span>        public void addMoney(double amount) {<a name="line.89"></a>
+<span class="sourceLineNo">090</span>                for (MoneyScoring moneyScoringFunction : moneyScoringFunctions) {<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                        moneyScoringFunction.addMoney(amount);<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                }<a name="line.92"></a>
+<span class="sourceLineNo">093</span>        }<a name="line.93"></a>
+<span class="sourceLineNo">094</span><a name="line.94"></a>
+<span class="sourceLineNo">095</span>        @Override<a name="line.95"></a>
+<span class="sourceLineNo">096</span>        public void agentStuck(double time) {<a name="line.96"></a>
+<span class="sourceLineNo">097</span>                for (AgentStuckScoring agentStuckScoringFunction : agentStuckScoringFunctions) {<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                        agentStuckScoringFunction.agentStuck(time);<a name="line.98"></a>
+<span class="sourceLineNo">099</span>                }<a name="line.99"></a>
+<span class="sourceLineNo">100</span>        }<a name="line.100"></a>
+<span class="sourceLineNo">101</span><a name="line.101"></a>
+<span class="sourceLineNo">102</span>        @Override<a name="line.102"></a>
+<span class="sourceLineNo">103</span>        public void handleEvent(Event event) {<a name="line.103"></a>
+<span class="sourceLineNo">104</span>                for ( ArbitraryEventScoring eventScoringFunction : this.arbtraryEventScoringFunctions ) {<a name="line.104"></a>
+<span class="sourceLineNo">105</span>                        eventScoringFunction.handleEvent(event) ;<a name="line.105"></a>
+<span class="sourceLineNo">106</span>                }<a name="line.106"></a>
+<span class="sourceLineNo">107</span>        }<a name="line.107"></a>
+<span class="sourceLineNo">108</span><a name="line.108"></a>
+<span class="sourceLineNo">109</span>        @Override<a name="line.109"></a>
+<span class="sourceLineNo">110</span>        public void finish() {<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                for (BasicScoring basicScoringFunction : basicScoringFunctions) {<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                        basicScoringFunction.finish();<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                }<a name="line.113"></a>
+<span class="sourceLineNo">114</span>        }<a name="line.114"></a>
+<span class="sourceLineNo">115</span><a name="line.115"></a>
+<span class="sourceLineNo">116</span>        /**<a name="line.116"></a>
+<span class="sourceLineNo">117</span>         * Add the score of all functions.<a name="line.117"></a>
+<span class="sourceLineNo">118</span>         */<a name="line.118"></a>
+<span class="sourceLineNo">119</span>        @Override<a name="line.119"></a>
+<span class="sourceLineNo">120</span>        public double getScore() {<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                double score = 0.0;<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                for (BasicScoring basicScoringFunction : basicScoringFunctions) {<a name="line.122"></a>
+<span class="sourceLineNo">123</span>                        double contribution = basicScoringFunction.getScore();<a name="line.123"></a>
+<span class="sourceLineNo">124</span>                        if (log.isTraceEnabled()) {<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                                log.trace("Contribution of scoring function: " + basicScoringFunction.getClass().getName() + " is: " + contribution);<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                        }<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                        if ( Double.isNaN( contribution ) ) {<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                                // I consider this dangerous enough to justify a crash. If somebody has strong arguments for NaN scores,<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                                // one might change this to "log.error(...)". td june 15<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                                throw new RuntimeException( "Contribution of scoring function: " + basicScoringFunction.getClass().getName() + " is NaN! Behavior with NaN scores is undefined." );<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                        }<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                        score += contribution;<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                }<a name="line.133"></a>
+<span class="sourceLineNo">134</span>                return score;<a name="line.134"></a>
+<span class="sourceLineNo">135</span>        }<a name="line.135"></a>
+<span class="sourceLineNo">136</span><a name="line.136"></a>
+<span class="sourceLineNo">137</span>        public void addScoringFunction(BasicScoring scoringFunction) {<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                basicScoringFunctions.add(scoringFunction);<a name="line.138"></a>
+<span class="sourceLineNo">139</span><a name="line.139"></a>
+<span class="sourceLineNo">140</span>                if (scoringFunction instanceof ActivityScoring) {<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                        activityScoringFunctions.add((ActivityScoring) scoringFunction);<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                }<a name="line.142"></a>
+<span class="sourceLineNo">143</span><a name="line.143"></a>
+<span class="sourceLineNo">144</span>                if (scoringFunction instanceof AgentStuckScoring) {<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                        agentStuckScoringFunctions.add((AgentStuckScoring) scoringFunction);<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                }<a name="line.146"></a>
+<span class="sourceLineNo">147</span><a name="line.147"></a>
+<span class="sourceLineNo">148</span>                if (scoringFunction instanceof LegScoring) {<a name="line.148"></a>
+<span class="sourceLineNo">149</span>                        legScoringFunctions.add((LegScoring) scoringFunction);<a name="line.149"></a>
+<span class="sourceLineNo">150</span>                }<a name="line.150"></a>
+<span class="sourceLineNo">151</span><a name="line.151"></a>
+<span class="sourceLineNo">152</span>                if (scoringFunction instanceof MoneyScoring) {<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                        moneyScoringFunctions.add((MoneyScoring) scoringFunction);<a name="line.153"></a>
+<span class="sourceLineNo">154</span>                }<a name="line.154"></a>
+<span class="sourceLineNo">155</span><a name="line.155"></a>
+<span class="sourceLineNo">156</span>                if (scoringFunction instanceof ArbitraryEventScoring ) {<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                        this.arbtraryEventScoringFunctions.add((ArbitraryEventScoring) scoringFunction) ;<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                }<a name="line.158"></a>
+<span class="sourceLineNo">159</span><a name="line.159"></a>
+<span class="sourceLineNo">160</span>        }<a name="line.160"></a>
+<span class="sourceLineNo">161</span><a name="line.161"></a>
+<span class="sourceLineNo">162</span><a name="line.162"></a>
+<span class="sourceLineNo">163</span>}<a name="line.163"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

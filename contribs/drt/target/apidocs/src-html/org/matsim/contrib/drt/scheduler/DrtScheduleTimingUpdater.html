@@ -1,0 +1,213 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> * *********************************************************************** *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> *                                                                         *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> * copyright       : (C) 2018 by the members listed in the COPYING,        *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> *                   LICENSE and WARRANTY file.                            *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> * email           : info at matsim dot org                                *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> *                                                                         *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> * *********************************************************************** *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> *                                                                         *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   (at your option) any later version.                                   *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *                                                                         *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> * *********************************************************************** */<a name="line.17"></a>
+<span class="sourceLineNo">018</span><a name="line.18"></a>
+<span class="sourceLineNo">019</span>package org.matsim.contrib.drt.scheduler;<a name="line.19"></a>
+<span class="sourceLineNo">020</span><a name="line.20"></a>
+<span class="sourceLineNo">021</span>import java.util.List;<a name="line.21"></a>
+<span class="sourceLineNo">022</span><a name="line.22"></a>
+<span class="sourceLineNo">023</span>import org.matsim.contrib.drt.run.DrtConfigGroup;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import org.matsim.contrib.drt.schedule.DrtTask;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import org.matsim.contrib.dvrp.data.Vehicle;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import org.matsim.contrib.dvrp.path.VrpPathWithTravelData;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.matsim.contrib.dvrp.schedule.DriveTask;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.contrib.dvrp.schedule.Schedule;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.contrib.dvrp.schedule.Schedule.ScheduleStatus;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.contrib.dvrp.schedule.Schedules;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.contrib.dvrp.schedule.Task;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.contrib.dvrp.tracker.TaskTrackers;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.core.mobsim.framework.MobsimTimer;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.core.utils.misc.Time;<a name="line.34"></a>
+<span class="sourceLineNo">035</span><a name="line.35"></a>
+<span class="sourceLineNo">036</span>import com.google.inject.Inject;<a name="line.36"></a>
+<span class="sourceLineNo">037</span><a name="line.37"></a>
+<span class="sourceLineNo">038</span>/**<a name="line.38"></a>
+<span class="sourceLineNo">039</span> * @author michalm<a name="line.39"></a>
+<span class="sourceLineNo">040</span> */<a name="line.40"></a>
+<span class="sourceLineNo">041</span>public class DrtScheduleTimingUpdater {<a name="line.41"></a>
+<span class="sourceLineNo">042</span>        private final double stopDuration;<a name="line.42"></a>
+<span class="sourceLineNo">043</span>        private final MobsimTimer timer;<a name="line.43"></a>
+<span class="sourceLineNo">044</span><a name="line.44"></a>
+<span class="sourceLineNo">045</span>        @Inject<a name="line.45"></a>
+<span class="sourceLineNo">046</span>        public DrtScheduleTimingUpdater(DrtConfigGroup drtCfg, MobsimTimer timer) {<a name="line.46"></a>
+<span class="sourceLineNo">047</span>                this.stopDuration = drtCfg.getStopDuration();<a name="line.47"></a>
+<span class="sourceLineNo">048</span>                this.timer = timer;<a name="line.48"></a>
+<span class="sourceLineNo">049</span>        }<a name="line.49"></a>
+<span class="sourceLineNo">050</span><a name="line.50"></a>
+<span class="sourceLineNo">051</span>        /**<a name="line.51"></a>
+<span class="sourceLineNo">052</span>         * Check and decide if the schedule should be updated due to if vehicle is Update timings (i.e. beginTime and<a name="line.52"></a>
+<span class="sourceLineNo">053</span>         * endTime) of all tasks in the schedule.<a name="line.53"></a>
+<span class="sourceLineNo">054</span>         */<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        public void updateBeforeNextTask(Vehicle vehicle) {<a name="line.55"></a>
+<span class="sourceLineNo">056</span>                Schedule schedule = vehicle.getSchedule();<a name="line.56"></a>
+<span class="sourceLineNo">057</span>                // Assumption: there is no delay as long as the schedule has not been started (PLANNED)<a name="line.57"></a>
+<span class="sourceLineNo">058</span>                if (schedule.getStatus() != ScheduleStatus.STARTED) {<a name="line.58"></a>
+<span class="sourceLineNo">059</span>                        return;<a name="line.59"></a>
+<span class="sourceLineNo">060</span>                }<a name="line.60"></a>
+<span class="sourceLineNo">061</span><a name="line.61"></a>
+<span class="sourceLineNo">062</span>                updateTimingsStartingFromCurrentTask(vehicle, timer.getTimeOfDay());<a name="line.62"></a>
+<span class="sourceLineNo">063</span>        }<a name="line.63"></a>
+<span class="sourceLineNo">064</span><a name="line.64"></a>
+<span class="sourceLineNo">065</span>        public void updateTimings(Vehicle vehicle) {<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                Schedule schedule = vehicle.getSchedule();<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                if (schedule.getStatus() != ScheduleStatus.STARTED) {<a name="line.67"></a>
+<span class="sourceLineNo">068</span>                        return;<a name="line.68"></a>
+<span class="sourceLineNo">069</span>                }<a name="line.69"></a>
+<span class="sourceLineNo">070</span><a name="line.70"></a>
+<span class="sourceLineNo">071</span>                double predictedEndTime = TaskTrackers.predictEndTime(schedule.getCurrentTask(), timer.getTimeOfDay());<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                updateTimingsStartingFromCurrentTask(vehicle, predictedEndTime);<a name="line.72"></a>
+<span class="sourceLineNo">073</span>        }<a name="line.73"></a>
+<span class="sourceLineNo">074</span><a name="line.74"></a>
+<span class="sourceLineNo">075</span>        private void updateTimingsStartingFromCurrentTask(Vehicle vehicle, double newEndTime) {<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                Schedule schedule = vehicle.getSchedule();<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                Task currentTask = schedule.getCurrentTask();<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                if (currentTask.getEndTime() != newEndTime) {<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                        currentTask.setEndTime(newEndTime);<a name="line.79"></a>
+<span class="sourceLineNo">080</span>                        updateTimingsStartingFromTaskIdx(vehicle, currentTask.getTaskIdx() + 1, newEndTime);<a name="line.80"></a>
+<span class="sourceLineNo">081</span>                }<a name="line.81"></a>
+<span class="sourceLineNo">082</span>        }<a name="line.82"></a>
+<span class="sourceLineNo">083</span><a name="line.83"></a>
+<span class="sourceLineNo">084</span>        void updateTimingsStartingFromTaskIdx(Vehicle vehicle, int startIdx, double newBeginTime) {<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                Schedule schedule = vehicle.getSchedule();<a name="line.85"></a>
+<span class="sourceLineNo">086</span>                List&lt;? extends Task&gt; tasks = schedule.getTasks();<a name="line.86"></a>
+<span class="sourceLineNo">087</span><a name="line.87"></a>
+<span class="sourceLineNo">088</span>                for (int i = startIdx; i &lt; tasks.size(); i++) {<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                        DrtTask task = (DrtTask)tasks.get(i);<a name="line.89"></a>
+<span class="sourceLineNo">090</span>                        double calcEndTime = calcNewEndTime(vehicle, task, newBeginTime);<a name="line.90"></a>
+<span class="sourceLineNo">091</span><a name="line.91"></a>
+<span class="sourceLineNo">092</span>                        if (Time.isUndefinedTime(calcEndTime)) {<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                                schedule.removeTask(task);<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                                i--;<a name="line.94"></a>
+<span class="sourceLineNo">095</span>                        } else if (calcEndTime &lt; newBeginTime) {// 0 s is fine (e.g. last 'wait')<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                                throw new IllegalStateException();<a name="line.96"></a>
+<span class="sourceLineNo">097</span>                        } else {<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                                task.setBeginTime(newBeginTime);<a name="line.98"></a>
+<span class="sourceLineNo">099</span>                                task.setEndTime(calcEndTime);<a name="line.99"></a>
+<span class="sourceLineNo">100</span>                                newBeginTime = calcEndTime;<a name="line.100"></a>
+<span class="sourceLineNo">101</span>                        }<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                }<a name="line.102"></a>
+<span class="sourceLineNo">103</span>        }<a name="line.103"></a>
+<span class="sourceLineNo">104</span><a name="line.104"></a>
+<span class="sourceLineNo">105</span>        private double calcNewEndTime(Vehicle vehicle, DrtTask task, double newBeginTime) {<a name="line.105"></a>
+<span class="sourceLineNo">106</span>                switch (task.getDrtTaskType()) {<a name="line.106"></a>
+<span class="sourceLineNo">107</span>                        case STAY: {<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                                if (Schedules.getLastTask(vehicle.getSchedule()).equals(task)) {// last task<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                                        // even if endTime=beginTime, do not remove this task!!! A DRT schedule should end with WAIT<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                                        return Math.max(newBeginTime, vehicle.getServiceEndTime());<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                                } else {<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                                        // if this is not the last task then some other task (e.g. DRIVE or PICKUP)<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                                        // must have been added at time submissionTime &lt;= t<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                                        double oldEndTime = task.getEndTime();<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                                        if (oldEndTime &lt;= newBeginTime) {// may happen if the previous task is delayed<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                                                return Time.UNDEFINED_TIME;// remove the task<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                                        } else {<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                                                return oldEndTime;<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                                        }<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                                }<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                        }<a name="line.121"></a>
+<span class="sourceLineNo">122</span><a name="line.122"></a>
+<span class="sourceLineNo">123</span>                        case DRIVE: {<a name="line.123"></a>
+<span class="sourceLineNo">124</span>                                // cannot be shortened/lengthen, therefore must be moved forward/backward<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                                VrpPathWithTravelData path = (VrpPathWithTravelData)((DriveTask)task).getPath();<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                                // TODO one may consider recalculation of SP!!!!<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                                return newBeginTime + path.getTravelTime();<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                        }<a name="line.128"></a>
+<span class="sourceLineNo">129</span><a name="line.129"></a>
+<span class="sourceLineNo">130</span>                        case STOP: {<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                                // TODO does not consider prebooking!!!<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                                double duration = stopDuration;<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                                return newBeginTime + duration;<a name="line.133"></a>
+<span class="sourceLineNo">134</span>                        }<a name="line.134"></a>
+<span class="sourceLineNo">135</span><a name="line.135"></a>
+<span class="sourceLineNo">136</span>                        default:<a name="line.136"></a>
+<span class="sourceLineNo">137</span>                                throw new IllegalStateException();<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                }<a name="line.138"></a>
+<span class="sourceLineNo">139</span>        }<a name="line.139"></a>
+<span class="sourceLineNo">140</span><a name="line.140"></a>
+<span class="sourceLineNo">141</span>}<a name="line.141"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

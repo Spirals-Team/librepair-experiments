@@ -1,0 +1,322 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>package org.matsim.contrib.matsim4urbansim.utils.network;<a name="line.1"></a>
+<span class="sourceLineNo">002</span><a name="line.2"></a>
+<span class="sourceLineNo">003</span>import java.util.List;<a name="line.3"></a>
+<span class="sourceLineNo">004</span>import java.util.Map;<a name="line.4"></a>
+<span class="sourceLineNo">005</span>import java.util.concurrent.ConcurrentHashMap;<a name="line.5"></a>
+<span class="sourceLineNo">006</span><a name="line.6"></a>
+<span class="sourceLineNo">007</span>import org.apache.log4j.Logger;<a name="line.7"></a>
+<span class="sourceLineNo">008</span>import org.matsim.api.core.v01.Coord;<a name="line.8"></a>
+<span class="sourceLineNo">009</span>import org.matsim.api.core.v01.Id;<a name="line.9"></a>
+<span class="sourceLineNo">010</span>import org.matsim.api.core.v01.network.Link;<a name="line.10"></a>
+<span class="sourceLineNo">011</span>import org.matsim.api.core.v01.network.Network;<a name="line.11"></a>
+<span class="sourceLineNo">012</span>import org.matsim.core.network.NetworkUtils;<a name="line.12"></a>
+<span class="sourceLineNo">013</span>import org.matsim.core.utils.geometry.CoordUtils;<a name="line.13"></a>
+<span class="sourceLineNo">014</span>import org.matsim.core.utils.geometry.CoordinateTransformation;<a name="line.14"></a>
+<span class="sourceLineNo">015</span>import org.openstreetmap.osmosis.core.container.v0_6.BoundContainer;<a name="line.15"></a>
+<span class="sourceLineNo">016</span>import org.openstreetmap.osmosis.core.container.v0_6.EntityContainer;<a name="line.16"></a>
+<span class="sourceLineNo">017</span>import org.openstreetmap.osmosis.core.container.v0_6.EntityProcessor;<a name="line.17"></a>
+<span class="sourceLineNo">018</span>import org.openstreetmap.osmosis.core.container.v0_6.NodeContainer;<a name="line.18"></a>
+<span class="sourceLineNo">019</span>import org.openstreetmap.osmosis.core.container.v0_6.RelationContainer;<a name="line.19"></a>
+<span class="sourceLineNo">020</span>import org.openstreetmap.osmosis.core.container.v0_6.WayContainer;<a name="line.20"></a>
+<span class="sourceLineNo">021</span>import org.openstreetmap.osmosis.core.domain.v0_6.Node;<a name="line.21"></a>
+<span class="sourceLineNo">022</span>import org.openstreetmap.osmosis.core.domain.v0_6.Tag;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import org.openstreetmap.osmosis.core.domain.v0_6.TagCollectionImpl;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import org.openstreetmap.osmosis.core.domain.v0_6.Way;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import org.openstreetmap.osmosis.core.domain.v0_6.WayNode;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import org.openstreetmap.osmosis.core.task.v0_6.Sink;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.openstreetmap.osmosis.core.task.v0_6.SinkSource;<a name="line.27"></a>
+<span class="sourceLineNo">028</span><a name="line.28"></a>
+<span class="sourceLineNo">029</span>public class NetworkSink implements SinkSource {<a name="line.29"></a>
+<span class="sourceLineNo">030</span><a name="line.30"></a>
+<span class="sourceLineNo">031</span>        private static Logger log = Logger.getLogger(NetworkSink.class);<a name="line.31"></a>
+<span class="sourceLineNo">032</span>        private final Map&lt;String, OsmHighwayDefaults&gt; highwayDefaults = new ConcurrentHashMap&lt;String, OsmHighwayDefaults&gt;();<a name="line.32"></a>
+<span class="sourceLineNo">033</span>        private final Network network;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>        private final CoordinateTransformation transform;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>        private boolean scaleMaxSpeed = false;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>        private Sink sink;<a name="line.36"></a>
+<span class="sourceLineNo">037</span><a name="line.37"></a>
+<span class="sourceLineNo">038</span><a name="line.38"></a>
+<span class="sourceLineNo">039</span><a name="line.39"></a>
+<span class="sourceLineNo">040</span>        public NetworkSink(Network network2, CoordinateTransformation transform) {<a name="line.40"></a>
+<span class="sourceLineNo">041</span>                super();<a name="line.41"></a>
+<span class="sourceLineNo">042</span>                this.network = network2;<a name="line.42"></a>
+<span class="sourceLineNo">043</span>                this.transform = transform;<a name="line.43"></a>
+<span class="sourceLineNo">044</span>        }<a name="line.44"></a>
+<span class="sourceLineNo">045</span><a name="line.45"></a>
+<span class="sourceLineNo">046</span>        public void setHighwayDefaults(final int hierarchy, final String highwayType, final double lanes, final double freespeed,<a name="line.46"></a>
+<span class="sourceLineNo">047</span>                        final double freespeedFactor, final double laneCapacity_vehPerHour, final boolean oneway) {<a name="line.47"></a>
+<span class="sourceLineNo">048</span>                this.highwayDefaults.put(highwayType, new OsmHighwayDefaults(lanes, freespeed, freespeedFactor, laneCapacity_vehPerHour, oneway));<a name="line.48"></a>
+<span class="sourceLineNo">049</span>        }<a name="line.49"></a>
+<span class="sourceLineNo">050</span><a name="line.50"></a>
+<span class="sourceLineNo">051</span>        private void readLink(Way entry) {<a name="line.51"></a>
+<span class="sourceLineNo">052</span>                List&lt;WayNode&gt; wayNodes = entry.getWayNodes();<a name="line.52"></a>
+<span class="sourceLineNo">053</span>                if (wayNodes.size() &lt; 2) {<a name="line.53"></a>
+<span class="sourceLineNo">054</span><a name="line.54"></a>
+<span class="sourceLineNo">055</span>                } else {<a name="line.55"></a>
+<span class="sourceLineNo">056</span>                        WayNode fromNode = wayNodes.get(0);<a name="line.56"></a>
+<span class="sourceLineNo">057</span>                        for (int i = 1, n = wayNodes.size(); i &lt; n; i++) {<a name="line.57"></a>
+<span class="sourceLineNo">058</span>                                WayNode toNode = wayNodes.get(i);<a name="line.58"></a>
+<span class="sourceLineNo">059</span>                                org.matsim.api.core.v01.network.Node fromMatsimNode = network.getNodes().get(Id.create(fromNode.getNodeId(), org.matsim.api.core.v01.network.Node.class));<a name="line.59"></a>
+<span class="sourceLineNo">060</span>                                if (fromMatsimNode == null) {<a name="line.60"></a>
+<span class="sourceLineNo">061</span>                                        throw new RuntimeException("Missing node: "+fromNode.getNodeId());<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                                }<a name="line.62"></a>
+<span class="sourceLineNo">063</span>                                org.matsim.api.core.v01.network.Node toMatsimNode = network.getNodes().get(Id.create(toNode.getNodeId(), org.matsim.api.core.v01.network.Node.class));<a name="line.63"></a>
+<span class="sourceLineNo">064</span>                                if (toMatsimNode == null) {<a name="line.64"></a>
+<span class="sourceLineNo">065</span>                                        throw new RuntimeException("Missing node: "+toNode.getNodeId());<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                                }<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                                double length = CoordUtils.calcEuclideanDistance(fromMatsimNode.getCoord(), toMatsimNode.getCoord());<a name="line.67"></a>
+<span class="sourceLineNo">068</span>                                createLink((Network) this.network, entry, fromNode, toNode, length);<a name="line.68"></a>
+<span class="sourceLineNo">069</span>                                fromNode = toNode;<a name="line.69"></a>
+<span class="sourceLineNo">070</span>                        }<a name="line.70"></a>
+<span class="sourceLineNo">071</span>                }<a name="line.71"></a>
+<span class="sourceLineNo">072</span>        }<a name="line.72"></a>
+<span class="sourceLineNo">073</span><a name="line.73"></a>
+<span class="sourceLineNo">074</span><a name="line.74"></a>
+<span class="sourceLineNo">075</span>        private void readNode(Node osmNode) {<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                Coord osmCoord = new Coord(osmNode.getLongitude(), osmNode.getLatitude());<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                Coord transformedCoord = transform.transform(osmCoord);<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                org.matsim.api.core.v01.network.Node node = network.getFactory().createNode(Id.create(osmNode.getId(), org.matsim.api.core.v01.network.Node.class), transformedCoord);<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                network.addNode(node);<a name="line.79"></a>
+<span class="sourceLineNo">080</span>                osmNode.getTags().add(new Tag("matsim:node-id", node.getId().toString()));<a name="line.80"></a>
+<span class="sourceLineNo">081</span>        }<a name="line.81"></a>
+<span class="sourceLineNo">082</span><a name="line.82"></a>
+<span class="sourceLineNo">083</span><a name="line.83"></a>
+<span class="sourceLineNo">084</span>        @Override<a name="line.84"></a>
+<span class="sourceLineNo">085</span>        public void release() {<a name="line.85"></a>
+<span class="sourceLineNo">086</span>                sink.release();<a name="line.86"></a>
+<span class="sourceLineNo">087</span>        }<a name="line.87"></a>
+<span class="sourceLineNo">088</span><a name="line.88"></a>
+<span class="sourceLineNo">089</span>        private void createLink(final Network network, final Way way, final WayNode fromNode, final WayNode toNode, final double length) {<a name="line.89"></a>
+<span class="sourceLineNo">090</span>                TagCollectionImpl tagCollection = new TagCollectionImpl(way.getTags());<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                Map&lt;String, String&gt; tags = tagCollection.buildMap();<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                String highway = tags.get("highway");<a name="line.92"></a>
+<span class="sourceLineNo">093</span><a name="line.93"></a>
+<span class="sourceLineNo">094</span>                OsmHighwayDefaults defaults = this.highwayDefaults.get(highway);<a name="line.94"></a>
+<span class="sourceLineNo">095</span>                if (defaults == null) {<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                        defaults = this.highwayDefaults.get("tertiary");<a name="line.96"></a>
+<span class="sourceLineNo">097</span>                }<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                String origId = Long.toString(way.getId());<a name="line.98"></a>
+<span class="sourceLineNo">099</span>                double nofLanes = defaults.lanes;<a name="line.99"></a>
+<span class="sourceLineNo">100</span>                double laneCapacity = defaults.laneCapacity;<a name="line.100"></a>
+<span class="sourceLineNo">101</span>                double freespeed = defaults.freespeed;<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                double freespeedFactor = defaults.freespeedFactor;<a name="line.102"></a>
+<span class="sourceLineNo">103</span>                boolean oneway = defaults.oneway;<a name="line.103"></a>
+<span class="sourceLineNo">104</span>                boolean onewayReverse = false;<a name="line.104"></a>
+<span class="sourceLineNo">105</span><a name="line.105"></a>
+<span class="sourceLineNo">106</span>                if (tags.containsKey("oneway")) {<a name="line.106"></a>
+<span class="sourceLineNo">107</span>                        String onewayTag = tags.get("oneway");<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                        if ("yes".equals(onewayTag)) {<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                                oneway = true;<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                        } <a name="line.110"></a>
+<span class="sourceLineNo">111</span>                }<a name="line.111"></a>
+<span class="sourceLineNo">112</span><a name="line.112"></a>
+<span class="sourceLineNo">113</span>                if (tags.containsKey("maxspeed")) {<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                        try {<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                                double maxspeed = Double.parseDouble(tags.get("maxspeed"));<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                                if (maxspeed &lt; freespeed) {<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                                        // freespeed doesn't always mean it's the maximum speed allowed.<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                                        // thus only correct freespeed if maxspeed is lower than freespeed.<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                                        freespeed = maxspeed;<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                                }<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                        } catch (NumberFormatException e) {<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                                log.warn("Could not parse freespeed tag:" + e.getMessage() + ". Ignoring it.");<a name="line.122"></a>
+<span class="sourceLineNo">123</span>                        }<a name="line.123"></a>
+<span class="sourceLineNo">124</span>                }<a name="line.124"></a>
+<span class="sourceLineNo">125</span><a name="line.125"></a>
+<span class="sourceLineNo">126</span>                // check tag "lanes"<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                if (tags.containsKey("lanes")) {<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                        try {<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                                if(Double.parseDouble(tags.get("lanes")) &gt; 0){<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                                        nofLanes = Double.parseDouble(tags.get("lanes"));<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                                }<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                        } catch (Exception e) {<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                                log.warn("Could not parse lanes tag:" + e.getMessage() + ". Ignoring it.");<a name="line.133"></a>
+<span class="sourceLineNo">134</span>                        }<a name="line.134"></a>
+<span class="sourceLineNo">135</span>                }<a name="line.135"></a>
+<span class="sourceLineNo">136</span><a name="line.136"></a>
+<span class="sourceLineNo">137</span>                // create the link(s)<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                double capacity = nofLanes * laneCapacity;<a name="line.138"></a>
+<span class="sourceLineNo">139</span><a name="line.139"></a>
+<span class="sourceLineNo">140</span>                if (this.scaleMaxSpeed) {<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                        freespeed = freespeed * freespeedFactor;<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                }<a name="line.142"></a>
+<span class="sourceLineNo">143</span><a name="line.143"></a>
+<span class="sourceLineNo">144</span>                // only create link, if both nodes were found, node could be null, since nodes outside a layer were dropped<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                long fromNodeNumber = fromNode.getNodeId();<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                long toNodeNumber = toNode.getNodeId();<a name="line.146"></a>
+<span class="sourceLineNo">147</span>                if (!onewayReverse) {<a name="line.147"></a>
+<span class="sourceLineNo">148</span>                        Id&lt;Link&gt; id = Id.create(Long.toString(way.getId())+"_"+Long.toString(fromNodeNumber)+"_"+Long.toString(toNodeNumber), Link.class);<a name="line.148"></a>
+<span class="sourceLineNo">149</span>                        if (!network.getLinks().containsKey(id)) {<a name="line.149"></a>
+<span class="sourceLineNo">150</span>                                final Id&lt;Link&gt; id2 = id;<a name="line.150"></a>
+<span class="sourceLineNo">151</span>                                final double freespeed1 = freespeed;<a name="line.151"></a>
+<span class="sourceLineNo">152</span>                                final double capacity1 = capacity;<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                                final double numLanes = nofLanes;<a name="line.153"></a>
+<span class="sourceLineNo">154</span>                                Link l = NetworkUtils.createAndAddLink(network,id2, network.getNodes().get(Id.create(fromNodeNumber, org.matsim.api.core.v01.network.Node.class)), network.getNodes().get(Id.create(toNodeNumber, org.matsim.api.core.v01.network.Node.class)), length, freespeed1, capacity1, numLanes );<a name="line.154"></a>
+<span class="sourceLineNo">155</span>                                final String id1 = origId;<a name="line.155"></a>
+<span class="sourceLineNo">156</span>                                NetworkUtils.setOrigId( ((Link) l), id1 ) ;<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                                tagWayForward(way, l);<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                        } else {<a name="line.158"></a>
+<span class="sourceLineNo">159</span>                                log.warn("Duplicate link: " + id);<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                        }<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                }<a name="line.161"></a>
+<span class="sourceLineNo">162</span>                if (!oneway) {<a name="line.162"></a>
+<span class="sourceLineNo">163</span>                        Id&lt;Link&gt; id = Id.create(Long.toString(way.getId())+"_"+Long.toString(fromNodeNumber)+"_"+Long.toString(toNodeNumber)+"_R", Link.class);<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                        if (!network.getLinks().containsKey(id)) {<a name="line.164"></a>
+<span class="sourceLineNo">165</span>                                final Id&lt;Link&gt; id2 = id;<a name="line.165"></a>
+<span class="sourceLineNo">166</span>                                final double freespeed1 = freespeed;<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                                final double capacity1 = capacity;<a name="line.167"></a>
+<span class="sourceLineNo">168</span>                                final double numLanes = nofLanes;<a name="line.168"></a>
+<span class="sourceLineNo">169</span>                                Link l = NetworkUtils.createAndAddLink(network,id2, network.getNodes().get(Id.create(toNodeNumber, org.matsim.api.core.v01.network.Node.class)), network.getNodes().get(Id.create(fromNodeNumber, org.matsim.api.core.v01.network.Node.class)), length, freespeed1, capacity1, numLanes );<a name="line.169"></a>
+<span class="sourceLineNo">170</span>                                final String id1 = origId;<a name="line.170"></a>
+<span class="sourceLineNo">171</span>                                NetworkUtils.setOrigId( ((Link) l), id1 ) ;<a name="line.171"></a>
+<span class="sourceLineNo">172</span>                                tagWayBackward(way, l);<a name="line.172"></a>
+<span class="sourceLineNo">173</span>                        } else {<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                                log.warn("Duplicate link: " + id);<a name="line.174"></a>
+<span class="sourceLineNo">175</span>                        }<a name="line.175"></a>
+<span class="sourceLineNo">176</span>                }<a name="line.176"></a>
+<span class="sourceLineNo">177</span>        }<a name="line.177"></a>
+<span class="sourceLineNo">178</span><a name="line.178"></a>
+<span class="sourceLineNo">179</span>        private void tagWayBackward(Way way, Link l) {<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                way.getTags().add(new Tag("matsim:backward:link-id:" + l.getId().toString(), l.getId().toString()));<a name="line.180"></a>
+<span class="sourceLineNo">181</span>        }<a name="line.181"></a>
+<span class="sourceLineNo">182</span><a name="line.182"></a>
+<span class="sourceLineNo">183</span>        private void tagWayForward(Way way, Link l) {<a name="line.183"></a>
+<span class="sourceLineNo">184</span>                way.getTags().add(new Tag("matsim:forward:link-id:" + l.getId().toString(), l.getId().toString()));<a name="line.184"></a>
+<span class="sourceLineNo">185</span>        }<a name="line.185"></a>
+<span class="sourceLineNo">186</span><a name="line.186"></a>
+<span class="sourceLineNo">187</span>        private static class OsmHighwayDefaults {<a name="line.187"></a>
+<span class="sourceLineNo">188</span>                public final double lanes;<a name="line.188"></a>
+<span class="sourceLineNo">189</span>                public final double freespeed;<a name="line.189"></a>
+<span class="sourceLineNo">190</span>                public final double freespeedFactor;<a name="line.190"></a>
+<span class="sourceLineNo">191</span>                public final double laneCapacity;<a name="line.191"></a>
+<span class="sourceLineNo">192</span>                public final boolean oneway;<a name="line.192"></a>
+<span class="sourceLineNo">193</span><a name="line.193"></a>
+<span class="sourceLineNo">194</span>                public OsmHighwayDefaults(final double lanes, final double freespeed, final double freespeedFactor, final double laneCapacity, final boolean oneway) {<a name="line.194"></a>
+<span class="sourceLineNo">195</span>                        this.lanes = lanes;<a name="line.195"></a>
+<span class="sourceLineNo">196</span>                        this.freespeed = freespeed;<a name="line.196"></a>
+<span class="sourceLineNo">197</span>                        this.freespeedFactor = freespeedFactor;<a name="line.197"></a>
+<span class="sourceLineNo">198</span>                        this.laneCapacity = laneCapacity;<a name="line.198"></a>
+<span class="sourceLineNo">199</span>                        this.oneway = oneway;<a name="line.199"></a>
+<span class="sourceLineNo">200</span>                }<a name="line.200"></a>
+<span class="sourceLineNo">201</span>        }<a name="line.201"></a>
+<span class="sourceLineNo">202</span><a name="line.202"></a>
+<span class="sourceLineNo">203</span>        @Override<a name="line.203"></a>
+<span class="sourceLineNo">204</span>        public void process(EntityContainer entityContainer) {<a name="line.204"></a>
+<span class="sourceLineNo">205</span>                entityContainer.process(new EntityProcessor() {<a name="line.205"></a>
+<span class="sourceLineNo">206</span><a name="line.206"></a>
+<span class="sourceLineNo">207</span>                        @Override<a name="line.207"></a>
+<span class="sourceLineNo">208</span>                        public void process(BoundContainer bound) {<a name="line.208"></a>
+<span class="sourceLineNo">209</span>                                sink.process(bound);<a name="line.209"></a>
+<span class="sourceLineNo">210</span>                        }<a name="line.210"></a>
+<span class="sourceLineNo">211</span><a name="line.211"></a>
+<span class="sourceLineNo">212</span>                        @Override<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                        public void process(NodeContainer node) {<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                                readNode(node.getEntity());<a name="line.214"></a>
+<span class="sourceLineNo">215</span>                                sink.process(node);<a name="line.215"></a>
+<span class="sourceLineNo">216</span>                        }<a name="line.216"></a>
+<span class="sourceLineNo">217</span><a name="line.217"></a>
+<span class="sourceLineNo">218</span>                        @Override<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                        public void process(RelationContainer relation) {<a name="line.219"></a>
+<span class="sourceLineNo">220</span>                                sink.process(relation);<a name="line.220"></a>
+<span class="sourceLineNo">221</span>                        }<a name="line.221"></a>
+<span class="sourceLineNo">222</span><a name="line.222"></a>
+<span class="sourceLineNo">223</span>                        @Override<a name="line.223"></a>
+<span class="sourceLineNo">224</span>                        public void process(WayContainer way) {<a name="line.224"></a>
+<span class="sourceLineNo">225</span>                                readLink(way.getEntity());<a name="line.225"></a>
+<span class="sourceLineNo">226</span>                                sink.process(way);<a name="line.226"></a>
+<span class="sourceLineNo">227</span>                        }<a name="line.227"></a>
+<span class="sourceLineNo">228</span><a name="line.228"></a>
+<span class="sourceLineNo">229</span>                });<a name="line.229"></a>
+<span class="sourceLineNo">230</span>        }<a name="line.230"></a>
+<span class="sourceLineNo">231</span><a name="line.231"></a>
+<span class="sourceLineNo">232</span>        @Override<a name="line.232"></a>
+<span class="sourceLineNo">233</span>        public void complete() {<a name="line.233"></a>
+<span class="sourceLineNo">234</span>                System.out.println(network.getNodes().size());<a name="line.234"></a>
+<span class="sourceLineNo">235</span>                System.out.println(network.getLinks().size());<a name="line.235"></a>
+<span class="sourceLineNo">236</span>                sink.complete();<a name="line.236"></a>
+<span class="sourceLineNo">237</span>        }<a name="line.237"></a>
+<span class="sourceLineNo">238</span><a name="line.238"></a>
+<span class="sourceLineNo">239</span>        @Override<a name="line.239"></a>
+<span class="sourceLineNo">240</span>        public void setSink(Sink sink) {<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                this.sink = sink;<a name="line.241"></a>
+<span class="sourceLineNo">242</span>        }<a name="line.242"></a>
+<span class="sourceLineNo">243</span><a name="line.243"></a>
+<span class="sourceLineNo">244</span>        @Override<a name="line.244"></a>
+<span class="sourceLineNo">245</span>        public void initialize(Map&lt;String, Object&gt; metaData) {<a name="line.245"></a>
+<span class="sourceLineNo">246</span>                // TODO Auto-generated method stub<a name="line.246"></a>
+<span class="sourceLineNo">247</span>                <a name="line.247"></a>
+<span class="sourceLineNo">248</span>        }<a name="line.248"></a>
+<span class="sourceLineNo">249</span><a name="line.249"></a>
+<span class="sourceLineNo">250</span>}<a name="line.250"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>
