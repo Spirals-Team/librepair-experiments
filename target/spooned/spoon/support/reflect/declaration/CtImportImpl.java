@@ -1,0 +1,65 @@
+package spoon.support.reflect.declaration;
+
+
+public class CtImportImpl extends spoon.support.reflect.declaration.CtElementImpl implements spoon.reflect.declaration.CtImport {
+    @spoon.reflect.annotations.MetamodelPropertyField(role = spoon.reflect.path.CtRole.IMPORT_REFERENCE)
+    private spoon.reflect.reference.CtReference localReference;
+
+    public CtImportImpl() {
+        super();
+    }
+
+    @java.lang.Override
+    public spoon.reflect.declaration.CtImportKind getImportKind() {
+        if ((this.localReference) == null) {
+            return null;
+        }
+        if ((this.localReference) instanceof spoon.reflect.reference.CtFieldReference) {
+            return spoon.reflect.declaration.CtImportKind.FIELD;
+        }else
+            if ((this.localReference) instanceof spoon.reflect.reference.CtExecutableReference) {
+                return spoon.reflect.declaration.CtImportKind.METHOD;
+            }else
+                if ((this.localReference) instanceof spoon.reflect.reference.CtPackageReference) {
+                    return spoon.reflect.declaration.CtImportKind.ALL_TYPES;
+                }else
+                    if ((this.localReference) instanceof spoon.support.reflect.reference.CtWildcardStaticTypeMemberReferenceImpl) {
+                        return spoon.reflect.declaration.CtImportKind.ALL_STATIC_MEMBERS;
+                    }else
+                        if ((this.localReference) instanceof spoon.reflect.reference.CtTypeReference) {
+                            return spoon.reflect.declaration.CtImportKind.TYPE;
+                        }else {
+                            throw new spoon.SpoonException("Only CtFieldReference, CtExecutableReference, CtPackageReference and CtTypeReference are accepted reference types.");
+                        }
+
+
+
+
+    }
+
+    @java.lang.Override
+    public <T extends spoon.reflect.declaration.CtImport> T setReference(spoon.reflect.reference.CtReference reference) {
+        if (reference != null) {
+            reference.setParent(this);
+        }
+        getFactory().getEnvironment().getModelChangeListener().onObjectUpdate(this, spoon.reflect.path.CtRole.IMPORT_REFERENCE, reference, this.localReference);
+        this.localReference = reference;
+        return ((T) (this));
+    }
+
+    @java.lang.Override
+    public spoon.reflect.reference.CtReference getReference() {
+        return this.localReference;
+    }
+
+    @java.lang.Override
+    public void accept(spoon.reflect.visitor.CtVisitor visitor) {
+        visitor.visitCtImport(this);
+    }
+
+    @java.lang.Override
+    public spoon.reflect.declaration.CtImport clone() {
+        return ((spoon.reflect.declaration.CtImport) (super.clone()));
+    }
+}
+

@@ -1,0 +1,180 @@
+package spoon.support.reflect.code;
+
+
+public class CtConstructorCallImpl<T> extends spoon.support.reflect.code.CtTargetedExpressionImpl<T, spoon.reflect.code.CtExpression<?>> implements spoon.reflect.code.CtConstructorCall<T> {
+    private static final long serialVersionUID = 1L;
+
+    @spoon.reflect.annotations.MetamodelPropertyField(role = spoon.reflect.path.CtRole.ARGUMENT)
+    java.util.List<spoon.reflect.code.CtExpression<?>> arguments = spoon.support.reflect.declaration.CtElementImpl.emptyList();
+
+    @spoon.reflect.annotations.MetamodelPropertyField(role = spoon.reflect.path.CtRole.EXECUTABLE_REF)
+    spoon.reflect.reference.CtExecutableReference<T> executable;
+
+    @spoon.reflect.annotations.MetamodelPropertyField(role = spoon.reflect.path.CtRole.LABEL)
+    java.lang.String label;
+
+    @java.lang.Override
+    public void accept(spoon.reflect.visitor.CtVisitor visitor) {
+        visitor.visitCtConstructorCall(this);
+    }
+
+    @java.lang.Override
+    public java.util.List<spoon.reflect.code.CtExpression<?>> getArguments() {
+        return arguments;
+    }
+
+    @java.lang.Override
+    public spoon.reflect.reference.CtExecutableReference<T> getExecutable() {
+        if ((executable) == null) {
+            executable = getFactory().Core().createExecutableReference();
+            executable.setParent(this);
+        }
+        return executable;
+    }
+
+    public java.lang.String getLabel() {
+        return label;
+    }
+
+    @java.lang.Override
+    public <C extends spoon.reflect.code.CtStatement> C insertAfter(spoon.reflect.code.CtStatement statement) {
+        spoon.support.reflect.code.CtStatementImpl.insertAfter(this, statement);
+        return ((C) (this));
+    }
+
+    @java.lang.Override
+    public <C extends spoon.reflect.code.CtStatement> C insertBefore(spoon.reflect.code.CtStatement statement) {
+        spoon.support.reflect.code.CtStatementImpl.insertBefore(this, statement);
+        return ((C) (this));
+    }
+
+    @java.lang.Override
+    public <C extends spoon.reflect.code.CtStatement> C insertAfter(spoon.reflect.code.CtStatementList statements) {
+        spoon.support.reflect.code.CtStatementImpl.insertAfter(this, statements);
+        return ((C) (this));
+    }
+
+    @java.lang.Override
+    public <C extends spoon.reflect.code.CtStatement> C insertBefore(spoon.reflect.code.CtStatementList statements) {
+        spoon.support.reflect.code.CtStatementImpl.insertBefore(this, statements);
+        return ((C) (this));
+    }
+
+    @java.lang.Override
+    public <C extends spoon.reflect.code.CtAbstractInvocation<T>> C setArguments(java.util.List<spoon.reflect.code.CtExpression<?>> arguments) {
+        if ((arguments == null) || (arguments.isEmpty())) {
+            this.arguments = spoon.support.reflect.declaration.CtElementImpl.emptyList();
+            return ((C) (this));
+        }
+        if ((this.arguments) == (spoon.support.reflect.declaration.CtElementImpl.<spoon.reflect.code.CtExpression<?>>emptyList())) {
+            this.arguments = new java.util.ArrayList<>(spoon.reflect.ModelElementContainerDefaultCapacities.PARAMETERS_CONTAINER_DEFAULT_CAPACITY);
+        }
+        getFactory().getEnvironment().getModelChangeListener().onListDeleteAll(this, spoon.reflect.path.CtRole.ARGUMENT, this.arguments, new java.util.ArrayList<>(this.arguments));
+        this.arguments.clear();
+        for (spoon.reflect.code.CtExpression<?> expr : arguments) {
+            addArgument(expr);
+        }
+        return ((C) (this));
+    }
+
+    private <C extends spoon.reflect.code.CtAbstractInvocation<T>> C addArgument(int position, spoon.reflect.code.CtExpression<?> argument) {
+        if (argument == null) {
+            return ((C) (this));
+        }
+        if ((arguments) == (spoon.support.reflect.declaration.CtElementImpl.<spoon.reflect.code.CtExpression<?>>emptyList())) {
+            arguments = new java.util.ArrayList<>(spoon.reflect.ModelElementContainerDefaultCapacities.PARAMETERS_CONTAINER_DEFAULT_CAPACITY);
+        }
+        argument.setParent(this);
+        getFactory().getEnvironment().getModelChangeListener().onListAdd(this, spoon.reflect.path.CtRole.ARGUMENT, this.arguments, position, argument);
+        arguments.add(position, argument);
+        return ((C) (this));
+    }
+
+    @java.lang.Override
+    public <C extends spoon.reflect.code.CtAbstractInvocation<T>> C addArgument(spoon.reflect.code.CtExpression<?> argument) {
+        return addArgument(arguments.size(), argument);
+    }
+
+    @java.lang.Override
+    public void removeArgument(spoon.reflect.code.CtExpression<?> argument) {
+        if ((arguments) == (spoon.support.reflect.declaration.CtElementImpl.<spoon.reflect.code.CtExpression<?>>emptyList())) {
+            return;
+        }
+        getFactory().getEnvironment().getModelChangeListener().onListDelete(this, spoon.reflect.path.CtRole.ARGUMENT, arguments, arguments.indexOf(argument), argument);
+        arguments.remove(argument);
+    }
+
+    @java.lang.Override
+    public <C extends spoon.reflect.code.CtAbstractInvocation<T>> C setExecutable(spoon.reflect.reference.CtExecutableReference<T> executable) {
+        if (executable != null) {
+            executable.setParent(this);
+        }
+        getFactory().getEnvironment().getModelChangeListener().onObjectUpdate(this, spoon.reflect.path.CtRole.EXECUTABLE_REF, executable, this.executable);
+        this.executable = executable;
+        return ((C) (this));
+    }
+
+    @java.lang.Override
+    public <C extends spoon.reflect.code.CtStatement> C setLabel(java.lang.String label) {
+        getFactory().getEnvironment().getModelChangeListener().onObjectUpdate(this, spoon.reflect.path.CtRole.LABEL, label, this.label);
+        this.label = label;
+        return ((C) (this));
+    }
+
+    @java.lang.Override
+    @spoon.support.DerivedProperty
+    public java.util.List<spoon.reflect.reference.CtTypeReference<?>> getActualTypeArguments() {
+        return (getExecutable()) == null ? spoon.support.reflect.declaration.CtElementImpl.<spoon.reflect.reference.CtTypeReference<?>>emptyList() : getExecutable().getActualTypeArguments();
+    }
+
+    @java.lang.Override
+    @spoon.support.DerivedProperty
+    public <T extends spoon.reflect.reference.CtActualTypeContainer> T setActualTypeArguments(java.util.List<? extends spoon.reflect.reference.CtTypeReference<?>> actualTypeArguments) {
+        if ((getExecutable()) != null) {
+            getExecutable().setActualTypeArguments(actualTypeArguments);
+        }
+        return ((T) (this));
+    }
+
+    @java.lang.Override
+    @spoon.support.DerivedProperty
+    public <T extends spoon.reflect.reference.CtActualTypeContainer> T addActualTypeArgument(spoon.reflect.reference.CtTypeReference<?> actualTypeArgument) {
+        if ((getExecutable()) != null) {
+            getExecutable().addActualTypeArgument(actualTypeArgument);
+        }
+        return ((T) (this));
+    }
+
+    @java.lang.Override
+    @spoon.support.DerivedProperty
+    public boolean removeActualTypeArgument(spoon.reflect.reference.CtTypeReference<?> actualTypeArgument) {
+        if ((getExecutable()) != null) {
+            return getExecutable().removeActualTypeArgument(actualTypeArgument);
+        }
+        return false;
+    }
+
+    @java.lang.Override
+    @spoon.support.DerivedProperty
+    public spoon.reflect.reference.CtTypeReference<T> getType() {
+        return (getExecutable()) == null ? null : getExecutable().getType();
+    }
+
+    @java.lang.Override
+    @spoon.support.DerivedProperty
+    public <C extends spoon.reflect.declaration.CtTypedElement> C setType(spoon.reflect.reference.CtTypeReference<T> type) {
+        if (type != null) {
+            type.setParent(this);
+        }
+        if ((getExecutable()) != null) {
+            getExecutable().setType(type);
+        }
+        return ((C) (this));
+    }
+
+    @java.lang.Override
+    public spoon.reflect.code.CtConstructorCall<T> clone() {
+        return ((spoon.reflect.code.CtConstructorCall<T>) (super.clone()));
+    }
+}
+
