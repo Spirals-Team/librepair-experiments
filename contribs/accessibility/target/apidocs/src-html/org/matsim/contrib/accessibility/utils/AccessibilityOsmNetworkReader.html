@@ -1,0 +1,263 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*                                                   *<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2009 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span><a name="line.19"></a>
+<span class="sourceLineNo">020</span>package org.matsim.contrib.accessibility.utils;<a name="line.20"></a>
+<span class="sourceLineNo">021</span><a name="line.21"></a>
+<span class="sourceLineNo">022</span>import java.io.IOException;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.io.InputStream;<a name="line.23"></a>
+<span class="sourceLineNo">024</span><a name="line.24"></a>
+<span class="sourceLineNo">025</span>import org.apache.log4j.Logger;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import org.matsim.api.core.v01.network.Network;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.matsim.core.config.ConfigUtils;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.core.controler.OutputDirectoryLogging;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.core.network.algorithms.NetworkCleaner;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.core.network.io.NetworkWriter;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.core.scenario.ScenarioUtils;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.core.utils.geometry.CoordinateTransformation;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.core.utils.geometry.transformations.TransformationFactory;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.core.utils.io.OsmNetworkReader;<a name="line.34"></a>
+<span class="sourceLineNo">035</span><a name="line.35"></a>
+<span class="sourceLineNo">036</span>/**<a name="line.36"></a>
+<span class="sourceLineNo">037</span> * @author dziemke<a name="line.37"></a>
+<span class="sourceLineNo">038</span> */<a name="line.38"></a>
+<span class="sourceLineNo">039</span>public class AccessibilityOsmNetworkReader {<a name="line.39"></a>
+<span class="sourceLineNo">040</span>        final private static Logger LOG = Logger.getLogger(AccessibilityOsmNetworkReader.class);<a name="line.40"></a>
+<span class="sourceLineNo">041</span>        <a name="line.41"></a>
+<span class="sourceLineNo">042</span>        private String osmFileName;<a name="line.42"></a>
+<span class="sourceLineNo">043</span>        private InputStream osmInputStream;<a name="line.43"></a>
+<span class="sourceLineNo">044</span>        private final String outputCRS;<a name="line.44"></a>
+<span class="sourceLineNo">045</span>        private String inputCRS = "EPSG:4326"; // EPSG:4326 = WGS84, OSM input is always in this CRS<a name="line.45"></a>
+<span class="sourceLineNo">046</span>        private boolean keepPaths = false; <a name="line.46"></a>
+<span class="sourceLineNo">047</span>        private boolean includeLowHierarchyWays = false;<a name="line.47"></a>
+<span class="sourceLineNo">048</span>        private boolean onlyMotorwayToTertiary = false; // "Thinner" network down to tertiary; do not use this together with "includeLowHierarchyWays"<a name="line.48"></a>
+<span class="sourceLineNo">049</span>        private boolean onlyMotorwayToSecondary = false; // "Thinner" network down to tertiary; do not use this together with "includeLowHierarchyWays"<a name="line.49"></a>
+<span class="sourceLineNo">050</span>        <a name="line.50"></a>
+<span class="sourceLineNo">051</span>        private Network network;<a name="line.51"></a>
+<span class="sourceLineNo">052</span><a name="line.52"></a>
+<span class="sourceLineNo">053</span>        public static void main(String[] args) {<a name="line.53"></a>
+<span class="sourceLineNo">054</span>                String osmFileName = "../../upretoria/data/capetown/osm/2017-10-03";<a name="line.54"></a>
+<span class="sourceLineNo">055</span>                String outputRoot = "../../upretoria/data/capetown/network/";<a name="line.55"></a>
+<span class="sourceLineNo">056</span>                String networkFileName = outputRoot + "2017-10-03_network.xml.gz";<a name="line.56"></a>
+<span class="sourceLineNo">057</span><a name="line.57"></a>
+<span class="sourceLineNo">058</span>                // EPSG:4326 = WGS84<a name="line.58"></a>
+<span class="sourceLineNo">059</span>                // EPSG:31468 = DHDN GK4, for Berlin; DE<a name="line.59"></a>
+<span class="sourceLineNo">060</span>                // EPSG:26918 = NAD83 / UTM zone 18N, for Maryland, US<a name="line.60"></a>
+<span class="sourceLineNo">061</span>                // EPSG:25832 = ETRS89 / UTM zone 32N, for Nordrhein-Westfalen<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                // EPSG:22235 = Cape / UTM zone 35S, for South Africa<a name="line.62"></a>
+<span class="sourceLineNo">063</span>                String outputCRS = "EPSG:22235";<a name="line.63"></a>
+<span class="sourceLineNo">064</span>                <a name="line.64"></a>
+<span class="sourceLineNo">065</span>                AccessibilityOsmNetworkReader osmNetworkCreatorDZ = new AccessibilityOsmNetworkReader(osmFileName, outputCRS);<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                osmNetworkCreatorDZ.createNetwork();<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                osmNetworkCreatorDZ.writeNetwork(outputRoot, networkFileName);<a name="line.67"></a>
+<span class="sourceLineNo">068</span>        }<a name="line.68"></a>
+<span class="sourceLineNo">069</span><a name="line.69"></a>
+<span class="sourceLineNo">070</span>        public AccessibilityOsmNetworkReader(String osmFileName, String outputCRS) {<a name="line.70"></a>
+<span class="sourceLineNo">071</span>                this.osmFileName = osmFileName;<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                this.outputCRS = outputCRS;<a name="line.72"></a>
+<span class="sourceLineNo">073</span>        }<a name="line.73"></a>
+<span class="sourceLineNo">074</span>        <a name="line.74"></a>
+<span class="sourceLineNo">075</span>        public AccessibilityOsmNetworkReader(InputStream osmInputStream, String outputCRS) {<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                this.osmInputStream = osmInputStream;<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                this.outputCRS = outputCRS;<a name="line.77"></a>
+<span class="sourceLineNo">078</span>        }<a name="line.78"></a>
+<span class="sourceLineNo">079</span><a name="line.79"></a>
+<span class="sourceLineNo">080</span>        public void createNetwork() {<a name="line.80"></a>
+<span class="sourceLineNo">081</span>                LOG.info("Input CRS is " + inputCRS + "; output CRS is " + outputCRS);<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                LOG.info("Setting \"keepPaths\" = " + keepPaths);<a name="line.82"></a>
+<span class="sourceLineNo">083</span>                LOG.info("Setting \"includeLowHierarchyWays\" = " + includeLowHierarchyWays);<a name="line.83"></a>
+<span class="sourceLineNo">084</span>                LOG.info("Setting \"onlyMotorwayToTertiary\" = " + onlyMotorwayToTertiary);<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                LOG.info("Setting \"onlyMotorwayToSecondary\" = " + onlyMotorwayToSecondary);<a name="line.85"></a>
+<span class="sourceLineNo">086</span><a name="line.86"></a>
+<span class="sourceLineNo">087</span>                // Infrastructure<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                network = ScenarioUtils.createScenario(ConfigUtils.createConfig()).getNetwork();<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                CoordinateTransformation coordinateTransformation = TransformationFactory.getCoordinateTransformation(inputCRS, outputCRS);<a name="line.89"></a>
+<span class="sourceLineNo">090</span>                OsmNetworkReader osmNetworkReader;<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                if (onlyMotorwayToTertiary == true || onlyMotorwayToSecondary == true) {<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                        osmNetworkReader = new OsmNetworkReader(network, coordinateTransformation, false);<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                } else {<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                        osmNetworkReader = new OsmNetworkReader(network, coordinateTransformation, true);<a name="line.94"></a>
+<span class="sourceLineNo">095</span>                }<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                <a name="line.96"></a>
+<span class="sourceLineNo">097</span>                // Setting this to true means that pure geometry-describing nodes (i.e. nodes which are not intersections etc.) are kept.<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                // This makes the file (for the Nairobi case) three times as big (22.4MB vs. 8.7MB)<a name="line.98"></a>
+<span class="sourceLineNo">099</span>                if (keepPaths == true) {<a name="line.99"></a>
+<span class="sourceLineNo">100</span>                        LOG.info("Detailed geometry of paths is kept.");<a name="line.100"></a>
+<span class="sourceLineNo">101</span>                        osmNetworkReader.setKeepPaths(true);<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                }<a name="line.102"></a>
+<span class="sourceLineNo">103</span>                                <a name="line.103"></a>
+<span class="sourceLineNo">104</span>                // This block is for the low hierarchy roads<a name="line.104"></a>
+<span class="sourceLineNo">105</span>                if (includeLowHierarchyWays == true) {<a name="line.105"></a>
+<span class="sourceLineNo">106</span>                        LOG.info("Low hierarchy ways are included.");<a name="line.106"></a>
+<span class="sourceLineNo">107</span>                        // By defaults set for motorway, motorway_link, trunk, trunk_link, primary, primary_link, secondary, secondary_link,<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                        // tertiary, tertiary_link, minor, unclassified, residential, living_street; minor does not exist on the website anymore<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                        // Parameters for living_street: (6, "living_street", 1,  15.0/3.6, 1.0,  300);<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                        // (hierarchy, highwayType, lanes, freespeed, freespeedFactor, laneCapacity_vehPerHour)<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                        //<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                        // Other types on OSM, see: http://wiki.openstreetmap.org/wiki/Key:highway<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                        osmNetworkReader.setHighwayDefaults(7, "cycleway", 1, 30/3.6, 1.0, 0);<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                        osmNetworkReader.setHighwayDefaults(7, "pedestrian", 1, 15/3.6, 1.0, 0);<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                        osmNetworkReader.setHighwayDefaults(7, "road", 1, 15/3.6, 1.0, 300); // like "living_street"<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                        osmNetworkReader.setHighwayDefaults(8, "track", 1, 15/3.6, 1.0, 0);<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                        osmNetworkReader.setHighwayDefaults(8, "footway", 1, 15/3.6, 1.0, 0);<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                        osmNetworkReader.setHighwayDefaults(8, "steps", 1, 5/3.6, 1.0, 0);<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                        osmNetworkReader.setHighwayDefaults(8, "path", 1, 15/3.6, 1.0, 0);<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                }               <a name="line.120"></a>
+<span class="sourceLineNo">121</span>                                <a name="line.121"></a>
+<span class="sourceLineNo">122</span>                // For a coarser network ("onlyMotorwayToTertiaryMotorways" leads to a network only a 14th as big (77.8MB vs. 1.04GB) for Maryland)<a name="line.122"></a>
+<span class="sourceLineNo">123</span>                if (onlyMotorwayToSecondary == true || onlyMotorwayToTertiary == true) {<a name="line.123"></a>
+<span class="sourceLineNo">124</span>                        LOG.info("Only bigger roads are included.");<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                        if (includeLowHierarchyWays == true) {<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                                throw new RuntimeException("It does not make sense to set both \"includeLowHierarchyWays\""<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                                                + " and \"onlyMotorwayToSecondary\" or \"onlyMotorwayToTertiary\" to true");<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                        }<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                        osmNetworkReader.setHighwayDefaults(1, "motorway",      2, 120.0/3.6, 1.0, 2000, true);<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                        osmNetworkReader.setHighwayDefaults(1, "motorway_link", 1,  80.0/3.6, 1.0, 1500, true);<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                        osmNetworkReader.setHighwayDefaults(2, "trunk",         1,  80.0/3.6, 1.0, 2000);<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                        osmNetworkReader.setHighwayDefaults(2, "trunk_link",    1,  50.0/3.6, 1.0, 1500);<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                        osmNetworkReader.setHighwayDefaults(3, "primary",       1,  80.0/3.6, 1.0, 1500);<a name="line.133"></a>
+<span class="sourceLineNo">134</span>                        osmNetworkReader.setHighwayDefaults(3, "primary_link",  1,  60.0/3.6, 1.0, 1500);<a name="line.134"></a>
+<span class="sourceLineNo">135</span>                        osmNetworkReader.setHighwayDefaults(4, "secondary",     1,  30.0/3.6, 1.0, 1000);<a name="line.135"></a>
+<span class="sourceLineNo">136</span>                        osmNetworkReader.setHighwayDefaults(4, "secondary_link",     1,  30.0/3.6, 1.0, 1000);<a name="line.136"></a>
+<span class="sourceLineNo">137</span>                        if (onlyMotorwayToTertiary == true) {<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                                osmNetworkReader.setHighwayDefaults(5, "tertiary",      1,  25.0/3.6, 1.0,  600);<a name="line.138"></a>
+<span class="sourceLineNo">139</span>                                osmNetworkReader.setHighwayDefaults(5, "tertiary_link",      1,  25.0/3.6, 1.0,  600);<a name="line.139"></a>
+<span class="sourceLineNo">140</span>                        }<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                }<a name="line.141"></a>
+<span class="sourceLineNo">142</span><a name="line.142"></a>
+<span class="sourceLineNo">143</span>                if (osmFileName != null &amp;&amp; osmInputStream == null) {<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                        osmNetworkReader.parse(osmFileName);<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                } else if (osmFileName == null &amp;&amp; osmInputStream != null) {<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                        osmNetworkReader.parse(osmInputStream); <a name="line.146"></a>
+<span class="sourceLineNo">147</span>                } else {<a name="line.147"></a>
+<span class="sourceLineNo">148</span>                        throw new IllegalArgumentException("Either the input stream OR the input file should be defined, but not both.");<a name="line.148"></a>
+<span class="sourceLineNo">149</span>                }<a name="line.149"></a>
+<span class="sourceLineNo">150</span>                <a name="line.150"></a>
+<span class="sourceLineNo">151</span>                new NetworkCleaner().run(network);<a name="line.151"></a>
+<span class="sourceLineNo">152</span>        }<a name="line.152"></a>
+<span class="sourceLineNo">153</span>        <a name="line.153"></a>
+<span class="sourceLineNo">154</span>        public void writeNetwork(String outputRoot, String networkFileName) {<a name="line.154"></a>
+<span class="sourceLineNo">155</span>                try {<a name="line.155"></a>
+<span class="sourceLineNo">156</span>                        OutputDirectoryLogging.initLoggingWithOutputDirectory(outputRoot);<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                } catch (IOException e) {<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                        e.printStackTrace();<a name="line.158"></a>
+<span class="sourceLineNo">159</span>                }<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                NetworkWriter networkWriter = new NetworkWriter(network);<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                networkWriter.write(networkFileName);<a name="line.161"></a>
+<span class="sourceLineNo">162</span>                LOG.info("Network file written to " + networkFileName);<a name="line.162"></a>
+<span class="sourceLineNo">163</span>        }<a name="line.163"></a>
+<span class="sourceLineNo">164</span>        <a name="line.164"></a>
+<span class="sourceLineNo">165</span>        /**<a name="line.165"></a>
+<span class="sourceLineNo">166</span>         * The input CRS for data from OSM should in almost all cases be EPSG:4326 = WGS84, which is used here as default.<a name="line.166"></a>
+<span class="sourceLineNo">167</span>         */<a name="line.167"></a>
+<span class="sourceLineNo">168</span>        public void setInputCRS(String inputCRS) {<a name="line.168"></a>
+<span class="sourceLineNo">169</span>                this.inputCRS = inputCRS;<a name="line.169"></a>
+<span class="sourceLineNo">170</span>        }<a name="line.170"></a>
+<span class="sourceLineNo">171</span><a name="line.171"></a>
+<span class="sourceLineNo">172</span>        public void setKeepPaths(boolean keepPaths) {<a name="line.172"></a>
+<span class="sourceLineNo">173</span>                this.keepPaths = keepPaths;<a name="line.173"></a>
+<span class="sourceLineNo">174</span>        }<a name="line.174"></a>
+<span class="sourceLineNo">175</span>        <a name="line.175"></a>
+<span class="sourceLineNo">176</span>        public void setIincludeLowHierarchyWays(boolean includeLowHierarchyWays) {<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                this.includeLowHierarchyWays = includeLowHierarchyWays;<a name="line.177"></a>
+<span class="sourceLineNo">178</span>        }<a name="line.178"></a>
+<span class="sourceLineNo">179</span><a name="line.179"></a>
+<span class="sourceLineNo">180</span>        public void setOnlyMotorwayToTertiary(boolean onlyMotorwayToTertiary) {<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                this.onlyMotorwayToTertiary = onlyMotorwayToTertiary;<a name="line.181"></a>
+<span class="sourceLineNo">182</span>        }<a name="line.182"></a>
+<span class="sourceLineNo">183</span><a name="line.183"></a>
+<span class="sourceLineNo">184</span>        public void setOnlyMotorwayToSecondary(boolean onlyMotorwayToSecondary) {<a name="line.184"></a>
+<span class="sourceLineNo">185</span>                this.onlyMotorwayToSecondary = onlyMotorwayToSecondary;<a name="line.185"></a>
+<span class="sourceLineNo">186</span>        }<a name="line.186"></a>
+<span class="sourceLineNo">187</span>        <a name="line.187"></a>
+<span class="sourceLineNo">188</span>        public Network getNetwork() {<a name="line.188"></a>
+<span class="sourceLineNo">189</span>                return this.network;<a name="line.189"></a>
+<span class="sourceLineNo">190</span>        }<a name="line.190"></a>
+<span class="sourceLineNo">191</span>}<a name="line.191"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

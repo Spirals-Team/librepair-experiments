@@ -1,0 +1,222 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>package org.matsim.contrib.freight.router;<a name="line.1"></a>
+<span class="sourceLineNo">002</span><a name="line.2"></a>
+<span class="sourceLineNo">003</span>import java.util.ArrayList;<a name="line.3"></a>
+<span class="sourceLineNo">004</span>import java.util.List;<a name="line.4"></a>
+<span class="sourceLineNo">005</span><a name="line.5"></a>
+<span class="sourceLineNo">006</span>import org.apache.log4j.Logger;<a name="line.6"></a>
+<span class="sourceLineNo">007</span>import org.matsim.api.core.v01.Id;<a name="line.7"></a>
+<span class="sourceLineNo">008</span>import org.matsim.api.core.v01.network.Link;<a name="line.8"></a>
+<span class="sourceLineNo">009</span>import org.matsim.api.core.v01.network.Network;<a name="line.9"></a>
+<span class="sourceLineNo">010</span>import org.matsim.api.core.v01.population.Person;<a name="line.10"></a>
+<span class="sourceLineNo">011</span>import org.matsim.contrib.freight.carrier.CarrierVehicle;<a name="line.11"></a>
+<span class="sourceLineNo">012</span>import org.matsim.contrib.freight.carrier.ScheduledTour;<a name="line.12"></a>
+<span class="sourceLineNo">013</span>import org.matsim.contrib.freight.carrier.Tour.Leg;<a name="line.13"></a>
+<span class="sourceLineNo">014</span>import org.matsim.contrib.freight.carrier.Tour.TourActivity;<a name="line.14"></a>
+<span class="sourceLineNo">015</span>import org.matsim.contrib.freight.carrier.Tour.TourElement;<a name="line.15"></a>
+<span class="sourceLineNo">016</span>import org.matsim.core.population.routes.NetworkRoute;<a name="line.16"></a>
+<span class="sourceLineNo">017</span>import org.matsim.core.population.routes.RouteUtils;<a name="line.17"></a>
+<span class="sourceLineNo">018</span>import org.matsim.core.router.util.LeastCostPathCalculator;<a name="line.18"></a>
+<span class="sourceLineNo">019</span>import org.matsim.core.router.util.LeastCostPathCalculator.Path;<a name="line.19"></a>
+<span class="sourceLineNo">020</span>import org.matsim.core.router.util.TravelTime;<a name="line.20"></a>
+<span class="sourceLineNo">021</span>import org.matsim.vehicles.Vehicle;<a name="line.21"></a>
+<span class="sourceLineNo">022</span>import org.matsim.vehicles.VehicleType;<a name="line.22"></a>
+<span class="sourceLineNo">023</span><a name="line.23"></a>
+<span class="sourceLineNo">024</span>/**<a name="line.24"></a>
+<span class="sourceLineNo">025</span> * Router routing scheduledTours.<a name="line.25"></a>
+<span class="sourceLineNo">026</span> * <a name="line.26"></a>
+<span class="sourceLineNo">027</span> * @author sschroeder<a name="line.27"></a>
+<span class="sourceLineNo">028</span> *<a name="line.28"></a>
+<span class="sourceLineNo">029</span> */<a name="line.29"></a>
+<span class="sourceLineNo">030</span>public class TimeAndSpaceTourRouter {<a name="line.30"></a>
+<span class="sourceLineNo">031</span>        <a name="line.31"></a>
+<span class="sourceLineNo">032</span>        static class MatsimVehicleAdapter implements Vehicle {<a name="line.32"></a>
+<span class="sourceLineNo">033</span><a name="line.33"></a>
+<span class="sourceLineNo">034</span>                private CarrierVehicle carrierVehicle;<a name="line.34"></a>
+<span class="sourceLineNo">035</span><a name="line.35"></a>
+<span class="sourceLineNo">036</span>                public MatsimVehicleAdapter(CarrierVehicle vehicle) {<a name="line.36"></a>
+<span class="sourceLineNo">037</span>                        this.carrierVehicle = vehicle;<a name="line.37"></a>
+<span class="sourceLineNo">038</span>                }<a name="line.38"></a>
+<span class="sourceLineNo">039</span><a name="line.39"></a>
+<span class="sourceLineNo">040</span>                @Override<a name="line.40"></a>
+<span class="sourceLineNo">041</span>                public Id&lt;Vehicle&gt; getId() {<a name="line.41"></a>
+<span class="sourceLineNo">042</span>                        return carrierVehicle.getVehicleId();<a name="line.42"></a>
+<span class="sourceLineNo">043</span>                }<a name="line.43"></a>
+<span class="sourceLineNo">044</span><a name="line.44"></a>
+<span class="sourceLineNo">045</span>                @Override<a name="line.45"></a>
+<span class="sourceLineNo">046</span>                public VehicleType getType() {<a name="line.46"></a>
+<span class="sourceLineNo">047</span>                        return carrierVehicle.getVehicleType();<a name="line.47"></a>
+<span class="sourceLineNo">048</span>                }<a name="line.48"></a>
+<span class="sourceLineNo">049</span><a name="line.49"></a>
+<span class="sourceLineNo">050</span>                public CarrierVehicle getCarrierVehicle() {<a name="line.50"></a>
+<span class="sourceLineNo">051</span>                        return carrierVehicle;<a name="line.51"></a>
+<span class="sourceLineNo">052</span>                }<a name="line.52"></a>
+<span class="sourceLineNo">053</span><a name="line.53"></a>
+<span class="sourceLineNo">054</span>        }<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        <a name="line.55"></a>
+<span class="sourceLineNo">056</span>        <a name="line.56"></a>
+<span class="sourceLineNo">057</span>        @SuppressWarnings("unused")<a name="line.57"></a>
+<span class="sourceLineNo">058</span>        private static Logger logger = Logger.getLogger(TimeAndSpaceTourRouter.class);<a name="line.58"></a>
+<span class="sourceLineNo">059</span>        <a name="line.59"></a>
+<span class="sourceLineNo">060</span>        private LeastCostPathCalculator router;<a name="line.60"></a>
+<span class="sourceLineNo">061</span>        <a name="line.61"></a>
+<span class="sourceLineNo">062</span>        private Network network;<a name="line.62"></a>
+<span class="sourceLineNo">063</span>        <a name="line.63"></a>
+<span class="sourceLineNo">064</span>        private TravelTime travelTime;<a name="line.64"></a>
+<span class="sourceLineNo">065</span><a name="line.65"></a>
+<span class="sourceLineNo">066</span>        /**<a name="line.66"></a>
+<span class="sourceLineNo">067</span>         * Constructs the timeAndSpaceRouter with a leastCostPathCalculator, network and travelTime.<a name="line.67"></a>
+<span class="sourceLineNo">068</span>         * @param router<a name="line.68"></a>
+<span class="sourceLineNo">069</span>         * @param network<a name="line.69"></a>
+<span class="sourceLineNo">070</span>         * @param travelTime<a name="line.70"></a>
+<span class="sourceLineNo">071</span>         * @see LeastCostPathCalculator, Network, TravelTime<a name="line.71"></a>
+<span class="sourceLineNo">072</span>         */<a name="line.72"></a>
+<span class="sourceLineNo">073</span>        public TimeAndSpaceTourRouter(LeastCostPathCalculator router, Network network, TravelTime travelTime) {<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                super();<a name="line.74"></a>
+<span class="sourceLineNo">075</span>                this.router = router;<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                this.network = network;<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                this.travelTime = travelTime;<a name="line.77"></a>
+<span class="sourceLineNo">078</span>        }<a name="line.78"></a>
+<span class="sourceLineNo">079</span>        <a name="line.79"></a>
+<span class="sourceLineNo">080</span>        /**<a name="line.80"></a>
+<span class="sourceLineNo">081</span>         * Routes a scheduledTour in time and space.<a name="line.81"></a>
+<span class="sourceLineNo">082</span>         * <a name="line.82"></a>
+<span class="sourceLineNo">083</span>         * &lt;p&gt;Uses a leastCostPathCalculator to calculate a route/path from one activity to another. It starts at the departureTime of <a name="line.83"></a>
+<span class="sourceLineNo">084</span>         * the scheduledTour and determines activity arrival and departure times considering activities time-windows.<a name="line.84"></a>
+<span class="sourceLineNo">085</span>         * @param tour<a name="line.85"></a>
+<span class="sourceLineNo">086</span>         */<a name="line.86"></a>
+<span class="sourceLineNo">087</span>        public void route(ScheduledTour tour) {<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                MatsimVehicleAdapter matsimVehicle = new MatsimVehicleAdapter(tour.getVehicle());<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                double currTime = tour.getDeparture();<a name="line.89"></a>
+<span class="sourceLineNo">090</span>                Id&lt;Link&gt; prevLink = tour.getTour().getStartLinkId();<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                Leg prevLeg = null;<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                for(TourElement e : tour.getTour().getTourElements()){<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                        if(e instanceof Leg){<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                                prevLeg = (Leg) e;<a name="line.94"></a>
+<span class="sourceLineNo">095</span>                                prevLeg.setDepartureTime(currTime);<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                        }<a name="line.96"></a>
+<span class="sourceLineNo">097</span>                        if(e instanceof TourActivity){<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                                TourActivity act = (TourActivity) e;<a name="line.98"></a>
+<span class="sourceLineNo">099</span>                                route(prevLeg, prevLink, act.getLocation(), null, matsimVehicle);<a name="line.99"></a>
+<span class="sourceLineNo">100</span>                                double expectedArrival = currTime + prevLeg.getExpectedTransportTime();<a name="line.100"></a>
+<span class="sourceLineNo">101</span>                                act.setExpectedArrival(expectedArrival);<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                                double startAct = Math.max(expectedArrival, act.getTimeWindow().getStart()); <a name="line.102"></a>
+<span class="sourceLineNo">103</span>                                currTime = startAct + act.getDuration();<a name="line.103"></a>
+<span class="sourceLineNo">104</span>                                prevLink = act.getLocation();<a name="line.104"></a>
+<span class="sourceLineNo">105</span>                        }<a name="line.105"></a>
+<span class="sourceLineNo">106</span>                }<a name="line.106"></a>
+<span class="sourceLineNo">107</span>                Id&lt;Link&gt; endLink = tour.getTour().getEndLinkId();<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                route(prevLeg,prevLink,endLink, null, matsimVehicle);<a name="line.108"></a>
+<span class="sourceLineNo">109</span>        }<a name="line.109"></a>
+<span class="sourceLineNo">110</span>        <a name="line.110"></a>
+<span class="sourceLineNo">111</span>        private void route(Leg prevLeg, Id&lt;Link&gt; fromLinkId, Id&lt;Link&gt; toLinkId, Person person, Vehicle vehicle) {<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                if(fromLinkId.equals(toLinkId)){<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                        prevLeg.setExpectedTransportTime(0);<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                        NetworkRoute route = RouteUtils.createLinkNetworkRouteImpl(fromLinkId, toLinkId);<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                        route.setDistance(0.0);<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                        route.setTravelTime(0.0);<a name="line.116"></a>
+<span class="sourceLineNo">117</span>//                      route.setVehicleId(vehicle.getId());<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                        prevLeg.setRoute(route);<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                        return;<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                }<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                Path path = router.calcLeastCostPath(network.getLinks().get(fromLinkId).getToNode(), network.getLinks().get(toLinkId).getFromNode(), prevLeg.getExpectedDepartureTime(), person, vehicle);<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                double travelTime = path.travelTime;<a name="line.122"></a>
+<span class="sourceLineNo">123</span>                <a name="line.123"></a>
+<span class="sourceLineNo">124</span>                /*<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                 *ACHTUNG. Konsistenz zu VRP <a name="line.125"></a>
+<span class="sourceLineNo">126</span>                 */<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                double toLinkTravelTime = this.travelTime.getLinkTravelTime(network.getLinks().get(toLinkId),prevLeg.getExpectedDepartureTime()+travelTime, person, vehicle);<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                travelTime += toLinkTravelTime;<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                prevLeg.setExpectedTransportTime(travelTime);<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                NetworkRoute route = createRoute(fromLinkId,path,toLinkId);<a name="line.130"></a>
+<span class="sourceLineNo">131</span>//              route.setVehicleId(vehicle.getId());<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                prevLeg.setRoute(route);<a name="line.132"></a>
+<span class="sourceLineNo">133</span>        }<a name="line.133"></a>
+<span class="sourceLineNo">134</span>        <a name="line.134"></a>
+<span class="sourceLineNo">135</span>        private NetworkRoute createRoute(Id&lt;Link&gt; fromLink, Path path, Id&lt;Link&gt; toLink) {<a name="line.135"></a>
+<span class="sourceLineNo">136</span>                NetworkRoute route = RouteUtils.createLinkNetworkRouteImpl(fromLink, toLink);<a name="line.136"></a>
+<span class="sourceLineNo">137</span>                route.setLinkIds(fromLink, getLinkIds(path.links), toLink);<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                return route;<a name="line.138"></a>
+<span class="sourceLineNo">139</span>        }<a name="line.139"></a>
+<span class="sourceLineNo">140</span>        <a name="line.140"></a>
+<span class="sourceLineNo">141</span>        private List&lt;Id&lt;Link&gt;&gt; getLinkIds(List&lt;Link&gt; links) {<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                List&lt;Id&lt;Link&gt;&gt; linkIds = new ArrayList&lt;Id&lt;Link&gt;&gt;();<a name="line.142"></a>
+<span class="sourceLineNo">143</span>                for(Link l : links){<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                        linkIds.add(l.getId());<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                }<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                return linkIds;<a name="line.146"></a>
+<span class="sourceLineNo">147</span>        }<a name="line.147"></a>
+<span class="sourceLineNo">148</span><a name="line.148"></a>
+<span class="sourceLineNo">149</span><a name="line.149"></a>
+<span class="sourceLineNo">150</span>}<a name="line.150"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

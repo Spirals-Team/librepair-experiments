@@ -1,0 +1,358 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> * MultiNodeDijkstra.java<a name="line.3"></a>
+<span class="sourceLineNo">004</span> *                                                                         *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> * *********************************************************************** *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> *                                                                         *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> * copyright       : (C) 2013 by the members listed in the COPYING,        *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> *                   LICENSE and WARRANTY file.                            *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> * email           : info at matsim dot org                                *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> *                                                                         *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> * *********************************************************************** *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *                                                                         *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   (at your option) any later version.                                   *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> *                                                                         *<a name="line.18"></a>
+<span class="sourceLineNo">019</span> * *********************************************************************** */<a name="line.19"></a>
+<span class="sourceLineNo">020</span><a name="line.20"></a>
+<span class="sourceLineNo">021</span>package org.matsim.core.router;<a name="line.21"></a>
+<span class="sourceLineNo">022</span><a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.util.ArrayList;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import java.util.Collection;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import java.util.HashMap;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import java.util.Map;<a name="line.26"></a>
+<span class="sourceLineNo">027</span><a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.apache.log4j.Logger;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.api.core.v01.Coord;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.api.core.v01.Id;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.api.core.v01.network.Link;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.api.core.v01.network.Network;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.api.core.v01.network.Node;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.core.router.util.DijkstraNodeData;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.core.router.util.PreProcessDijkstra;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.core.router.util.TravelDisutility;<a name="line.36"></a>
+<span class="sourceLineNo">037</span>import org.matsim.core.router.util.TravelTime;<a name="line.37"></a>
+<span class="sourceLineNo">038</span>import org.matsim.core.utils.collections.RouterPriorityQueue;<a name="line.38"></a>
+<span class="sourceLineNo">039</span><a name="line.39"></a>
+<span class="sourceLineNo">040</span>/**<a name="line.40"></a>
+<span class="sourceLineNo">041</span> * &lt;p&gt;An extended implementation of the Dijkstra algorithm that supports multiple<a name="line.41"></a>
+<span class="sourceLineNo">042</span> * start- and/or end nodes.&lt;/p&gt;<a name="line.42"></a>
+<span class="sourceLineNo">043</span> * <a name="line.43"></a>
+<span class="sourceLineNo">044</span> * &lt;p&gt;To do so, ImaginaryNodes and IntialNodes are introduced which is required for<a name="line.44"></a>
+<span class="sourceLineNo">045</span> * backwards compatibility with the default Dijkstra implementation which expects<a name="line.45"></a>
+<span class="sourceLineNo">046</span> * only single nodes as arguments.&lt;/p&gt;<a name="line.46"></a>
+<span class="sourceLineNo">047</span> * <a name="line.47"></a>
+<span class="sourceLineNo">048</span> * &lt;p&gt;Therefore, ImaginaryNodes are introduced. They contain a collection of<a name="line.48"></a>
+<span class="sourceLineNo">049</span> * InitialNodes that represents the start or end nodes to be used by the algorithm.<a name="line.49"></a>
+<span class="sourceLineNo">050</span> * Each InitialNode represents a node from the network. In addition, initial time and<a name="line.50"></a>
+<span class="sourceLineNo">051</span> * costs can be defined, i.e. the time respectively costs to reach that node.&lt;p&gt;<a name="line.51"></a>
+<span class="sourceLineNo">052</span> * <a name="line.52"></a>
+<span class="sourceLineNo">053</span> * &lt;p&gt;By default, only the cheapest path between is calculated, i.e. the routing algorithm<a name="line.53"></a>
+<span class="sourceLineNo">054</span> * will terminate before all end nodes have been reached. This behaviour can be changed<a name="line.54"></a>
+<span class="sourceLineNo">055</span> * by setting the searchAllEndNodes parameter to true.&lt;/p&gt;<a name="line.55"></a>
+<span class="sourceLineNo">056</span> * <a name="line.56"></a>
+<span class="sourceLineNo">057</span> * @see org.matsim.core.router.Dijkstra<a name="line.57"></a>
+<span class="sourceLineNo">058</span> * @see org.matsim.core.router.InitialNode<a name="line.58"></a>
+<span class="sourceLineNo">059</span> * @see org.matsim.core.router.ImaginaryNode<a name="line.59"></a>
+<span class="sourceLineNo">060</span> * <a name="line.60"></a>
+<span class="sourceLineNo">061</span> * @author cdobler<a name="line.61"></a>
+<span class="sourceLineNo">062</span> */<a name="line.62"></a>
+<span class="sourceLineNo">063</span>public class MultiNodeDijkstra extends Dijkstra implements MultiNodePathCalculator {<a name="line.63"></a>
+<span class="sourceLineNo">064</span>        <a name="line.64"></a>
+<span class="sourceLineNo">065</span>        private final static Logger log = Logger.getLogger(MultiNodeDijkstra.class);<a name="line.65"></a>
+<span class="sourceLineNo">066</span>        <a name="line.66"></a>
+<span class="sourceLineNo">067</span>        /*<a name="line.67"></a>
+<span class="sourceLineNo">068</span>         * If this value is true, the algorithm tries to find routes to all end nodes.<a name="line.68"></a>
+<span class="sourceLineNo">069</span>         * Otherwise only the one(s) with the lowest costs are found.<a name="line.69"></a>
+<span class="sourceLineNo">070</span>         * <a name="line.70"></a>
+<span class="sourceLineNo">071</span>         * When enabling this option, select end nodes with care! If only one of them<a name="line.71"></a>
+<span class="sourceLineNo">072</span>         * is in a not reachable part of the network, the algorithm will process the<a name="line.72"></a>
+<span class="sourceLineNo">073</span>         * entire reachable part of the network before terminating.<a name="line.73"></a>
+<span class="sourceLineNo">074</span>         */<a name="line.74"></a>
+<span class="sourceLineNo">075</span>        private boolean searchAllEndNodes;<a name="line.75"></a>
+<span class="sourceLineNo">076</span>        <a name="line.76"></a>
+<span class="sourceLineNo">077</span>        MultiNodeDijkstra(Network network, TravelDisutility costFunction, TravelTime timeFunction, boolean searchAllEndNodes) {<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                super(network, costFunction, timeFunction);<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                this.searchAllEndNodes = searchAllEndNodes;<a name="line.79"></a>
+<span class="sourceLineNo">080</span>        }<a name="line.80"></a>
+<span class="sourceLineNo">081</span>        <a name="line.81"></a>
+<span class="sourceLineNo">082</span>        MultiNodeDijkstra(final Network network, final TravelDisutility costFunction, final TravelTime timeFunction,<a name="line.82"></a>
+<span class="sourceLineNo">083</span>                        final PreProcessDijkstra preProcessData, boolean searchAllEndNodes) {<a name="line.83"></a>
+<span class="sourceLineNo">084</span>                super(network, costFunction, timeFunction, preProcessData);<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                this.searchAllEndNodes = searchAllEndNodes;<a name="line.85"></a>
+<span class="sourceLineNo">086</span>        }<a name="line.86"></a>
+<span class="sourceLineNo">087</span>        <a name="line.87"></a>
+<span class="sourceLineNo">088</span>        public static ImaginaryNode createImaginaryNode(Collection&lt;? extends InitialNode&gt; nodes) {<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                return new ImaginaryNode(nodes);<a name="line.89"></a>
+<span class="sourceLineNo">090</span>        }<a name="line.90"></a>
+<span class="sourceLineNo">091</span>        <a name="line.91"></a>
+<span class="sourceLineNo">092</span>        public static ImaginaryNode createImaginaryNode(Collection&lt;? extends InitialNode&gt; nodes, Coord coord) {<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                return new ImaginaryNode(nodes, coord);<a name="line.93"></a>
+<span class="sourceLineNo">094</span>        }<a name="line.94"></a>
+<span class="sourceLineNo">095</span>        <a name="line.95"></a>
+<span class="sourceLineNo">096</span>        /*<a name="line.96"></a>
+<span class="sourceLineNo">097</span>         * We have to extend this method from the original Dijkstra. The given input nodes might be<a name="line.97"></a>
+<span class="sourceLineNo">098</span>         * ImaginaryNodes which contain multiple start / end nodes for the routing process. Those<a name="line.98"></a>
+<span class="sourceLineNo">099</span>         * nodes should be part of the routing network, therefore we perform the check for each of them.<a name="line.99"></a>
+<span class="sourceLineNo">100</span>         * <a name="line.100"></a>
+<span class="sourceLineNo">101</span>         * Regular nodes are directly passed to the super class.<a name="line.101"></a>
+<span class="sourceLineNo">102</span>         * <a name="line.102"></a>
+<span class="sourceLineNo">103</span>         * cdobler, jun'14<a name="line.103"></a>
+<span class="sourceLineNo">104</span>         */<a name="line.104"></a>
+<span class="sourceLineNo">105</span>        /*package*/ @Override<a name="line.105"></a>
+<span class="sourceLineNo">106</span>        void checkNodeBelongToNetwork(Node node) {<a name="line.106"></a>
+<span class="sourceLineNo">107</span>                if (node instanceof ImaginaryNode) {<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                        ImaginaryNode imaginaryNode = (ImaginaryNode) node;<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                        for (InitialNode initialNode : imaginaryNode.initialNodes) super.checkNodeBelongToNetwork(initialNode.node);<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                } else super.checkNodeBelongToNetwork(node);<a name="line.110"></a>
+<span class="sourceLineNo">111</span>        }<a name="line.111"></a>
+<span class="sourceLineNo">112</span>        <a name="line.112"></a>
+<span class="sourceLineNo">113</span>        @Override<a name="line.113"></a>
+<span class="sourceLineNo">114</span>        /*package*/ Node searchLogic(final Node fromNode, final Node toNode, final RouterPriorityQueue&lt;Node&gt; pendingNodes) {<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                <a name="line.115"></a>
+<span class="sourceLineNo">116</span>                // If it is an imaginary node...<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                if (toNode instanceof ImaginaryNode) {<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                        <a name="line.118"></a>
+<span class="sourceLineNo">119</span>                        Map&lt;Id&lt;Node&gt;, InitialNode&gt; endNodes = new HashMap&lt;&gt;();<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                        <a name="line.120"></a>
+<span class="sourceLineNo">121</span>                        Collection&lt;? extends InitialNode&gt; initialNodes = ((ImaginaryNode) toNode).initialNodes;<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                        for (InitialNode initialNode : initialNodes) endNodes.put(initialNode.node.getId(), initialNode);<a name="line.122"></a>
+<span class="sourceLineNo">123</span><a name="line.123"></a>
+<span class="sourceLineNo">124</span>                        // find out which one is the cheapest end node<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                        double minCost = Double.POSITIVE_INFINITY;<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                        Node minCostNode = null;<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                        <a name="line.127"></a>
+<span class="sourceLineNo">128</span>                        // continue searching as long as unvisited end nodes are available<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                        boolean stillSearching = endNodes.size() &gt; 0;<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                        <a name="line.130"></a>
+<span class="sourceLineNo">131</span>                        while (stillSearching) {<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                                Node outNode = pendingNodes.poll();<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                                <a name="line.133"></a>
+<span class="sourceLineNo">134</span>                                if (outNode == null) {<a name="line.134"></a>
+<span class="sourceLineNo">135</span>                                        /*<a name="line.135"></a>
+<span class="sourceLineNo">136</span>                                         * This is not necessarily a problem. Some of the out nodes might be reachable only<a name="line.136"></a>
+<span class="sourceLineNo">137</span>                                         * by passing another out node. Those nodes will never become the cheapest out node.<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                                         * Therefore only print a warning if no path to any of the out nodes was found.<a name="line.138"></a>
+<span class="sourceLineNo">139</span>                                         */<a name="line.139"></a>
+<span class="sourceLineNo">140</span>                                        if (minCostNode == null) {<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                                                if ( log.isTraceEnabled() ) {<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                                                        log.trace("No route was found from node " + fromNode.getId() + " to any of the destination nodes was found.");<a name="line.142"></a>
+<span class="sourceLineNo">143</span>                                                        // seems we have no more nodes left, but not yet reached all endNodes...<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                                                        StringBuffer sb = new StringBuffer("\tnot reached destionation nodes: ");<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                                                        for (InitialNode endNode : endNodes.values()) {<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                                                                sb.append(endNode.node.getId().toString());<a name="line.146"></a>
+<span class="sourceLineNo">147</span>                                                                sb.append("; ");<a name="line.147"></a>
+<span class="sourceLineNo">148</span>                                                        }<a name="line.148"></a>
+<span class="sourceLineNo">149</span>                                                        log.trace(sb.toString());<a name="line.149"></a>
+<span class="sourceLineNo">150</span>                                                }<a name="line.150"></a>
+<span class="sourceLineNo">151</span>                                        }<a name="line.151"></a>
+<span class="sourceLineNo">152</span>                                        <a name="line.152"></a>
+<span class="sourceLineNo">153</span>                                        if (searchAllEndNodes &amp;&amp; endNodes.size() &gt; 0) {<a name="line.153"></a>
+<span class="sourceLineNo">154</span>                                                for (InitialNode endNode : endNodes.values()) {<a name="line.154"></a>
+<span class="sourceLineNo">155</span>                                                        log.trace("No route was found from node " + fromNode.getId() + " to destination node " + endNode.node.getId() + ".");<a name="line.155"></a>
+<span class="sourceLineNo">156</span>                                                }<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                                        }<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                                        <a name="line.158"></a>
+<span class="sourceLineNo">159</span>                                        endNodes.clear();<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                                        stillSearching = false;<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                                } else {<a name="line.161"></a>
+<span class="sourceLineNo">162</span>                                        DijkstraNodeData data = getData(outNode);<a name="line.162"></a>
+<span class="sourceLineNo">163</span>                                        InitialNode initData = endNodes.remove(outNode.getId());<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                                                                                <a name="line.164"></a>
+<span class="sourceLineNo">165</span>                                        /*<a name="line.165"></a>
+<span class="sourceLineNo">166</span>                                         * If the node is an end node.<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                                         * Note: <a name="line.167"></a>
+<span class="sourceLineNo">168</span>                                         * The node was head of the priority queue, i.e. the shortest path to the <a name="line.168"></a>
+<span class="sourceLineNo">169</span>                                         * node has been found. The algorithm will not re-visit the node on another<a name="line.169"></a>
+<span class="sourceLineNo">170</span>                                         * route!<a name="line.170"></a>
+<span class="sourceLineNo">171</span>                                         */<a name="line.171"></a>
+<span class="sourceLineNo">172</span>                                        if (initData != null) {<a name="line.172"></a>
+<span class="sourceLineNo">173</span>                                                double cost = data.getCost() + initData.initialCost;<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                                                if (cost &lt; minCost) {<a name="line.174"></a>
+<span class="sourceLineNo">175</span>                                                        minCost = cost;<a name="line.175"></a>
+<span class="sourceLineNo">176</span>                                                        minCostNode = outNode;<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                                                }<a name="line.177"></a>
+<span class="sourceLineNo">178</span>                                        }<a name="line.178"></a>
+<span class="sourceLineNo">179</span>                                        <a name="line.179"></a>
+<span class="sourceLineNo">180</span>                                        if (searchAllEndNodes) {<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                                                relaxNode(outNode, null, pendingNodes);<a name="line.181"></a>
+<span class="sourceLineNo">182</span>                                                stillSearching = endNodes.size() &gt; 0;<a name="line.182"></a>
+<span class="sourceLineNo">183</span>                                        } else {<a name="line.183"></a>
+<span class="sourceLineNo">184</span>                                                if (data.getCost() &gt; minCost) {<a name="line.184"></a>
+<span class="sourceLineNo">185</span>                                                        endNodes.clear(); // we can't get any better now<a name="line.185"></a>
+<span class="sourceLineNo">186</span>                                                        stillSearching = false;<a name="line.186"></a>
+<span class="sourceLineNo">187</span>                                                } else {<a name="line.187"></a>
+<span class="sourceLineNo">188</span>                                                        relaxNode(outNode, null, pendingNodes);<a name="line.188"></a>
+<span class="sourceLineNo">189</span>                                                }<a name="line.189"></a>
+<span class="sourceLineNo">190</span>                                        }<a name="line.190"></a>
+<span class="sourceLineNo">191</span>                                }<a name="line.191"></a>
+<span class="sourceLineNo">192</span>                        }<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                        <a name="line.193"></a>
+<span class="sourceLineNo">194</span>                        return minCostNode;<a name="line.194"></a>
+<span class="sourceLineNo">195</span>                } <a name="line.195"></a>
+<span class="sourceLineNo">196</span>                // ... otherwise: default behaviour.<a name="line.196"></a>
+<span class="sourceLineNo">197</span>                else return super.searchLogic(fromNode, toNode, pendingNodes);<a name="line.197"></a>
+<span class="sourceLineNo">198</span>        }<a name="line.198"></a>
+<span class="sourceLineNo">199</span>        <a name="line.199"></a>
+<span class="sourceLineNo">200</span>        /*<a name="line.200"></a>
+<span class="sourceLineNo">201</span>         * initFromNode -&gt; first Node in pendingNodes -&gt; calcLeastCostPath will relax that node<a name="line.201"></a>
+<span class="sourceLineNo">202</span>         * -&gt; we relax that dummy node here<a name="line.202"></a>
+<span class="sourceLineNo">203</span>         */<a name="line.203"></a>
+<span class="sourceLineNo">204</span>        @Override<a name="line.204"></a>
+<span class="sourceLineNo">205</span>        /*package*/ void initFromNode(final Node fromNode, final Node toNode, final double startTime,<a name="line.205"></a>
+<span class="sourceLineNo">206</span>                        final RouterPriorityQueue&lt;Node&gt; pendingNodes) {<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                <a name="line.207"></a>
+<span class="sourceLineNo">208</span>                // If it is an imaginary node, we relax it.<a name="line.208"></a>
+<span class="sourceLineNo">209</span>                if (fromNode instanceof ImaginaryNode) {                        <a name="line.209"></a>
+<span class="sourceLineNo">210</span>                        relaxImaginaryNode((ImaginaryNode) fromNode, pendingNodes, startTime);<a name="line.210"></a>
+<span class="sourceLineNo">211</span>                }<a name="line.211"></a>
+<span class="sourceLineNo">212</span>                // ... otherwise: default behaviour.<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                else super.initFromNode(fromNode, toNode, startTime, pendingNodes);<a name="line.213"></a>
+<span class="sourceLineNo">214</span>        }<a name="line.214"></a>
+<span class="sourceLineNo">215</span>        <a name="line.215"></a>
+<span class="sourceLineNo">216</span>        protected void relaxImaginaryNode(final ImaginaryNode outNode, final RouterPriorityQueue&lt;Node&gt; pendingNodes,<a name="line.216"></a>
+<span class="sourceLineNo">217</span>                        final double currTime) {<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                <a name="line.218"></a>
+<span class="sourceLineNo">219</span>                double currCost = 0.0;  // should be 0<a name="line.219"></a>
+<span class="sourceLineNo">220</span><a name="line.220"></a>
+<span class="sourceLineNo">221</span>                for (InitialNode initialNode : outNode.initialNodes) {<a name="line.221"></a>
+<span class="sourceLineNo">222</span>                        double travelTime = initialNode.initialTime;<a name="line.222"></a>
+<span class="sourceLineNo">223</span>                        double travelCost = initialNode.initialCost;<a name="line.223"></a>
+<span class="sourceLineNo">224</span>                        DijkstraNodeData data = getData(initialNode.node);<a name="line.224"></a>
+<span class="sourceLineNo">225</span>                        Link l = null;  // fromLink - use a dummy link here??<a name="line.225"></a>
+<span class="sourceLineNo">226</span>                        visitNode(initialNode.node, data, pendingNodes, currTime + travelTime, currCost + travelCost, l);                       <a name="line.226"></a>
+<span class="sourceLineNo">227</span>                }<a name="line.227"></a>
+<span class="sourceLineNo">228</span>        }       <a name="line.228"></a>
+<span class="sourceLineNo">229</span>        <a name="line.229"></a>
+<span class="sourceLineNo">230</span>        @Override<a name="line.230"></a>
+<span class="sourceLineNo">231</span>        protected Path constructPath(Node fromNode, Node toNode, double startTime, double arrivalTime) {<a name="line.231"></a>
+<span class="sourceLineNo">232</span>                ArrayList&lt;Node&gt; nodes = new ArrayList&lt;Node&gt;();<a name="line.232"></a>
+<span class="sourceLineNo">233</span>                ArrayList&lt;Link&gt; links = new ArrayList&lt;Link&gt;();<a name="line.233"></a>
+<span class="sourceLineNo">234</span><a name="line.234"></a>
+<span class="sourceLineNo">235</span>                nodes.add(0, toNode);<a name="line.235"></a>
+<span class="sourceLineNo">236</span>                Link tmpLink = getData(toNode).getPrevLink();<a name="line.236"></a>
+<span class="sourceLineNo">237</span>                <a name="line.237"></a>
+<span class="sourceLineNo">238</span>                // Only this part has been adapted. Could probably also be changed in the super class.<a name="line.238"></a>
+<span class="sourceLineNo">239</span>                while (tmpLink != null) {<a name="line.239"></a>
+<span class="sourceLineNo">240</span>                        links.add(0, tmpLink);<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                        nodes.add(0, tmpLink.getFromNode());<a name="line.241"></a>
+<span class="sourceLineNo">242</span>                        tmpLink = getData(tmpLink.getFromNode()).getPrevLink();<a name="line.242"></a>
+<span class="sourceLineNo">243</span>                }<a name="line.243"></a>
+<span class="sourceLineNo">244</span><a name="line.244"></a>
+<span class="sourceLineNo">245</span>                // Ignore the initial time and cost of the start node!<a name="line.245"></a>
+<span class="sourceLineNo">246</span>                DijkstraNodeData startNodeData = getData(nodes.get(0));<a name="line.246"></a>
+<span class="sourceLineNo">247</span>                DijkstraNodeData toNodeData = getData(toNode);<a name="line.247"></a>
+<span class="sourceLineNo">248</span>                Path path = new Path(nodes, links, toNodeData.getTime() - startNodeData.getTime(), toNodeData.getCost() - startNodeData.getCost());<a name="line.248"></a>
+<span class="sourceLineNo">249</span>//              double travelTime = arrivalTime - startTime;<a name="line.249"></a>
+<span class="sourceLineNo">250</span>//              Path path = new Path(nodes, links, travelTime, toNodeData.getCost());<a name="line.250"></a>
+<span class="sourceLineNo">251</span><a name="line.251"></a>
+<span class="sourceLineNo">252</span>                return path;<a name="line.252"></a>
+<span class="sourceLineNo">253</span>        }<a name="line.253"></a>
+<span class="sourceLineNo">254</span>        <a name="line.254"></a>
+<span class="sourceLineNo">255</span>        /**<a name="line.255"></a>
+<span class="sourceLineNo">256</span>         * This method should only be called from outside after calcLeastCostPath(...) has<a name="line.256"></a>
+<span class="sourceLineNo">257</span>         * been executed. After that, the paths between the multiple start and/or end nodes<a name="line.257"></a>
+<span class="sourceLineNo">258</span>         * can be constructed using this method.<a name="line.258"></a>
+<span class="sourceLineNo">259</span>         * <a name="line.259"></a>
+<span class="sourceLineNo">260</span>         * Is there a way to check whether this method is called as intended??<a name="line.260"></a>
+<span class="sourceLineNo">261</span>         * cdobler, oct'13<a name="line.261"></a>
+<span class="sourceLineNo">262</span>         */<a name="line.262"></a>
+<span class="sourceLineNo">263</span>        public Path constructPath(Node fromNode, Node toNode, double startTime) {<a name="line.263"></a>
+<span class="sourceLineNo">264</span>                if (toNode == null || fromNode == null) return null;<a name="line.264"></a>
+<span class="sourceLineNo">265</span>                else {<a name="line.265"></a>
+<span class="sourceLineNo">266</span>                        DijkstraNodeData toData = getData(toNode);<a name="line.266"></a>
+<span class="sourceLineNo">267</span>                        if (!toData.isVisited(this.getIterationId())) return null;<a name="line.267"></a>
+<span class="sourceLineNo">268</span><a name="line.268"></a>
+<span class="sourceLineNo">269</span>                        DijkstraNodeData fromData = getData(fromNode);<a name="line.269"></a>
+<span class="sourceLineNo">270</span>                        if (!fromData.isVisited(this.getIterationId())) return null;<a name="line.270"></a>
+<span class="sourceLineNo">271</span><a name="line.271"></a>
+<span class="sourceLineNo">272</span>                        double arrivalTime = toData.getTime();<a name="line.272"></a>
+<span class="sourceLineNo">273</span>                        <a name="line.273"></a>
+<span class="sourceLineNo">274</span>                        // now construct and return the path<a name="line.274"></a>
+<span class="sourceLineNo">275</span>                        return constructPath(fromNode, toNode, startTime, arrivalTime);                 <a name="line.275"></a>
+<span class="sourceLineNo">276</span>                }<a name="line.276"></a>
+<span class="sourceLineNo">277</span>        }<a name="line.277"></a>
+<span class="sourceLineNo">278</span><a name="line.278"></a>
+<span class="sourceLineNo">279</span>    public boolean isSearchAllEndNodes() {<a name="line.279"></a>
+<span class="sourceLineNo">280</span>        return searchAllEndNodes;<a name="line.280"></a>
+<span class="sourceLineNo">281</span>    }<a name="line.281"></a>
+<span class="sourceLineNo">282</span><a name="line.282"></a>
+<span class="sourceLineNo">283</span>    public void setSearchAllEndNodes(boolean searchAllEndNodes) {<a name="line.283"></a>
+<span class="sourceLineNo">284</span>        this.searchAllEndNodes = searchAllEndNodes;<a name="line.284"></a>
+<span class="sourceLineNo">285</span>    }<a name="line.285"></a>
+<span class="sourceLineNo">286</span>}<a name="line.286"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,319 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2008 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span><a name="line.19"></a>
+<span class="sourceLineNo">020</span>package org.matsim.core.mobsim.qsim;<a name="line.20"></a>
+<span class="sourceLineNo">021</span><a name="line.21"></a>
+<span class="sourceLineNo">022</span>import java.util.Comparator;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.util.Iterator;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import java.util.Queue;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import java.util.concurrent.PriorityBlockingQueue;<a name="line.25"></a>
+<span class="sourceLineNo">026</span><a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.apache.log4j.Logger;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.api.core.v01.Id;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.api.core.v01.events.PersonStuckEvent;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.api.core.v01.network.Link;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.api.core.v01.population.Person;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.core.api.experimental.events.EventsManager;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.core.mobsim.framework.MobsimAgent;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.core.mobsim.framework.MobsimAgent.State;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.core.mobsim.qsim.interfaces.ActivityHandler;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.core.mobsim.qsim.interfaces.AgentCounter;<a name="line.36"></a>
+<span class="sourceLineNo">037</span>import org.matsim.core.mobsim.qsim.interfaces.MobsimEngine;<a name="line.37"></a>
+<span class="sourceLineNo">038</span>import org.matsim.core.utils.misc.Time;<a name="line.38"></a>
+<span class="sourceLineNo">039</span><a name="line.39"></a>
+<span class="sourceLineNo">040</span>import javax.inject.Inject;<a name="line.40"></a>
+<span class="sourceLineNo">041</span><a name="line.41"></a>
+<span class="sourceLineNo">042</span>public class ActivityEngine implements MobsimEngine, ActivityHandler {<a name="line.42"></a>
+<span class="sourceLineNo">043</span>        private static final Logger log = Logger.getLogger( ActivityEngine.class ) ;<a name="line.43"></a>
+<span class="sourceLineNo">044</span><a name="line.44"></a>
+<span class="sourceLineNo">045</span>        private EventsManager eventsManager;<a name="line.45"></a>
+<span class="sourceLineNo">046</span>        @Inject<a name="line.46"></a>
+<span class="sourceLineNo">047</span>        public ActivityEngine(EventsManager eventsManager) {<a name="line.47"></a>
+<span class="sourceLineNo">048</span>                this.eventsManager = eventsManager;<a name="line.48"></a>
+<span class="sourceLineNo">049</span>        }<a name="line.49"></a>
+<span class="sourceLineNo">050</span><a name="line.50"></a>
+<span class="sourceLineNo">051</span>        public ActivityEngine(EventsManager eventsManager, AgentCounter agentCounter) {<a name="line.51"></a>
+<span class="sourceLineNo">052</span>                this.eventsManager = eventsManager;<a name="line.52"></a>
+<span class="sourceLineNo">053</span>        }<a name="line.53"></a>
+<span class="sourceLineNo">054</span><a name="line.54"></a>
+<span class="sourceLineNo">055</span>        /**<a name="line.55"></a>
+<span class="sourceLineNo">056</span>         * Agents cannot be added directly to the activityEndsList since that would<a name="line.56"></a>
+<span class="sourceLineNo">057</span>         * not be thread-safe when within-day replanning is used. There, an agent's<a name="line.57"></a>
+<span class="sourceLineNo">058</span>         * activity end time can be modified. As a result, the agent is located at<a name="line.58"></a>
+<span class="sourceLineNo">059</span>         * the wrong position in the activityEndsList until it is updated by using<a name="line.59"></a>
+<span class="sourceLineNo">060</span>         * rescheduleActivityEnd(...). However, if another agent is added to the list<a name="line.60"></a>
+<span class="sourceLineNo">061</span>         * in the mean time, it might be inserted at the wrong position.<a name="line.61"></a>
+<span class="sourceLineNo">062</span>         * cdobler, apr'12<a name="line.62"></a>
+<span class="sourceLineNo">063</span>         */<a name="line.63"></a>
+<span class="sourceLineNo">064</span>        private static class AgentEntry {<a name="line.64"></a>
+<span class="sourceLineNo">065</span>                public AgentEntry(MobsimAgent agent, double activityEndTime) {<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                        this.agent = agent;<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                        this.activityEndTime = activityEndTime;<a name="line.67"></a>
+<span class="sourceLineNo">068</span>                }<a name="line.68"></a>
+<span class="sourceLineNo">069</span>                final MobsimAgent agent;<a name="line.69"></a>
+<span class="sourceLineNo">070</span>                final double activityEndTime;<a name="line.70"></a>
+<span class="sourceLineNo">071</span>        }<a name="line.71"></a>
+<span class="sourceLineNo">072</span><a name="line.72"></a>
+<span class="sourceLineNo">073</span>        private InternalInterface internalInterface;<a name="line.73"></a>
+<span class="sourceLineNo">074</span>        <a name="line.74"></a>
+<span class="sourceLineNo">075</span>        /**<a name="line.75"></a>
+<span class="sourceLineNo">076</span>         * This list needs to be a "blocking" queue since this is needed for<a name="line.76"></a>
+<span class="sourceLineNo">077</span>         * thread-safety in the parallel qsim. cdobler, oct'10<a name="line.77"></a>
+<span class="sourceLineNo">078</span>         */<a name="line.78"></a>
+<span class="sourceLineNo">079</span>        private final Queue&lt;AgentEntry&gt; activityEndsList = new PriorityBlockingQueue&lt;&gt;(500, new Comparator&lt;AgentEntry&gt;() {<a name="line.79"></a>
+<span class="sourceLineNo">080</span><a name="line.80"></a>
+<span class="sourceLineNo">081</span>                @Override<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                public int compare(AgentEntry arg0, AgentEntry arg1) {<a name="line.82"></a>
+<span class="sourceLineNo">083</span>                        int cmp = Double.compare(arg0.activityEndTime, arg1.activityEndTime);<a name="line.83"></a>
+<span class="sourceLineNo">084</span>                        if (cmp == 0) {<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                                // Both depart at the same time -&gt; let the one with the larger id be first (=smaller)<a name="line.85"></a>
+<span class="sourceLineNo">086</span>                                //<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                                // yy We are not sure what the above comment line is supposed to say.  Presumably, it is supposed<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                                // to say that the agent with the larger ID should be "smaller" one in the comparison.<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                                // In practice, it seems<a name="line.89"></a>
+<span class="sourceLineNo">090</span>                                // that something like "emob_9" is before "emob_8", and something like "emob_10" before "emob_1".<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                                // It is unclear why this convention is supposed to be helpful.<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                                // kai &amp; dominik, jul'12<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                                //<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                                return arg1.agent.getId().compareTo(arg0.agent.getId());<a name="line.94"></a>
+<span class="sourceLineNo">095</span>                        }<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                        return cmp;<a name="line.96"></a>
+<span class="sourceLineNo">097</span>                }<a name="line.97"></a>
+<span class="sourceLineNo">098</span><a name="line.98"></a>
+<span class="sourceLineNo">099</span>        });<a name="line.99"></a>
+<span class="sourceLineNo">100</span>        <a name="line.100"></a>
+<span class="sourceLineNo">101</span>        // See handleActivity for the reason for this.<a name="line.101"></a>
+<span class="sourceLineNo">102</span>        private boolean beforeFirstSimStep = true;<a name="line.102"></a>
+<span class="sourceLineNo">103</span><a name="line.103"></a>
+<span class="sourceLineNo">104</span>        @Override<a name="line.104"></a>
+<span class="sourceLineNo">105</span>        public void onPrepareSim() {<a name="line.105"></a>
+<span class="sourceLineNo">106</span>                // Nothing to do here<a name="line.106"></a>
+<span class="sourceLineNo">107</span>        }<a name="line.107"></a>
+<span class="sourceLineNo">108</span><a name="line.108"></a>
+<span class="sourceLineNo">109</span>        @Override<a name="line.109"></a>
+<span class="sourceLineNo">110</span>        public void doSimStep(double time) {<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                beforeFirstSimStep = false;<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                while (activityEndsList.peek() != null) {<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                        if (activityEndsList.peek().activityEndTime &lt;= time) {<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                                MobsimAgent agent = activityEndsList.poll().agent;<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                                unregisterAgentAtActivityLocation(agent);<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                                agent.endActivityAndComputeNextState(time);<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                                internalInterface.arrangeNextAgentState(agent);<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                        } else {<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                                return;<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                        }<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                }<a name="line.121"></a>
+<span class="sourceLineNo">122</span>        }<a name="line.122"></a>
+<span class="sourceLineNo">123</span><a name="line.123"></a>
+<span class="sourceLineNo">124</span>        @Override<a name="line.124"></a>
+<span class="sourceLineNo">125</span>        public void afterSim() {<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                double now = this.internalInterface.getMobsim().getSimTimer().getTimeOfDay();<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                for (AgentEntry entry : activityEndsList) {<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                        if (entry.activityEndTime!=Double.POSITIVE_INFINITY &amp;&amp; entry.activityEndTime!=Time.UNDEFINED_TIME) {<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                                // since we are at an activity, it is not plausible to assume that the agents know mode or destination<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                                // link id.  Thus generating the event with ``null'' in the corresponding entries.  kai, mar'12<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                                eventsManager.processEvent(new PersonStuckEvent(now, entry.agent.getId(), null, null));<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                        }<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                }<a name="line.133"></a>
+<span class="sourceLineNo">134</span>                activityEndsList.clear();<a name="line.134"></a>
+<span class="sourceLineNo">135</span>        }<a name="line.135"></a>
+<span class="sourceLineNo">136</span><a name="line.136"></a>
+<span class="sourceLineNo">137</span>        @Override<a name="line.137"></a>
+<span class="sourceLineNo">138</span>        public void setInternalInterface(InternalInterface internalInterface) {<a name="line.138"></a>
+<span class="sourceLineNo">139</span>                this.internalInterface = internalInterface;<a name="line.139"></a>
+<span class="sourceLineNo">140</span>        }<a name="line.140"></a>
+<span class="sourceLineNo">141</span><a name="line.141"></a>
+<span class="sourceLineNo">142</span>        <a name="line.142"></a>
+<span class="sourceLineNo">143</span>        /**<a name="line.143"></a>
+<span class="sourceLineNo">144</span>         * <a name="line.144"></a>
+<span class="sourceLineNo">145</span>         * This method is called by QSim to pass in agents which then "live" in the activity layer until they are handed out again<a name="line.145"></a>
+<span class="sourceLineNo">146</span>         * through the internalInterface.<a name="line.146"></a>
+<span class="sourceLineNo">147</span>         * <a name="line.147"></a>
+<span class="sourceLineNo">148</span>         * It is called not before onPrepareSim() and not after afterSim(), but it may be called before, after, or from doSimStep(),<a name="line.148"></a>
+<span class="sourceLineNo">149</span>         * and even from itself (i.e. it must be reentrant), since internalInterface.arrangeNextAgentState() may trigger<a name="line.149"></a>
+<span class="sourceLineNo">150</span>         * the next Activity.<a name="line.150"></a>
+<span class="sourceLineNo">151</span>         * <a name="line.151"></a>
+<span class="sourceLineNo">152</span>         */<a name="line.152"></a>
+<span class="sourceLineNo">153</span>        @Override<a name="line.153"></a>
+<span class="sourceLineNo">154</span>        public boolean handleActivity(MobsimAgent agent) {<a name="line.154"></a>
+<span class="sourceLineNo">155</span>                if (agent.getActivityEndTime() == Double.POSITIVE_INFINITY) {<a name="line.155"></a>
+<span class="sourceLineNo">156</span>                        // This is the last planned activity.<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                        // So the agent goes to sleep.<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                        internalInterface.getMobsim().getAgentCounter().decLiving();<a name="line.158"></a>
+<span class="sourceLineNo">159</span>                } else if (agent.getActivityEndTime() &lt;= internalInterface.getMobsim().getSimTimer().getTimeOfDay() &amp;&amp; !beforeFirstSimStep) {<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                        // This activity is already over (planned for 0 duration)<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                        // So we proceed immediately.<a name="line.161"></a>
+<span class="sourceLineNo">162</span>                        agent.endActivityAndComputeNextState(internalInterface.getMobsim().getSimTimer().getTimeOfDay());<a name="line.162"></a>
+<span class="sourceLineNo">163</span>                        internalInterface.arrangeNextAgentState(agent) ;<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                } else {<a name="line.164"></a>
+<span class="sourceLineNo">165</span>                        // The agent commences an activity on this link.<a name="line.165"></a>
+<span class="sourceLineNo">166</span>                        final AgentEntry agentEntry = new AgentEntry(agent, agent.getActivityEndTime());<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                        activityEndsList.add(agentEntry);<a name="line.167"></a>
+<span class="sourceLineNo">168</span>                        internalInterface.registerAdditionalAgentOnLink(agent);<a name="line.168"></a>
+<span class="sourceLineNo">169</span>                }<a name="line.169"></a>
+<span class="sourceLineNo">170</span>                // Why beforeFirstSimStep matters:<a name="line.170"></a>
+<span class="sourceLineNo">171</span>                // - If this class has never had a doSimStep() when this method is called, this means that this Agent is having its<a name="line.171"></a>
+<span class="sourceLineNo">172</span>                // "overnight", i.e. first Activity.<a name="line.172"></a>
+<span class="sourceLineNo">173</span>                // - This means that this ActivityEngine should not just pass this MobsimAgent along if its activityEndTime has already ended,<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                // but queue it in with other such Agents and let them all leave on doSimStep(), because we expect those Agents to leave<a name="line.174"></a>
+<span class="sourceLineNo">175</span>                // in the order specified by the activityQueue (no matter if it is a good order or not, see comment there). The order in which new Agents enter<a name="line.175"></a>
+<span class="sourceLineNo">176</span>                // the simulation and are passed into this method is a different one, so this matters.<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                // - This is safe (Agents will not miss a second), simply because doSimStep for this time step has not yet happened.<a name="line.177"></a>
+<span class="sourceLineNo">178</span>                // - It also means that e.g. OTFVis will probably display all Agents while they are in their first Activity before you press play.<a name="line.178"></a>
+<span class="sourceLineNo">179</span>                // - On the other hand, agents whose first activity is also their last activity go right to sleep "inside" this engine.<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                return true;<a name="line.180"></a>
+<span class="sourceLineNo">181</span>        }<a name="line.181"></a>
+<span class="sourceLineNo">182</span><a name="line.182"></a>
+<span class="sourceLineNo">183</span>        /**<a name="line.183"></a>
+<span class="sourceLineNo">184</span>         * For within-day replanning. Tells this engine that the activityEndTime the agent reports may have changed since<a name="line.184"></a>
+<span class="sourceLineNo">185</span>         * the agent was added to this engine through handleActivity.<a name="line.185"></a>
+<span class="sourceLineNo">186</span>         * May be merged with handleActivity, since this engine can know by itself if it was called the first time<a name="line.186"></a>
+<span class="sourceLineNo">187</span>         * or not.<a name="line.187"></a>
+<span class="sourceLineNo">188</span>         *<a name="line.188"></a>
+<span class="sourceLineNo">189</span>         * @param agent The agent.<a name="line.189"></a>
+<span class="sourceLineNo">190</span>         */<a name="line.190"></a>
+<span class="sourceLineNo">191</span>        @Override<a name="line.191"></a>
+<span class="sourceLineNo">192</span>        public void rescheduleActivityEnd(final MobsimAgent agent) {<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                if ( agent.getState()!=State.ACTIVITY ) {<a name="line.193"></a>
+<span class="sourceLineNo">194</span>                        return ;<a name="line.194"></a>
+<span class="sourceLineNo">195</span>                }<a name="line.195"></a>
+<span class="sourceLineNo">196</span>                <a name="line.196"></a>
+<span class="sourceLineNo">197</span>                <a name="line.197"></a>
+<span class="sourceLineNo">198</span>                double newActivityEndTime = agent.getActivityEndTime();<a name="line.198"></a>
+<span class="sourceLineNo">199</span>                AgentEntry oldEntry = removeAgentFromQueue(agent);<a name="line.199"></a>
+<span class="sourceLineNo">200</span><a name="line.200"></a>
+<span class="sourceLineNo">201</span>                // The intention in the following is that an agent that is no longer alive has an activity end time of infinity.  The number of<a name="line.201"></a>
+<span class="sourceLineNo">202</span>                // alive agents is only modified when an activity end time is changed between a finite time and infinite.  kai, jun'11<a name="line.202"></a>
+<span class="sourceLineNo">203</span>                if (oldEntry == null) {<a name="line.203"></a>
+<span class="sourceLineNo">204</span>                        if (newActivityEndTime == Double.POSITIVE_INFINITY) {<a name="line.204"></a>
+<span class="sourceLineNo">205</span>                                // agent was de-activated and still should be de-activated - nothing to do here<a name="line.205"></a>
+<span class="sourceLineNo">206</span>                        } else {<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                                // re-activate the agent<a name="line.207"></a>
+<span class="sourceLineNo">208</span>                                activityEndsList.add(new AgentEntry(agent, newActivityEndTime));<a name="line.208"></a>
+<span class="sourceLineNo">209</span>                                internalInterface.registerAdditionalAgentOnLink(agent);<a name="line.209"></a>
+<span class="sourceLineNo">210</span>                                ((org.matsim.core.mobsim.qsim.AgentCounter) internalInterface.getMobsim().getAgentCounter()).incLiving();<a name="line.210"></a>
+<span class="sourceLineNo">211</span>                        }<a name="line.211"></a>
+<span class="sourceLineNo">212</span>                } else if (newActivityEndTime == Double.POSITIVE_INFINITY) {<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                        /*<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                         * After the re-planning the agent's current activity has changed to its last activity.<a name="line.214"></a>
+<span class="sourceLineNo">215</span>                         * Therefore the agent is de-activated. cdobler, oct'11<a name="line.215"></a>
+<span class="sourceLineNo">216</span>                         */<a name="line.216"></a>
+<span class="sourceLineNo">217</span>                        unregisterAgentAtActivityLocation(agent);<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                        internalInterface.getMobsim().getAgentCounter().decLiving();<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                } else {<a name="line.219"></a>
+<span class="sourceLineNo">220</span>                        /*<a name="line.220"></a>
+<span class="sourceLineNo">221</span>                         *  The activity is just rescheduled during the day, so we keep the agent active. cdobler, oct'11<a name="line.221"></a>
+<span class="sourceLineNo">222</span>                         */<a name="line.222"></a>
+<span class="sourceLineNo">223</span>                        activityEndsList.add(new AgentEntry(agent, newActivityEndTime));<a name="line.223"></a>
+<span class="sourceLineNo">224</span>                }<a name="line.224"></a>
+<span class="sourceLineNo">225</span>        }<a name="line.225"></a>
+<span class="sourceLineNo">226</span><a name="line.226"></a>
+<span class="sourceLineNo">227</span>        private AgentEntry removeAgentFromQueue(MobsimAgent agent) {<a name="line.227"></a>
+<span class="sourceLineNo">228</span>                Iterator&lt;AgentEntry&gt; iterator = activityEndsList.iterator();<a name="line.228"></a>
+<span class="sourceLineNo">229</span>                while (iterator.hasNext()) {<a name="line.229"></a>
+<span class="sourceLineNo">230</span>                        AgentEntry entry = iterator.next();<a name="line.230"></a>
+<span class="sourceLineNo">231</span>                        if (entry.agent == agent) {<a name="line.231"></a>
+<span class="sourceLineNo">232</span>                                iterator.remove();<a name="line.232"></a>
+<span class="sourceLineNo">233</span>                                return entry;<a name="line.233"></a>
+<span class="sourceLineNo">234</span>                        }<a name="line.234"></a>
+<span class="sourceLineNo">235</span>                }<a name="line.235"></a>
+<span class="sourceLineNo">236</span>                return null;<a name="line.236"></a>
+<span class="sourceLineNo">237</span>        }<a name="line.237"></a>
+<span class="sourceLineNo">238</span><a name="line.238"></a>
+<span class="sourceLineNo">239</span>        private void unregisterAgentAtActivityLocation(final MobsimAgent agent) {<a name="line.239"></a>
+<span class="sourceLineNo">240</span>                Id&lt;Person&gt; agentId = agent.getId();<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                Id&lt;Link&gt; linkId = agent.getCurrentLinkId();<a name="line.241"></a>
+<span class="sourceLineNo">242</span>                if (linkId != null) { // may be bushwacking<a name="line.242"></a>
+<span class="sourceLineNo">243</span>                        internalInterface.unregisterAdditionalAgentOnLink(agentId, linkId);<a name="line.243"></a>
+<span class="sourceLineNo">244</span>                }<a name="line.244"></a>
+<span class="sourceLineNo">245</span>        }<a name="line.245"></a>
+<span class="sourceLineNo">246</span><a name="line.246"></a>
+<span class="sourceLineNo">247</span>}<a name="line.247"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

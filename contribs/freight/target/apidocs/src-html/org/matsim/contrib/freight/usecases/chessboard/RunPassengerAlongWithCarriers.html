@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>package org.matsim.contrib.freight.usecases.chessboard;<a name="line.1"></a>
+<span class="sourceLineNo">002</span><a name="line.2"></a>
+<span class="sourceLineNo">003</span>import org.matsim.api.core.v01.Scenario;<a name="line.3"></a>
+<span class="sourceLineNo">004</span>import org.matsim.api.core.v01.network.Network;<a name="line.4"></a>
+<span class="sourceLineNo">005</span>import org.matsim.contrib.freight.carrier.*;<a name="line.5"></a>
+<span class="sourceLineNo">006</span>import org.matsim.contrib.freight.controler.CarrierModule;<a name="line.6"></a>
+<span class="sourceLineNo">007</span>import org.matsim.contrib.freight.replanning.CarrierPlanStrategyManagerFactory;<a name="line.7"></a>
+<span class="sourceLineNo">008</span>import org.matsim.contrib.freight.scoring.CarrierScoringFunctionFactory;<a name="line.8"></a>
+<span class="sourceLineNo">009</span>import org.matsim.contrib.freight.usecases.analysis.CarrierScoreStats;<a name="line.9"></a>
+<span class="sourceLineNo">010</span>import org.matsim.contrib.freight.usecases.analysis.LegHistogram;<a name="line.10"></a>
+<span class="sourceLineNo">011</span>import org.matsim.contrib.freight.usecases.chessboard.CarrierScoringFunctionFactoryImpl.DriversActivityScoring;<a name="line.11"></a>
+<span class="sourceLineNo">012</span>import org.matsim.contrib.freight.usecases.chessboard.CarrierScoringFunctionFactoryImpl.DriversLegScoring;<a name="line.12"></a>
+<span class="sourceLineNo">013</span>import org.matsim.core.api.experimental.events.EventsManager;<a name="line.13"></a>
+<span class="sourceLineNo">014</span>import org.matsim.core.config.Config;<a name="line.14"></a>
+<span class="sourceLineNo">015</span>import org.matsim.core.config.ConfigUtils;<a name="line.15"></a>
+<span class="sourceLineNo">016</span>import org.matsim.core.controler.Controler;<a name="line.16"></a>
+<span class="sourceLineNo">017</span>import org.matsim.core.controler.MatsimServices;<a name="line.17"></a>
+<span class="sourceLineNo">018</span>import org.matsim.core.controler.listener.IterationEndsListener;<a name="line.18"></a>
+<span class="sourceLineNo">019</span>import org.matsim.core.replanning.GenericPlanStrategyImpl;<a name="line.19"></a>
+<span class="sourceLineNo">020</span>import org.matsim.core.replanning.GenericStrategyManager;<a name="line.20"></a>
+<span class="sourceLineNo">021</span>import org.matsim.core.replanning.selectors.BestPlanSelector;<a name="line.21"></a>
+<span class="sourceLineNo">022</span>import org.matsim.core.scenario.ScenarioUtils;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import org.matsim.core.scoring.SumScoringFunction;<a name="line.23"></a>
+<span class="sourceLineNo">024</span><a name="line.24"></a>
+<span class="sourceLineNo">025</span>public class RunPassengerAlongWithCarriers {<a name="line.25"></a>
+<span class="sourceLineNo">026</span><a name="line.26"></a>
+<span class="sourceLineNo">027</span>    public static void main(String[] args) {<a name="line.27"></a>
+<span class="sourceLineNo">028</span><a name="line.28"></a>
+<span class="sourceLineNo">029</span><a name="line.29"></a>
+<span class="sourceLineNo">030</span>        String configFile = "input/usecases/chessboard/passenger/config.xml";<a name="line.30"></a>
+<span class="sourceLineNo">031</span>        Config config = ConfigUtils.loadConfig(configFile);<a name="line.31"></a>
+<span class="sourceLineNo">032</span>        Scenario scenario = ScenarioUtils.loadScenario(config);<a name="line.32"></a>
+<span class="sourceLineNo">033</span><a name="line.33"></a>
+<span class="sourceLineNo">034</span>        Controler controler = new Controler(config);<a name="line.34"></a>
+<span class="sourceLineNo">035</span>        final Carriers carriers = new Carriers();<a name="line.35"></a>
+<span class="sourceLineNo">036</span>        new CarrierPlanXmlReaderV2(carriers).readFile("input/usecases/chessboard/freight/carrierPlans.xml");<a name="line.36"></a>
+<span class="sourceLineNo">037</span><a name="line.37"></a>
+<span class="sourceLineNo">038</span>        CarrierVehicleTypes types = new CarrierVehicleTypes();<a name="line.38"></a>
+<span class="sourceLineNo">039</span>        new CarrierVehicleTypeReader(types).readFile("input/usecases/chessboard/freight/vehicleTypes.xml");<a name="line.39"></a>
+<span class="sourceLineNo">040</span>        new CarrierVehicleTypeLoader(carriers).loadVehicleTypes(types);<a name="line.40"></a>
+<span class="sourceLineNo">041</span><a name="line.41"></a>
+<span class="sourceLineNo">042</span>        CarrierPlanStrategyManagerFactory strategyManagerFactory = createStrategyManagerFactory(types, controler);<a name="line.42"></a>
+<span class="sourceLineNo">043</span>        CarrierScoringFunctionFactory scoringFunctionFactory = createScoringFunctionFactory(scenario.getNetwork());<a name="line.43"></a>
+<span class="sourceLineNo">044</span><a name="line.44"></a>
+<span class="sourceLineNo">045</span>        CarrierModule carrierController = new CarrierModule(carriers, strategyManagerFactory, scoringFunctionFactory);<a name="line.45"></a>
+<span class="sourceLineNo">046</span><a name="line.46"></a>
+<span class="sourceLineNo">047</span>        controler.addOverridingModule(carrierController);<a name="line.47"></a>
+<span class="sourceLineNo">048</span>        prepareFreightOutputDataAndStats(scenario, controler.getEvents(), controler, carriers);<a name="line.48"></a>
+<span class="sourceLineNo">049</span><a name="line.49"></a>
+<span class="sourceLineNo">050</span>        controler.run();<a name="line.50"></a>
+<span class="sourceLineNo">051</span><a name="line.51"></a>
+<span class="sourceLineNo">052</span>    }<a name="line.52"></a>
+<span class="sourceLineNo">053</span><a name="line.53"></a>
+<span class="sourceLineNo">054</span><a name="line.54"></a>
+<span class="sourceLineNo">055</span>    private static void prepareFreightOutputDataAndStats(Scenario scenario, EventsManager eventsManager, MatsimServices controler, final Carriers carriers) {<a name="line.55"></a>
+<span class="sourceLineNo">056</span>        final LegHistogram freightOnly = new LegHistogram(900);<a name="line.56"></a>
+<span class="sourceLineNo">057</span>        freightOnly.setPopulation(scenario.getPopulation());<a name="line.57"></a>
+<span class="sourceLineNo">058</span>        freightOnly.setInclPop(false);<a name="line.58"></a>
+<span class="sourceLineNo">059</span>        final LegHistogram withoutFreight = new LegHistogram(900);<a name="line.59"></a>
+<span class="sourceLineNo">060</span>        withoutFreight.setPopulation(scenario.getPopulation());<a name="line.60"></a>
+<span class="sourceLineNo">061</span><a name="line.61"></a>
+<span class="sourceLineNo">062</span>        CarrierScoreStats scores = new CarrierScoreStats(carriers, "output/carrier_scores", true);<a name="line.62"></a>
+<span class="sourceLineNo">063</span><a name="line.63"></a>
+<span class="sourceLineNo">064</span>        eventsManager.addHandler(withoutFreight);<a name="line.64"></a>
+<span class="sourceLineNo">065</span>        eventsManager.addHandler(freightOnly);<a name="line.65"></a>
+<span class="sourceLineNo">066</span>        controler.addControlerListener(scores);<a name="line.66"></a>
+<span class="sourceLineNo">067</span>        controler.addControlerListener((IterationEndsListener) event -&gt; {<a name="line.67"></a>
+<span class="sourceLineNo">068</span>            //write plans<a name="line.68"></a>
+<span class="sourceLineNo">069</span>            String dir = event.getServices().getControlerIO().getIterationPath(event.getIteration());<a name="line.69"></a>
+<span class="sourceLineNo">070</span>            new CarrierPlanXmlWriterV2(carriers).write(dir + "/" + event.getIteration() + ".carrierPlans.xml");<a name="line.70"></a>
+<span class="sourceLineNo">071</span><a name="line.71"></a>
+<span class="sourceLineNo">072</span>            //write stats<a name="line.72"></a>
+<span class="sourceLineNo">073</span>            freightOnly.writeGraphic(dir + "/" + event.getIteration() + ".legHistogram_freight.png");<a name="line.73"></a>
+<span class="sourceLineNo">074</span>            freightOnly.reset(event.getIteration());<a name="line.74"></a>
+<span class="sourceLineNo">075</span><a name="line.75"></a>
+<span class="sourceLineNo">076</span>            withoutFreight.writeGraphic(dir + "/" + event.getIteration() + ".legHistogram_withoutFreight.png");<a name="line.76"></a>
+<span class="sourceLineNo">077</span>            withoutFreight.reset(event.getIteration());<a name="line.77"></a>
+<span class="sourceLineNo">078</span>        });<a name="line.78"></a>
+<span class="sourceLineNo">079</span>    }<a name="line.79"></a>
+<span class="sourceLineNo">080</span><a name="line.80"></a>
+<span class="sourceLineNo">081</span><a name="line.81"></a>
+<span class="sourceLineNo">082</span>    private static CarrierScoringFunctionFactory createScoringFunctionFactory(final Network network) {<a name="line.82"></a>
+<span class="sourceLineNo">083</span>        return carrier -&gt; {<a name="line.83"></a>
+<span class="sourceLineNo">084</span>            SumScoringFunction sf = new SumScoringFunction();<a name="line.84"></a>
+<span class="sourceLineNo">085</span>            DriversLegScoring driverLegScoring = new DriversLegScoring(carrier, network);<a name="line.85"></a>
+<span class="sourceLineNo">086</span>            DriversActivityScoring actScoring = new DriversActivityScoring();<a name="line.86"></a>
+<span class="sourceLineNo">087</span>            sf.addScoringFunction(driverLegScoring);<a name="line.87"></a>
+<span class="sourceLineNo">088</span>            sf.addScoringFunction(actScoring);<a name="line.88"></a>
+<span class="sourceLineNo">089</span>            return sf;<a name="line.89"></a>
+<span class="sourceLineNo">090</span>        };<a name="line.90"></a>
+<span class="sourceLineNo">091</span>    }<a name="line.91"></a>
+<span class="sourceLineNo">092</span><a name="line.92"></a>
+<span class="sourceLineNo">093</span><a name="line.93"></a>
+<span class="sourceLineNo">094</span>    private static CarrierPlanStrategyManagerFactory createStrategyManagerFactory(final CarrierVehicleTypes types, final MatsimServices controler) {<a name="line.94"></a>
+<span class="sourceLineNo">095</span>        return () -&gt; {<a name="line.95"></a>
+<span class="sourceLineNo">096</span>            final GenericStrategyManager&lt;CarrierPlan, Carrier&gt; strategyManager = new GenericStrategyManager&lt;&gt;();<a name="line.96"></a>
+<span class="sourceLineNo">097</span>            strategyManager.addStrategy(new GenericPlanStrategyImpl&lt;&gt;(new BestPlanSelector&lt;&gt;()), null, 0.95);<a name="line.97"></a>
+<span class="sourceLineNo">098</span>            strategyManager.addStrategy(new SelectBestPlanAndOptimizeItsVehicleRouteFactory(controler.getScenario().getNetwork(), types, controler.getLinkTravelTimes()).createStrategy(), null, 0.05);<a name="line.98"></a>
+<span class="sourceLineNo">099</span>            return strategyManager;<a name="line.99"></a>
+<span class="sourceLineNo">100</span>        };<a name="line.100"></a>
+<span class="sourceLineNo">101</span>    }<a name="line.101"></a>
+<span class="sourceLineNo">102</span><a name="line.102"></a>
+<span class="sourceLineNo">103</span>}<a name="line.103"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

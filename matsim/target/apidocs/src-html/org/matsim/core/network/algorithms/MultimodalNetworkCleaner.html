@@ -1,0 +1,347 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2010 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span><a name="line.19"></a>
+<span class="sourceLineNo">020</span>package org.matsim.core.network.algorithms;<a name="line.20"></a>
+<span class="sourceLineNo">021</span><a name="line.21"></a>
+<span class="sourceLineNo">022</span>import java.util.ArrayList;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.util.Arrays;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import java.util.HashMap;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import java.util.HashSet;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import java.util.Iterator;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import java.util.List;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import java.util.Map;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import java.util.Set;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import java.util.TreeMap;<a name="line.30"></a>
+<span class="sourceLineNo">031</span><a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.apache.log4j.Logger;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.api.core.v01.Id;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.api.core.v01.network.Link;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.api.core.v01.network.Network;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.api.core.v01.network.Node;<a name="line.36"></a>
+<span class="sourceLineNo">037</span><a name="line.37"></a>
+<span class="sourceLineNo">038</span>/**<a name="line.38"></a>
+<span class="sourceLineNo">039</span> * Variant of {@link org.matsim.core.network.algorithms.NetworkCleaner NetworkCleaner} that supports<a name="line.39"></a>
+<span class="sourceLineNo">040</span> * multi-modal networks. If the cleaner is run, it will make sure that the sub-network of all those<a name="line.40"></a>
+<span class="sourceLineNo">041</span> * links having at least one of the given transport modes is strongly connected. Other links are not<a name="line.41"></a>
+<span class="sourceLineNo">042</span> * modified. If a link does not belong to the biggest cluster, the to-be-cleaned modes are removed<a name="line.42"></a>
+<span class="sourceLineNo">043</span> * from the set of allowed modes for this link. If a link has no allowed mode anymore, it is removed<a name="line.43"></a>
+<span class="sourceLineNo">044</span> * from the network, along with nodes that lose all their in- and out-links by that way.<a name="line.44"></a>
+<span class="sourceLineNo">045</span> *<a name="line.45"></a>
+<span class="sourceLineNo">046</span> * @author mrieser<a name="line.46"></a>
+<span class="sourceLineNo">047</span> */<a name="line.47"></a>
+<span class="sourceLineNo">048</span>public final class MultimodalNetworkCleaner {<a name="line.48"></a>
+<span class="sourceLineNo">049</span><a name="line.49"></a>
+<span class="sourceLineNo">050</span>        private final static Logger log = Logger.getLogger(MultimodalNetworkCleaner.class);<a name="line.50"></a>
+<span class="sourceLineNo">051</span><a name="line.51"></a>
+<span class="sourceLineNo">052</span>        private final Network network;<a name="line.52"></a>
+<span class="sourceLineNo">053</span>        <a name="line.53"></a>
+<span class="sourceLineNo">054</span>        private final Set&lt;Id&lt;Link&gt;&gt; removedLinks = new HashSet&lt;&gt;();<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        private final Set&lt;Id&lt;Link&gt;&gt; modifiedLinks = new HashSet&lt;&gt;();<a name="line.55"></a>
+<span class="sourceLineNo">056</span><a name="line.56"></a>
+<span class="sourceLineNo">057</span>        public MultimodalNetworkCleaner(final Network network) {<a name="line.57"></a>
+<span class="sourceLineNo">058</span>                this.network = network;<a name="line.58"></a>
+<span class="sourceLineNo">059</span>        }<a name="line.59"></a>
+<span class="sourceLineNo">060</span><a name="line.60"></a>
+<span class="sourceLineNo">061</span>        /**<a name="line.61"></a>
+<span class="sourceLineNo">062</span>         * Removes nodes from the network that have no incoming or outgoing links attached to them.<a name="line.62"></a>
+<span class="sourceLineNo">063</span>         */<a name="line.63"></a>
+<span class="sourceLineNo">064</span>        public void removeNodesWithoutLinks() {<a name="line.64"></a>
+<span class="sourceLineNo">065</span>                List&lt;Node&gt; toBeRemoved = new ArrayList&lt;&gt;();<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                for (Node node : this.network.getNodes().values()) {<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                        if ((node.getInLinks().size() == 0) &amp;&amp; (node.getOutLinks().size() == 0)) {<a name="line.67"></a>
+<span class="sourceLineNo">068</span>                                toBeRemoved.add(node);<a name="line.68"></a>
+<span class="sourceLineNo">069</span>                        }<a name="line.69"></a>
+<span class="sourceLineNo">070</span>                }<a name="line.70"></a>
+<span class="sourceLineNo">071</span>                for (Node node : toBeRemoved) {<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                        this.network.removeNode(node.getId());<a name="line.72"></a>
+<span class="sourceLineNo">073</span>                }<a name="line.73"></a>
+<span class="sourceLineNo">074</span>        }<a name="line.74"></a>
+<span class="sourceLineNo">075</span><a name="line.75"></a>
+<span class="sourceLineNo">076</span>        /**<a name="line.76"></a>
+<span class="sourceLineNo">077</span>         * Modifies the network such that the subnetwork containing only links that have at least<a name="line.77"></a>
+<span class="sourceLineNo">078</span>         * one of the specified transport modes in their set of allowed transport modes is strongly<a name="line.78"></a>
+<span class="sourceLineNo">079</span>         * connected (=every link/node can be reached by every other link/node). If multiple modes<a name="line.79"></a>
+<span class="sourceLineNo">080</span>         * are given, the algorithm does &lt;em&gt;not&lt;/em&gt; guarantee that the resulting network is strongly<a name="line.80"></a>
+<span class="sourceLineNo">081</span>         * connected for each of the modes individually! Nodes having links connected to them before<a name="line.81"></a>
+<span class="sourceLineNo">082</span>         * cleaning, but none after cleaning, are removed from the network.<a name="line.82"></a>
+<span class="sourceLineNo">083</span>         *<a name="line.83"></a>
+<span class="sourceLineNo">084</span>         * @param modes<a name="line.84"></a>
+<span class="sourceLineNo">085</span>         */<a name="line.85"></a>
+<span class="sourceLineNo">086</span>        public void run(final Set&lt;String&gt; modes) {<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                run(modes, new HashSet&lt;String&gt;());<a name="line.87"></a>
+<span class="sourceLineNo">088</span>        }<a name="line.88"></a>
+<span class="sourceLineNo">089</span><a name="line.89"></a>
+<span class="sourceLineNo">090</span>        /**<a name="line.90"></a>
+<span class="sourceLineNo">091</span>         * Modifies the network such that the subnetwork containing only links that have at least<a name="line.91"></a>
+<span class="sourceLineNo">092</span>         * one of the specified transport modes (&lt;code&gt;cleaningModes&lt;/code&gt; as well as<a name="line.92"></a>
+<span class="sourceLineNo">093</span>         * &lt;code&gt;connectivityModes&lt;/code&gt;) in their set of allowed transport modes is strongly<a name="line.93"></a>
+<span class="sourceLineNo">094</span>         * connected (=every link/node can be reached by every other link/node). In contrast to<a name="line.94"></a>
+<span class="sourceLineNo">095</span>         * {@link #run(Set)}, this method will only remove &lt;code&gt;cleaningModes&lt;/code&gt; from links,<a name="line.95"></a>
+<span class="sourceLineNo">096</span>         * but not &lt;code&gt;connectivityModes&lt;/code&gt;. Thus, the resulting  network may still contain<a name="line.96"></a>
+<span class="sourceLineNo">097</span>         * nodes that are sources or sinks for modes of &lt;code&gt;connectivityModes&lt;/code&gt;, but not<a name="line.97"></a>
+<span class="sourceLineNo">098</span>         * for modes of &lt;code&gt;cleaningModes&lt;/code&gt; and &lt;code&gt;connectivityModes&lt;/code&gt; combined. If<a name="line.98"></a>
+<span class="sourceLineNo">099</span>         * multiple modes are given as &lt;code&gt;cleaningModes&lt;/code&gt;, the algorithm does &lt;em&gt;not&lt;/em&gt;<a name="line.99"></a>
+<span class="sourceLineNo">100</span>         * guarantee that the resulting network is strongly connected for each of the modes<a name="line.100"></a>
+<span class="sourceLineNo">101</span>         * individually! The subnetwork consisting of links having only modes from<a name="line.101"></a>
+<span class="sourceLineNo">102</span>         * &lt;code&gt;cleaningModes&lt;/code&gt; may not be strongly connected, only in combination with links<a name="line.102"></a>
+<span class="sourceLineNo">103</span>         * having modes from &lt;code&gt;connectivityModes&lt;/code&gt;, a strongly connected subnetwork emerges.<a name="line.103"></a>
+<span class="sourceLineNo">104</span>         * Nodes having links connected to them before cleaning, but none after cleaning, are removed<a name="line.104"></a>
+<span class="sourceLineNo">105</span>         * from the network.<a name="line.105"></a>
+<span class="sourceLineNo">106</span>         *<a name="line.106"></a>
+<span class="sourceLineNo">107</span>         * @param cleaningModes<a name="line.107"></a>
+<span class="sourceLineNo">108</span>         * @param connectivityModes<a name="line.108"></a>
+<span class="sourceLineNo">109</span>         */<a name="line.109"></a>
+<span class="sourceLineNo">110</span>        public void run(final Set&lt;String&gt; cleaningModes, final Set&lt;String&gt; connectivityModes) {<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                final Set&lt;String&gt; combinedModes = new HashSet&lt;&gt;(cleaningModes);<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                combinedModes.addAll(connectivityModes);<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                final Map&lt;Id&lt;Link&gt;, Link&gt; visitedLinks = new TreeMap&lt;&gt;();<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                Map&lt;Id&lt;Link&gt;, Link&gt; biggestCluster = new TreeMap&lt;&gt;();<a name="line.114"></a>
+<span class="sourceLineNo">115</span><a name="line.115"></a>
+<span class="sourceLineNo">116</span>                log.info("running " + this.getClass().getName() + " algorithm for modes " + Arrays.toString(cleaningModes.toArray())<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                                + " with connectivity modes " + Arrays.toString(connectivityModes.toArray()) + "...");<a name="line.117"></a>
+<span class="sourceLineNo">118</span><a name="line.118"></a>
+<span class="sourceLineNo">119</span>                // search the biggest cluster of nodes in the network<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                log.info("  checking " + this.network.getNodes().size() + " nodes and " +<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                                this.network.getLinks().size() + " links for dead-ends...");<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                boolean stillSearching = true;<a name="line.122"></a>
+<span class="sourceLineNo">123</span>                Iterator&lt;? extends Link&gt; iter = this.network.getLinks().values().iterator();<a name="line.123"></a>
+<span class="sourceLineNo">124</span>                while (iter.hasNext() &amp;&amp; stillSearching) {<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                        Link startLink = iter.next();<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                        if ((!visitedLinks.containsKey(startLink.getId())) &amp;&amp; (intersectingSets(combinedModes, startLink.getAllowedModes()))) {<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                                Map&lt;Id&lt;Link&gt;, Link&gt; cluster = this.findCluster(startLink, combinedModes);<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                                visitedLinks.putAll(cluster);<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                                if (cluster.size() &gt; biggestCluster.size()) {<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                                        biggestCluster = cluster;<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                                        if (biggestCluster.size() &gt;= (this.network.getLinks().size() - visitedLinks.size())) {<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                                                // stop searching here, because we cannot find a bigger cluster in the lasting nodes<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                                                stillSearching = false;<a name="line.133"></a>
+<span class="sourceLineNo">134</span>                                        }<a name="line.134"></a>
+<span class="sourceLineNo">135</span>                                }<a name="line.135"></a>
+<span class="sourceLineNo">136</span>                        }<a name="line.136"></a>
+<span class="sourceLineNo">137</span>                }<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                log.info("    The biggest cluster consists of " + biggestCluster.size() + " links.");<a name="line.138"></a>
+<span class="sourceLineNo">139</span>                log.info("  done.");<a name="line.139"></a>
+<span class="sourceLineNo">140</span><a name="line.140"></a>
+<span class="sourceLineNo">141</span>                /* Remove the modes from all links not being part of the cluster. If a link has no allowed mode<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                 * anymore after this, remove the link from the network.<a name="line.142"></a>
+<span class="sourceLineNo">143</span>                 */<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                List&lt;Link&gt; allLinks = new ArrayList&lt;&gt;(this.network.getLinks().values());<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                for (Link link : allLinks) {<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                        if (!biggestCluster.containsKey(link.getId())) {<a name="line.146"></a>
+<span class="sourceLineNo">147</span>                                Set&lt;String&gt; reducedModes = new HashSet&lt;&gt;(link.getAllowedModes());<a name="line.147"></a>
+<span class="sourceLineNo">148</span>                                reducedModes.removeAll(cleaningModes);<a name="line.148"></a>
+<span class="sourceLineNo">149</span>                                link.setAllowedModes(reducedModes);<a name="line.149"></a>
+<span class="sourceLineNo">150</span>                                if (reducedModes.isEmpty()) {<a name="line.150"></a>
+<span class="sourceLineNo">151</span>                                        this.network.removeLink(link.getId());<a name="line.151"></a>
+<span class="sourceLineNo">152</span>                                        if ((link.getFromNode().getInLinks().size() + link.getFromNode().getOutLinks().size()) == 0) {<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                                                this.network.removeNode(link.getFromNode().getId());<a name="line.153"></a>
+<span class="sourceLineNo">154</span>                                        }<a name="line.154"></a>
+<span class="sourceLineNo">155</span>                                        if ((link.getToNode().getInLinks().size() + link.getToNode().getOutLinks().size()) == 0) {<a name="line.155"></a>
+<span class="sourceLineNo">156</span>                                                this.network.removeNode(link.getToNode().getId());<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                                        }<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                                        this.removedLinks.add(link.getId());<a name="line.158"></a>
+<span class="sourceLineNo">159</span>                                }<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                                if(!removedLinks.contains(link.getId())) modifiedLinks.add(link.getId());<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                        }<a name="line.161"></a>
+<span class="sourceLineNo">162</span>                }<a name="line.162"></a>
+<span class="sourceLineNo">163</span>                log.info("  resulting network contains " + this.network.getNodes().size() + " nodes and " +<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                                this.network.getLinks().size() + " links.");<a name="line.164"></a>
+<span class="sourceLineNo">165</span>                log.info("done.");<a name="line.165"></a>
+<span class="sourceLineNo">166</span>        }<a name="line.166"></a>
+<span class="sourceLineNo">167</span><a name="line.167"></a>
+<span class="sourceLineNo">168</span>        /**<a name="line.168"></a>
+<span class="sourceLineNo">169</span>         * Finds the cluster of links &lt;pre&gt;startLink&lt;/pre&gt; is part of. The cluster<a name="line.169"></a>
+<span class="sourceLineNo">170</span>         * contains all links which can be reached starting at &lt;code&gt;startLink&lt;/code&gt;<a name="line.170"></a>
+<span class="sourceLineNo">171</span>         * and from where it is also possible to return again to &lt;code&gt;startLink&lt;/code&gt;.<a name="line.171"></a>
+<span class="sourceLineNo">172</span>         *<a name="line.172"></a>
+<span class="sourceLineNo">173</span>         * @param startLink the link to start building the cluster<a name="line.173"></a>
+<span class="sourceLineNo">174</span>         * @param modes the set of modes that are allowed to<a name="line.174"></a>
+<span class="sourceLineNo">175</span>         * @return cluster of links &lt;pre&gt;startLink&lt;/pre&gt; is part of<a name="line.175"></a>
+<span class="sourceLineNo">176</span>         */<a name="line.176"></a>
+<span class="sourceLineNo">177</span>        private Map&lt;Id&lt;Link&gt;, Link&gt; findCluster(final Link startLink, final Set&lt;String&gt; modes) {<a name="line.177"></a>
+<span class="sourceLineNo">178</span><a name="line.178"></a>
+<span class="sourceLineNo">179</span>                final Map&lt;Id&lt;Link&gt;, DoubleFlagRole&gt; linkRoles = new HashMap&lt;&gt;(this.network.getLinks().size());<a name="line.179"></a>
+<span class="sourceLineNo">180</span><a name="line.180"></a>
+<span class="sourceLineNo">181</span>                ArrayList&lt;Node&gt; pendingForward = new ArrayList&lt;&gt;();<a name="line.181"></a>
+<span class="sourceLineNo">182</span>                ArrayList&lt;Node&gt; pendingBackward = new ArrayList&lt;&gt;();<a name="line.182"></a>
+<span class="sourceLineNo">183</span><a name="line.183"></a>
+<span class="sourceLineNo">184</span>                TreeMap&lt;Id&lt;Link&gt;, Link&gt; clusterLinks = new TreeMap&lt;&gt;();<a name="line.184"></a>
+<span class="sourceLineNo">185</span><a name="line.185"></a>
+<span class="sourceLineNo">186</span>                pendingForward.add(startLink.getToNode());<a name="line.186"></a>
+<span class="sourceLineNo">187</span>                pendingBackward.add(startLink.getFromNode());<a name="line.187"></a>
+<span class="sourceLineNo">188</span><a name="line.188"></a>
+<span class="sourceLineNo">189</span>                // step through the network in forward mode<a name="line.189"></a>
+<span class="sourceLineNo">190</span>                while (pendingForward.size() &gt; 0) {<a name="line.190"></a>
+<span class="sourceLineNo">191</span>                        int idx = pendingForward.size() - 1;<a name="line.191"></a>
+<span class="sourceLineNo">192</span>                        Node currNode = pendingForward.remove(idx); // get the last element to prevent object shifting in the array<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                        for (Link link : currNode.getOutLinks().values()) {<a name="line.193"></a>
+<span class="sourceLineNo">194</span>                                if (intersectingSets(modes, link.getAllowedModes())) {<a name="line.194"></a>
+<span class="sourceLineNo">195</span>                                        DoubleFlagRole r = getDoubleFlag(link, linkRoles);<a name="line.195"></a>
+<span class="sourceLineNo">196</span>                                        if (!r.forwardFlag) {<a name="line.196"></a>
+<span class="sourceLineNo">197</span>                                                r.forwardFlag = true;<a name="line.197"></a>
+<span class="sourceLineNo">198</span>                                                pendingForward.add(link.getToNode());<a name="line.198"></a>
+<span class="sourceLineNo">199</span>                                        }<a name="line.199"></a>
+<span class="sourceLineNo">200</span>                                }<a name="line.200"></a>
+<span class="sourceLineNo">201</span>                        }<a name="line.201"></a>
+<span class="sourceLineNo">202</span>                }<a name="line.202"></a>
+<span class="sourceLineNo">203</span><a name="line.203"></a>
+<span class="sourceLineNo">204</span>                // now step through the network in backward mode<a name="line.204"></a>
+<span class="sourceLineNo">205</span>                while (pendingBackward.size() &gt; 0) {<a name="line.205"></a>
+<span class="sourceLineNo">206</span>                        int idx = pendingBackward.size()-1;<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                        Node currNode = pendingBackward.remove(idx); // get the last element to prevent object shifting in the array<a name="line.207"></a>
+<span class="sourceLineNo">208</span>                        for (Link link : currNode.getInLinks().values()) {<a name="line.208"></a>
+<span class="sourceLineNo">209</span>                                if (intersectingSets(modes, link.getAllowedModes())) {<a name="line.209"></a>
+<span class="sourceLineNo">210</span>                                        DoubleFlagRole r = getDoubleFlag(link, linkRoles);<a name="line.210"></a>
+<span class="sourceLineNo">211</span>                                        if (!r.backwardFlag) {<a name="line.211"></a>
+<span class="sourceLineNo">212</span>                                                r.backwardFlag = true;<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                                                pendingBackward.add(link.getFromNode());<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                                                if (r.forwardFlag) {<a name="line.214"></a>
+<span class="sourceLineNo">215</span>                                                        // the node can be reached forward and backward, add it to the cluster<a name="line.215"></a>
+<span class="sourceLineNo">216</span>                                                        clusterLinks.put(link.getId(), link);<a name="line.216"></a>
+<span class="sourceLineNo">217</span>                                                }<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                                        }<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                                }<a name="line.219"></a>
+<span class="sourceLineNo">220</span>                        }<a name="line.220"></a>
+<span class="sourceLineNo">221</span>                }<a name="line.221"></a>
+<span class="sourceLineNo">222</span><a name="line.222"></a>
+<span class="sourceLineNo">223</span>                return clusterLinks;<a name="line.223"></a>
+<span class="sourceLineNo">224</span>        }<a name="line.224"></a>
+<span class="sourceLineNo">225</span><a name="line.225"></a>
+<span class="sourceLineNo">226</span>        /**<a name="line.226"></a>
+<span class="sourceLineNo">227</span>         * @return the removedLinks<a name="line.227"></a>
+<span class="sourceLineNo">228</span>         */<a name="line.228"></a>
+<span class="sourceLineNo">229</span>        public final Set&lt;Id&lt;Link&gt;&gt; getRemovedLinkIds() {<a name="line.229"></a>
+<span class="sourceLineNo">230</span>                return removedLinks;<a name="line.230"></a>
+<span class="sourceLineNo">231</span>        }<a name="line.231"></a>
+<span class="sourceLineNo">232</span><a name="line.232"></a>
+<span class="sourceLineNo">233</span>        /**<a name="line.233"></a>
+<span class="sourceLineNo">234</span>         * @return the modifiedLinks<a name="line.234"></a>
+<span class="sourceLineNo">235</span>         */<a name="line.235"></a>
+<span class="sourceLineNo">236</span>        public final Set&lt;Id&lt;Link&gt;&gt; getModifiedLinkIds() {<a name="line.236"></a>
+<span class="sourceLineNo">237</span>                return modifiedLinks;<a name="line.237"></a>
+<span class="sourceLineNo">238</span>        }<a name="line.238"></a>
+<span class="sourceLineNo">239</span><a name="line.239"></a>
+<span class="sourceLineNo">240</span>        /**<a name="line.240"></a>
+<span class="sourceLineNo">241</span>         * An optimized method to find out if two sets have common elements.<a name="line.241"></a>
+<span class="sourceLineNo">242</span>         * The basic approach would be to copy one set, and then use<a name="line.242"></a>
+<span class="sourceLineNo">243</span>         * {@link Set#retainAll(java.util.Collection)} and see if the<a name="line.243"></a>
+<span class="sourceLineNo">244</span>         * resulting set is not empty. But that way creates additional objects,<a name="line.244"></a>
+<span class="sourceLineNo">245</span>         * which this method tries to avoid.<a name="line.245"></a>
+<span class="sourceLineNo">246</span>         *<a name="line.246"></a>
+<span class="sourceLineNo">247</span>         * @param &lt;T&gt; the type of objects in the two sets<a name="line.247"></a>
+<span class="sourceLineNo">248</span>         * @param setA the first set<a name="line.248"></a>
+<span class="sourceLineNo">249</span>         * @param setB the second set<a name="line.249"></a>
+<span class="sourceLineNo">250</span>         * @return &lt;code&gt;true&lt;/code&gt; if the intersection of two sets is not empty<a name="line.250"></a>
+<span class="sourceLineNo">251</span>         */<a name="line.251"></a>
+<span class="sourceLineNo">252</span>        private &lt;T&gt; boolean intersectingSets(final Set&lt;T&gt; setA, final Set&lt;T&gt; setB) {<a name="line.252"></a>
+<span class="sourceLineNo">253</span>                for (T t : setA) {<a name="line.253"></a>
+<span class="sourceLineNo">254</span>                        if (setB.contains(t)) {<a name="line.254"></a>
+<span class="sourceLineNo">255</span>                                return true;<a name="line.255"></a>
+<span class="sourceLineNo">256</span>                        }<a name="line.256"></a>
+<span class="sourceLineNo">257</span>                }<a name="line.257"></a>
+<span class="sourceLineNo">258</span>                return false;<a name="line.258"></a>
+<span class="sourceLineNo">259</span>        }<a name="line.259"></a>
+<span class="sourceLineNo">260</span><a name="line.260"></a>
+<span class="sourceLineNo">261</span>        private static DoubleFlagRole getDoubleFlag(final Link l, final Map&lt;Id&lt;Link&gt;, DoubleFlagRole&gt; linkRoles) {<a name="line.261"></a>
+<span class="sourceLineNo">262</span>                DoubleFlagRole r = linkRoles.get(l.getId());<a name="line.262"></a>
+<span class="sourceLineNo">263</span>                if (null == r) {<a name="line.263"></a>
+<span class="sourceLineNo">264</span>                        r = new DoubleFlagRole();<a name="line.264"></a>
+<span class="sourceLineNo">265</span>                        linkRoles.put(l.getId(), r);<a name="line.265"></a>
+<span class="sourceLineNo">266</span>                }<a name="line.266"></a>
+<span class="sourceLineNo">267</span>                return r;<a name="line.267"></a>
+<span class="sourceLineNo">268</span>        }<a name="line.268"></a>
+<span class="sourceLineNo">269</span><a name="line.269"></a>
+<span class="sourceLineNo">270</span>        static class DoubleFlagRole {<a name="line.270"></a>
+<span class="sourceLineNo">271</span>                boolean forwardFlag = false;<a name="line.271"></a>
+<span class="sourceLineNo">272</span>                boolean backwardFlag = false;<a name="line.272"></a>
+<span class="sourceLineNo">273</span>        }<a name="line.273"></a>
+<span class="sourceLineNo">274</span><a name="line.274"></a>
+<span class="sourceLineNo">275</span>}<a name="line.275"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

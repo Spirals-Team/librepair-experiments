@@ -1,0 +1,603 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> * VisumNetReader.java<a name="line.3"></a>
+<span class="sourceLineNo">004</span> *                                                                         *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> * *********************************************************************** *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> *                                                                         *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> * copyright       : (C) 2008 by the members listed in the COPYING,        *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> *                   LICENSE and WARRANTY file.                            *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> * email           : info at matsim dot org                                *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> *                                                                         *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> * *********************************************************************** *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *                                                                         *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   (at your option) any later version.                                   *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> *                                                                         *<a name="line.18"></a>
+<span class="sourceLineNo">019</span> * *********************************************************************** */<a name="line.19"></a>
+<span class="sourceLineNo">020</span><a name="line.20"></a>
+<span class="sourceLineNo">021</span>package org.matsim.visum;<a name="line.21"></a>
+<span class="sourceLineNo">022</span><a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.io.BufferedReader;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import java.io.IOException;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import java.nio.charset.Charset;<a name="line.25"></a>
+<span class="sourceLineNo">026</span><a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.apache.log4j.Logger;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.api.core.v01.Coord;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.api.core.v01.Id;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.api.core.v01.network.Link;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.api.core.v01.network.Node;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.core.utils.io.IOUtils;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.core.utils.io.UncheckedIOException;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.core.utils.misc.StringUtils;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.visum.VisumNetwork.StopPoint;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.visum.VisumNetwork.TransitLine;<a name="line.36"></a>
+<span class="sourceLineNo">037</span>import org.matsim.visum.VisumNetwork.TransitLineRoute;<a name="line.37"></a>
+<span class="sourceLineNo">038</span><a name="line.38"></a>
+<span class="sourceLineNo">039</span><a name="line.39"></a>
+<span class="sourceLineNo">040</span>public class VisumNetworkReader {<a name="line.40"></a>
+<span class="sourceLineNo">041</span><a name="line.41"></a>
+<span class="sourceLineNo">042</span>        private static final String ATTRIBUTE_UNKNOWN = "%%%KEINE_AHNUNG%%%";<a name="line.42"></a>
+<span class="sourceLineNo">043</span><a name="line.43"></a>
+<span class="sourceLineNo">044</span>        private final VisumNetwork network;<a name="line.44"></a>
+<span class="sourceLineNo">045</span><a name="line.45"></a>
+<span class="sourceLineNo">046</span>        private final Logger log = Logger.getLogger(VisumNetworkReader.class);<a name="line.46"></a>
+<span class="sourceLineNo">047</span><a name="line.47"></a>
+<span class="sourceLineNo">048</span>        /** index for accessing the localized strings. */<a name="line.48"></a>
+<span class="sourceLineNo">049</span>        private int language = 0;<a name="line.49"></a>
+<span class="sourceLineNo">050</span><a name="line.50"></a>
+<span class="sourceLineNo">051</span>        /* collection of localized strings: [0] english, [1] german */<a name="line.51"></a>
+<span class="sourceLineNo">052</span><a name="line.52"></a>
+<span class="sourceLineNo">053</span>        // reusable strings<a name="line.53"></a>
+<span class="sourceLineNo">054</span><a name="line.54"></a>
+<span class="sourceLineNo">055</span>        private final String[] GENERAL_DCODE = {"DIRECTIONCODE", "RICHTUNGCODE"};<a name="line.55"></a>
+<span class="sourceLineNo">056</span>        private final String[] GENERAL_INDEX = {"INDEX", "INDEX"};<a name="line.56"></a>
+<span class="sourceLineNo">057</span>        private final String[] GENERAL_NAME = {"NAME", "NAME"};<a name="line.57"></a>
+<span class="sourceLineNo">058</span>        private final String[] GENERAL_NO = {"NO", "NR"};<a name="line.58"></a>
+<span class="sourceLineNo">059</span>        private final String[] GENERAL_LINENAME = {"LINENAME", "LINNAME"};<a name="line.59"></a>
+<span class="sourceLineNo">060</span>        private final String[] GENERAL_LINEROUTENAME = {"LINEROUTENAME", "LINROUTENAME"};<a name="line.60"></a>
+<span class="sourceLineNo">061</span><a name="line.61"></a>
+<span class="sourceLineNo">062</span>        // specific strings<a name="line.62"></a>
+<span class="sourceLineNo">063</span><a name="line.63"></a>
+<span class="sourceLineNo">064</span>        private final String[] TABLE_LINKTYPE = {"$LINKTYPE:", "$STRECKENTYP:"};<a name="line.64"></a>
+<span class="sourceLineNo">065</span>        private final String[] TABLE_STOP = {"$STOP:", "$HALTESTELLE:"};<a name="line.65"></a>
+<span class="sourceLineNo">066</span>        private final String[] TABLE_STOPAREA = {"$STOPAREA:", "$HALTESTELLENBEREICH:"};<a name="line.66"></a>
+<span class="sourceLineNo">067</span>        private final String[] TABLE_STOPPOINT = {"$STOPPOINT:", "$HALTEPUNKT:"};<a name="line.67"></a>
+<span class="sourceLineNo">068</span>        private final String[] TABLE_LINE = {"$LINE:", "$LINIE:"};<a name="line.68"></a>
+<span class="sourceLineNo">069</span>        private final String[] TABLE_LINEROUTE = {"$LINEROUTE:", "$LINIENROUTE:"};<a name="line.69"></a>
+<span class="sourceLineNo">070</span>        private final String[] TABLE_LINEROUTEITEM = {"$LINEROUTEITEM:", "$LINIENROUTENELEMENT:"};<a name="line.70"></a>
+<span class="sourceLineNo">071</span>        private final String[] TABLE_TIMEPROFILE = {"$TIMEPROFILE:", "$FAHRZEITPROFIL:"};<a name="line.71"></a>
+<span class="sourceLineNo">072</span>        private final String[] TABLE_TIMEPROFILEITEM = {"$TIMEPROFILEITEM:", "$FAHRZEITPROFILELEMENT:"};<a name="line.72"></a>
+<span class="sourceLineNo">073</span>        private final String[] TABLE_VEHJOURNEY = {"$VEHJOURNEY:", "$FZGFAHRT:"};<a name="line.73"></a>
+<span class="sourceLineNo">074</span>//      private final String[] TABLE_VEHJOURNEYITEM = {"$VEHJOURNEYITEM:", "$FZGFAHRTELEMENT:"};<a name="line.74"></a>
+<span class="sourceLineNo">075</span>        private final String[] TABLE_VEHJOURNEYSECTION = {"$VEHJOURNEYSECTION:", "$FZGFAHRTABSCHNITT:"};<a name="line.75"></a>
+<span class="sourceLineNo">076</span>        private final String[] TABLE_VEHUNIT = {"$VEHUNIT:", "$FZGEINHEIT:"};<a name="line.76"></a>
+<span class="sourceLineNo">077</span>        private final String[] TABLE_VEHCOMB = {"$VEHCOMB:", "$FZGKOMB:"};<a name="line.77"></a>
+<span class="sourceLineNo">078</span>        private final String[] TABLE_VEHUNITTOVEHCOMB = {"$VEHUNITTOVEHCOMB:", "$FZGEINHEITZUFZGKOMB:"};<a name="line.78"></a>
+<span class="sourceLineNo">079</span><a name="line.79"></a>
+<span class="sourceLineNo">080</span>        private final String[] ATTRIBUTE_LINKTYPE_NO = GENERAL_NO;<a name="line.80"></a>
+<span class="sourceLineNo">081</span>        private final String[] ATTRIBUTE_LINKTYPE_KAPIV = {"CAPPRT", "KAPIV"};<a name="line.81"></a>
+<span class="sourceLineNo">082</span>        private final String[] ATTRIBUTE_LINKTYPE_V0IV = {"V0PRT", "V0IV"};<a name="line.82"></a>
+<span class="sourceLineNo">083</span>        private final String[] ATTRIBUTE_LINKTYPE_NOLANES = {"NUMLANES", "ANZFAHRSTREIFEN"};<a name="line.83"></a>
+<span class="sourceLineNo">084</span><a name="line.84"></a>
+<span class="sourceLineNo">085</span>        private final String[] ATTRIBUTE_STOP_NO = GENERAL_NO;<a name="line.85"></a>
+<span class="sourceLineNo">086</span>        private final String[] ATTRIBUTE_STOP_NAME = GENERAL_NAME;<a name="line.86"></a>
+<span class="sourceLineNo">087</span>        private final String[] ATTRIBUTE_STOP_XCOORD = {"XCOORD", "XKOORD"};<a name="line.87"></a>
+<span class="sourceLineNo">088</span>        private final String[] ATTRIBUTE_STOP_YCOORD = {"YCOORD", "YKOORD"};<a name="line.88"></a>
+<span class="sourceLineNo">089</span><a name="line.89"></a>
+<span class="sourceLineNo">090</span>        private final String[] ATTRIBUTE_STOPAREA_NO = GENERAL_NO;<a name="line.90"></a>
+<span class="sourceLineNo">091</span>        private final String[] ATTRIBUTE_STOPAREA_STOPNO = {"STOPNO", "HSTNR"};<a name="line.91"></a>
+<span class="sourceLineNo">092</span><a name="line.92"></a>
+<span class="sourceLineNo">093</span>        private final String[] ATTRIBUTE_STOPPT_NO = GENERAL_NO;<a name="line.93"></a>
+<span class="sourceLineNo">094</span>        private final String[] ATTRIBUTE_STOPPT_STOPAREANO = {"STOPAREANO", "HSTBERNR"};<a name="line.94"></a>
+<span class="sourceLineNo">095</span>        private final String[] ATTRIBUTE_STOPPT_NAME =  GENERAL_NAME;<a name="line.95"></a>
+<span class="sourceLineNo">096</span>        private final String[] ATTRIBUTE_STOPPT_RLNO = {"LINKNO", "STRNR"};<a name="line.96"></a>
+<span class="sourceLineNo">097</span>        private final String[] ATTRIBUTE_STOPPT_NODE = {"NODENO", "KNOTNR"};<a name="line.97"></a>
+<span class="sourceLineNo">098</span><a name="line.98"></a>
+<span class="sourceLineNo">099</span>        private final String[] ATTRIBUTE_LR_NAME = GENERAL_NAME;<a name="line.99"></a>
+<span class="sourceLineNo">100</span>        private final String[] ATTRIBUTE_LR_LINENAME = GENERAL_LINENAME;<a name="line.100"></a>
+<span class="sourceLineNo">101</span>        private final String[] ATTRIBUTE_LR_DCODE = GENERAL_DCODE;<a name="line.101"></a>
+<span class="sourceLineNo">102</span>        private final String[] ATTRIBUTE_LR_TAKT = {ATTRIBUTE_UNKNOWN, "TAKT_TAG_HVZ"};<a name="line.102"></a>
+<span class="sourceLineNo">103</span><a name="line.103"></a>
+<span class="sourceLineNo">104</span>        private final String[] ATTRIBUTE_L_NAME = GENERAL_NAME;<a name="line.104"></a>
+<span class="sourceLineNo">105</span>        private final String[] ATTRIBUTE_L_TCODE = {"TSYSCODE", "VSYSCODE"};<a name="line.105"></a>
+<span class="sourceLineNo">106</span>        private final String[] ATTRIBUTE_L_VEHCOMBNO = {"VEHCOMBNO", "FZGKOMBNR"};<a name="line.106"></a>
+<span class="sourceLineNo">107</span><a name="line.107"></a>
+<span class="sourceLineNo">108</span>        private final String[] ATTRIBUTE_LRI_LRNAME = GENERAL_LINEROUTENAME;<a name="line.108"></a>
+<span class="sourceLineNo">109</span>        private final String[] ATTRIBUTE_LRI_LNAME = GENERAL_LINENAME;<a name="line.109"></a>
+<span class="sourceLineNo">110</span>        private final String[] ATTRIBUTE_LRI_ID = GENERAL_INDEX;<a name="line.110"></a>
+<span class="sourceLineNo">111</span>        private final String[] ATTRIBUTE_LRI_DCODE = GENERAL_DCODE;<a name="line.111"></a>
+<span class="sourceLineNo">112</span>        private final String[] ATTRIBUTE_LRI_NODEID = {"NODENO", "KNOTNR"};<a name="line.112"></a>
+<span class="sourceLineNo">113</span>        private final String[] ATTRIBUTE_LRI_SPNO = {"STOPPOINTNO", "HPUNKTNR"};<a name="line.113"></a>
+<span class="sourceLineNo">114</span><a name="line.114"></a>
+<span class="sourceLineNo">115</span>        private final String[] ATTRIBUTE_TP_LNAME = GENERAL_LINENAME;<a name="line.115"></a>
+<span class="sourceLineNo">116</span>        private final String[] ATTRIBUTE_TP_LRNAME = GENERAL_LINEROUTENAME;<a name="line.116"></a>
+<span class="sourceLineNo">117</span>        private final String[] ATTRIBUTE_TP_ID = GENERAL_NAME;<a name="line.117"></a>
+<span class="sourceLineNo">118</span>        private final String[] ATTRIBUTE_TP_DCODE = GENERAL_DCODE;<a name="line.118"></a>
+<span class="sourceLineNo">119</span>        private final String[] ATTRIBUTE_TP_VEHCOMBNO = {"VEHCOMBNO", "FZGKOMBNR"};<a name="line.119"></a>
+<span class="sourceLineNo">120</span><a name="line.120"></a>
+<span class="sourceLineNo">121</span>        private final String[] ATTRIBUTE_TPI_LNAME = GENERAL_LINENAME;<a name="line.121"></a>
+<span class="sourceLineNo">122</span>        private final String[] ATTRIBUTE_TPI_LRNAME = GENERAL_LINEROUTENAME;<a name="line.122"></a>
+<span class="sourceLineNo">123</span>        private final String[] ATTRIBUTE_TPI_ID = GENERAL_INDEX;<a name="line.123"></a>
+<span class="sourceLineNo">124</span>        private final String[] ATTRIBUTE_TPI_TPNAME = {"TIMEPROFILENAME", "FZPROFILNAME"};<a name="line.124"></a>
+<span class="sourceLineNo">125</span>        private final String[] ATTRIBUTE_TPI_DCODE = GENERAL_DCODE;<a name="line.125"></a>
+<span class="sourceLineNo">126</span>        private final String[] ATTRIBUTE_TPI_ARR = {"ARR", "ANKUNFT"};<a name="line.126"></a>
+<span class="sourceLineNo">127</span>        private final String[] ATTRIBUTE_TPI_DEP = {"DEP", "ABFAHRT"};<a name="line.127"></a>
+<span class="sourceLineNo">128</span>        private final String[] ATTRIBUTE_TPI_LRIINDEX = {"LRITEMINDEX", "LRELEMINDEX"};<a name="line.128"></a>
+<span class="sourceLineNo">129</span><a name="line.129"></a>
+<span class="sourceLineNo">130</span>        private final String[] ATTRIBUTE_D_LNAME = GENERAL_LINENAME;<a name="line.130"></a>
+<span class="sourceLineNo">131</span>        private final String[] ATTRIBUTE_D_LRNAME = GENERAL_LINEROUTENAME;<a name="line.131"></a>
+<span class="sourceLineNo">132</span>        private final String[] ATTRIBUTE_D_ID = GENERAL_NO;<a name="line.132"></a>
+<span class="sourceLineNo">133</span>        private final String[] ATTRIBUTE_D_TPNAME = {"TIMEPROFILENAME", "FZPROFILNAME"};<a name="line.133"></a>
+<span class="sourceLineNo">134</span>        private final String[] ATTRIBUTE_D_DEP = {"DEP", "ABFAHRT"};<a name="line.134"></a>
+<span class="sourceLineNo">135</span>        private final String[] ATTRIBUTE_D_DCODE = GENERAL_DCODE;<a name="line.135"></a>
+<span class="sourceLineNo">136</span><a name="line.136"></a>
+<span class="sourceLineNo">137</span>        private final String[] ATTRIBUTE_VJS_VEHJOURNEYNO = {"VEHJOURNEYNO", "FZGFAHRTNR"}; // vehicle journey section<a name="line.137"></a>
+<span class="sourceLineNo">138</span>        private final String[] ATTRIBUTE_VJS_VEHCOMBNO = {"VEHCOMBNO", "FZGKOMBNR"};<a name="line.138"></a>
+<span class="sourceLineNo">139</span><a name="line.139"></a>
+<span class="sourceLineNo">140</span>        private final String[] ATTRIBUTE_VEHUNIT_ID = GENERAL_NO;<a name="line.140"></a>
+<span class="sourceLineNo">141</span>        private final String[] ATTRIBUTE_VEHUNIT_CODE = {"CODE", "CODE"};<a name="line.141"></a>
+<span class="sourceLineNo">142</span>        private final String[] ATTRIBUTE_VEHUNIT_SEATCAP = {"SEATCAP", "SITZPL"};<a name="line.142"></a>
+<span class="sourceLineNo">143</span>        private final String[] ATTRIBUTE_VEHUNIT_TOTALCAP = {"TOTALCAP", "GESAMTPL"};<a name="line.143"></a>
+<span class="sourceLineNo">144</span><a name="line.144"></a>
+<span class="sourceLineNo">145</span>        private final String[] ATTRIBUTE_VEHCOMB_NO = GENERAL_NO;<a name="line.145"></a>
+<span class="sourceLineNo">146</span>        private final String[] ATTRIBUTE_VEHCOMB_NAME = GENERAL_NAME;<a name="line.146"></a>
+<span class="sourceLineNo">147</span><a name="line.147"></a>
+<span class="sourceLineNo">148</span>        private final String[] ATTRIBUTE_VEHUNITTOVEHCOMB_VEHCOMBNO = {"VEHCOMBNO", "FZGKOMBNR"};<a name="line.148"></a>
+<span class="sourceLineNo">149</span>        private final String[] ATTRIBUTE_VEHUNITTOVEHCOMB_VEHUNITNO = {"VEHUNITNO", "FZGEINHEITNR"};<a name="line.149"></a>
+<span class="sourceLineNo">150</span>        private final String[] ATTRIBUTE_VEHUNITTOVEHCOMB_NUMVEHUNITS = {"NUMVEHUNITS", "ANZFZGEINH"};<a name="line.150"></a>
+<span class="sourceLineNo">151</span><a name="line.151"></a>
+<span class="sourceLineNo">152</span>        public VisumNetworkReader(final VisumNetwork network) {<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                this.network = network;<a name="line.153"></a>
+<span class="sourceLineNo">154</span>        }<a name="line.154"></a>
+<span class="sourceLineNo">155</span><a name="line.155"></a>
+<span class="sourceLineNo">156</span>        public void read(final String filename) throws UncheckedIOException {<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                BufferedReader reader = IOUtils.getBufferedReader(filename, Charset.forName("ISO-8859-1"));<a name="line.157"></a>
+<span class="sourceLineNo">158</span><a name="line.158"></a>
+<span class="sourceLineNo">159</span>                try {<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                        String line = reader.readLine();<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                        if (!"$VISION".equals(line)) {<a name="line.161"></a>
+<span class="sourceLineNo">162</span>                                throw new IOException("File does not start with '$VISION'. Are you sure it is a VISUM network file?");<a name="line.162"></a>
+<span class="sourceLineNo">163</span>                        }<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                        // next line after header:<a name="line.164"></a>
+<span class="sourceLineNo">165</span>                        line = reader.readLine();<a name="line.165"></a>
+<span class="sourceLineNo">166</span>                        while (line != null) {<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                                if (line.startsWith("$VERSION:")) {<a name="line.167"></a>
+<span class="sourceLineNo">168</span>                                        readVersion(line, reader);<a name="line.168"></a>
+<span class="sourceLineNo">169</span>                                } else if (line.startsWith(this.TABLE_STOP[this.language])) {<a name="line.169"></a>
+<span class="sourceLineNo">170</span>                                        readStops(line, reader);<a name="line.170"></a>
+<span class="sourceLineNo">171</span>                                } else if (line.startsWith(this.TABLE_LINKTYPE[this.language])) {<a name="line.171"></a>
+<span class="sourceLineNo">172</span>                                        readEdgeTypes(line, reader);<a name="line.172"></a>
+<span class="sourceLineNo">173</span>                                } else if (line.startsWith(this.TABLE_STOPAREA[this.language])) {<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                                        readStopAreas(line, reader);<a name="line.174"></a>
+<span class="sourceLineNo">175</span>                                } else if (line.startsWith(this.TABLE_STOPPOINT[this.language])) {<a name="line.175"></a>
+<span class="sourceLineNo">176</span>                                        readStopPoints(line, reader);<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                                } else if (line.startsWith(this.TABLE_LINE[this.language])) {<a name="line.177"></a>
+<span class="sourceLineNo">178</span>                                        readLines(line, reader);<a name="line.178"></a>
+<span class="sourceLineNo">179</span>                                } else if (line.startsWith(this.TABLE_LINEROUTE[this.language])) {<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                                        readLineRoutes(line, reader);<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                                } else if (line.startsWith(this.TABLE_LINEROUTEITEM[this.language])) {<a name="line.181"></a>
+<span class="sourceLineNo">182</span>                                        readLineRouteItems(line, reader);<a name="line.182"></a>
+<span class="sourceLineNo">183</span>                                } else if (line.startsWith(this.TABLE_TIMEPROFILE[this.language])) {<a name="line.183"></a>
+<span class="sourceLineNo">184</span>                                        readTimeProfile(line, reader);<a name="line.184"></a>
+<span class="sourceLineNo">185</span>                                } else if (line.startsWith(this.TABLE_TIMEPROFILEITEM[this.language])) {<a name="line.185"></a>
+<span class="sourceLineNo">186</span>                                        readTimeProfileItems(line, reader);<a name="line.186"></a>
+<span class="sourceLineNo">187</span>                                } else if (line.startsWith(this.TABLE_VEHJOURNEY[this.language])) {<a name="line.187"></a>
+<span class="sourceLineNo">188</span>                                        readDepartures(line, reader);<a name="line.188"></a>
+<span class="sourceLineNo">189</span>                                } else if (line.startsWith(this.TABLE_VEHJOURNEYSECTION[this.language])) {<a name="line.189"></a>
+<span class="sourceLineNo">190</span>                                        readDepartureSections(line, reader);<a name="line.190"></a>
+<span class="sourceLineNo">191</span>                                } else if (line.startsWith(this.TABLE_VEHUNIT[this.language])) {<a name="line.191"></a>
+<span class="sourceLineNo">192</span>                                        readVehicleUnits(line, reader);<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                                } else if (line.startsWith(this.TABLE_VEHCOMB[this.language])) {<a name="line.193"></a>
+<span class="sourceLineNo">194</span>                                        readVehicleCombinations(line, reader);<a name="line.194"></a>
+<span class="sourceLineNo">195</span>                                } else if (line.startsWith(this.TABLE_VEHUNITTOVEHCOMB[this.language])) {<a name="line.195"></a>
+<span class="sourceLineNo">196</span>                                        readVehicleUnitToVehicleCombination(line, reader);<a name="line.196"></a>
+<span class="sourceLineNo">197</span>                                } else if (line.startsWith("$")) {<a name="line.197"></a>
+<span class="sourceLineNo">198</span>                                        readUnknownTable(reader);<a name="line.198"></a>
+<span class="sourceLineNo">199</span>                                } else if (!line.startsWith("* ")) {<a name="line.199"></a>
+<span class="sourceLineNo">200</span>                                        throw new IOException("cannot interpret line: " + line);<a name="line.200"></a>
+<span class="sourceLineNo">201</span>                                }<a name="line.201"></a>
+<span class="sourceLineNo">202</span>                                // next line:<a name="line.202"></a>
+<span class="sourceLineNo">203</span>                                line = reader.readLine();<a name="line.203"></a>
+<span class="sourceLineNo">204</span>                        }<a name="line.204"></a>
+<span class="sourceLineNo">205</span><a name="line.205"></a>
+<span class="sourceLineNo">206</span>                } catch (IOException e) {<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                        this.log.warn("there was an exception while reading the file.", e);<a name="line.207"></a>
+<span class="sourceLineNo">208</span>                        try {<a name="line.208"></a>
+<span class="sourceLineNo">209</span>                                reader.close();<a name="line.209"></a>
+<span class="sourceLineNo">210</span>                        } catch (IOException e2) {<a name="line.210"></a>
+<span class="sourceLineNo">211</span>                                this.log.warn("could not close reader.", e2);<a name="line.211"></a>
+<span class="sourceLineNo">212</span>                        }<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                        throw new UncheckedIOException(e);<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                }<a name="line.214"></a>
+<span class="sourceLineNo">215</span><a name="line.215"></a>
+<span class="sourceLineNo">216</span>                try {<a name="line.216"></a>
+<span class="sourceLineNo">217</span>                        reader.close();<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                } catch (IOException e) {<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                        this.log.warn("could not close reader.", e);<a name="line.219"></a>
+<span class="sourceLineNo">220</span>                }<a name="line.220"></a>
+<span class="sourceLineNo">221</span><a name="line.221"></a>
+<span class="sourceLineNo">222</span>        }<a name="line.222"></a>
+<span class="sourceLineNo">223</span><a name="line.223"></a>
+<span class="sourceLineNo">224</span><a name="line.224"></a>
+<span class="sourceLineNo">225</span>        private void readVersion(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.225"></a>
+<span class="sourceLineNo">226</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring("$VERSION:".length()), ';');<a name="line.226"></a>
+<span class="sourceLineNo">227</span>                final int idxLanguage = getAttributeIndex("LANGUAGE", attributes);<a name="line.227"></a>
+<span class="sourceLineNo">228</span><a name="line.228"></a>
+<span class="sourceLineNo">229</span>                String line = reader.readLine();<a name="line.229"></a>
+<span class="sourceLineNo">230</span>                if (line == null) {<a name="line.230"></a>
+<span class="sourceLineNo">231</span>                        throw new RuntimeException("Language definition cannot be found.");<a name="line.231"></a>
+<span class="sourceLineNo">232</span>                }<a name="line.232"></a>
+<span class="sourceLineNo">233</span>                final String[] parts = StringUtils.explode(line, ';');<a name="line.233"></a>
+<span class="sourceLineNo">234</span>                if (parts[idxLanguage].equals("ENG")) {<a name="line.234"></a>
+<span class="sourceLineNo">235</span>                        this.language = 0;<a name="line.235"></a>
+<span class="sourceLineNo">236</span>                } else if (parts[idxLanguage].equals("DEU")) {<a name="line.236"></a>
+<span class="sourceLineNo">237</span>                        this.language = 1;<a name="line.237"></a>
+<span class="sourceLineNo">238</span>                } else {<a name="line.238"></a>
+<span class="sourceLineNo">239</span>                        throw new RuntimeException("Unknown language: " + parts[idxLanguage]);<a name="line.239"></a>
+<span class="sourceLineNo">240</span>                }<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                // proceed to next line, assumed to be empty<a name="line.241"></a>
+<span class="sourceLineNo">242</span>                reader.readLine();<a name="line.242"></a>
+<span class="sourceLineNo">243</span>        }<a name="line.243"></a>
+<span class="sourceLineNo">244</span><a name="line.244"></a>
+<span class="sourceLineNo">245</span>        private void readEdgeTypes(String tableAttributes, BufferedReader reader) throws IOException {<a name="line.245"></a>
+<span class="sourceLineNo">246</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_LINKTYPE[this.language].length()), ';');<a name="line.246"></a>
+<span class="sourceLineNo">247</span>                final int idxNo = getAttributeIndex(this.ATTRIBUTE_LINKTYPE_NO[this.language], attributes);<a name="line.247"></a>
+<span class="sourceLineNo">248</span>                final int idxKapIV = getAttributeIndex(this.ATTRIBUTE_LINKTYPE_KAPIV[this.language], attributes);<a name="line.248"></a>
+<span class="sourceLineNo">249</span>                final int idxV0IV = getAttributeIndex(this.ATTRIBUTE_LINKTYPE_V0IV[this.language], attributes);<a name="line.249"></a>
+<span class="sourceLineNo">250</span>                final int idxNoOfLanes = getAttributeIndex(this.ATTRIBUTE_LINKTYPE_NOLANES[this.language], attributes);<a name="line.250"></a>
+<span class="sourceLineNo">251</span><a name="line.251"></a>
+<span class="sourceLineNo">252</span>                String line = reader.readLine();<a name="line.252"></a>
+<span class="sourceLineNo">253</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.253"></a>
+<span class="sourceLineNo">254</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.254"></a>
+<span class="sourceLineNo">255</span>                        VisumNetwork.EdgeType edgeType = new VisumNetwork.EdgeType(Id.create(parts[idxNo], VisumNetwork.EdgeType.class), parts[idxKapIV], parts[idxV0IV], parts[idxNoOfLanes]);<a name="line.255"></a>
+<span class="sourceLineNo">256</span>                        this.network.addEdgeType(edgeType);<a name="line.256"></a>
+<span class="sourceLineNo">257</span>                        // proceed to next line<a name="line.257"></a>
+<span class="sourceLineNo">258</span>                        line = reader.readLine();<a name="line.258"></a>
+<span class="sourceLineNo">259</span>                }<a name="line.259"></a>
+<span class="sourceLineNo">260</span>        }<a name="line.260"></a>
+<span class="sourceLineNo">261</span><a name="line.261"></a>
+<span class="sourceLineNo">262</span>        private void readStops(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.262"></a>
+<span class="sourceLineNo">263</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_STOP[this.language].length()), ';');<a name="line.263"></a>
+<span class="sourceLineNo">264</span>                final int idxNo = getAttributeIndex(this.ATTRIBUTE_STOP_NO[this.language], attributes);<a name="line.264"></a>
+<span class="sourceLineNo">265</span>                final int idxName = getAttributeIndex(this.ATTRIBUTE_STOP_NAME[this.language], attributes);<a name="line.265"></a>
+<span class="sourceLineNo">266</span>                final int idxXcoord = getAttributeIndex(this.ATTRIBUTE_STOP_XCOORD[this.language], attributes);<a name="line.266"></a>
+<span class="sourceLineNo">267</span>                final int idxYcoord = getAttributeIndex(this.ATTRIBUTE_STOP_YCOORD[this.language], attributes);<a name="line.267"></a>
+<span class="sourceLineNo">268</span><a name="line.268"></a>
+<span class="sourceLineNo">269</span>                String line = reader.readLine();<a name="line.269"></a>
+<span class="sourceLineNo">270</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.270"></a>
+<span class="sourceLineNo">271</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.271"></a>
+<span class="sourceLineNo">272</span>                        VisumNetwork.Stop stop = new VisumNetwork.Stop(Id.create(parts[idxNo], VisumNetwork.Stop.class), parts[idxName],<a name="line.272"></a>
+<span class="sourceLineNo">273</span>                                        new Coord(Double.parseDouble(parts[idxXcoord].replace(',', '.')), Double.parseDouble(parts[idxYcoord].replace(',', '.'))));<a name="line.273"></a>
+<span class="sourceLineNo">274</span>                        this.network.addStop(stop);<a name="line.274"></a>
+<span class="sourceLineNo">275</span>                        // proceed to next line<a name="line.275"></a>
+<span class="sourceLineNo">276</span>                        line = reader.readLine();<a name="line.276"></a>
+<span class="sourceLineNo">277</span>                }<a name="line.277"></a>
+<span class="sourceLineNo">278</span>        }<a name="line.278"></a>
+<span class="sourceLineNo">279</span><a name="line.279"></a>
+<span class="sourceLineNo">280</span>        private void readStopAreas(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.280"></a>
+<span class="sourceLineNo">281</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_STOPAREA[this.language].length()), ';');<a name="line.281"></a>
+<span class="sourceLineNo">282</span>                final int idxNo = getAttributeIndex(this.ATTRIBUTE_STOPAREA_NO[this.language], attributes);<a name="line.282"></a>
+<span class="sourceLineNo">283</span>                final int idxStopId = getAttributeIndex(this.ATTRIBUTE_STOPAREA_STOPNO[this.language], attributes);<a name="line.283"></a>
+<span class="sourceLineNo">284</span><a name="line.284"></a>
+<span class="sourceLineNo">285</span>                String line = reader.readLine();<a name="line.285"></a>
+<span class="sourceLineNo">286</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.286"></a>
+<span class="sourceLineNo">287</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.287"></a>
+<span class="sourceLineNo">288</span>                        VisumNetwork.StopArea stopAr = new VisumNetwork.StopArea(Id.create(parts[idxNo], VisumNetwork.StopArea.class), Id.create(parts[idxStopId], VisumNetwork.Stop.class));<a name="line.288"></a>
+<span class="sourceLineNo">289</span>                        this.network.addStopArea(stopAr);<a name="line.289"></a>
+<span class="sourceLineNo">290</span>                        // proceed to next line<a name="line.290"></a>
+<span class="sourceLineNo">291</span>                        line = reader.readLine();<a name="line.291"></a>
+<span class="sourceLineNo">292</span>                }<a name="line.292"></a>
+<span class="sourceLineNo">293</span>        }<a name="line.293"></a>
+<span class="sourceLineNo">294</span>        private void readStopPoints(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.294"></a>
+<span class="sourceLineNo">295</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring( this.TABLE_STOPPOINT[this.language].length()), ';');<a name="line.295"></a>
+<span class="sourceLineNo">296</span>                final int idxNo = getAttributeIndex(this.ATTRIBUTE_STOPPT_NO[this.language], attributes);<a name="line.296"></a>
+<span class="sourceLineNo">297</span>                final int idxStopAreaNo = getAttributeIndex(this.ATTRIBUTE_STOPPT_STOPAREANO[this.language], attributes);<a name="line.297"></a>
+<span class="sourceLineNo">298</span>                final int idxName = getAttributeIndex(this.ATTRIBUTE_STOPPT_NAME[this.language], attributes);<a name="line.298"></a>
+<span class="sourceLineNo">299</span>                final int idxRLNo = getAttributeIndex(this.ATTRIBUTE_STOPPT_RLNO[this.language], attributes);<a name="line.299"></a>
+<span class="sourceLineNo">300</span>                final int idxNode = getAttributeIndex(this.ATTRIBUTE_STOPPT_NODE[this.language], attributes);<a name="line.300"></a>
+<span class="sourceLineNo">301</span>                String line = reader.readLine();<a name="line.301"></a>
+<span class="sourceLineNo">302</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.302"></a>
+<span class="sourceLineNo">303</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.303"></a>
+<span class="sourceLineNo">304</span>                        VisumNetwork.StopPoint stopPt = new VisumNetwork.StopPoint(Id.create(parts[idxNo], VisumNetwork.StopPoint.class),<a name="line.304"></a>
+<span class="sourceLineNo">305</span>                                        Id.create(parts[idxStopAreaNo], VisumNetwork.StopArea.class),<a name="line.305"></a>
+<span class="sourceLineNo">306</span>                                        parts[idxName], <a name="line.306"></a>
+<span class="sourceLineNo">307</span>                                        Id.create(parts[idxRLNo], Link.class), Id.create(parts[idxNode], Node.class));<a name="line.307"></a>
+<span class="sourceLineNo">308</span>                        this.network.addStopPoint(stopPt);<a name="line.308"></a>
+<span class="sourceLineNo">309</span>                        // proceed to next line<a name="line.309"></a>
+<span class="sourceLineNo">310</span>                        line = reader.readLine();<a name="line.310"></a>
+<span class="sourceLineNo">311</span>                }<a name="line.311"></a>
+<span class="sourceLineNo">312</span>        }<a name="line.312"></a>
+<span class="sourceLineNo">313</span>        private void readLineRoutes(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.313"></a>
+<span class="sourceLineNo">314</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_LINEROUTE[this.language].length()), ';');<a name="line.314"></a>
+<span class="sourceLineNo">315</span>                final int idxName = getAttributeIndex(this.ATTRIBUTE_LR_NAME[this.language], attributes);<a name="line.315"></a>
+<span class="sourceLineNo">316</span>                final int idxLineName = getAttributeIndex(this.ATTRIBUTE_LR_LINENAME[this.language], attributes);<a name="line.316"></a>
+<span class="sourceLineNo">317</span>                final int idxDCode = getAttributeIndex(this.ATTRIBUTE_LR_DCODE[this.language], attributes);<a name="line.317"></a>
+<span class="sourceLineNo">318</span>                final int idxTakt = getAttributeIndex(this.ATTRIBUTE_LR_TAKT[this.language], attributes);<a name="line.318"></a>
+<span class="sourceLineNo">319</span><a name="line.319"></a>
+<span class="sourceLineNo">320</span>                String line = reader.readLine();<a name="line.320"></a>
+<span class="sourceLineNo">321</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.321"></a>
+<span class="sourceLineNo">322</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.322"></a>
+<span class="sourceLineNo">323</span>                        VisumNetwork.TransitLineRoute lr1 = new VisumNetwork.TransitLineRoute(<a name="line.323"></a>
+<span class="sourceLineNo">324</span>                                        Id.create(parts[idxName], TransitLineRoute.class),<a name="line.324"></a>
+<span class="sourceLineNo">325</span>                                        Id.create(parts[idxLineName], TransitLine.class),<a name="line.325"></a>
+<span class="sourceLineNo">326</span>                                        parts[idxDCode]);<a name="line.326"></a>
+<span class="sourceLineNo">327</span>                        if (idxTakt != -1) {<a name="line.327"></a>
+<span class="sourceLineNo">328</span>                                lr1.takt = parts[idxTakt];<a name="line.328"></a>
+<span class="sourceLineNo">329</span>                        }<a name="line.329"></a>
+<span class="sourceLineNo">330</span>                        this.network.addLineRoute(lr1);<a name="line.330"></a>
+<span class="sourceLineNo">331</span>                        // proceed to next line<a name="line.331"></a>
+<span class="sourceLineNo">332</span>                        line = reader.readLine();<a name="line.332"></a>
+<span class="sourceLineNo">333</span>                }<a name="line.333"></a>
+<span class="sourceLineNo">334</span>        }<a name="line.334"></a>
+<span class="sourceLineNo">335</span>        private void readLines(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.335"></a>
+<span class="sourceLineNo">336</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_LINE[this.language].length()), ';');<a name="line.336"></a>
+<span class="sourceLineNo">337</span>                final int idxName = getAttributeIndex(this.ATTRIBUTE_L_NAME[this.language], attributes);<a name="line.337"></a>
+<span class="sourceLineNo">338</span>                final int idxTCode = getAttributeIndex(this.ATTRIBUTE_L_TCODE[this.language], attributes);<a name="line.338"></a>
+<span class="sourceLineNo">339</span>                final int idxVehCombNo = getAttributeIndex(this.ATTRIBUTE_L_VEHCOMBNO[this.language], attributes);<a name="line.339"></a>
+<span class="sourceLineNo">340</span><a name="line.340"></a>
+<span class="sourceLineNo">341</span>                String line = reader.readLine();<a name="line.341"></a>
+<span class="sourceLineNo">342</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.342"></a>
+<span class="sourceLineNo">343</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.343"></a>
+<span class="sourceLineNo">344</span>                        VisumNetwork.TransitLine tLine = new VisumNetwork.TransitLine(<a name="line.344"></a>
+<span class="sourceLineNo">345</span>                                        Id.create(parts[idxName], TransitLine.class),<a name="line.345"></a>
+<span class="sourceLineNo">346</span>                                        parts[idxTCode], parts[idxVehCombNo]);<a name="line.346"></a>
+<span class="sourceLineNo">347</span>                        this.network.addline(tLine);<a name="line.347"></a>
+<span class="sourceLineNo">348</span>                        // proceed to next line<a name="line.348"></a>
+<span class="sourceLineNo">349</span>                        line = reader.readLine();<a name="line.349"></a>
+<span class="sourceLineNo">350</span>                }<a name="line.350"></a>
+<span class="sourceLineNo">351</span>        }<a name="line.351"></a>
+<span class="sourceLineNo">352</span>        private void readLineRouteItems(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.352"></a>
+<span class="sourceLineNo">353</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_LINEROUTEITEM[this.language].length()), ';');<a name="line.353"></a>
+<span class="sourceLineNo">354</span>                final int idxLineRouteName = getAttributeIndex(this.ATTRIBUTE_LRI_LRNAME[this.language], attributes);<a name="line.354"></a>
+<span class="sourceLineNo">355</span>                final int idxLineName = getAttributeIndex(this.ATTRIBUTE_LRI_LNAME[this.language], attributes);<a name="line.355"></a>
+<span class="sourceLineNo">356</span>                final int idxIndex = getAttributeIndex(this.ATTRIBUTE_LRI_ID[this.language], attributes);<a name="line.356"></a>
+<span class="sourceLineNo">357</span>                final int idxDCode = getAttributeIndex(this.ATTRIBUTE_LRI_DCODE[this.language], attributes);<a name="line.357"></a>
+<span class="sourceLineNo">358</span>                final int idxNodeId = getAttributeIndex(this.ATTRIBUTE_LRI_NODEID[this.language], attributes);<a name="line.358"></a>
+<span class="sourceLineNo">359</span>                final int idxStopPointNo = getAttributeIndex(this.ATTRIBUTE_LRI_SPNO[this.language], attributes);<a name="line.359"></a>
+<span class="sourceLineNo">360</span><a name="line.360"></a>
+<span class="sourceLineNo">361</span><a name="line.361"></a>
+<span class="sourceLineNo">362</span>                String line = reader.readLine();<a name="line.362"></a>
+<span class="sourceLineNo">363</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.363"></a>
+<span class="sourceLineNo">364</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.364"></a>
+<span class="sourceLineNo">365</span>                        Id&lt;Node&gt; nodeId = Id.create(parts[idxNodeId], Node.class);<a name="line.365"></a>
+<span class="sourceLineNo">366</span>                        String stopPointNoString = parts[idxStopPointNo];<a name="line.366"></a>
+<span class="sourceLineNo">367</span>                        Id&lt;StopPoint&gt; stopPointNo;<a name="line.367"></a>
+<span class="sourceLineNo">368</span>                        if (stopPointNoString.length() == 0) {<a name="line.368"></a>
+<span class="sourceLineNo">369</span>                                stopPointNo = null;<a name="line.369"></a>
+<span class="sourceLineNo">370</span>                        } else {<a name="line.370"></a>
+<span class="sourceLineNo">371</span>                                stopPointNo = Id.create(stopPointNoString, StopPoint.class);<a name="line.371"></a>
+<span class="sourceLineNo">372</span>                        }<a name="line.372"></a>
+<span class="sourceLineNo">373</span>                        VisumNetwork.LineRouteItem lri1 = new VisumNetwork.LineRouteItem(parts[idxLineName],parts[idxLineRouteName],parts[idxIndex],parts[idxDCode],nodeId,stopPointNo);<a name="line.373"></a>
+<span class="sourceLineNo">374</span>                        this.network.addLineRouteItem(lri1);<a name="line.374"></a>
+<span class="sourceLineNo">375</span>                        // proceed to next line<a name="line.375"></a>
+<span class="sourceLineNo">376</span>                        line = reader.readLine();<a name="line.376"></a>
+<span class="sourceLineNo">377</span>                }<a name="line.377"></a>
+<span class="sourceLineNo">378</span>        }<a name="line.378"></a>
+<span class="sourceLineNo">379</span>        private void readTimeProfile(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.379"></a>
+<span class="sourceLineNo">380</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_TIMEPROFILE[this.language].length()), ';');<a name="line.380"></a>
+<span class="sourceLineNo">381</span>                final int idxLineName = getAttributeIndex(this.ATTRIBUTE_TP_LNAME[this.language], attributes);<a name="line.381"></a>
+<span class="sourceLineNo">382</span>                final int idxLineRouteName = getAttributeIndex(this.ATTRIBUTE_TP_LRNAME[this.language], attributes);<a name="line.382"></a>
+<span class="sourceLineNo">383</span>                final int idxIndex = getAttributeIndex(this.ATTRIBUTE_TP_ID[this.language], attributes);<a name="line.383"></a>
+<span class="sourceLineNo">384</span>                final int idxDCode = getAttributeIndex(this.ATTRIBUTE_TP_DCODE[this.language], attributes);<a name="line.384"></a>
+<span class="sourceLineNo">385</span>                final int idxVehCombNo = getAttributeIndex(this.ATTRIBUTE_TP_VEHCOMBNO[this.language], attributes);<a name="line.385"></a>
+<span class="sourceLineNo">386</span><a name="line.386"></a>
+<span class="sourceLineNo">387</span>                String line = reader.readLine();<a name="line.387"></a>
+<span class="sourceLineNo">388</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.388"></a>
+<span class="sourceLineNo">389</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.389"></a>
+<span class="sourceLineNo">390</span><a name="line.390"></a>
+<span class="sourceLineNo">391</span>                        VisumNetwork.TimeProfile tp1 = new VisumNetwork.TimeProfile(Id.create(parts[idxLineName], VisumNetwork.TransitLine.class),<a name="line.391"></a>
+<span class="sourceLineNo">392</span>                                        Id.create(parts[idxLineRouteName], TransitLineRoute.class), Id.create(parts[idxIndex], VisumNetwork.TimeProfile.class),<a name="line.392"></a>
+<span class="sourceLineNo">393</span>                                        parts[idxDCode],<a name="line.393"></a>
+<span class="sourceLineNo">394</span>                                        parts[idxVehCombNo]);<a name="line.394"></a>
+<span class="sourceLineNo">395</span>                        this.network.addTimeProfile(tp1);<a name="line.395"></a>
+<span class="sourceLineNo">396</span>                        // proceed to next line<a name="line.396"></a>
+<span class="sourceLineNo">397</span>                        line = reader.readLine();<a name="line.397"></a>
+<span class="sourceLineNo">398</span>                }<a name="line.398"></a>
+<span class="sourceLineNo">399</span>        }<a name="line.399"></a>
+<span class="sourceLineNo">400</span>        private void readTimeProfileItems(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.400"></a>
+<span class="sourceLineNo">401</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_TIMEPROFILEITEM[this.language].length()), ';');<a name="line.401"></a>
+<span class="sourceLineNo">402</span>                final int idxLineRouteName = getAttributeIndex(this.ATTRIBUTE_TPI_LRNAME[this.language], attributes);<a name="line.402"></a>
+<span class="sourceLineNo">403</span>                final int idxLineName = getAttributeIndex(this.ATTRIBUTE_TPI_LNAME[this.language], attributes);<a name="line.403"></a>
+<span class="sourceLineNo">404</span>                final int idxTPName = getAttributeIndex(this.ATTRIBUTE_TPI_TPNAME[this.language], attributes);<a name="line.404"></a>
+<span class="sourceLineNo">405</span>                final int idxDCode = getAttributeIndex(this.ATTRIBUTE_TPI_DCODE[this.language], attributes);<a name="line.405"></a>
+<span class="sourceLineNo">406</span>                final int idxIndex = getAttributeIndex(this.ATTRIBUTE_TPI_ID[this.language], attributes);<a name="line.406"></a>
+<span class="sourceLineNo">407</span>                final int idxArr = getAttributeIndex(this.ATTRIBUTE_TPI_ARR[this.language], attributes);<a name="line.407"></a>
+<span class="sourceLineNo">408</span>                final int idxDep = getAttributeIndex(this.ATTRIBUTE_TPI_DEP[this.language], attributes);<a name="line.408"></a>
+<span class="sourceLineNo">409</span>                final int idxLRIIndex = getAttributeIndex(this.ATTRIBUTE_TPI_LRIINDEX[this.language], attributes);<a name="line.409"></a>
+<span class="sourceLineNo">410</span><a name="line.410"></a>
+<span class="sourceLineNo">411</span>                String line = reader.readLine();<a name="line.411"></a>
+<span class="sourceLineNo">412</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.412"></a>
+<span class="sourceLineNo">413</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.413"></a>
+<span class="sourceLineNo">414</span><a name="line.414"></a>
+<span class="sourceLineNo">415</span>                        VisumNetwork.TimeProfileItem tpi1 = new VisumNetwork.TimeProfileItem(parts[idxLineName], parts[idxLineRouteName], <a name="line.415"></a>
+<span class="sourceLineNo">416</span>                                        parts[idxTPName], parts[idxDCode], parts[idxIndex], parts[idxArr], parts[idxDep],<a name="line.416"></a>
+<span class="sourceLineNo">417</span>                                        Id.create(parts[idxLRIIndex], VisumNetwork.TimeProfileItem.class));<a name="line.417"></a>
+<span class="sourceLineNo">418</span>                        this.network.addTimeProfileItem(tpi1);<a name="line.418"></a>
+<span class="sourceLineNo">419</span>                        // proceed to next line<a name="line.419"></a>
+<span class="sourceLineNo">420</span>                        line = reader.readLine();<a name="line.420"></a>
+<span class="sourceLineNo">421</span>                }<a name="line.421"></a>
+<span class="sourceLineNo">422</span>        }<a name="line.422"></a>
+<span class="sourceLineNo">423</span><a name="line.423"></a>
+<span class="sourceLineNo">424</span>        private void readDepartures(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.424"></a>
+<span class="sourceLineNo">425</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_VEHJOURNEY[this.language].length()), ';');<a name="line.425"></a>
+<span class="sourceLineNo">426</span>                final int idxLineRouteName = getAttributeIndex(this.ATTRIBUTE_D_LRNAME[this.language], attributes);<a name="line.426"></a>
+<span class="sourceLineNo">427</span>                final int idxLineName = getAttributeIndex(this.ATTRIBUTE_D_LNAME[this.language], attributes);<a name="line.427"></a>
+<span class="sourceLineNo">428</span>                final int idxNo = getAttributeIndex(this.ATTRIBUTE_D_ID[this.language], attributes);<a name="line.428"></a>
+<span class="sourceLineNo">429</span>                final int idxTRI = getAttributeIndex(this.ATTRIBUTE_D_TPNAME[this.language], attributes);<a name="line.429"></a>
+<span class="sourceLineNo">430</span>                final int idxDep = getAttributeIndex(this.ATTRIBUTE_D_DEP[this.language], attributes);<a name="line.430"></a>
+<span class="sourceLineNo">431</span>                final int idxDCode = getAttributeIndex(this.ATTRIBUTE_D_DCODE[this.language], attributes);<a name="line.431"></a>
+<span class="sourceLineNo">432</span><a name="line.432"></a>
+<span class="sourceLineNo">433</span>                String line = reader.readLine();<a name="line.433"></a>
+<span class="sourceLineNo">434</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.434"></a>
+<span class="sourceLineNo">435</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.435"></a>
+<span class="sourceLineNo">436</span><a name="line.436"></a>
+<span class="sourceLineNo">437</span>                        VisumNetwork.Departure d = new VisumNetwork.Departure(parts[idxLineName], parts[idxLineRouteName], parts[idxNo], parts[idxTRI], parts[idxDep], parts[idxDCode]);<a name="line.437"></a>
+<span class="sourceLineNo">438</span>                        this.network.addDeparture(d);<a name="line.438"></a>
+<span class="sourceLineNo">439</span>                        // proceed to next line<a name="line.439"></a>
+<span class="sourceLineNo">440</span>                        line = reader.readLine();<a name="line.440"></a>
+<span class="sourceLineNo">441</span>                }<a name="line.441"></a>
+<span class="sourceLineNo">442</span>        }<a name="line.442"></a>
+<span class="sourceLineNo">443</span><a name="line.443"></a>
+<span class="sourceLineNo">444</span>        private void readDepartureSections(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.444"></a>
+<span class="sourceLineNo">445</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_VEHJOURNEYSECTION[this.language].length()), ';');<a name="line.445"></a>
+<span class="sourceLineNo">446</span>                final int idxVehicleJourneyNo = getAttributeIndex(this.ATTRIBUTE_VJS_VEHJOURNEYNO[this.language], attributes);<a name="line.446"></a>
+<span class="sourceLineNo">447</span>                final int idxVehCombinationNo = getAttributeIndex(this.ATTRIBUTE_VJS_VEHCOMBNO[this.language], attributes);<a name="line.447"></a>
+<span class="sourceLineNo">448</span><a name="line.448"></a>
+<span class="sourceLineNo">449</span>                String line = reader.readLine();<a name="line.449"></a>
+<span class="sourceLineNo">450</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.450"></a>
+<span class="sourceLineNo">451</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.451"></a>
+<span class="sourceLineNo">452</span><a name="line.452"></a>
+<span class="sourceLineNo">453</span>                        String vehJourneyNo = parts[idxVehicleJourneyNo];<a name="line.453"></a>
+<span class="sourceLineNo">454</span>                        String vehCombNo = parts[idxVehCombinationNo];<a name="line.454"></a>
+<span class="sourceLineNo">455</span>                        VisumNetwork.Departure d = this.network.departuresByNo.get(vehJourneyNo);<a name="line.455"></a>
+<span class="sourceLineNo">456</span>                        d.vehCombinationNo = vehCombNo;<a name="line.456"></a>
+<span class="sourceLineNo">457</span>                        // proceed to next line<a name="line.457"></a>
+<span class="sourceLineNo">458</span>                        line = reader.readLine();<a name="line.458"></a>
+<span class="sourceLineNo">459</span>                }<a name="line.459"></a>
+<span class="sourceLineNo">460</span>        }<a name="line.460"></a>
+<span class="sourceLineNo">461</span><a name="line.461"></a>
+<span class="sourceLineNo">462</span>        private void readVehicleUnits(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.462"></a>
+<span class="sourceLineNo">463</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_VEHUNIT[this.language].length()), ';');<a name="line.463"></a>
+<span class="sourceLineNo">464</span>                final int idxId = getAttributeIndex(this.ATTRIBUTE_VEHUNIT_ID[this.language], attributes);<a name="line.464"></a>
+<span class="sourceLineNo">465</span>                final int idxCode = getAttributeIndex(this.ATTRIBUTE_VEHUNIT_CODE[this.language], attributes);<a name="line.465"></a>
+<span class="sourceLineNo">466</span>                final int idxSeatCap = getAttributeIndex(this.ATTRIBUTE_VEHUNIT_SEATCAP[this.language], attributes);<a name="line.466"></a>
+<span class="sourceLineNo">467</span>                final int idxTotalCap = getAttributeIndex(this.ATTRIBUTE_VEHUNIT_TOTALCAP[this.language], attributes);<a name="line.467"></a>
+<span class="sourceLineNo">468</span><a name="line.468"></a>
+<span class="sourceLineNo">469</span>                String line = reader.readLine();<a name="line.469"></a>
+<span class="sourceLineNo">470</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.470"></a>
+<span class="sourceLineNo">471</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.471"></a>
+<span class="sourceLineNo">472</span><a name="line.472"></a>
+<span class="sourceLineNo">473</span>                        VisumNetwork.VehicleUnit vehicleUnit = new VisumNetwork.VehicleUnit(parts[idxId], parts[idxCode],<a name="line.473"></a>
+<span class="sourceLineNo">474</span>                                        Integer.parseInt(parts[idxSeatCap]), Integer.parseInt(parts[idxTotalCap]));<a name="line.474"></a>
+<span class="sourceLineNo">475</span>                        this.network.addVehicleUnit(vehicleUnit);<a name="line.475"></a>
+<span class="sourceLineNo">476</span>                        // proceed to next line<a name="line.476"></a>
+<span class="sourceLineNo">477</span>                        line = reader.readLine();<a name="line.477"></a>
+<span class="sourceLineNo">478</span>                }<a name="line.478"></a>
+<span class="sourceLineNo">479</span>        }<a name="line.479"></a>
+<span class="sourceLineNo">480</span><a name="line.480"></a>
+<span class="sourceLineNo">481</span>        private void readVehicleCombinations(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.481"></a>
+<span class="sourceLineNo">482</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_VEHCOMB[this.language].length()), ';');<a name="line.482"></a>
+<span class="sourceLineNo">483</span>                final int idxId = getAttributeIndex(this.ATTRIBUTE_VEHCOMB_NO[this.language], attributes);<a name="line.483"></a>
+<span class="sourceLineNo">484</span>                final int idxName = getAttributeIndex(this.ATTRIBUTE_VEHCOMB_NAME[this.language], attributes);<a name="line.484"></a>
+<span class="sourceLineNo">485</span><a name="line.485"></a>
+<span class="sourceLineNo">486</span>                String line = reader.readLine();<a name="line.486"></a>
+<span class="sourceLineNo">487</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.487"></a>
+<span class="sourceLineNo">488</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.488"></a>
+<span class="sourceLineNo">489</span><a name="line.489"></a>
+<span class="sourceLineNo">490</span>                        VisumNetwork.VehicleCombination vehicleComb = new VisumNetwork.VehicleCombination(parts[idxId], parts[idxName]);<a name="line.490"></a>
+<span class="sourceLineNo">491</span>                        this.network.addVehicleCombination(vehicleComb);<a name="line.491"></a>
+<span class="sourceLineNo">492</span>                        // proceed to next line<a name="line.492"></a>
+<span class="sourceLineNo">493</span>                        line = reader.readLine();<a name="line.493"></a>
+<span class="sourceLineNo">494</span>                }<a name="line.494"></a>
+<span class="sourceLineNo">495</span>        }<a name="line.495"></a>
+<span class="sourceLineNo">496</span><a name="line.496"></a>
+<span class="sourceLineNo">497</span>        private void readVehicleUnitToVehicleCombination(final String tableAttributes, final BufferedReader reader) throws IOException {<a name="line.497"></a>
+<span class="sourceLineNo">498</span>                final String[] attributes = StringUtils.explode(tableAttributes.substring(this.TABLE_VEHUNITTOVEHCOMB[this.language].length()), ';');<a name="line.498"></a>
+<span class="sourceLineNo">499</span>                final int idxVehicleUnit = getAttributeIndex(this.ATTRIBUTE_VEHUNITTOVEHCOMB_VEHUNITNO[this.language], attributes);<a name="line.499"></a>
+<span class="sourceLineNo">500</span>                final int idxVehicleComb = getAttributeIndex(this.ATTRIBUTE_VEHUNITTOVEHCOMB_VEHCOMBNO[this.language], attributes);<a name="line.500"></a>
+<span class="sourceLineNo">501</span>                final int idxVehicleNumber = getAttributeIndex(this.ATTRIBUTE_VEHUNITTOVEHCOMB_NUMVEHUNITS[this.language], attributes);<a name="line.501"></a>
+<span class="sourceLineNo">502</span><a name="line.502"></a>
+<span class="sourceLineNo">503</span>                String line = reader.readLine();<a name="line.503"></a>
+<span class="sourceLineNo">504</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.504"></a>
+<span class="sourceLineNo">505</span>                        final String[] parts = StringUtils.explode(line, ';');<a name="line.505"></a>
+<span class="sourceLineNo">506</span><a name="line.506"></a>
+<span class="sourceLineNo">507</span>                        VisumNetwork.VehicleCombination vehicleComb = this.network.vehicleCombinations.get(parts[idxVehicleComb]);<a name="line.507"></a>
+<span class="sourceLineNo">508</span>                        vehicleComb.vehUnitId = parts[idxVehicleUnit];<a name="line.508"></a>
+<span class="sourceLineNo">509</span>                        vehicleComb.numOfVehicles = Integer.parseInt(parts[idxVehicleNumber]);<a name="line.509"></a>
+<span class="sourceLineNo">510</span>                        // proceed to next line<a name="line.510"></a>
+<span class="sourceLineNo">511</span>                        line = reader.readLine();<a name="line.511"></a>
+<span class="sourceLineNo">512</span>                }<a name="line.512"></a>
+<span class="sourceLineNo">513</span>        }<a name="line.513"></a>
+<span class="sourceLineNo">514</span><a name="line.514"></a>
+<span class="sourceLineNo">515</span>        private void readUnknownTable(final BufferedReader reader) throws IOException {<a name="line.515"></a>
+<span class="sourceLineNo">516</span>                String line = reader.readLine();<a name="line.516"></a>
+<span class="sourceLineNo">517</span>                while (line != null &amp;&amp; line.length() &gt; 0) {<a name="line.517"></a>
+<span class="sourceLineNo">518</span><a name="line.518"></a>
+<span class="sourceLineNo">519</span>                        line = reader.readLine();<a name="line.519"></a>
+<span class="sourceLineNo">520</span>                }<a name="line.520"></a>
+<span class="sourceLineNo">521</span>        }<a name="line.521"></a>
+<span class="sourceLineNo">522</span><a name="line.522"></a>
+<span class="sourceLineNo">523</span>        private int getAttributeIndex(final String attribute, final String[] attributes) {<a name="line.523"></a>
+<span class="sourceLineNo">524</span>                for (int i = 0; i &lt; attributes.length; i++) {<a name="line.524"></a>
+<span class="sourceLineNo">525</span>                        if (attributes[i].equals(attribute)) {<a name="line.525"></a>
+<span class="sourceLineNo">526</span>                                return i;<a name="line.526"></a>
+<span class="sourceLineNo">527</span>                        }<a name="line.527"></a>
+<span class="sourceLineNo">528</span>                }<a name="line.528"></a>
+<span class="sourceLineNo">529</span>                return -1;<a name="line.529"></a>
+<span class="sourceLineNo">530</span>        }<a name="line.530"></a>
+<span class="sourceLineNo">531</span>}<a name="line.531"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>
