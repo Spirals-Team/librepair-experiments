@@ -1,0 +1,47 @@
+/**
+ * Copyright (C) 2006-2017 INRIA and contributors
+ * Spoon - http://spoon.gforge.inria.fr/
+ *
+ * This software is governed by the CeCILL-C License under French law and
+ * abiding by the rules of distribution of free software. You can use, modify
+ * and/or redistribute the software under the terms of the CeCILL-C license as
+ * circulated by CEA, CNRS and INRIA at http://www.cecill.info.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the CeCILL-C License for more details.
+ *
+ * The fact that you are presently reading this means that you have had
+ * knowledge of the CeCILL-C license and that you accept its terms.
+ */
+package spoon.reflect.code;
+
+
+/**
+ * This code element defines a <code>do</code> loop.
+ *
+ * Example:
+ * <pre>
+ *     int x = 0;
+ *     do {
+ *         x=x+1;
+ *     } while (x&lt;10);
+ * </pre>
+ */
+public interface CtDo extends spoon.reflect.code.CtLoop {
+    /**
+     * Returns the looping test as a boolean expression.
+     */
+    @spoon.reflect.annotations.PropertyGetter(role = spoon.reflect.path.CtRole.EXPRESSION)
+    spoon.reflect.code.CtExpression<java.lang.Boolean> getLoopingExpression();
+
+    /**
+     * Sets the looping test as a boolean expression.
+     */
+    @spoon.reflect.annotations.PropertySetter(role = spoon.reflect.path.CtRole.EXPRESSION)
+    <T extends spoon.reflect.code.CtDo> T setLoopingExpression(spoon.reflect.code.CtExpression<java.lang.Boolean> expression);
+
+    @java.lang.Override
+    spoon.reflect.code.CtDo clone();
+}
+
