@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PackagePersister.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.meta.persist</a> &gt; <span class="el_source">PackagePersister.java</span></div><h1>PackagePersister.java</h1><pre class="source lang-java linenums">package org.molgenis.data.meta.persist;
+
+import com.google.common.collect.Iterators;
+import com.google.common.collect.Sets;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Query;
+import org.molgenis.data.meta.model.Package;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.*;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.function.Function.identity;
+import static java.util.stream.Collectors.toMap;
+import static org.molgenis.data.meta.model.PackageMetadata.ID;
+import static org.molgenis.data.meta.model.PackageMetadata.PACKAGE;
+
+@Component
+public class PackagePersister
+{
+	private static final int BATCH_SIZE = 1000;
+
+	private final DataService dataService;
+
+	public PackagePersister(DataService dataService)
+<span class="fc" id="L28">	{</span>
+<span class="fc" id="L29">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L30">	}</span>
+
+	@Transactional
+	public void upsertPackages(Stream&lt;Package&gt; packages)
+	{
+<span class="fc" id="L35">		Iterator&lt;List&lt;Package&gt;&gt; partitions = Iterators.partition(packages.iterator(), BATCH_SIZE);</span>
+<span class="fc" id="L36">		partitions.forEachRemaining(this::upsertPackages);</span>
+<span class="fc" id="L37">	}</span>
+
+	private void upsertPackages(Collection&lt;Package&gt; packages)
+	{
+<span class="fc" id="L41">		List&lt;Package&gt; packagesToAdd = new ArrayList&lt;&gt;(packages.size());</span>
+<span class="fc" id="L42">		List&lt;Package&gt; packagesToUpdate = new ArrayList&lt;&gt;(packages.size());</span>
+
+<span class="fc" id="L44">		Map&lt;String, Package&gt; packageMap = getCandidateExistingPackageMap(packages);</span>
+<span class="fc" id="L45">		packages.forEach(pack -&gt;</span>
+		{
+<span class="fc" id="L47">			Package existingPackage = packageMap.get(pack.getId());</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">			if (existingPackage != null)</span>
+			{
+<span class="fc" id="L50">				pack.setId(existingPackage.getId()); // inject existing package identifier into package</span>
+<span class="fc bfc" id="L51" title="All 2 branches covered.">				if (!pack.equals(existingPackage))</span>
+				{
+<span class="fc" id="L53">					packagesToUpdate.add(pack);</span>
+				}
+			}
+			else
+			{
+<span class="fc" id="L58">				packagesToAdd.add(pack);</span>
+			}
+<span class="fc" id="L60">		});</span>
+
+<span class="pc bpc" id="L62" title="1 of 2 branches missed.">		if (!packagesToAdd.isEmpty())</span>
+		{
+<span class="fc" id="L64">			dataService.add(PACKAGE, packagesToAdd.stream());</span>
+		}
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">		if (!packagesToUpdate.isEmpty())</span>
+		{
+<span class="fc" id="L68">			dataService.update(PACKAGE, packagesToUpdate.stream());</span>
+		}
+<span class="fc" id="L70">	}</span>
+
+	private Map&lt;String, Package&gt; getCandidateExistingPackageMap(Collection&lt;Package&gt; packages)
+	{
+<span class="fc" id="L74">		Set&lt;String&gt; packageIds = Sets.newHashSetWithExpectedSize(packages.size());</span>
+<span class="fc" id="L75">		packages.forEach(pack -&gt; packageIds.add(pack.getId()));</span>
+
+<span class="fc" id="L77">		Query&lt;Package&gt; query = dataService.query(PACKAGE, Package.class).in(ID, packageIds);</span>
+<span class="fc" id="L78">		return query.findAll().collect(toMap(Package::getId, identity()));</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

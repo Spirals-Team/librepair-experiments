@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataConverter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data</a> &gt; <span class="el_source">DataConverter.java</span></div><h1>DataConverter.java</h1><pre class="source lang-java linenums">package org.molgenis.data;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.convert.StringToDateConverter;
+import org.molgenis.data.convert.StringToDateTimeConverter;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.util.ApplicationContextProvider;
+import org.molgenis.util.ListEscapeUtils;
+import org.springframework.core.convert.ConversionFailedException;
+import org.springframework.core.convert.ConversionService;
+import org.springframework.core.convert.ConverterNotFoundException;
+import org.springframework.core.convert.support.DefaultConversionService;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import static java.util.stream.StreamSupport.stream;
+
+@SuppressFBWarnings(value = &quot;NP_BOOLEAN_RETURN_NULL&quot;, justification = &quot;We want to return Boolean.TRUE, Boolean.FALSE or null&quot;)
+<span class="nc" id="L25">public class DataConverter</span>
+{
+	private static ConversionService conversionService;
+
+	public static boolean canConvert(Object source, Class&lt;?&gt; targetType)
+	{
+		try
+		{
+<span class="nc" id="L33">			convert(source, targetType);</span>
+<span class="nc" id="L34">			return true;</span>
+		}
+<span class="nc" id="L36">		catch (Exception e)</span>
+		{
+<span class="nc" id="L38">			return false;</span>
+		}
+	}
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	public static &lt;T&gt; T convert(Object source, Class&lt;T&gt; targetType)
+	{
+<span class="pc bpc" id="L45" title="1 of 2 branches missed.">		if (source == null)</span>
+		{
+<span class="nc" id="L47">			return null;</span>
+		}
+
+<span class="fc bfc" id="L50" title="All 2 branches covered.">		if (targetType.isAssignableFrom(source.getClass()))</span>
+		{
+<span class="fc" id="L52">			return (T) source;</span>
+		}
+
+<span class="fc" id="L55">		return getConversionService().convert(source, targetType);</span>
+	}
+
+	/**
+	 * Convert value to the type based on the given attribute.
+	 *
+	 * @param source value to convert
+	 * @param attr   attribute that defines the type of the converted value
+	 * @return converted value or the input value if the attribute type is a reference type
+	 */
+	public static Object convert(Object source, Attribute attr)
+	{
+		try
+		{
+<span class="pc bpc" id="L69" title="3 of 9 branches missed.">			switch (attr.getDataType())</span>
+			{
+				case BOOL:
+<span class="nc" id="L72">					return toBoolean(source);</span>
+				case XREF:
+				case CATEGORICAL:
+				case CATEGORICAL_MREF:
+				case MREF:
+				case FILE:
+				case ONE_TO_MANY:
+<span class="fc" id="L79">					return source;</span>
+				case COMPOUND:
+<span class="nc" id="L81">					throw new UnsupportedOperationException();</span>
+				case DATE:
+<span class="fc" id="L83">					return toLocalDate(source);</span>
+				case DATE_TIME:
+<span class="fc" id="L85">					return toInstant(source);</span>
+				case DECIMAL:
+<span class="nc" id="L87">					return toDouble(source);</span>
+				case INT:
+<span class="fc" id="L89">					return toInt(source);</span>
+				case LONG:
+<span class="fc" id="L91">					return toLong(source);</span>
+				default:
+<span class="fc" id="L93">					return toString(source);</span>
+
+			}
+		}
+<span class="fc" id="L97">		catch (ConversionFailedException cfe)</span>
+		{
+<span class="fc" id="L99">			throw new MolgenisDataException(</span>
+<span class="fc" id="L100">					String.format(&quot;Conversion failure in entity type [%s] attribute [%s]; %s&quot;, attr.getEntity().getId(),</span>
+<span class="fc" id="L101">							attr.getName(), cfe.getMessage()));</span>
+		}
+	}
+
+	public static String toString(Object source)
+	{
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">		if (source == null) return null;</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">		if (source instanceof String) return (String) source;</span>
+<span class="pc bpc" id="L109" title="1 of 2 branches missed.">		if (source instanceof Entity)</span>
+		{
+<span class="nc" id="L111">			Object labelValue = ((Entity) source).getLabelValue();</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">			return labelValue != null ? labelValue.toString() : null;</span>
+		}
+<span class="pc bpc" id="L114" title="1 of 2 branches missed.">		if (source instanceof List)</span>
+		{
+<span class="nc" id="L116">			StringBuilder sb = new StringBuilder();</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">			for (Object obj : (List&lt;?&gt;) source)</span>
+			{
+<span class="nc bnc" id="L119" title="All 2 branches missed.">				if (sb.length() &gt; 0) sb.append(&quot;,&quot;);</span>
+<span class="nc" id="L120">				sb.append(toString(obj));</span>
+<span class="nc" id="L121">			}</span>
+
+<span class="nc" id="L123">			return sb.toString();</span>
+		}
+
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">		if (getConversionService() == null) return source.toString();</span>
+
+		try
+		{
+<span class="fc" id="L130">			return convert(source, String.class);</span>
+		}
+<span class="nc" id="L132">		catch (ConverterNotFoundException e)</span>
+		{
+<span class="nc" id="L134">			return source.toString();</span>
+		}
+	}
+
+	public static Integer toInt(Object source)
+	{
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">		if (source == null) return null;</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">		if (source instanceof Integer) return (Integer) source;</span>
+<span class="fc" id="L142">		return convert(source, Integer.class);</span>
+	}
+
+	public static Long toLong(Object source)
+	{
+<span class="pc bpc" id="L147" title="1 of 2 branches missed.">		if (source == null) return null;</span>
+<span class="pc bpc" id="L148" title="1 of 2 branches missed.">		if (source instanceof Long) return (Long) source;</span>
+<span class="fc" id="L149">		return convert(source, Long.class);</span>
+	}
+
+	public static Boolean toBoolean(Object source)
+	{
+<span class="nc bnc" id="L154" title="All 2 branches missed.">		if (source == null) return null;</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">		if (source instanceof Boolean) return (Boolean) source;</span>
+<span class="nc" id="L156">		return convert(source, Boolean.class);</span>
+	}
+
+	public static Double toDouble(Object source)
+	{
+<span class="nc bnc" id="L161" title="All 2 branches missed.">		if (source == null) return null;</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">		if (source instanceof Double) return (Double) source;</span>
+<span class="nc" id="L163">		return convert(source, Double.class);</span>
+	}
+
+	public static LocalDate toLocalDate(Object source)
+	{
+<span class="pc bpc" id="L168" title="1 of 2 branches missed.">		if (source == null) return null;</span>
+<span class="pc bpc" id="L169" title="1 of 2 branches missed.">		if (source instanceof LocalDate) return (LocalDate) source;</span>
+<span class="fc" id="L170">		return convert(source, LocalDate.class);</span>
+	}
+
+	public static Instant toInstant(Object source)
+	{
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">		if (source == null) return null;</span>
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">		if (source instanceof Instant) return (Instant) source;</span>
+<span class="fc" id="L177">		return convert(source, Instant.class);</span>
+	}
+
+	public static Entity toEntity(Object source)
+	{
+<span class="nc bnc" id="L182" title="All 2 branches missed.">		if (source == null) return null;</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">		if (source instanceof Entity) return (Entity) source;</span>
+<span class="nc" id="L184">		return convert(source, Entity.class);</span>
+	}
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	public static Iterable&lt;Entity&gt; toEntities(Object source)
+	{
+<span class="nc bnc" id="L190" title="All 2 branches missed.">		if (source == null) return null;</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">		if (source instanceof Iterable) return (Iterable&lt;Entity&gt;) source;</span>
+<span class="nc" id="L192">		return null;</span>
+	}
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	public static List&lt;String&gt; toList(Object source)
+	{
+<span class="pc bpc" id="L198" title="1 of 2 branches missed.">		if (source == null) return null;</span>
+<span class="pc bpc" id="L199" title="1 of 2 branches missed.">		else if (source instanceof Iterable&lt;?&gt;)</span>
+		{
+<span class="fc" id="L201">			return stream(((Iterable&lt;?&gt;) source).spliterator(), false).map(obj -&gt;</span>
+			{
+				Object objValue;
+<span class="fc bfc" id="L204" title="All 2 branches covered.">				if (obj instanceof Entity)</span>
+				{
+<span class="fc" id="L206">					objValue = ((Entity) obj).getIdValue();</span>
+				}
+				else
+				{
+<span class="fc" id="L210">					objValue = obj;</span>
+				}
+<span class="fc" id="L212">				return DataConverter.toString(objValue);</span>
+<span class="fc" id="L213">			}).collect(Collectors.toList());</span>
+		}
+<span class="nc bnc" id="L215" title="All 2 branches missed.">		else if (source instanceof String) return ListEscapeUtils.toList((String) source);</span>
+<span class="nc" id="L216">		else return ListEscapeUtils.toList(source.toString());</span>
+
+	}
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	public static List&lt;Object&gt; toObjectList(Object source)
+	{
+<span class="nc bnc" id="L223" title="All 2 branches missed.">		if (source == null) return null;</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">		else if (source instanceof List) return (List&lt;Object&gt;) source;</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">		else if (source instanceof String)</span>
+		{
+<span class="nc" id="L227">			List&lt;Object&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L228">			result.addAll(Arrays.asList(((String) source).split(&quot;,&quot;)));</span>
+<span class="nc" id="L229">			return result;</span>
+		}
+<span class="nc" id="L231">		else return Arrays.asList(source);</span>
+	}
+
+	public static List&lt;Integer&gt; toIntList(Object source)
+	{
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">		if (source == null) return null;</span>
+<span class="pc bpc" id="L237" title="1 of 2 branches missed.">		else if (source instanceof String)</span>
+		{
+<span class="nc" id="L239">			List&lt;String&gt; stringList = ListEscapeUtils.toList((String) source);</span>
+<span class="nc" id="L240">			List&lt;Integer&gt; intList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">			for (String s : stringList)</span>
+			{
+<span class="nc bnc" id="L243" title="All 2 branches missed.">				if (!StringUtils.isNumeric(s))</span>
+				{
+<span class="nc" id="L245">					throw new IllegalArgumentException(s + &quot; is not an integer&quot;);</span>
+				}
+<span class="nc" id="L247">				intList.add(Integer.parseInt(s));</span>
+<span class="nc" id="L248">			}</span>
+
+<span class="nc" id="L250">			return intList;</span>
+		}
+<span class="pc bpc" id="L252" title="1 of 2 branches missed.">		else if (source instanceof Iterable&lt;?&gt;)</span>
+		{
+<span class="fc" id="L254">			ArrayList&lt;Integer&gt; intList = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">			for (Object o : (Iterable&lt;?&gt;) source)</span>
+			{
+<span class="fc bfc" id="L257" title="All 2 branches covered.">				if (o instanceof Entity)</span>
+				{
+<span class="fc" id="L259">					o = ((Entity) o).getIdValue();</span>
+				}
+<span class="fc" id="L261">				intList.add(toInt(o));</span>
+<span class="fc" id="L262">			}</span>
+<span class="fc" id="L263">			return intList;</span>
+		}
+<span class="nc bnc" id="L265" title="All 2 branches missed.">		else if (source instanceof Integer) return new ArrayList&lt;&gt;(Arrays.asList((Integer) source));</span>
+<span class="nc" id="L266">		else return null;</span>
+	}
+
+	private static ConversionService getConversionService()
+	{
+<span class="fc bfc" id="L271" title="All 2 branches covered.">		if (conversionService == null)</span>
+		{
+<span class="pc bpc" id="L273" title="1 of 2 branches missed.">			if (ApplicationContextProvider.getApplicationContext() == null)</span>
+			{
+				// We are not in a Spring managed environment
+<span class="fc" id="L276">				conversionService = new DefaultConversionService();</span>
+<span class="fc" id="L277">				((DefaultConversionService) conversionService).addConverter(new StringToDateConverter());</span>
+<span class="fc" id="L278">				((DefaultConversionService) conversionService).addConverter(new StringToDateTimeConverter());</span>
+			}
+			else
+			{
+<span class="nc" id="L282">				conversionService = ApplicationContextProvider.getApplicationContext().getBean(ConversionService.class);</span>
+			}
+
+		}
+
+<span class="fc" id="L287">		return conversionService;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

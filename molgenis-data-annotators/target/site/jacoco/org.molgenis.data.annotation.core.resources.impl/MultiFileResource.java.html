@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MultiFileResource.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.resources.impl</a> &gt; <span class="el_source">MultiFileResource.java</span></div><h1>MultiFileResource.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.resources.impl;
+
+import org.molgenis.data.Entity;
+import org.molgenis.data.Query;
+import org.molgenis.data.QueryRule;
+import org.molgenis.data.annotation.core.resources.MultiResourceConfig;
+import org.molgenis.data.annotation.core.resources.Resource;
+import org.molgenis.data.annotation.core.resources.ResourceConfig;
+import org.molgenis.data.vcf.model.VcfAttributes;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Optional;
+
+public abstract class MultiFileResource implements Resource
+{
+	private final String name;
+<span class="fc" id="L21">	private final Map&lt;String, ResourceImpl&gt; resources = new HashMap&lt;&gt;();</span>
+	private final MultiResourceConfig config;
+
+	public MultiFileResource(String name, MultiResourceConfig config)
+<span class="fc" id="L25">	{</span>
+<span class="fc" id="L26">		this.name = name;</span>
+<span class="fc" id="L27">		this.config = config;</span>
+<span class="fc" id="L28">	}</span>
+
+	private void initializeResources()
+	{
+<span class="fc" id="L32">		this.resources.clear();</span>
+
+<span class="fc bfc" id="L34" title="All 2 branches covered.">		for (Entry&lt;String, ResourceConfig&gt; chromConfig : config.getConfigs().entrySet())</span>
+		{
+<span class="fc" id="L36">			final String key = chromConfig.getKey();</span>
+			// Config may change so keep querying the MultiResourceConfig for the current File
+<span class="fc" id="L38">			this.resources.put(key, new ResourceImpl(name + key, () -&gt;</span>
+			{
+<span class="fc" id="L40">				ResourceConfig resourceConfig = config.getConfigs().get(key);</span>
+<span class="pc bpc" id="L41" title="1 of 2 branches missed.">				if (resourceConfig == null)</span>
+				{
+<span class="nc" id="L43">					initializeResources();</span>
+<span class="nc" id="L44">					return null;</span>
+				}
+<span class="fc" id="L46">				File file = resourceConfig.getFile();</span>
+<span class="fc" id="L47">				return file;</span>
+			})
+<span class="fc" id="L49">			{</span>
+				@Override
+				public RepositoryFactory getRepositoryFactory()
+				{
+<span class="fc" id="L53">					return MultiFileResource.this.getRepositoryFactory();</span>
+				}
+			});
+<span class="fc" id="L56">		}</span>
+<span class="fc" id="L57">	}</span>
+
+	private static Optional&lt;Object&gt; getFirstEqualsValueFor(String attributeName, Query&lt;Entity&gt; q)
+	{
+<span class="fc" id="L61">		return q.getRules()</span>
+<span class="fc" id="L62">				.stream()</span>
+<span class="fc" id="L63">				.filter(rule -&gt; attributeName.equals(rule.getField()))</span>
+<span class="pc bpc" id="L64" title="1 of 2 branches missed.">				.filter(rule -&gt; rule.getOperator() == QueryRule.Operator.EQUALS)</span>
+<span class="fc" id="L65">				.findFirst()</span>
+<span class="fc" id="L66">				.map(QueryRule::getValue);</span>
+	}
+
+	@Override
+	public boolean isAvailable()
+	{
+		// initialize after autowiring is complete and resources is empty
+<span class="fc bfc" id="L73" title="All 2 branches covered.">		if (resources.isEmpty())</span>
+		{
+<span class="fc" id="L75">			initializeResources();</span>
+		}
+<span class="fc" id="L77">		return resources.values().stream().allMatch(ResourceImpl::isAvailable);</span>
+	}
+
+	@Override
+	public String getName()
+	{
+<span class="fc" id="L83">		return name;</span>
+	}
+
+	@Override
+	public Iterable&lt;Entity&gt; findAll(Query&lt;Entity&gt; q)
+	{
+		// initialize after autowiring is complete and resources is empty
+<span class="fc" id="L90">		isAvailable();</span>
+<span class="fc" id="L91">		return getFirstEqualsValueFor(VcfAttributes.CHROM, q).map(Object::toString)</span>
+<span class="fc" id="L92">															 .filter(resources::containsKey)</span>
+<span class="fc" id="L93">															 .map(resources::get)</span>
+<span class="fc" id="L94">															 .map(resource -&gt; resource.findAll(q))</span>
+<span class="fc" id="L95">															 .orElse(new ArrayList&lt;&gt;());</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

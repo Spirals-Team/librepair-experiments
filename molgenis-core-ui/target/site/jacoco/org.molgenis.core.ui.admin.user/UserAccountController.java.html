@@ -1,0 +1,292 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UserAccountController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">core-ui</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.core.ui.admin.user</a> &gt; <span class="el_source">UserAccountController.java</span></div><h1>UserAccountController.java</h1><pre class="source lang-java linenums">package org.molgenis.core.ui.admin.user;
+
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+import io.swagger.annotations.ApiResponse;
+import io.swagger.annotations.ApiResponses;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.core.util.CountryCodes;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.i18n.LanguageService;
+import org.molgenis.security.login.MolgenisLoginController;
+import org.molgenis.security.settings.AuthenticationSettings;
+import org.molgenis.security.twofactor.TwoFactorAuthenticationController;
+import org.molgenis.security.twofactor.auth.TwoFactorAuthenticationSetting;
+import org.molgenis.security.twofactor.model.RecoveryCode;
+import org.molgenis.security.twofactor.service.RecoveryService;
+import org.molgenis.security.twofactor.service.TwoFactorAuthenticationService;
+import org.molgenis.security.user.MolgenisUserException;
+import org.molgenis.security.user.UserAccountService;
+import org.molgenis.web.ErrorMessageResponse;
+import org.molgenis.web.ErrorMessageResponse.ErrorMessage;
+import org.molgenis.web.PluginController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.LocaleResolver;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
+import java.util.*;
+import java.util.stream.Stream;
+
+import static java.text.MessageFormat.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.apache.commons.lang3.StringUtils.isNotEmpty;
+import static org.molgenis.core.ui.admin.user.UserAccountController.URI;
+import static org.molgenis.security.user.UserAccountService.MIN_PASSWORD_LENGTH;
+import static org.springframework.util.MimeTypeUtils.APPLICATION_JSON_VALUE;
+
+@Api(&quot;User account&quot;)
+@Controller
+@RequestMapping(URI)
+public class UserAccountController extends PluginController
+{
+<span class="fc" id="L57">	private static final Logger LOG = LoggerFactory.getLogger(UserAccountController.class);</span>
+
+	public static final String ID = &quot;useraccount&quot;;
+	public static final String URI = PluginController.PLUGIN_URI_PREFIX + ID;
+
+	private final UserAccountService userAccountService;
+	private final RecoveryService recoveryService;
+	private final TwoFactorAuthenticationService twoFactorAuthenticationService;
+	private final AuthenticationSettings authenticationSettings;
+	private final LocaleResolver localeResolver;
+
+	public UserAccountController(UserAccountService userAccountService, RecoveryService recoveryService,
+			TwoFactorAuthenticationService twoFactorAuthenticationService,
+			AuthenticationSettings authenticationSettings, LocaleResolver localeResolver)
+	{
+<span class="fc" id="L72">		super(URI);</span>
+<span class="fc" id="L73">		this.userAccountService = requireNonNull(userAccountService);</span>
+<span class="fc" id="L74">		this.recoveryService = requireNonNull(recoveryService);</span>
+<span class="fc" id="L75">		this.twoFactorAuthenticationService = requireNonNull(twoFactorAuthenticationService);</span>
+<span class="fc" id="L76">		this.authenticationSettings = requireNonNull(authenticationSettings);</span>
+<span class="fc" id="L77">		this.localeResolver = requireNonNull(localeResolver);</span>
+<span class="fc" id="L78">	}</span>
+
+	@ApiOperation(&quot;Show account&quot;)
+	@ApiResponses({ @ApiResponse(code = 200, message = &quot;Return the view of the account&quot;, response = String.class) })
+	@GetMapping
+	public String showAccount(Model model, @RequestParam(value = &quot;showCodes&quot;, defaultValue = &quot;false&quot;) boolean showCodes)
+	{
+<span class="fc" id="L85">		TwoFactorAuthenticationSetting twoFactorAuthenticationApp = authenticationSettings.getTwoFactorAuthentication();</span>
+<span class="fc" id="L86">		boolean isTwoFactorAuthenticationEnableForUser = userAccountService.getCurrentUser()</span>
+<span class="fc" id="L87">																		   .isTwoFactorAuthentication();</span>
+
+<span class="fc" id="L89">		model.addAttribute(&quot;user&quot;, userAccountService.getCurrentUser());</span>
+<span class="fc" id="L90">		model.addAttribute(&quot;countries&quot;, CountryCodes.get());</span>
+<span class="fc" id="L91">		model.addAttribute(&quot;min_password_length&quot;, MIN_PASSWORD_LENGTH);</span>
+<span class="fc" id="L92">		model.addAttribute(&quot;two_factor_authentication_app_option&quot;, twoFactorAuthenticationApp);</span>
+<span class="fc" id="L93">		model.addAttribute(&quot;two_factor_authentication_user_enabled&quot;, isTwoFactorAuthenticationEnableForUser);</span>
+<span class="fc" id="L94">		model.addAttribute(&quot;show_recovery_codes&quot;, showCodes);</span>
+<span class="fc" id="L95">		return &quot;view-useraccount&quot;;</span>
+	}
+
+	@ApiOperation(&quot;Updates the selected user language&quot;)
+	@ApiResponses({ @ApiResponse(code = 204, message = &quot;Update succeeded&quot;),
+			@ApiResponse(code = 403, message = &quot;Access denied. You need write permission on the UserAccount plugin&quot;, response = ErrorMessageResponse.class),
+			@ApiResponse(code = 400, message = &quot;Bad request. You need to provide a valid language code&quot;, response = ErrorMessageResponse.class) })
+	@PostMapping(value = &quot;/language/update&quot;, produces = APPLICATION_JSON_VALUE)
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void updateUserLanguage(HttpServletRequest request, HttpServletResponse response,
+			@RequestParam(&quot;languageCode&quot;) String languageCode)
+	{
+<span class="fc bfc" id="L107" title="All 2 branches covered.">		if (!LanguageService.hasLanguageCode(languageCode))</span>
+		{
+<span class="fc" id="L109">			throw new MolgenisUserException(format(&quot;Unknown language code ''{0}''&quot;, languageCode));</span>
+		}
+<span class="fc" id="L111">		localeResolver.setLocale(request, response, new Locale(languageCode));</span>
+<span class="fc" id="L112">	}</span>
+
+	@ApiOperation(&quot;Updated the useraccount&quot;)
+	@ApiResponses({ @ApiResponse(code = 200, message = &quot;Account is updated&quot;),
+			@ApiResponse(code = 400, message = &quot;Invalid password entered&quot;, response = ErrorMessageResponse.class) })
+	@PostMapping(value = &quot;/update&quot;, headers = &quot;Content-Type=application/x-www-form-urlencoded&quot;)
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void updateAccount(@Valid @NotNull AccountUpdateRequest updateRequest)
+	{
+<span class="fc" id="L121">		String newPassword = validatePasswordInUpdateRequest(updateRequest);</span>
+
+		// update current user
+<span class="fc" id="L124">		User user = userAccountService.getCurrentUser();</span>
+
+<span class="fc bfc" id="L126" title="All 2 branches covered.">		if (isNotEmpty(newPassword)) user.setPassword(newPassword);</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getPhone())) user.setPhone(updateRequest.getPhone());</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getFax())) user.setFax(updateRequest.getFax());</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getTollFreePhone()))</span>
+		{
+<span class="fc" id="L131">			user.setTollFreePhone(updateRequest.getTollFreePhone());</span>
+		}
+<span class="fc bfc" id="L133" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getAddress())) user.setAddress(updateRequest.getAddress());</span>
+<span class="fc bfc" id="L134" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getTitle())) user.setTitle(updateRequest.getTitle());</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getFirstname())) user.setFirstName(updateRequest.getFirstname());</span>
+<span class="fc bfc" id="L136" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getMiddleNames())) user.setMiddleNames(updateRequest.getMiddleNames());</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getLastname())) user.setLastName(updateRequest.getLastname());</span>
+<span class="fc bfc" id="L138" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getInstitute())) user.setAffiliation(updateRequest.getInstitute());</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getDepartment())) user.setDepartment(updateRequest.getDepartment());</span>
+<span class="fc bfc" id="L140" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getPosition())) user.setRole(updateRequest.getPosition());</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getCity())) user.setCity(updateRequest.getCity());</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">		if (isNotEmpty(updateRequest.getCountry()))</span>
+		{
+<span class="fc" id="L144">			user.setCountry(CountryCodes.get(updateRequest.getCountry()));</span>
+		}
+
+<span class="fc" id="L147">		userAccountService.updateCurrentUser(user);</span>
+<span class="fc" id="L148">	}</span>
+
+	private String validatePasswordInUpdateRequest(@Valid @NotNull AccountUpdateRequest updateRequest)
+	{
+		// validate new password
+<span class="fc" id="L153">		String newPassword = updateRequest.getNewpwd();</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">		if (!StringUtils.isEmpty(newPassword))</span>
+		{
+<span class="fc" id="L156">			String oldPassword = updateRequest.getOldpwd();</span>
+<span class="fc" id="L157">			String newPasswordConfirm = updateRequest.getNewpwd2();</span>
+
+			// validate password for current user
+<span class="pc bpc" id="L160" title="1 of 4 branches missed.">			if (oldPassword == null || oldPassword.isEmpty())</span>
+			{
+<span class="fc" id="L162">				throw new MolgenisUserException(&quot;Please enter old password to update your password.&quot;);</span>
+			}
+<span class="fc" id="L164">			boolean valid = userAccountService.validateCurrentUserPassword(oldPassword);</span>
+<span class="fc bfc" id="L165" title="All 2 branches covered.">			if (!valid) throw new MolgenisUserException(&quot;The password you entered is incorrect.&quot;);</span>
+
+			// validate new password against new password confirmation
+<span class="fc bfc" id="L168" title="All 2 branches covered.">			if (!newPassword.equals(newPasswordConfirm))</span>
+			{
+<span class="fc" id="L170">				throw new MolgenisUserException(&quot;'New password' does not match 'Repeat new password'.&quot;);</span>
+			}
+
+			// TODO implement http://www.molgenis.org/ticket/2145
+<span class="fc bfc" id="L174" title="All 2 branches covered.">			if (newPassword.length() &lt; MIN_PASSWORD_LENGTH)</span>
+			{
+<span class="fc" id="L176">				throw new MolgenisUserException(&quot;New password must consist of at least 6 characters.&quot;);</span>
+			}
+		}
+<span class="fc" id="L179">		return newPassword;</span>
+	}
+
+	@ApiOperation(&quot;Enable two factor authentication&quot;)
+	@ApiResponses({ @ApiResponse(code = 200, message = &quot;Two factor authentication enabled&quot;),
+			@ApiResponse(code = 400, message = &quot;Could not enable two factor authentication for user&quot;) })
+	@PostMapping(TwoFactorAuthenticationController.URI + &quot;/enable&quot;)
+	public String enableTwoFactorAuthentication()
+	{
+<span class="fc" id="L188">		twoFactorAuthenticationService.enableForUser();</span>
+
+<span class="fc" id="L190">		return &quot;redirect:&quot; + MolgenisLoginController.URI;</span>
+	}
+
+	@ApiOperation(&quot;Disable two factor authentication&quot;)
+	@ApiResponses({ @ApiResponse(code = 200, message = &quot;Two factor authentication disabled&quot;),
+			@ApiResponse(code = 400, message = &quot;Could not disable two factor authentication for user&quot;, response = ErrorMessageResponse.class) })
+	@PostMapping(TwoFactorAuthenticationController.URI + &quot;/disable&quot;)
+	public String disableTwoFactorAuthentication(Model model)
+	{
+<span class="fc" id="L199">		twoFactorAuthenticationService.disableForUser();</span>
+<span class="fc" id="L200">		downgradeUserAuthentication();</span>
+
+<span class="fc" id="L202">		return showAccount(model, false);</span>
+	}
+
+	@ApiOperation(&quot;Reset two factor authentication&quot;)
+	@ApiResponses({ @ApiResponse(code = 200, message = &quot;Two factor authentication is reset&quot;),
+			@ApiResponse(code = 400, message = &quot;Could not rest two factor authentication for user&quot;, response = ErrorMessageResponse.class) })
+	@PostMapping(TwoFactorAuthenticationController.URI + &quot;/reset&quot;)
+	public String resetTwoFactorAuthentication()
+	{
+<span class="fc" id="L211">		twoFactorAuthenticationService.resetSecretForUser();</span>
+
+<span class="fc" id="L213">		return &quot;redirect:&quot; + TwoFactorAuthenticationController.URI</span>
+				+ TwoFactorAuthenticationController.TWO_FACTOR_ACTIVATION_URI;
+	}
+
+	/**
+	 * &lt;p&gt;Set AuthenticationToken back to {@link UsernamePasswordAuthenticationToken} generated with default DaoAuthenticationProvider&lt;/p&gt;
+	 */
+	private void downgradeUserAuthentication()
+	{
+<span class="fc" id="L222">		Authentication auth = SecurityContextHolder.getContext().getAuthentication();</span>
+<span class="fc" id="L223">		UsernamePasswordAuthenticationToken token = new UsernamePasswordAuthenticationToken(auth.getPrincipal(),</span>
+<span class="fc" id="L224">				auth.getCredentials(), auth.getAuthorities());</span>
+<span class="fc" id="L225">		SecurityContextHolder.getContext().setAuthentication(token);</span>
+<span class="fc" id="L226">	}</span>
+
+	@ApiOperation(&quot;Get recoverycodes for two factor authentication&quot;)
+	@ApiResponses({ @ApiResponse(code = 200, message = &quot;Returns a list of recoverycodes&quot;, response = Map.class),
+			@ApiResponse(code = 500, message = &quot;Something went wrong retrieving the recoverycodes&quot;, response = ErrorMessageResponse.class) })
+	@GetMapping(&quot;recoveryCodes&quot;)
+	@ResponseBody
+	public Map&lt;String, List&lt;String&gt;&gt; getRecoveryCodes()
+	{
+<span class="fc" id="L235">		return convertToRecoveryCodesMap(</span>
+<span class="fc" id="L236">				recoveryService.getRecoveryCodes().map(RecoveryCode::getCode).collect(toList()));</span>
+	}
+
+	@ApiOperation(&quot;Generate recoverycodes for two factor authentication&quot;)
+	@ApiResponses({
+			@ApiResponse(code = 200, message = &quot;Returns a list of generated recoverycodes&quot;, response = Map.class),
+			@ApiResponse(code = 500, message = &quot;Something went wrong generating the recoverycodes&quot;, response = ErrorMessageResponse.class) })
+	@GetMapping(&quot;generateRecoveryCodes&quot;)
+	@ResponseBody
+	public Map&lt;String, List&lt;String&gt;&gt; generateRecoveryCodes()
+	{
+<span class="fc" id="L247">		Stream&lt;RecoveryCode&gt; recoveryCodes = recoveryService.generateRecoveryCodes();</span>
+<span class="fc" id="L248">		return convertToRecoveryCodesMap(recoveryCodes.map(RecoveryCode::getCode).collect(toList()));</span>
+	}
+
+	/**
+	 * Convert the list from the recoveryService to a Map for usability in client
+	 *
+	 * @param recoveryCodesList list from recoveryService
+	 * @return Map&amp;lt;String, List&amp;lt;String&amp;gt;&amp;gt;
+	 */
+	private Map&lt;String, List&lt;String&gt;&gt; convertToRecoveryCodesMap(List&lt;String&gt; recoveryCodesList)
+	{
+<span class="fc" id="L259">		Map&lt;String, List&lt;String&gt;&gt; recoveryCodes = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L260">		recoveryCodes.put(&quot;recoveryCodes&quot;, recoveryCodesList);</span>
+<span class="fc" id="L261">		return recoveryCodes;</span>
+	}
+
+	@ExceptionHandler(MolgenisUserException.class)
+	@ResponseStatus(value = HttpStatus.BAD_REQUEST)
+	@ResponseBody
+	private ErrorMessageResponse handleMolgenisUserException(MolgenisUserException e)
+	{
+<span class="fc" id="L269">		LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L270">		return new ErrorMessageResponse(Collections.singletonList(new ErrorMessage(e.getMessage())));</span>
+	}
+
+	@ExceptionHandler(AccessDeniedException.class)
+	@ResponseStatus(value = HttpStatus.FORBIDDEN)
+	@ResponseBody
+	private ErrorMessageResponse handleAccessDeniedException(AccessDeniedException e)
+	{
+<span class="fc" id="L278">		LOG.warn(&quot;Access denied&quot;, e);</span>
+<span class="fc" id="L279">		return new ErrorMessageResponse(Collections.singletonList(new ErrorMessage(e.getMessage())));</span>
+	}
+
+	@ExceptionHandler(RuntimeException.class)
+	@ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
+	@Order(Ordered.HIGHEST_PRECEDENCE)
+	@ResponseBody
+	private ErrorMessageResponse handleRuntimeException(RuntimeException e)
+	{
+<span class="fc" id="L288">		LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L289">		return new ErrorMessageResponse(Collections.singletonList(new ErrorMessage(e.getMessage())));</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

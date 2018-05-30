@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>L1Cache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-cache</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.cache.l1</a> &gt; <span class="el_source">L1Cache.java</span></div><h1>L1Cache.java</h1><pre class="source lang-java linenums">package org.molgenis.data.cache.l1;
+
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.guava.CaffeinatedGuava;
+import com.google.common.cache.Cache;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.molgenis.data.Entity;
+import org.molgenis.data.EntityKey;
+import org.molgenis.data.cache.utils.CombinedEntityCache;
+import org.molgenis.data.cache.utils.EntityHydration;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.transaction.DefaultMolgenisTransactionListener;
+import org.molgenis.data.transaction.TransactionManager;
+import org.slf4j.Logger;
+import org.springframework.stereotype.Component;
+
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static org.slf4j.LoggerFactory.getLogger;
+
+/**
+ * Caches entities within a transaction to speed up queries within those transactions. Each transaction has its own
+ * cache. When the transaction is committed the cache is removed.
+ */
+@Component
+public class L1Cache extends DefaultMolgenisTransactionListener
+{
+<span class="fc" id="L31">	private static final Logger LOG = getLogger(L1Cache.class);</span>
+	private static final int MAX_CACHE_SIZE = 1000;
+	private final ThreadLocal&lt;CombinedEntityCache&gt; caches;
+	private final EntityHydration entityHydration;
+
+	public L1Cache(TransactionManager transactionManager, EntityHydration entityHydration)
+<span class="fc" id="L37">	{</span>
+<span class="fc" id="L38">		caches = new ThreadLocal&lt;&gt;();</span>
+<span class="fc" id="L39">		this.entityHydration = requireNonNull(entityHydration);</span>
+<span class="fc" id="L40">		requireNonNull(transactionManager).addTransactionListener(this);</span>
+<span class="fc" id="L41">	}</span>
+
+	@Override
+	public void transactionStarted(String transactionId)
+	{
+<span class="fc" id="L46">		LOG.trace(&quot;Creating L1 cache for transaction [{}]&quot;, transactionId);</span>
+<span class="fc" id="L47">		caches.set(createCache());</span>
+<span class="fc" id="L48">	}</span>
+
+	private CombinedEntityCache createCache()
+	{
+<span class="fc" id="L52">		Cache&lt;EntityKey, Optional&lt;Map&lt;String, Object&gt;&gt;&gt; cache = CaffeinatedGuava.build(</span>
+<span class="fc" id="L53">				Caffeine.newBuilder().maximumSize(MAX_CACHE_SIZE).recordStats());</span>
+<span class="fc" id="L54">		return new CombinedEntityCache(entityHydration, cache);</span>
+	}
+
+	@Override
+	public void doCleanupAfterCompletion(String transactionId)
+	{
+<span class="fc" id="L60">		CombinedEntityCache entityCache = caches.get();</span>
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">		if (entityCache != null)</span>
+		{
+<span class="fc" id="L63">			LOG.trace(&quot;Cleaning up L1 cache after transaction [{}]&quot;, transactionId);</span>
+<span class="fc" id="L64">			caches.remove();</span>
+		}
+<span class="fc" id="L66">	}</span>
+
+	public void putDeletion(EntityKey entityKey)
+	{
+<span class="fc" id="L70">		CombinedEntityCache entityCache = caches.get();</span>
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">		if (entityCache != null)</span>
+		{
+<span class="fc" id="L73">			entityCache.putDeletion(entityKey);</span>
+		}
+<span class="fc" id="L75">	}</span>
+
+	//TODO: Call this also when repository metadata changes!
+	public void evictAll(EntityType entityType)
+	{
+<span class="fc" id="L80">		CombinedEntityCache entityCache = caches.get();</span>
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">		if (entityCache != null)</span>
+		{
+<span class="fc" id="L83">			LOG.trace(&quot;Removing all entities from L1 cache that belong to {}&quot;, entityType.getId());</span>
+<span class="fc" id="L84">			entityCache.evictAll(entityType);</span>
+		}
+<span class="fc" id="L86">	}</span>
+
+	public void evict(Stream&lt;EntityKey&gt; entityKeys)
+	{
+<span class="fc" id="L90">		CombinedEntityCache entityCache = caches.get();</span>
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">		if (entityCache != null)</span>
+		{
+<span class="fc" id="L93">			LOG.trace(&quot;Removing entity keys from L1 cache.&quot;);</span>
+<span class="fc" id="L94">			entityCache.evict(entityKeys);</span>
+		}
+<span class="fc" id="L96">	}</span>
+
+	/**
+	 * Retrieves an entity from the L1 cache based on a combination of entity name and entity id.
+	 *
+	 * @param entityTypeId name of the entity to retrieve
+	 * @param id           id value of the entity to retrieve
+	 * @return the retrieved {@link Entity} or Optional.empty() if deletion of this entity is stored in the cache or
+	 * null if no information available about this entity in the cache
+	 */
+	@SuppressFBWarnings(value = &quot;NP_OPTIONAL_RETURN_NULL&quot;, justification = &quot;Intentional behavior&quot;)
+	public Optional&lt;Entity&gt; get(String entityTypeId, Object id, EntityType entityType)
+	{
+<span class="fc" id="L109">		CombinedEntityCache cache = caches.get();</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">		if (cache == null)</span>
+		{
+<span class="fc" id="L112">			return null;</span>
+		}
+<span class="fc" id="L114">		Optional&lt;Entity&gt; result = cache.getIfPresent(entityType, id);</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">		if (result != null)</span>
+		{
+<span class="fc" id="L117">			LOG.debug(&quot;Retrieved entity [{}] from L1 cache that belongs to {}&quot;, id, entityTypeId);</span>
+		}
+		else
+		{
+<span class="fc" id="L121">			LOG.trace(&quot;No entity with id [{}] present in L1 cache that belongs to {}&quot;, id, entityTypeId);</span>
+		}
+<span class="fc" id="L123">		return result;</span>
+	}
+
+	/**
+	 * Puts an entity into the L1 cache, if the cache exists for the current thread.
+	 *
+	 * @param entityTypeId name of the entity to put into the cache
+	 * @param entity       the entity to put into the cache
+	 */
+	public void put(String entityTypeId, Entity entity)
+	{
+<span class="fc" id="L134">		CombinedEntityCache entityCache = caches.get();</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">		if (entityCache != null)</span>
+		{
+<span class="fc" id="L137">			entityCache.put(entity);</span>
+<span class="fc" id="L138">			LOG.trace(&quot;Added dehydrated row [{}] from entity {} to the L1 cache&quot;, entity.getIdValue(), entityTypeId);</span>
+		}
+<span class="fc" id="L140">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

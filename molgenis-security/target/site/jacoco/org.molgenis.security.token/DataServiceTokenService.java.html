@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataServiceTokenService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security.token</a> &gt; <span class="el_source">DataServiceTokenService.java</span></div><h1>DataServiceTokenService.java</h1><pre class="source lang-java linenums">package org.molgenis.security.token;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.security.auth.Token;
+import org.molgenis.data.security.auth.TokenFactory;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.security.core.token.TokenService;
+import org.molgenis.security.core.token.UnknownTokenException;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.transaction.annotation.Transactional;
+
+import static java.lang.String.format;
+import static java.time.Instant.now;
+import static java.time.temporal.ChronoUnit.HOURS;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.security.auth.TokenMetaData.TOKEN;
+import static org.molgenis.data.security.auth.TokenMetaData.TOKEN_ATTR;
+import static org.molgenis.data.security.auth.UserMetaData.USER;
+import static org.molgenis.data.security.auth.UserMetaData.USERNAME;
+
+/**
+ * TokensService implementation that uses the DataService
+ */
+public class DataServiceTokenService implements TokenService
+{
+	private final TokenGenerator tokenGenerator;
+	private final DataService dataService;
+	private final UserDetailsService userDetailsService;
+	private final TokenFactory tokenFactory;
+
+	public DataServiceTokenService(TokenGenerator tokenGenerator, DataService dataService,
+			UserDetailsService userDetailsService, TokenFactory tokenFactory)
+<span class="fc" id="L35">	{</span>
+<span class="fc" id="L36">		this.tokenGenerator = requireNonNull(tokenGenerator);</span>
+<span class="fc" id="L37">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L38">		this.userDetailsService = requireNonNull(userDetailsService);</span>
+<span class="fc" id="L39">		this.tokenFactory = requireNonNull(tokenFactory);</span>
+<span class="fc" id="L40">	}</span>
+
+	/**
+	 * Find a user by a security token
+	 *
+	 * @param token security token
+	 * @return the user or null if not found or token is expired
+	 */
+	@Override
+	@Transactional(readOnly = true)
+	@RunAsSystem
+	public UserDetails findUserByToken(String token)
+	{
+<span class="fc" id="L53">		Token molgenisToken = getMolgenisToken(token);</span>
+<span class="fc" id="L54">		return userDetailsService.loadUserByUsername(molgenisToken.getUser().getUsername());</span>
+	}
+
+	/**
+	 * Generates a token and associates it with a user.
+	 * &lt;p&gt;
+	 * Token expires in 2 hours
+	 *
+	 * @param username    username
+	 * @param description token description
+	 * @return token
+	 */
+	@Override
+	@Transactional
+	@RunAsSystem
+	public String generateAndStoreToken(String username, String description)
+	{
+<span class="fc" id="L71">		User user = dataService.query(USER, User.class).eq(USERNAME, username).findOne();</span>
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">		if (user == null)</span>
+		{
+<span class="nc" id="L74">			throw new IllegalArgumentException(format(&quot;Unknown username [%s]&quot;, username));</span>
+		}
+
+<span class="fc" id="L77">		String token = tokenGenerator.generateToken();</span>
+
+<span class="fc" id="L79">		Token molgenisToken = tokenFactory.create();</span>
+<span class="fc" id="L80">		molgenisToken.setUser(user);</span>
+<span class="fc" id="L81">		molgenisToken.setToken(token);</span>
+<span class="fc" id="L82">		molgenisToken.setDescription(description);</span>
+<span class="fc" id="L83">		molgenisToken.setExpirationDate(now().plus(2, HOURS));</span>
+<span class="fc" id="L84">		dataService.add(TOKEN, molgenisToken);</span>
+
+<span class="fc" id="L86">		return token;</span>
+	}
+
+	@Override
+	@Transactional
+	@RunAsSystem
+	public void removeToken(String token)
+	{
+<span class="fc" id="L94">		Token molgenisToken = getMolgenisToken(token);</span>
+<span class="fc" id="L95">		dataService.delete(TOKEN, molgenisToken);</span>
+<span class="fc" id="L96">	}</span>
+
+	private Token getMolgenisToken(String token)
+	{
+<span class="fc" id="L100">		Token molgenisToken = dataService.query(TOKEN, Token.class).eq(TOKEN_ATTR, token).findOne();</span>
+<span class="pc bpc" id="L101" title="1 of 4 branches missed.">		if (molgenisToken == null || molgenisToken.isExpired())</span>
+		{
+<span class="fc" id="L103">			throw new UnknownTokenException(&quot;Invalid token&quot;);</span>
+		}
+
+<span class="fc" id="L106">		return molgenisToken;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FeedbackController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">core-ui</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.core.ui.controller</a> &gt; <span class="el_source">FeedbackController.java</span></div><h1>FeedbackController.java</h1><pre class="source lang-java linenums">package org.molgenis.core.ui.controller;
+
+import org.molgenis.data.security.auth.User;
+import org.molgenis.data.security.user.UserService;
+import org.molgenis.security.captcha.CaptchaException;
+import org.molgenis.security.captcha.CaptchaRequest;
+import org.molgenis.security.captcha.CaptchaService;
+import org.molgenis.security.core.utils.SecurityUtils;
+import org.molgenis.settings.AppSettings;
+import org.molgenis.web.PluginController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.mail.MailAuthenticationException;
+import org.springframework.mail.MailSendException;
+import org.springframework.mail.MailSender;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+import javax.validation.Valid;
+import javax.validation.constraints.Email;
+import javax.validation.constraints.NotBlank;
+import java.util.ArrayList;
+import java.util.List;
+
+import static java.util.Objects.requireNonNull;
+
+/**
+ * Controller that handles feedback page requests. The user can fill in this feedback form to send a mail to the app's
+ * administrators.
+ */
+@Controller
+@RequestMapping(FeedbackController.URI)
+public class FeedbackController extends AbstractStaticContentController
+{
+<span class="fc" id="L41">	private static final Logger LOG = LoggerFactory.getLogger(FeedbackController.class);</span>
+
+	public static final String ID = &quot;feedback&quot;;
+	public static final String URI = PluginController.PLUGIN_URI_PREFIX + ID;
+	private static final String MAIL_AUTHENTICATION_EXCEPTION_MESSAGE = &quot;Unfortunately, we were unable to send the mail containing your feedback. Please contact the administrator.&quot;;
+	private static final String MAIL_SEND_EXCEPTION_MESSAGE = MAIL_AUTHENTICATION_EXCEPTION_MESSAGE;
+
+	private final UserService userService;
+	private final AppSettings appSettings;
+	private final CaptchaService captchaService;
+	private final MailSender mailSender;
+
+	public FeedbackController(UserService userService, AppSettings appSettings, CaptchaService captchaService,
+			MailSender mailSender)
+	{
+<span class="fc" id="L56">		super(ID, URI);</span>
+<span class="fc" id="L57">		this.userService = requireNonNull(userService);</span>
+<span class="fc" id="L58">		this.appSettings = requireNonNull(appSettings);</span>
+<span class="fc" id="L59">		this.captchaService = requireNonNull(captchaService);</span>
+<span class="fc" id="L60">		this.mailSender = requireNonNull(mailSender);</span>
+<span class="fc" id="L61">	}</span>
+
+	/**
+	 * Serves feedback form.
+	 */
+	@Override
+	@GetMapping
+	public String init(final Model model)
+	{
+<span class="fc" id="L70">		super.init(model);</span>
+<span class="fc" id="L71">		model.addAttribute(&quot;adminEmails&quot;, userService.getSuEmailAddresses());</span>
+<span class="fc bfc" id="L72" title="All 2 branches covered.">		if (SecurityUtils.currentUserIsAuthenticated())</span>
+		{
+<span class="fc" id="L74">			User currentUser = userService.getUser(SecurityUtils.getCurrentUsername());</span>
+<span class="fc" id="L75">			model.addAttribute(&quot;userName&quot;, getFormattedName(currentUser));</span>
+<span class="fc" id="L76">			model.addAttribute(&quot;userEmail&quot;, currentUser.getEmail());</span>
+		}
+<span class="fc" id="L78">		return &quot;view-feedback&quot;;</span>
+	}
+
+	/**
+	 * Handles feedback form submission.
+	 *
+	 * @throws CaptchaException if no valid captcha is supplied
+	 */
+	@PostMapping
+	public String submitFeedback(@Valid FeedbackForm form, @Valid @ModelAttribute CaptchaRequest captchaRequest)
+			throws CaptchaException
+	{
+<span class="fc bfc" id="L90" title="All 2 branches covered.">		if (!captchaService.validateCaptcha(captchaRequest.getCaptcha()))</span>
+		{
+<span class="fc" id="L92">			form.setErrorMessage(&quot;Invalid captcha.&quot;);</span>
+<span class="fc" id="L93">			return &quot;view-feedback&quot;;</span>
+		}
+		try
+		{
+<span class="fc" id="L97">			LOG.info(&quot;Sending feedback:&quot; + form);</span>
+<span class="fc" id="L98">			SimpleMailMessage message = createFeedbackMessage(form);</span>
+<span class="fc" id="L99">			mailSender.send(message);</span>
+<span class="fc" id="L100">			form.setSubmitted(true);</span>
+<span class="fc" id="L101">			captchaService.removeCaptcha();</span>
+		}
+<span class="nc" id="L103">		catch (MailAuthenticationException e)</span>
+		{
+<span class="nc" id="L105">			LOG.error(&quot;Error authenticating with email server.&quot;, e);</span>
+<span class="nc" id="L106">			form.setErrorMessage(MAIL_AUTHENTICATION_EXCEPTION_MESSAGE);</span>
+		}
+<span class="fc" id="L108">		catch (MailSendException e)</span>
+		{
+<span class="fc" id="L110">			LOG.error(&quot;Error sending mail&quot;, e);</span>
+<span class="fc" id="L111">			form.setErrorMessage(MAIL_SEND_EXCEPTION_MESSAGE);</span>
+<span class="pc" id="L112">		}</span>
+<span class="fc" id="L113">		return &quot;view-feedback&quot;;</span>
+	}
+
+	/**
+	 * Creates a MimeMessage based on a FeedbackForm.
+	 */
+	private SimpleMailMessage createFeedbackMessage(FeedbackForm form)
+	{
+<span class="fc" id="L121">		SimpleMailMessage message = new SimpleMailMessage();</span>
+<span class="fc" id="L122">		message.setTo(userService.getSuEmailAddresses().toArray(new String[] {}));</span>
+<span class="pc bpc" id="L123" title="1 of 2 branches missed.">		if (form.hasEmail())</span>
+		{
+<span class="fc" id="L125">			message.setCc(form.getEmail());</span>
+<span class="fc" id="L126">			message.setReplyTo(form.getEmail());</span>
+		}
+		else
+		{
+<span class="nc" id="L130">			message.setReplyTo(&quot;no-reply@molgenis.org&quot;);</span>
+		}
+<span class="fc" id="L132">		String appName = appSettings.getTitle();</span>
+<span class="fc" id="L133">		message.setSubject(String.format(&quot;[feedback-%s] %s&quot;, appName, form.getSubject()));</span>
+<span class="fc" id="L134">		message.setText(String.format(&quot;Feedback from %s:\n\n%s&quot;, form.getFrom(), form.getFeedback()));</span>
+<span class="fc" id="L135">		return message;</span>
+	}
+
+	/**
+	 * Formats a MolgenisUser's name.
+	 *
+	 * @return String containing the user's first name, middle names and last name.
+	 */
+	private static String getFormattedName(User user)
+	{
+<span class="fc" id="L145">		List&lt;String&gt; parts = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L146" title="1 of 2 branches missed.">		if (user.getTitle() != null)</span>
+		{
+<span class="nc" id="L148">			parts.add(user.getTitle());</span>
+		}
+<span class="fc bfc" id="L150" title="All 2 branches covered.">		if (user.getFirstName() != null)</span>
+		{
+<span class="fc" id="L152">			parts.add(user.getFirstName());</span>
+		}
+<span class="pc bpc" id="L154" title="1 of 2 branches missed.">		if (user.getMiddleNames() != null)</span>
+		{
+<span class="nc" id="L156">			parts.add(user.getMiddleNames());</span>
+		}
+<span class="fc bfc" id="L158" title="All 2 branches covered.">		if (user.getLastName() != null)</span>
+		{
+<span class="fc" id="L160">			parts.add(user.getLastName());</span>
+		}
+
+<span class="fc bfc" id="L163" title="All 2 branches covered.">		if (parts.isEmpty())</span>
+		{
+<span class="fc" id="L165">			return null;</span>
+		}
+		else
+		{
+<span class="fc" id="L169">			return StringUtils.collectionToDelimitedString(parts, &quot; &quot;);</span>
+		}
+	}
+
+	/**
+	 * Bean for the feedback form data.
+	 */
+<span class="fc" id="L176">	public static class FeedbackForm</span>
+	{
+		private String name;
+		private String email;
+		private String subject;
+		private String feedback;
+<span class="fc" id="L182">		private boolean submitted = false;</span>
+		private String errorMessage;
+
+		public String getName()
+		{
+<span class="fc" id="L187">			return name;</span>
+		}
+
+		public boolean hasName()
+		{
+<span class="pc bpc" id="L192" title="2 of 4 branches missed.">			return name != null &amp;&amp; !name.trim().isEmpty();</span>
+		}
+
+		public void setName(String name)
+		{
+<span class="fc" id="L197">			this.name = name;</span>
+<span class="fc" id="L198">		}</span>
+
+		@Email
+		public String getEmail()
+		{
+<span class="fc" id="L203">			return email;</span>
+		}
+
+		public void setEmail(String email)
+		{
+<span class="fc" id="L208">			this.email = email;</span>
+<span class="fc" id="L209">		}</span>
+
+		public boolean hasEmail()
+		{
+<span class="pc bpc" id="L213" title="2 of 4 branches missed.">			return email != null &amp;&amp; !email.trim().isEmpty();</span>
+		}
+
+		public String getFrom()
+		{
+<span class="fc" id="L218">			StringBuilder result = new StringBuilder();</span>
+<span class="pc bpc" id="L219" title="3 of 4 branches missed.">			if (!hasName() &amp;&amp; !hasEmail())</span>
+			{
+<span class="nc" id="L221">				result.append(&quot;Anonymous&quot;);</span>
+			}
+			else
+			{
+<span class="pc bpc" id="L225" title="1 of 2 branches missed.">				if (hasName())</span>
+				{
+<span class="fc" id="L227">					result.append(getName());</span>
+				}
+<span class="pc bpc" id="L229" title="1 of 2 branches missed.">				if (hasEmail())</span>
+				{
+<span class="pc bpc" id="L231" title="1 of 2 branches missed.">					if (hasName())</span>
+					{
+<span class="fc" id="L233">						result.append(String.format(&quot; (%s)&quot;, getEmail()));</span>
+					}
+					else
+					{
+<span class="nc" id="L237">						result.append(getEmail());</span>
+					}
+				}
+			}
+<span class="fc" id="L241">			return result.toString();</span>
+		}
+
+		public String getSubject()
+		{
+<span class="pc bpc" id="L246" title="1 of 4 branches missed.">			if (subject == null || subject.trim().isEmpty())</span>
+			{
+<span class="fc" id="L248">				return &quot;&lt;no subject&gt;&quot;;</span>
+			}
+<span class="fc" id="L250">			return subject;</span>
+		}
+
+		public void setSubject(String subject)
+		{
+<span class="fc" id="L255">			this.subject = subject;</span>
+<span class="fc" id="L256">		}</span>
+
+		@NotBlank
+		public String getFeedback()
+		{
+<span class="fc" id="L261">			return feedback;</span>
+		}
+
+		public void setFeedback(String feedback)
+		{
+<span class="fc" id="L266">			this.feedback = feedback;</span>
+<span class="fc" id="L267">		}</span>
+
+		public void setSubmitted(boolean b)
+		{
+<span class="fc" id="L271">			this.submitted = b;</span>
+<span class="fc" id="L272">		}</span>
+
+		public boolean isSubmitted()
+		{
+<span class="fc" id="L276">			return submitted;</span>
+		}
+
+		public String getErrorMessage()
+		{
+<span class="fc" id="L281">			return errorMessage;</span>
+		}
+
+		public void setErrorMessage(String errorMessage)
+		{
+<span class="fc" id="L286">			this.errorMessage = errorMessage;</span>
+<span class="fc" id="L287">		}</span>
+
+		@Override
+		public String toString()
+		{
+<span class="fc" id="L292">			String builder = &quot;[From: &quot; + getFrom() + &quot;\nSubject: &quot; + getSubject() + &quot;\nBody: &quot; + getFeedback() + ']';</span>
+<span class="fc" id="L293">			return builder;</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

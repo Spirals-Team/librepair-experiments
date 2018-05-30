@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RecoveryServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security.twofactor.service</a> &gt; <span class="el_source">RecoveryServiceImpl.java</span></div><h1>RecoveryServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.security.twofactor.service;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.data.security.user.UserService;
+import org.molgenis.security.core.utils.SecurityUtils;
+import org.molgenis.security.twofactor.model.RecoveryCode;
+import org.molgenis.security.twofactor.model.RecoveryCodeFactory;
+import org.molgenis.security.twofactor.model.UserSecret;
+import org.molgenis.security.twofactor.model.UserSecretMetaData;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.populate.IdGenerator.Strategy.LONG_SECURE_RANDOM;
+import static org.molgenis.security.core.runas.RunAsSystemAspect.runAsSystem;
+import static org.molgenis.security.twofactor.model.RecoveryCodeMetadata.*;
+import static org.molgenis.security.twofactor.model.UserSecretMetaData.USER_SECRET;
+
+@Service
+public class RecoveryServiceImpl implements RecoveryService
+{
+	private static final int RECOVERY_CODE_COUNT = 10;
+
+	private final DataService dataService;
+	private final RecoveryCodeFactory recoveryCodeFactory;
+	private final IdGenerator idGenerator;
+	private final UserService userService;
+
+	public RecoveryServiceImpl(DataService dataService, UserService userService,
+			RecoveryCodeFactory recoveryCodeFactory, IdGenerator idGenerator)
+<span class="fc" id="L39">	{</span>
+<span class="fc" id="L40">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L41">		this.userService = requireNonNull(userService);</span>
+<span class="fc" id="L42">		this.recoveryCodeFactory = requireNonNull(recoveryCodeFactory);</span>
+<span class="fc" id="L43">		this.idGenerator = requireNonNull(idGenerator);</span>
+<span class="fc" id="L44">	}</span>
+
+	@Override
+	@Transactional
+	public Stream&lt;RecoveryCode&gt; generateRecoveryCodes()
+	{
+<span class="fc" id="L50">		String userId = getUser().getId();</span>
+<span class="fc" id="L51">		deleteOldRecoveryCodes(userId);</span>
+<span class="fc" id="L52">		List&lt;RecoveryCode&gt; newRecoveryCodes = generateRecoveryCodes(userId);</span>
+		//noinspection RedundantCast
+<span class="fc" id="L54">		runAsSystem((Runnable) () -&gt; dataService.add(RECOVERY_CODE, newRecoveryCodes.stream()));</span>
+<span class="fc" id="L55">		return newRecoveryCodes.stream();</span>
+	}
+
+	@Override
+	@Transactional
+	public void useRecoveryCode(String recoveryCode)
+	{
+<span class="fc" id="L62">		String userId = getUser().getId();</span>
+<span class="fc" id="L63">		RecoveryCode existingCode = runAsSystem(() -&gt; dataService.query(RECOVERY_CODE, RecoveryCode.class)</span>
+<span class="fc" id="L64">																 .eq(USER_ID, userId)</span>
+<span class="fc" id="L65">																 .and()</span>
+<span class="fc" id="L66">																 .eq(CODE, recoveryCode)</span>
+<span class="fc" id="L67">																 .findOne());</span>
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">		if (existingCode != null)</span>
+		{
+<span class="fc" id="L70">			runAsSystem(() -&gt; dataService.delete(RECOVERY_CODE, existingCode));</span>
+<span class="fc" id="L71">			UserSecret secret = runAsSystem(() -&gt; dataService.query(USER_SECRET, UserSecret.class)</span>
+<span class="fc" id="L72">															 .eq(UserSecretMetaData.USER_ID, userId)</span>
+<span class="fc" id="L73">															 .findOne());</span>
+<span class="fc" id="L74">			secret.setFailedLoginAttempts(0);</span>
+<span class="fc" id="L75">			runAsSystem(() -&gt; dataService.update(USER_SECRET, secret));</span>
+<span class="fc" id="L76">		}</span>
+		else
+		{
+<span class="nc" id="L79">			throw new BadCredentialsException(&quot;Invalid recovery code or code already used&quot;);</span>
+		}
+<span class="fc" id="L81">	}</span>
+
+	@Override
+	public Stream&lt;RecoveryCode&gt; getRecoveryCodes()
+	{
+<span class="fc" id="L86">		String userId = getUser().getId();</span>
+<span class="fc" id="L87">		return runAsSystem(() -&gt; dataService.query(RECOVERY_CODE, RecoveryCode.class).eq(USER_ID, userId).findAll());</span>
+	}
+
+	private void deleteOldRecoveryCodes(String userId)
+	{
+<span class="fc" id="L92">		runAsSystem(() -&gt;</span>
+		{
+<span class="fc" id="L94">			Stream&lt;RecoveryCode&gt; recoveryCodes = dataService.query(RECOVERY_CODE, RecoveryCode.class)</span>
+<span class="fc" id="L95">															.eq(USER_ID, userId)</span>
+<span class="fc" id="L96">															.findAll();</span>
+<span class="fc" id="L97">			dataService.delete(RECOVERY_CODE, recoveryCodes);</span>
+<span class="fc" id="L98">		});</span>
+<span class="fc" id="L99">	}</span>
+
+	private List&lt;RecoveryCode&gt; generateRecoveryCodes(String userId)
+	{
+<span class="fc" id="L103">		List&lt;RecoveryCode&gt; recoveryCodes = newArrayList();</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">		for (int i = 0; i &lt; RECOVERY_CODE_COUNT; i++)</span>
+		{
+<span class="fc" id="L106">			RecoveryCode recoveryCode = recoveryCodeFactory.create();</span>
+<span class="fc" id="L107">			recoveryCode.setUserId(userId);</span>
+<span class="fc" id="L108">			recoveryCode.setCode(idGenerator.generateId(LONG_SECURE_RANDOM));</span>
+<span class="fc" id="L109">			recoveryCodes.add(recoveryCode);</span>
+		}
+<span class="fc" id="L111">		return recoveryCodes;</span>
+	}
+
+	private User getUser()
+	{
+<span class="fc" id="L116">		User user = userService.getUser(SecurityUtils.getCurrentUsername());</span>
+
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">		if (user != null)</span>
+		{
+<span class="fc" id="L120">			return user;</span>
+		}
+		else
+		{
+<span class="nc" id="L124">			throw new UsernameNotFoundException(&quot;Can't find user: [&quot; + SecurityUtils.getCurrentUsername() + &quot;]&quot;);</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

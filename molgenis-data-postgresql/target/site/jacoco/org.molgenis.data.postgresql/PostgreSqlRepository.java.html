@@ -1,0 +1,785 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PostgreSqlRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.postgresql</a> &gt; <span class="el_source">PostgreSqlRepository.java</span></div><h1>PostgreSqlRepository.java</h1><pre class="source lang-java linenums">package org.molgenis.data.postgresql;
+
+import com.google.common.base.Stopwatch;
+import com.google.common.collect.*;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Fetch;
+import org.molgenis.data.Query;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.RepositoryCapability;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.AbstractRepository;
+import org.molgenis.data.support.BatchingQueryResult;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.data.validation.ConstraintViolation;
+import org.molgenis.data.validation.MolgenisValidationException;
+import org.molgenis.util.UnexpectedEnumException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.*;
+
+import javax.sql.DataSource;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+
+import static com.google.common.base.Stopwatch.createStarted;
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Maps.newHashMap;
+import static java.lang.String.format;
+import static java.util.Collections.emptyList;
+import static java.util.Collections.unmodifiableSet;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.*;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.QueryRule.Operator.*;
+import static org.molgenis.data.RepositoryCapability.*;
+import static org.molgenis.data.meta.AttributeType.ONE_TO_MANY;
+import static org.molgenis.data.postgresql.PostgreSqlExceptionTranslator.VALUE_TOO_LONG_MSG;
+import static org.molgenis.data.postgresql.PostgreSqlNameGenerator.getJunctionTableOrderColumnName;
+import static org.molgenis.data.postgresql.PostgreSqlQueryGenerator.*;
+import static org.molgenis.data.postgresql.PostgreSqlQueryUtils.getJunctionTableAttributes;
+import static org.molgenis.data.postgresql.PostgreSqlQueryUtils.getTableAttributes;
+import static org.molgenis.data.postgresql.PostgreSqlUtils.getPostgreSqlValue;
+import static org.molgenis.data.support.EntityTypeUtils.isMultipleReferenceType;
+
+/**
+ * Repository that persists entities in a PostgreSQL database
+ * &lt;ul&gt;
+ * &lt;li&gt;Attributes with expression are not persisted&lt;/li&gt;
+ * &lt;li&gt;Cross-backend attribute references are supported&lt;/li&gt;
+ * &lt;li&gt;Query operators DIS_MAX, FUZZY_MATCH, FUZZY_MATCH_NGRAM, SEARCH, SHOULD are not supported&lt;/li&gt;
+ * &lt;/ul&gt;
+ */
+class PostgreSqlRepository extends AbstractRepository
+{
+<span class="fc" id="L62">	private static final Logger LOG = LoggerFactory.getLogger(PostgreSqlRepository.class);</span>
+
+	/**
+	 * JDBC batch operation size
+	 */
+	static final int BATCH_SIZE = 1000;
+	/**
+	 * Repository capabilities
+	 */
+<span class="fc" id="L71">	private static final Set&lt;RepositoryCapability&gt; REPO_CAPABILITIES = unmodifiableSet(</span>
+<span class="fc" id="L72">			EnumSet.of(WRITABLE, MANAGABLE, QUERYABLE, VALIDATE_REFERENCE_CONSTRAINT, VALIDATE_UNIQUE_CONSTRAINT,</span>
+					VALIDATE_NOTNULL_CONSTRAINT, VALIDATE_READONLY_CONSTRAINT, CACHEABLE));
+
+	/**
+	 * Supported query operators
+	 */
+<span class="fc" id="L78">	private static final Set&lt;Operator&gt; QUERY_OPERATORS = unmodifiableSet(</span>
+<span class="fc" id="L79">			EnumSet.of(EQUALS, IN, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL, RANGE, LIKE, NOT, AND, OR, NESTED));</span>
+
+	private final PostgreSqlEntityFactory postgreSqlEntityFactory;
+	private final JdbcTemplate jdbcTemplate;
+	private final DataSource dataSource;
+	private final EntityType entityType;
+
+	PostgreSqlRepository(PostgreSqlEntityFactory postgreSqlEntityFactory, JdbcTemplate jdbcTemplate,
+			DataSource dataSource, EntityType entityType)
+<span class="fc" id="L88">	{</span>
+<span class="fc" id="L89">		this.postgreSqlEntityFactory = requireNonNull(postgreSqlEntityFactory);</span>
+<span class="fc" id="L90">		this.jdbcTemplate = requireNonNull(jdbcTemplate);</span>
+<span class="fc" id="L91">		this.dataSource = requireNonNull(dataSource);</span>
+<span class="fc" id="L92">		this.entityType = requireNonNull(entityType);</span>
+<span class="fc" id="L93">	}</span>
+
+	@Override
+	public Iterator&lt;Entity&gt; iterator()
+	{
+<span class="nc" id="L98">		Query&lt;Entity&gt; q = new QueryImpl&lt;&gt;();</span>
+<span class="nc" id="L99">		return findAllBatching(q).iterator();</span>
+	}
+
+	@Override
+	public Set&lt;RepositoryCapability&gt; getCapabilities()
+	{
+<span class="nc" id="L105">		return REPO_CAPABILITIES;</span>
+	}
+
+	@Override
+	public Set&lt;Operator&gt; getQueryOperators()
+	{
+<span class="nc" id="L111">		return QUERY_OPERATORS;</span>
+	}
+
+	@Override
+	public EntityType getEntityType()
+	{
+<span class="fc" id="L117">		return entityType;</span>
+	}
+
+	@Override
+	public long count(Query&lt;Entity&gt; q)
+	{
+<span class="fc" id="L123">		List&lt;Object&gt; parameters = Lists.newArrayList();</span>
+<span class="fc" id="L124">		String sql = getSqlCount(entityType, q, parameters);</span>
+
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L128">			LOG.debug(&quot;Counting [{}] rows for query [{}]&quot;, getName(), q);</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L131">				LOG.trace(&quot;SQL: {}, parameters: {}&quot;, sql, parameters);</span>
+			}
+		}
+<span class="fc" id="L134">		return jdbcTemplate.queryForObject(sql, parameters.toArray(new Object[parameters.size()]), Long.class);</span>
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; findAll(Query&lt;Entity&gt; q)
+	{
+<span class="fc" id="L140">		return stream(findAllBatching(q).spliterator(), false);</span>
+	}
+
+	@Override
+	public Entity findOne(Query&lt;Entity&gt; q)
+	{
+<span class="nc" id="L146">		Iterator&lt;Entity&gt; iterator = findAll(q).iterator();</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">		if (iterator.hasNext())</span>
+		{
+<span class="nc" id="L149">			return iterator.next();</span>
+		}
+<span class="nc" id="L151">		return null;</span>
+	}
+
+	@Override
+	public Entity findOneById(Object id)
+	{
+<span class="nc bnc" id="L157" title="All 2 branches missed.">		if (id == null)</span>
+		{
+<span class="nc" id="L159">			return null;</span>
+		}
+<span class="nc" id="L161">		return findOne(new QueryImpl&lt;&gt;().eq(entityType.getIdAttribute().getName(), id));</span>
+	}
+
+	@Override
+	public Entity findOneById(Object id, Fetch fetch)
+	{
+<span class="nc bnc" id="L167" title="All 2 branches missed.">		if (id == null)</span>
+		{
+<span class="nc" id="L169">			return null;</span>
+		}
+<span class="nc" id="L171">		return findOne(new QueryImpl&lt;&gt;().eq(entityType.getIdAttribute().getName(), id).fetch(fetch));</span>
+	}
+
+	@Override
+	public void update(Entity entity)
+	{
+<span class="nc" id="L177">		update(Stream.of(entity));</span>
+<span class="nc" id="L178">	}</span>
+
+	@Override
+	public void update(Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L183">		updateBatching(entities.iterator());</span>
+<span class="fc" id="L184">	}</span>
+
+	@Override
+	public void delete(Entity entity)
+	{
+<span class="nc" id="L189">		this.delete(Stream.of(entity));</span>
+<span class="nc" id="L190">	}</span>
+
+	@Override
+	public void delete(Stream&lt;Entity&gt; entities)
+	{
+<span class="nc" id="L195">		deleteAll(entities.map(Entity::getIdValue));</span>
+<span class="nc" id="L196">	}</span>
+
+	@Override
+	public void deleteById(Object id)
+	{
+<span class="nc" id="L201">		this.deleteAll(Stream.of(id));</span>
+<span class="nc" id="L202">	}</span>
+
+	@Override
+	public void deleteAll(Stream&lt;Object&gt; ids)
+	{
+<span class="nc" id="L207">		Iterators.partition(ids.iterator(), BATCH_SIZE).forEachRemaining(idsBatch -&gt;</span>
+		{
+<span class="nc" id="L209">			String sql = getSqlDelete(entityType);</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">			if (LOG.isDebugEnabled())</span>
+			{
+<span class="nc" id="L212">				LOG.debug(&quot;Deleting {} [{}] entities&quot;, idsBatch.size(), getName());</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">				if (LOG.isTraceEnabled())</span>
+				{
+<span class="nc" id="L215">					LOG.trace(&quot;SQL: {}&quot;, sql);</span>
+				}
+			}
+<span class="nc" id="L218">			jdbcTemplate.batchUpdate(sql, new BatchDeletePreparedStatementSetter(idsBatch));</span>
+<span class="nc" id="L219">		});</span>
+<span class="nc" id="L220">	}</span>
+
+	@Override
+	public void deleteAll()
+	{
+<span class="nc" id="L225">		String deleteAllSql = getSqlDeleteAll(entityType);</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L228">			LOG.debug(&quot;Deleting all [{}] entities&quot;, getName());</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L231">				LOG.trace(&quot;SQL: {}&quot;, deleteAllSql);</span>
+			}
+		}
+<span class="nc" id="L234">		jdbcTemplate.update(deleteAllSql);</span>
+<span class="nc" id="L235">	}</span>
+
+	@Override
+	public void add(Entity entity)
+	{
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="fc" id="L242">			throw new NullPointerException(&quot;PostgreSqlRepository.add() failed: entity was null&quot;);</span>
+		}
+<span class="nc" id="L244">		add(Stream.of(entity));</span>
+<span class="nc" id="L245">	}</span>
+
+	@Override
+	public Integer add(Stream&lt;Entity&gt; entities)
+	{
+<span class="nc" id="L250">		return addBatching(entities.iterator());</span>
+	}
+
+	@Override
+	public void forEachBatched(Fetch fetch, Consumer&lt;List&lt;Entity&gt;&gt; consumer, int batchSize)
+	{
+<span class="nc" id="L256">		final Stopwatch stopwatch = createStarted();</span>
+<span class="nc" id="L257">		final JdbcTemplate template = new JdbcTemplate(dataSource);</span>
+<span class="nc" id="L258">		template.setFetchSize(batchSize);</span>
+
+<span class="nc" id="L260">		final Query&lt;Entity&gt; query = new QueryImpl&lt;&gt;();</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">		if (fetch != null)</span>
+		{
+<span class="nc" id="L263">			query.fetch(fetch);</span>
+		}
+<span class="nc" id="L265">		final String allRowsSelect = getSqlSelect(entityType, query, emptyList(), false);</span>
+<span class="nc" id="L266">		LOG.debug(&quot;Fetching [{}] data...&quot;, getName());</span>
+<span class="nc" id="L267">		LOG.trace(&quot;SQL: {}&quot;, allRowsSelect);</span>
+<span class="nc" id="L268">		RowMapper&lt;Entity&gt; rowMapper = postgreSqlEntityFactory.createRowMapper(entityType, fetch);</span>
+<span class="nc" id="L269">		template.query(allRowsSelect,</span>
+<span class="nc" id="L270">				(ResultSetExtractor&lt;Object&gt;) resultSet -&gt; processResultSet(consumer, batchSize, entityType, rowMapper,</span>
+						resultSet));
+<span class="nc" id="L272">		LOG.debug(&quot;Streamed entire repository in batches of size {} in {}.&quot;, batchSize, stopwatch);</span>
+<span class="nc" id="L273">	}</span>
+
+	private Object processResultSet(Consumer&lt;List&lt;Entity&gt;&gt; consumer, int batchSize, EntityType entityType,
+			RowMapper&lt;Entity&gt; rowMapper, ResultSet resultSet) throws SQLException
+	{
+<span class="nc" id="L278">		int rowNum = 0;</span>
+<span class="nc" id="L279">		Map&lt;Object, Entity&gt; batch = newHashMap();</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">		while (resultSet.next())</span>
+		{
+<span class="nc" id="L282">			Entity entity = rowMapper.mapRow(resultSet, rowNum++);</span>
+<span class="nc" id="L283">			batch.put(entity.getIdValue(), entity);</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">			if (rowNum % batchSize == 0)</span>
+			{
+<span class="nc" id="L286">				handleBatch(consumer, entityType, batch);</span>
+<span class="nc" id="L287">				batch = newHashMap();</span>
+			}
+<span class="nc" id="L289">		}</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">		if (!batch.isEmpty())</span>
+		{
+<span class="nc" id="L292">			handleBatch(consumer, entityType, batch);</span>
+		}
+<span class="nc" id="L294">		return null;</span>
+	}
+
+	/**
+	 * Handles a batch of Entities. Looks up the values for MREF ID attributes and sets them as references in the
+	 * entities. Then feeds the entities to the {@link Consumer}
+	 *
+	 * @param consumer   {@link Consumer} to feed the batch to after setting the MREF ID values
+	 * @param entityType EntityType for the {@link Entity}s in the batch
+	 * @param batch      {@link Map} mapping entity ID to entity for all {@link Entity}s in the batch
+	 */
+	private void handleBatch(Consumer&lt;List&lt;Entity&gt;&gt; consumer, EntityType entityType, Map&lt;Object, Entity&gt; batch)
+	{
+<span class="nc" id="L307">		AttributeType idAttributeDataType = entityType.getIdAttribute().getDataType();</span>
+<span class="nc" id="L308">		LOG.debug(&quot;Select ID values for a batch of MREF attributes...&quot;);</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">		for (Attribute mrefAttr : entityType.getAtomicAttributes())</span>
+		{
+<span class="nc bnc" id="L311" title="All 4 branches missed.">			if (mrefAttr.getExpression() == null &amp;&amp; isMultipleReferenceType(mrefAttr) &amp;&amp; !(</span>
+<span class="nc bnc" id="L312" title="All 4 branches missed.">					mrefAttr.getDataType() == ONE_TO_MANY &amp;&amp; mrefAttr.isMappedBy()))</span>
+			{
+<span class="nc" id="L314">				EntityType refEntityType = mrefAttr.getRefEntity();</span>
+<span class="nc" id="L315">				Multimap&lt;Object, Object&gt; mrefIDs = selectMrefIDsForAttribute(entityType, idAttributeDataType, mrefAttr,</span>
+<span class="nc" id="L316">						batch.keySet(), refEntityType.getIdAttribute().getDataType());</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">				for (Map.Entry entry : batch.entrySet())</span>
+				{
+<span class="nc" id="L319">					batch.get(entry.getKey())</span>
+<span class="nc" id="L320">						 .set(mrefAttr.getName(), postgreSqlEntityFactory.getReferences(refEntityType,</span>
+<span class="nc" id="L321">								 newArrayList(mrefIDs.get(entry.getKey()))));</span>
+<span class="nc" id="L322">				}</span>
+			}
+<span class="nc" id="L324">		}</span>
+<span class="nc" id="L325">		LOG.trace(&quot;Feeding batch of {} rows to consumer.&quot;, batch.size());</span>
+<span class="nc" id="L326">		consumer.accept(batch.values().stream().collect(toList()));</span>
+<span class="nc" id="L327">	}</span>
+
+	/**
+	 * Selects MREF IDs for an MREF attribute from the junction table, in the order of the MREF attribute value.
+	 *
+	 * @param entityType          EntityType for the entities
+	 * @param idAttributeDataType {@link AttributeType} of the ID attribute of the entity
+	 * @param mrefAttr            Attribute of the MREF attribute to select the values for
+	 * @param ids                 {@link Set} of {@link Object}s containing the values for the ID attribute of the entity
+	 * @param refIdDataType       {@link AttributeType} of the ID attribute of the refEntity of the attribute
+	 * @return Multimap mapping entity ID to a list containing the MREF IDs for the values in the attribute
+	 */
+	private Multimap&lt;Object, Object&gt; selectMrefIDsForAttribute(EntityType entityType, AttributeType idAttributeDataType,
+			Attribute mrefAttr, Set&lt;Object&gt; ids, AttributeType refIdDataType)
+	{
+<span class="nc" id="L342">		Stopwatch stopwatch = null;</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">		if (LOG.isTraceEnabled()) stopwatch = createStarted();</span>
+
+<span class="nc" id="L345">		String junctionTableSelect = getSqlJunctionTableSelect(entityType, mrefAttr, ids.size());</span>
+<span class="nc" id="L346">		LOG.trace(&quot;SQL: {}&quot;, junctionTableSelect);</span>
+
+<span class="nc" id="L348">		Multimap&lt;Object, Object&gt; mrefIDs = ArrayListMultimap.create();</span>
+<span class="nc" id="L349">		jdbcTemplate.query(junctionTableSelect,</span>
+<span class="nc" id="L350">				getJunctionTableRowCallbackHandler(idAttributeDataType, refIdDataType, mrefIDs), ids.toArray());</span>
+
+<span class="nc bnc" id="L352" title="All 2 branches missed.">		if (LOG.isTraceEnabled()) LOG.trace(&quot;Selected {} ID values for MREF attribute {} in {}&quot;,</span>
+<span class="nc" id="L353">				mrefIDs.values().stream().collect(counting()), mrefAttr.getName(), stopwatch);</span>
+<span class="nc" id="L354">		return mrefIDs;</span>
+	}
+
+	RowCallbackHandler getJunctionTableRowCallbackHandler(AttributeType idAttributeDataType,
+			AttributeType refIdDataType, Multimap&lt;Object, Object&gt; mrefIDs)
+	{
+<span class="fc" id="L360">		return row -&gt;</span>
+		{
+			Object id;
+<span class="pc bfc" id="L363" title="All 4 branches covered.">			switch (idAttributeDataType)</span>
+			{
+				case EMAIL:
+				case HYPERLINK:
+				case STRING:
+<span class="fc" id="L368">					id = row.getString(1);</span>
+<span class="fc" id="L369">					break;</span>
+				case INT:
+<span class="fc" id="L371">					id = row.getInt(1);</span>
+<span class="fc" id="L372">					break;</span>
+				case LONG:
+<span class="fc" id="L374">					id = row.getLong(1);</span>
+<span class="fc" id="L375">					break;</span>
+				default:
+<span class="fc" id="L377">					throw new UnexpectedEnumException(idAttributeDataType);</span>
+			}
+
+			Object refId;
+<span class="fc bfc" id="L381" title="All 4 branches covered.">			switch (refIdDataType)</span>
+			{
+				case EMAIL:
+				case HYPERLINK:
+				case STRING:
+<span class="fc" id="L386">					refId = row.getString(3);</span>
+<span class="fc" id="L387">					break;</span>
+				case INT:
+<span class="fc" id="L389">					refId = row.getInt(3);</span>
+<span class="fc" id="L390">					break;</span>
+				case LONG:
+<span class="fc" id="L392">					refId = row.getLong(3);</span>
+<span class="fc" id="L393">					break;</span>
+				default:
+<span class="fc" id="L395">					throw new UnexpectedEnumException(refIdDataType);</span>
+			}
+<span class="fc" id="L397">			mrefIDs.put(id, refId);</span>
+<span class="fc" id="L398">		};</span>
+	}
+
+	private BatchingQueryResult&lt;Entity&gt; findAllBatching(Query&lt;Entity&gt; q)
+	{
+<span class="fc" id="L403">		return new BatchingQueryResult&lt;Entity&gt;(BATCH_SIZE, q)</span>
+<span class="fc" id="L404">		{</span>
+			@Override
+			protected List&lt;Entity&gt; getBatch(Query&lt;Entity&gt; batchQuery)
+			{
+<span class="fc" id="L408">				List&lt;Object&gt; parameters = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L410">				String sql = getSqlSelect(getEntityType(), batchQuery, parameters, true);</span>
+<span class="fc" id="L411">				RowMapper&lt;Entity&gt; entityMapper = postgreSqlEntityFactory.createRowMapper(getEntityType(),</span>
+<span class="fc" id="L412">						batchQuery.getFetch());</span>
+<span class="fc" id="L413">				LOG.debug(&quot;Fetching [{}] data for query [{}]&quot;, getName(), batchQuery);</span>
+<span class="fc" id="L414">				LOG.trace(&quot;SQL: {}, parameters: {}&quot;, sql, parameters);</span>
+<span class="fc" id="L415">				Stopwatch sw = createStarted();</span>
+<span class="fc" id="L416">				List&lt;Entity&gt; result = jdbcTemplate.query(sql, parameters.toArray(new Object[parameters.size()]),</span>
+						entityMapper);
+<span class="fc" id="L418">				LOG.trace(&quot;That took {}&quot;, sw);</span>
+<span class="fc" id="L419">				return result;</span>
+			}
+		};
+	}
+
+	private Integer addBatching(Iterator&lt;? extends Entity&gt; entities)
+	{
+<span class="nc" id="L426">		AtomicInteger count = new AtomicInteger();</span>
+
+<span class="nc" id="L428">		final Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="nc" id="L429">		final List&lt;Attribute&gt; tableAttrs = getTableAttributes(entityType).collect(toList());</span>
+<span class="nc" id="L430">		final List&lt;Attribute&gt; junctionTableAttrs = getJunctionTableAttributes(entityType).collect(toList());</span>
+<span class="nc" id="L431">		final String insertSql = getSqlInsert(entityType);</span>
+
+<span class="nc" id="L433">		Iterators.partition(entities, BATCH_SIZE).forEachRemaining(entitiesBatch -&gt;</span>
+		{
+<span class="nc bnc" id="L435" title="All 2 branches missed.">			if (LOG.isDebugEnabled())</span>
+			{
+<span class="nc" id="L437">				LOG.debug(&quot;Adding {} [{}] entities&quot;, entitiesBatch.size(), getName());</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">				if (LOG.isTraceEnabled())</span>
+				{
+<span class="nc" id="L440">					LOG.trace(&quot;SQL: {}&quot;, insertSql);</span>
+				}
+			}
+
+			// persist values in entity table
+<span class="nc" id="L445">			jdbcTemplate.batchUpdate(insertSql, new BatchAddPreparedStatementSetter(entitiesBatch, tableAttrs));</span>
+
+			// persist values in entity junction table
+<span class="nc bnc" id="L448" title="All 2 branches missed.">			if (!junctionTableAttrs.isEmpty())</span>
+			{
+<span class="nc" id="L450">				Map&lt;String, List&lt;Map&lt;String, Object&gt;&gt;&gt; mrefs = createMrefMap(idAttr, junctionTableAttrs, entitiesBatch);</span>
+
+<span class="nc bnc" id="L452" title="All 2 branches missed.">				for (Attribute attr : junctionTableAttrs)</span>
+				{
+<span class="nc" id="L454">					List&lt;Map&lt;String, Object&gt;&gt; attrMrefs = mrefs.get(attr.getName());</span>
+<span class="nc bnc" id="L455" title="All 4 branches missed.">					if (attrMrefs != null &amp;&amp; !attrMrefs.isEmpty())</span>
+					{
+<span class="nc" id="L457">						addMrefs(attrMrefs, attr);</span>
+					}
+<span class="nc" id="L459">				}</span>
+			}
+
+<span class="nc" id="L462">			count.addAndGet(entitiesBatch.size());</span>
+<span class="nc" id="L463">		});</span>
+
+<span class="nc" id="L465">		return count.get();</span>
+	}
+
+	private static Map&lt;String, List&lt;Map&lt;String, Object&gt;&gt;&gt; createMrefMap(Attribute idAttr,
+			List&lt;Attribute&gt; junctionTableAttrs, List&lt;? extends Entity&gt; entitiesBatch)
+	{
+<span class="nc" id="L471">		Map&lt;String, List&lt;Map&lt;String, Object&gt;&gt;&gt; mrefs = Maps.newHashMapWithExpectedSize(junctionTableAttrs.size());</span>
+
+<span class="nc" id="L473">		AtomicInteger seqNr = new AtomicInteger();</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">		for (Entity entity : entitiesBatch)</span>
+		{
+<span class="nc bnc" id="L476" title="All 2 branches missed.">			for (Attribute attr : junctionTableAttrs)</span>
+			{
+<span class="nc" id="L478">				Iterable&lt;Entity&gt; refEntities = entity.getEntities(attr.getName());</span>
+
+				// Not-Null constraint doesn't exist for MREF attributes since they are stored in junction tables,
+				// so validate manually.
+<span class="nc bnc" id="L482" title="All 4 branches missed.">				if (!attr.isNillable() &amp;&amp; Iterables.isEmpty(refEntities))</span>
+				{
+<span class="nc" id="L484">					throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="nc" id="L485">							format(&quot;The attribute [%s] of entity [%s] with id [%s] can not be null.&quot;, attr.getName(),</span>
+<span class="nc" id="L486">									attr.getEntity().getId(), entity.getIdValue().toString())));</span>
+				}
+
+<span class="nc" id="L489">				mrefs.putIfAbsent(attr.getName(), new ArrayList&lt;&gt;());</span>
+
+<span class="nc" id="L491">				seqNr.set(0);</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">				for (Entity val : refEntities)</span>
+				{
+<span class="nc" id="L494">					Map&lt;String, Object&gt; mref = createJunctionTableRowData(seqNr.getAndIncrement(), idAttr, val, attr,</span>
+							entity);
+<span class="nc" id="L496">					mrefs.get(attr.getName()).add(mref);</span>
+<span class="nc" id="L497">				}</span>
+<span class="nc" id="L498">			}</span>
+<span class="nc" id="L499">		}</span>
+
+<span class="nc" id="L501">		return mrefs;</span>
+	}
+
+	static Map&lt;String, Object&gt; createJunctionTableRowData(int seqNr, Attribute idAttr, Entity refEntity,
+			Attribute junctionTableAttr, Entity entity)
+	{
+<span class="nc" id="L507">		Map&lt;String, Object&gt; mref = Maps.newHashMapWithExpectedSize(3);</span>
+<span class="nc" id="L508">		mref.put(getJunctionTableOrderColumnName(), seqNr);</span>
+<span class="nc" id="L509">		mref.put(idAttr.getName(), entity.get(idAttr.getName()));</span>
+<span class="nc" id="L510">		mref.put(junctionTableAttr.getName(), refEntity);</span>
+<span class="nc" id="L511">		return mref;</span>
+	}
+
+	private void updateBatching(Iterator&lt;? extends Entity&gt; entities)
+	{
+<span class="fc" id="L516">		final Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="fc" id="L517">		final List&lt;Attribute&gt; tableAttrs = getTableAttributes(entityType).collect(toList());</span>
+<span class="fc" id="L518">		final List&lt;Attribute&gt; junctionTableAttrs = getJunctionTableAttributes(entityType).filter(</span>
+<span class="pc bnc" id="L519" title="All 2 branches missed.">				attr -&gt; !attr.isReadOnly()).collect(toList());</span>
+<span class="fc" id="L520">		final String updateSql = getSqlUpdate(entityType);</span>
+
+		// update values in entity table
+<span class="fc" id="L523">		Iterators.partition(entities, BATCH_SIZE).forEachRemaining(entitiesBatch -&gt;</span>
+		{
+<span class="pc bpc" id="L525" title="1 of 2 branches missed.">			if (LOG.isDebugEnabled())</span>
+			{
+<span class="nc" id="L527">				LOG.debug(&quot;Updating {} [{}] entities&quot;, entitiesBatch.size(), getName());</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">				if (LOG.isTraceEnabled())</span>
+				{
+<span class="nc" id="L530">					LOG.trace(&quot;SQL: {}&quot;, updateSql);</span>
+				}
+			}
+<span class="fc" id="L533">			int[] counts = jdbcTemplate.batchUpdate(updateSql,</span>
+					new BatchUpdatePreparedStatementSetter(entitiesBatch, tableAttrs, idAttr));
+<span class="fc" id="L535">			verifyUpdate(entitiesBatch, counts, idAttr);</span>
+
+			// update values in entity junction table
+<span class="pc bpc" id="L538" title="1 of 2 branches missed.">			if (!junctionTableAttrs.isEmpty())</span>
+			{
+<span class="nc" id="L540">				Map&lt;String, List&lt;Map&lt;String, Object&gt;&gt;&gt; mrefs = createMrefMap(idAttr, junctionTableAttrs, entitiesBatch);</span>
+
+				// update mrefs
+<span class="nc" id="L543">				List&lt;Object&gt; ids = entitiesBatch.stream()</span>
+<span class="nc" id="L544">												.map(entity -&gt; getPostgreSqlValue(entity, idAttr))</span>
+<span class="nc" id="L545">												.collect(toList());</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">				for (Attribute attr : junctionTableAttrs)</span>
+				{
+<span class="nc" id="L548">					removeMrefs(ids, attr);</span>
+<span class="nc" id="L549">					addMrefs(mrefs.get(attr.getName()), attr);</span>
+<span class="nc" id="L550">				}</span>
+			}
+<span class="fc" id="L552">		});</span>
+<span class="fc" id="L553">	}</span>
+
+	private void verifyUpdate(List&lt;? extends Entity&gt; entitiesBatch, int[] counts, Attribute idAttr)
+	{
+<span class="fc" id="L557">		int nrUpdatedEntities = Arrays.stream(counts).sum();</span>
+<span class="fc bfc" id="L558" title="All 2 branches covered.">		if (nrUpdatedEntities &lt; entitiesBatch.size())</span>
+		{
+<span class="fc" id="L560">			Set&lt;Object&gt; existingEntityIds = findAll(entitiesBatch.stream().map(Entity::getIdValue),</span>
+<span class="fc" id="L561">					new Fetch().field(idAttr.getName())).map(Entity::getIdValue).collect(toSet());</span>
+<span class="fc" id="L562">			Object nonExistingEntityId = entitiesBatch.stream()</span>
+<span class="fc" id="L563">													  .map(Entity::getIdValue)</span>
+<span class="fc bfc" id="L564" title="All 2 branches covered.">													  .filter(entityId -&gt; !existingEntityIds.contains(entityId))</span>
+<span class="fc" id="L565">													  .findFirst()</span>
+<span class="pc" id="L566">													  .orElseThrow(() -&gt; new IllegalStateException(</span>
+															  &quot;Not all entities in batch were updated but all are present in the repository.&quot;));
+<span class="fc" id="L568">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L569">					format(&quot;Cannot update [%s] with id [%s] because it does not exist&quot;, entityType.getId(),</span>
+<span class="fc" id="L570">							nonExistingEntityId.toString())));</span>
+		}
+<span class="fc" id="L572">	}</span>
+
+	void addMrefs(final List&lt;Map&lt;String, Object&gt;&gt; mrefs, final Attribute attr)
+	{
+		// database doesn't validate NOT NULL constraint for attribute values referencing multiple entities,
+		// so validate it ourselves
+<span class="pc bpc" id="L578" title="2 of 4 branches missed.">		if (!attr.isNillable() &amp;&amp; mrefs.isEmpty())</span>
+		{
+<span class="nc" id="L580">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="nc" id="L581">					format(&quot;Entity [%s] attribute [%s] value cannot be null&quot;, entityType.getId(), attr.getName())));</span>
+		}
+
+<span class="fc" id="L584">		final Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="fc" id="L585">		String insertMrefSql = getSqlInsertJunction(entityType, attr);</span>
+
+<span class="pc bpc" id="L587" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L589">			LOG.debug(&quot;Adding junction table entries for entity [{}] attribute [{}]&quot;, getName(), attr.getName());</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L592">				LOG.trace(&quot;SQL: {}&quot;, insertMrefSql);</span>
+			}
+		}
+
+		try
+		{
+<span class="nc" id="L598">			jdbcTemplate.batchUpdate(insertMrefSql,</span>
+					new BatchJunctionTableAddPreparedStatementSetter(mrefs, attr, idAttr));
+
+		}
+<span class="fc" id="L602">		catch (MolgenisValidationException mve)</span>
+		{
+<span class="pc bpc" id="L604" title="1 of 2 branches missed.">			if (mve.getMessage().equals(VALUE_TOO_LONG_MSG))</span>
+			{
+<span class="fc" id="L606">				mve = new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L607">						format(&quot;One of the mref values in entity type [%s] attribute [%s] is too long.&quot;,</span>
+<span class="fc" id="L608">								getEntityType().getId(), attr.getName())));</span>
+			}
+<span class="fc" id="L610">			throw mve;</span>
+<span class="nc" id="L611">		}</span>
+<span class="nc" id="L612">	}</span>
+
+	private void removeMrefs(final List&lt;Object&gt; ids, final Attribute attr)
+	{
+<span class="nc bnc" id="L616" title="All 2 branches missed.">		final Attribute idAttr = attr.isMappedBy() ? attr.getMappedBy() : entityType.getIdAttribute();</span>
+<span class="nc" id="L617">		String deleteMrefSql = getSqlDelete(PostgreSqlNameGenerator.getJunctionTableName(entityType, attr), idAttr);</span>
+
+<span class="nc bnc" id="L619" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L621">			LOG.debug(&quot;Removing junction table entries for entity [{}] attribute [{}]&quot;, getName(), attr.getName());</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L624">				LOG.trace(&quot;SQL: {}&quot;, deleteMrefSql);</span>
+			}
+		}
+<span class="nc" id="L627">		jdbcTemplate.batchUpdate(deleteMrefSql, new BatchJunctionTableDeletePreparedStatementSetter(ids));</span>
+<span class="nc" id="L628">	}</span>
+
+	private static class BatchAddPreparedStatementSetter implements BatchPreparedStatementSetter
+	{
+		private final List&lt;? extends Entity&gt; entities;
+		private final List&lt;Attribute&gt; tableAttrs;
+
+		BatchAddPreparedStatementSetter(List&lt;? extends Entity&gt; entities, List&lt;Attribute&gt; tableAttrs)
+<span class="nc" id="L636">		{</span>
+<span class="nc" id="L637">			this.entities = entities;</span>
+<span class="nc" id="L638">			this.tableAttrs = tableAttrs;</span>
+<span class="nc" id="L639">		}</span>
+
+		@Override
+		public void setValues(PreparedStatement preparedStatement, int rowIndex) throws SQLException
+		{
+<span class="nc" id="L644">			Entity entity = entities.get(rowIndex);</span>
+
+<span class="nc" id="L646">			int fieldIndex = 1;</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">			for (Attribute attr : tableAttrs)</span>
+			{
+<span class="nc" id="L649">				Object postgreSqlValue = getPostgreSqlValue(entity, attr);</span>
+<span class="nc" id="L650">				preparedStatement.setObject(fieldIndex++, postgreSqlValue);</span>
+<span class="nc" id="L651">			}</span>
+<span class="nc" id="L652">		}</span>
+
+		@Override
+		public int getBatchSize()
+		{
+<span class="nc" id="L657">			return entities.size();</span>
+		}
+	}
+
+	private static class BatchUpdatePreparedStatementSetter implements BatchPreparedStatementSetter
+	{
+		private final List&lt;? extends Entity&gt; entities;
+		private final List&lt;Attribute&gt; tableAttrs;
+		private final Attribute idAttr;
+
+		BatchUpdatePreparedStatementSetter(List&lt;? extends Entity&gt; entities, List&lt;Attribute&gt; tableAttrs,
+				Attribute idAttr)
+<span class="fc" id="L669">		{</span>
+<span class="fc" id="L670">			this.entities = entities;</span>
+<span class="fc" id="L671">			this.tableAttrs = tableAttrs;</span>
+<span class="fc" id="L672">			this.idAttr = idAttr;</span>
+<span class="fc" id="L673">		}</span>
+
+		@Override
+		public void setValues(PreparedStatement preparedStatement, int rowIndex) throws SQLException
+		{
+<span class="nc" id="L678">			Entity entity = entities.get(rowIndex);</span>
+
+<span class="nc" id="L680">			int fieldIndex = 1;</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">			for (Attribute attr : tableAttrs)</span>
+			{
+<span class="nc" id="L683">				Object postgreSqlValue = getPostgreSqlValue(entity, attr);</span>
+<span class="nc" id="L684">				preparedStatement.setObject(fieldIndex++, postgreSqlValue);</span>
+<span class="nc" id="L685">			}</span>
+
+<span class="nc" id="L687">			preparedStatement.setObject(fieldIndex, getPostgreSqlValue(entity, idAttr));</span>
+<span class="nc" id="L688">		}</span>
+
+		@Override
+		public int getBatchSize()
+		{
+<span class="nc" id="L693">			return entities.size();</span>
+		}
+	}
+
+	private static class BatchDeletePreparedStatementSetter implements BatchPreparedStatementSetter
+	{
+		private final List&lt;Object&gt; entityIds;
+
+		BatchDeletePreparedStatementSetter(List&lt;Object&gt; entityIds)
+<span class="nc" id="L702">		{</span>
+<span class="nc" id="L703">			this.entityIds = entityIds;</span>
+<span class="nc" id="L704">		}</span>
+
+		@Override
+		public void setValues(PreparedStatement preparedStatement, int i) throws SQLException
+		{
+<span class="nc" id="L709">			preparedStatement.setObject(1, entityIds.get(i));</span>
+<span class="nc" id="L710">		}</span>
+
+		@Override
+		public int getBatchSize()
+		{
+<span class="nc" id="L715">			return entityIds.size();</span>
+		}
+	}
+
+	private static class BatchJunctionTableAddPreparedStatementSetter implements BatchPreparedStatementSetter
+	{
+		private final List&lt;Map&lt;String, Object&gt;&gt; mrefs;
+		private final Attribute attr;
+		private final Attribute idAttr;
+
+		BatchJunctionTableAddPreparedStatementSetter(List&lt;Map&lt;String, Object&gt;&gt; mrefs, Attribute attr, Attribute idAttr)
+<span class="fc" id="L726">		{</span>
+<span class="fc" id="L727">			this.mrefs = mrefs;</span>
+<span class="fc" id="L728">			this.attr = attr;</span>
+<span class="fc" id="L729">			this.idAttr = idAttr;</span>
+<span class="fc" id="L730">		}</span>
+
+		@Override
+		public void setValues(PreparedStatement preparedStatement, int i) throws SQLException
+		{
+<span class="nc" id="L735">			Map&lt;String, Object&gt; mref = mrefs.get(i);</span>
+
+			Object idValue0;
+			Object idValue1;
+<span class="nc bnc" id="L739" title="All 2 branches missed.">			if (attr.isMappedBy())</span>
+			{
+<span class="nc" id="L741">				Entity mrefEntity = (Entity) mref.get(attr.getName());</span>
+<span class="nc" id="L742">				idValue0 = getPostgreSqlValue(mrefEntity, attr.getRefEntity().getIdAttribute());</span>
+<span class="nc" id="L743">				idValue1 = mref.get(idAttr.getName());</span>
+<span class="nc" id="L744">			}</span>
+			else
+			{
+<span class="nc" id="L747">				idValue0 = mref.get(idAttr.getName());</span>
+<span class="nc" id="L748">				Entity mrefEntity = (Entity) mref.get(attr.getName());</span>
+<span class="nc" id="L749">				idValue1 = getPostgreSqlValue(mrefEntity, mrefEntity.getEntityType().getIdAttribute());</span>
+			}
+<span class="nc" id="L751">			preparedStatement.setInt(1, (int) mref.get(getJunctionTableOrderColumnName()));</span>
+<span class="nc" id="L752">			preparedStatement.setObject(2, idValue0);</span>
+<span class="nc" id="L753">			preparedStatement.setObject(3, idValue1);</span>
+<span class="nc" id="L754">		}</span>
+
+		@Override
+		public int getBatchSize()
+		{
+<span class="nc" id="L759">			return mrefs.size();</span>
+		}
+	}
+
+	private static class BatchJunctionTableDeletePreparedStatementSetter implements BatchPreparedStatementSetter
+	{
+		private final List&lt;Object&gt; entityIds;
+
+		BatchJunctionTableDeletePreparedStatementSetter(List&lt;Object&gt; entityIds)
+<span class="nc" id="L768">		{</span>
+<span class="nc" id="L769">			this.entityIds = entityIds;</span>
+<span class="nc" id="L770">		}</span>
+
+		@Override
+		public void setValues(PreparedStatement preparedStatement, int i) throws SQLException
+		{
+<span class="nc" id="L775">			preparedStatement.setObject(1, entityIds.get(i));</span>
+<span class="nc" id="L776">		}</span>
+
+		@Override
+		public int getBatchSize()
+		{
+<span class="nc" id="L781">			return entityIds.size();</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

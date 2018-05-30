@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MultiAllelicResultFilter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.filter</a> &gt; <span class="el_source">MultiAllelicResultFilter.java</span></div><h1>MultiAllelicResultFilter.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.filter;
+
+import com.google.common.base.Optional;
+import com.google.common.collect.*;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.annotation.core.datastructures.Location;
+import org.molgenis.data.annotation.core.entity.ResultFilter;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.data.vcf.model.VcfAttributes;
+
+import java.util.*;
+
+import static com.google.common.collect.FluentIterable.from;
+import static java.util.Arrays.asList;
+import static org.molgenis.data.vcf.model.VcfAttributes.ALT;
+import static org.molgenis.data.vcf.model.VcfAttributes.REF;
+
+/**
+ * TODO: Support multi-allelic combination fields. These fields contain not only info for ref-alt pairs, but also values
+ * for all possible alt-alt pairs. For example, the &quot;AC_Het&quot; field in ExAC:
+ * &lt;p&gt;
+ * For 2 alt alleles, there are 3 values in the AC_Het field, the third being the count for T-A: 1 6536051 . C T,A
+ * 11129.51 PASS AC_Adj=5,3;AC_Het=5,3,0;AC_Hom=0,0; Alt-allele combinations in AC_Het field occur in the following
+ * order: C-T, C-A, T-A.
+ * &lt;p&gt;
+ * For 3 alt alleles, there are 6 values (3+2+1): 15 66641732 rs2063690 G C,A,T 35371281.87 PASS
+ * AC_Adj=13570,3,2;AC_Het=11380,1,2,2,0,0;AC_Hom=1094,0,0; Alt-allele combinations in AC_Het field occur in the
+ * following order: G-C, G-A, G-T, C-A, C-T, A-T.
+ * &lt;p&gt;
+ * For 4 alt alleles, there are 10 values (4+3+2+1): 21 45650009 rs3831401 T G,C,TG,A 8366813.26 PASS
+ * AC_Adj=2528,3415,1,0;AC_Het=934,1240,0,0,725,1,0,0,0,0;AC_Hom=434,725,0,0; Alt-allele combinations in AC_Het field
+ * occur in the following order: T-G, T-C, T-TG, T-A, G-C, G-TG, G-A, C-TG, C-A, TG-A.
+ * &lt;p&gt;
+ * &lt;p&gt;
+ * &lt;p&gt;
+ * TODO: Smart matching of non-obvious ref and alt alleles. Right now, we only 'string match' the exact values of ref
+ * and alt alleles. However, depending on which other genotypes you call for a certain genomic position, the same
+ * variant may be denoted in a different way. For example: &quot;1 231094050 GA G&quot; is the same variant as the GAA/GA in
+ * &quot;1 231094050 GAA GA,G&quot;, but to allow notation of the the AA deletion (in GAA/G), the ref was written as GAA instead
+ * of GA.
+ * &lt;p&gt;
+ * This can be tricky. Consider this variant: 1 6529182 . TTCCTCC TTCC
+ * &lt;p&gt;
+ * And after some puzzling, you will find that it is seen in ExAC: 1 6529182 . TTCCTCCTCC
+ * TTCCTCC,TTCC,T,TTCCTCCTCCTCC,TTCCTCCTCCTCCTCC,TTCCTCCTCCTCCTCCTCCTCC
+ * &lt;p&gt;
+ * But here denoted as &quot;TTCCTCCTCC/TTCCTCC&quot;. In both cases, a TCC was deleted, but in ExAC this variant is trailed with
+ * another TCC. Finding and parsing these variants to correctly match them against databases such as 1000 Genomes and
+ * ExAC would be very valuable.
+ */
+public class MultiAllelicResultFilter implements ResultFilter
+{
+	private final List&lt;Attribute&gt; attributes;
+	private final boolean mergeMultilineResourceResults;
+	private final VcfAttributes vcfAttributes;
+
+	public MultiAllelicResultFilter(List&lt;Attribute&gt; alleleSpecificAttributes, boolean mergeMultilineResourceResults,
+			VcfAttributes vcfAttributes)
+<span class="fc" id="L61">	{</span>
+<span class="fc" id="L62">		this.attributes = alleleSpecificAttributes;</span>
+<span class="fc" id="L63">		this.mergeMultilineResourceResults = mergeMultilineResourceResults;</span>
+<span class="fc" id="L64">		this.vcfAttributes = vcfAttributes;</span>
+<span class="fc" id="L65">	}</span>
+
+	public MultiAllelicResultFilter(List&lt;Attribute&gt; alleleSpecificAttributes, VcfAttributes vcfAttributes)
+<span class="fc" id="L68">	{</span>
+<span class="fc" id="L69">		this.attributes = alleleSpecificAttributes;</span>
+<span class="fc" id="L70">		this.mergeMultilineResourceResults = false;</span>
+<span class="fc" id="L71">		this.vcfAttributes = vcfAttributes;</span>
+<span class="fc" id="L72">	}</span>
+
+	@Override
+	public Collection&lt;Attribute&gt; getRequiredAttributes()
+	{
+<span class="fc" id="L77">		return asList(vcfAttributes.getRefAttribute(), vcfAttributes.getAltAttribute());</span>
+	}
+
+	@Override
+	public Optional&lt;Entity&gt; filterResults(Iterable&lt;Entity&gt; resourceEntities, Entity sourceEntity, boolean updateMode)
+	{
+<span class="fc" id="L83">		List&lt;Entity&gt; processedResults = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L85">		String sourceRef = sourceEntity.getString(REF);</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">		if (sourceRef == null)</span>
+		{
+<span class="fc" id="L88">			return Optional.absent();</span>
+		}
+
+<span class="fc bfc" id="L91" title="All 2 branches covered.">		if (mergeMultilineResourceResults)</span>
+		{
+<span class="fc" id="L93">			resourceEntities = merge(resourceEntities);</span>
+		}
+
+<span class="fc bfc" id="L96" title="All 2 branches covered.">		for (Entity resourceEntity : resourceEntities)</span>
+		{
+<span class="fc" id="L98">			String resourceRef = resourceEntity.getString(REF);</span>
+
+<span class="fc bfc" id="L100" title="All 2 branches covered.">			if (resourceRef.equals(sourceRef))</span>
+			{
+<span class="fc" id="L102">				processedResults.addAll(filter(sourceEntity, resourceEntity, &quot;&quot;, &quot;&quot;, updateMode));</span>
+			}
+			// example: ref AGG, input A, substring AGG from index 1, so GG is the postfix to use to match against this
+			// reference
+<span class="fc bfc" id="L106" title="All 2 branches covered.">			else if (resourceRef.startsWith(sourceRef))</span>
+			{
+<span class="fc" id="L108">				String postFix = resourceRef.substring(sourceRef.length());</span>
+<span class="fc" id="L109">				processedResults.addAll(filter(sourceEntity, resourceEntity, postFix, &quot;&quot;, updateMode));</span>
+<span class="fc" id="L110">			}</span>
+			// example: ref T, input TC, substring TC from index 1, so C is the postfix to use to match against this
+			// input
+<span class="fc bfc" id="L113" title="All 2 branches covered.">			else if (sourceRef.startsWith(resourceRef))</span>
+			{
+<span class="fc" id="L115">				String postFix = sourceRef.substring(resourceRef.length());</span>
+<span class="fc" id="L116">				processedResults.addAll(filter(sourceEntity, resourceEntity, &quot;&quot;, postFix, updateMode));</span>
+			}
+<span class="fc" id="L118">		}</span>
+<span class="fc" id="L119">		return from(processedResults).first();</span>
+	}
+
+	private List&lt;Entity&gt; filter(Entity sourceEntity, Entity resourceEntity, String sourcePostfix,
+			String resourcePostfix, boolean updateMode)
+	{
+<span class="fc" id="L125">		List&lt;Entity&gt; result = Lists.newArrayList();</span>
+<span class="fc" id="L126">		Map&lt;String, String&gt; alleleValueMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L127">		Map&lt;String, String&gt; sourceAlleleValueMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L128">		String[] alts = resourceEntity.getString(VcfAttributes.ALT).split(&quot;,&quot;);</span>
+<span class="fc" id="L129">		String[] sourceAlts = sourceEntity.getString(VcfAttributes.ALT).split(&quot;,&quot;);</span>
+<span class="fc bfc" id="L130" title="All 2 branches covered.">		for (Attribute attribute : attributes)</span>
+		{
+<span class="fc" id="L132">			String[] values = resourceEntity.getString(attribute.getName()).split(&quot;,&quot;, -1);</span>
+<span class="fc bfc" id="L133" title="All 2 branches covered.">			for (int i = 0; i &lt; alts.length; i++)</span>
+			{
+<span class="fc" id="L135">				alleleValueMap.put(alts[i] + resourcePostfix, values[i]);</span>
+			}
+
+			// also compile a list of original source alleles and their values for use in 'update mode'
+<span class="pc bpc" id="L139" title="3 of 4 branches missed.">			if (updateMode &amp;&amp; sourceEntity.get(attribute.getName()) != null)</span>
+			{
+<span class="nc" id="L141">				Attribute sourceAttr = sourceEntity.getEntityType().getAttribute(attribute.getName());</span>
+<span class="nc bnc" id="L142" title="All 4 branches missed.">				if (EntityTypeUtils.isTextType(sourceAttr) || EntityTypeUtils.isStringType(sourceAttr))</span>
+				{
+<span class="nc" id="L144">					String[] sourceValues = sourceEntity.getString(attribute.getName()).split(&quot;,&quot;, -1);</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">					for (int i = 0; i &lt; sourceAlts.length; i++)</span>
+					{
+<span class="nc" id="L147">						sourceAlleleValueMap.put(sourceAlts[i] + resourcePostfix,</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">								sourceValues[i].isEmpty() ? &quot;.&quot; : sourceValues[i]);</span>
+					}
+<span class="nc" id="L150">				}</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">				else if (sourceAlts.length == 1)</span>
+				{
+<span class="nc" id="L153">					sourceAlleleValueMap.put(sourceAlts[0], sourceEntity.get(attribute.getName()).toString());</span>
+				}
+			}
+
+<span class="fc" id="L157">			StringBuilder newAttributeValue = new StringBuilder();</span>
+<span class="fc" id="L158">			String[] annotatedEntityAltAlleles = sourceEntity.getString(ALT).split(&quot;,&quot;);</span>
+<span class="fc bfc" id="L159" title="All 2 branches covered.">			for (int i = 0; i &lt; annotatedEntityAltAlleles.length; i++)</span>
+			{
+<span class="fc bfc" id="L161" title="All 2 branches covered.">				if (i != 0)</span>
+				{
+<span class="fc" id="L163">					newAttributeValue.append(&quot;,&quot;);</span>
+				}
+<span class="fc bfc" id="L165" title="All 2 branches covered.">				if (alleleValueMap.get(annotatedEntityAltAlleles[i] + sourcePostfix) != null)</span>
+				{
+<span class="fc" id="L167">					newAttributeValue.append(alleleValueMap.get(annotatedEntityAltAlleles[i] + sourcePostfix));</span>
+				}
+				else
+				{
+					// default: no data in in resource, add &quot;.&quot; for missing value
+					// because we are not in update mode, don't check the original source
+<span class="pc bpc" id="L173" title="1 of 2 branches missed.">					if (updateMode == false)</span>
+					{
+<span class="fc" id="L175">						newAttributeValue.append(&quot;.&quot;);</span>
+					}
+					else
+					{
+						// we are in update mode, so let's check the source entity if there was an original value
+<span class="nc bnc" id="L180" title="All 2 branches missed.">						if (sourceAlleleValueMap.get(annotatedEntityAltAlleles[i] + sourcePostfix) != null)</span>
+						{
+<span class="nc" id="L182">							newAttributeValue.append(</span>
+<span class="nc" id="L183">									sourceAlleleValueMap.get(annotatedEntityAltAlleles[i] + sourcePostfix));</span>
+						}
+						// if there was no original value either, add &quot;.&quot; for missing value
+						else
+						{
+<span class="nc" id="L188">							newAttributeValue.append(&quot;.&quot;);</span>
+						}
+					}
+				}
+			}
+			// add entity only if something was found, so no '.' or any multiple of '.,' (e.g. &quot;.,.,.&quot;)
+<span class="fc bfc" id="L194" title="All 2 branches covered.">			if (!newAttributeValue.toString().matches(&quot;[\\.,]+&quot;))</span>
+			{
+<span class="fc" id="L196">				resourceEntity.set(attribute.getName(), newAttributeValue.toString());</span>
+<span class="fc" id="L197">				result.add(resourceEntity);</span>
+			}
+<span class="fc" id="L199">		}</span>
+<span class="fc" id="L200">		return result;</span>
+	}
+
+	/**
+	 * Combine ALT information per reference allele (in VCF there is only 1 reference by letting ALT vary, but that
+	 * might not always be the case)
+	 * &lt;p&gt;
+	 * So we want to support this hypothetical example:
+	 * 3	300	G	A	0.2|23.1
+	 * 3	300	G	T	-2.4|0.123
+	 * 3	300	G	X	-0.002|2.3
+	 * 3	300	G	C	0.5|14.5
+	 * 3	300	GC	A	0.2|23.1
+	 * 3	300	GC	T	-2.4|0.123
+	 * 3	300	C	GX	-0.002|2.3
+	 * 3	300	C	GC	0.5|14.5
+	 * &lt;p&gt;
+	 * &lt;p&gt;
+	 * So we want to support this hypothetical example: 3 300 G A 0.2|23.1 3 300 G T -2.4|0.123 3 300 G X -0.002|2.3 3
+	 * 300 G C 0.5|14.5 3 300 GC A 0.2|23.1 3 300 GC T -2.4|0.123 3 300 C GX -0.002|2.3 3 300 C GC 0.5|14.5
+	 * &lt;p&gt;
+	 * and it should become:
+	 * &lt;p&gt;
+	 * 3 300 G A,T,X,C 0.2|23.1,-2.4|0.123,-0.002|2.3,0.5|14.5 3 300 GC A,T 0.2|23.1,-2.4|0.123 3 300 C GX,GC
+	 * -0.002|2.3,0.5|14.5
+	 * &lt;p&gt;
+	 * &lt;p&gt;
+	 * 3	300	G	A,T,X,C	0.2|23.1,-2.4|0.123,-0.002|2.3,0.5|14.5
+	 * 3	300	GC	A,T	0.2|23.1,-2.4|0.123
+	 * 3	300	C	GX,GC	-0.002|2.3,0.5|14.5
+	 * &lt;p&gt;
+	 * so that the multi-allelic filter can then find back the appropriate values as if it were a multi-allelic VCF line
+	 */
+	public Iterable&lt;Entity&gt; merge(Iterable&lt;Entity&gt; resourceEntities)
+	{
+<span class="fc" id="L235">		ArrayList&lt;Entity&gt; resourceEntitiesMerged = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L237">		PeekingIterator&lt;Entity&gt; resourceEntitiesIterator = Iterators.peekingIterator(resourceEntities.iterator());</span>
+
+<span class="pc bpc" id="L239" title="1 of 2 branches missed.">		if (!resourceEntitiesIterator.hasNext())</span>
+		{
+<span class="nc" id="L241">			return resourceEntitiesMerged;</span>
+		}
+<span class="fc" id="L243">		Location location = Location.create(resourceEntitiesIterator.peek());</span>
+
+		// collect entities to be merged by ref
+<span class="fc" id="L246">		Multimap&lt;String, Entity&gt; refToMergedEntity = LinkedListMultimap.create();</span>
+
+<span class="fc bfc" id="L248" title="All 2 branches covered.">		while (resourceEntitiesIterator.hasNext())</span>
+		{
+<span class="fc" id="L250">			Entity resourceEntity = resourceEntitiesIterator.next();</span>
+			// verify if all results have the same chrom &amp; pos
+<span class="fc" id="L252">			Location thisLoc = Location.create(resourceEntity);</span>
+
+			// at least chrom and pos have to be the same, ref may be different
+<span class="fc bfc" id="L255" title="All 2 branches covered.">			if (!location.equals(thisLoc))</span>
+			{
+<span class="fc" id="L257">				throw new MolgenisDataException(&quot;Mismatch in location! &quot; + location + &quot; vs &quot; + thisLoc);</span>
+			}
+
+			// add to map by ref, so we get [ref -&gt; entities to be merged into one]
+<span class="fc" id="L261">			refToMergedEntity.put(resourceEntity.getString(REF), resourceEntity);</span>
+<span class="fc" id="L262">		}</span>
+
+		// now iterate over map with refs and merge entities per ref
+<span class="fc bfc" id="L265" title="All 2 branches covered.">		for (String refKey : refToMergedEntity.keySet())</span>
+		{
+<span class="fc" id="L267">			boolean first = true;</span>
+<span class="fc" id="L268">			Entity mergeWithMe = null;</span>
+<span class="fc bfc" id="L269" title="All 2 branches covered.">			for (Entity entityToBeMerged : refToMergedEntity.get(refKey))</span>
+			{
+<span class="fc bfc" id="L271" title="All 2 branches covered.">				if (first)</span>
+				{
+					// merge all following entities with the first one
+<span class="fc" id="L274">					mergeWithMe = entityToBeMerged;</span>
+<span class="fc" id="L275">					first = false;</span>
+				}
+				else
+				{
+					// concatenate alleles
+<span class="fc" id="L280">					mergeWithMe.set(ALT, mergeWithMe.get(ALT).toString() + &quot;,&quot; + entityToBeMerged.get(ALT).toString());</span>
+
+					// concatenate allele specific attributes
+<span class="fc bfc" id="L283" title="All 2 branches covered.">					for (Attribute alleleSpecificAttributes : attributes)</span>
+					{
+<span class="fc" id="L285">						String attrName = alleleSpecificAttributes.getName();</span>
+<span class="fc" id="L286">						mergeWithMe.set(attrName,</span>
+<span class="fc" id="L287">								mergeWithMe.get(attrName).toString() + &quot;,&quot; + entityToBeMerged.get(attrName).toString());</span>
+<span class="fc" id="L288">					}</span>
+				}
+<span class="fc" id="L290">			}</span>
+<span class="fc" id="L291">			resourceEntitiesMerged.add(mergeWithMe);</span>
+<span class="fc" id="L292">		}</span>
+<span class="fc" id="L293">		return resourceEntitiesMerged;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

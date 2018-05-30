@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TwoFactorAuthenticationFilter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security.twofactor.auth</a> &gt; <span class="el_source">TwoFactorAuthenticationFilter.java</span></div><h1>TwoFactorAuthenticationFilter.java</h1><pre class="source lang-java linenums">package org.molgenis.security.twofactor.auth;
+
+import org.molgenis.security.settings.AuthenticationSettings;
+import org.molgenis.security.token.RestAuthenticationToken;
+import org.molgenis.security.twofactor.TwoFactorAuthenticationController;
+import org.molgenis.security.twofactor.service.TwoFactorAuthenticationService;
+import org.molgenis.security.user.UserAccountService;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.RedirectStrategy;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import javax.servlet.FilterChain;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.security.account.AccountController.CHANGE_PASSWORD_URI;
+import static org.molgenis.security.core.utils.SecurityUtils.currentUserIsAuthenticated;
+import static org.molgenis.security.twofactor.auth.TwoFactorAuthenticationSetting.DISABLED;
+import static org.molgenis.security.twofactor.auth.TwoFactorAuthenticationSetting.ENFORCED;
+
+public class TwoFactorAuthenticationFilter extends OncePerRequestFilter
+{
+	private final RedirectStrategy redirectStrategy;
+	private final UserAccountService userAccountService;
+
+	private final TwoFactorAuthenticationService twoFactorAuthenticationService;
+	private final AuthenticationSettings authenticationSettings;
+
+	public TwoFactorAuthenticationFilter(AuthenticationSettings authenticationSettings,
+			TwoFactorAuthenticationService twoFactorAuthenticationService, RedirectStrategy redirectStrategy,
+			UserAccountService userAccountService)
+<span class="fc" id="L36">	{</span>
+<span class="fc" id="L37">		this.authenticationSettings = requireNonNull(authenticationSettings);</span>
+<span class="fc" id="L38">		this.twoFactorAuthenticationService = requireNonNull(twoFactorAuthenticationService);</span>
+<span class="fc" id="L39">		this.redirectStrategy = requireNonNull(redirectStrategy);</span>
+<span class="fc" id="L40">		this.userAccountService = requireNonNull(userAccountService);</span>
+<span class="fc" id="L41">	}</span>
+
+	@Override
+	protected void doFilterInternal(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse,
+			FilterChain filterChain) throws ServletException, IOException
+	{
+<span class="fc bfc" id="L47" title="All 6 branches covered.">		if (isUserShouldTwoFactorAuthenticate() &amp;&amp; currentUserIsAuthenticated() &amp;&amp; isNotProtected(</span>
+<span class="pc bpc" id="L48" title="1 of 2 branches missed.">				httpServletRequest.getRequestURI()) &amp;&amp; isInsufficientlyAuthenticated())</span>
+		{
+<span class="fc" id="L50">			redirectToTwoFactorAuthenticationController(httpServletRequest, httpServletResponse);</span>
+		}
+		else
+		{
+<span class="fc" id="L54">			filterChain.doFilter(httpServletRequest, httpServletResponse);</span>
+		}
+<span class="fc" id="L56">	}</span>
+
+	private boolean isUserShouldTwoFactorAuthenticate()
+	{
+<span class="fc bfc" id="L60" title="All 2 branches covered.">		return authenticationSettings.getTwoFactorAuthentication() != DISABLED &amp;&amp; (</span>
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">				authenticationSettings.getTwoFactorAuthentication() == ENFORCED || userAccountService.getCurrentUser()</span>
+<span class="pc bnc" id="L62" title="All 2 branches missed.">																									 .isTwoFactorAuthentication());</span>
+	}
+
+	private boolean isNotProtected(String requestURI)
+	{
+<span class="pc bpc" id="L67" title="1 of 4 branches missed.">		return !requestURI.startsWith(TwoFactorAuthenticationController.URI) &amp;&amp; !requestURI.equalsIgnoreCase(</span>
+				CHANGE_PASSWORD_URI);
+	}
+
+	private void redirectToTwoFactorAuthenticationController(HttpServletRequest httpServletRequest,
+			HttpServletResponse httpServletResponse) throws IOException
+	{
+<span class="fc bfc" id="L74" title="All 2 branches covered.">		if (twoFactorAuthenticationService.isConfiguredForUser())</span>
+		{
+<span class="fc" id="L76">			redirectStrategy.sendRedirect(httpServletRequest, httpServletResponse, TwoFactorAuthenticationController.URI</span>
+					+ TwoFactorAuthenticationController.TWO_FACTOR_CONFIGURED_URI);
+		}
+		else
+		{
+<span class="fc" id="L81">			redirectStrategy.sendRedirect(httpServletRequest, httpServletResponse, TwoFactorAuthenticationController.URI</span>
+					+ TwoFactorAuthenticationController.TWO_FACTOR_ACTIVATION_URI);
+		}
+<span class="fc" id="L84">	}</span>
+
+	private boolean isInsufficientlyAuthenticated()
+	{
+<span class="pc bpc" id="L88" title="3 of 6 branches missed.">		return !isUserTwoFactorAuthenticated() &amp;&amp; !hasAuthenticatedMolgenisToken() &amp;&amp; !isUserRecoveryAuthenticated();</span>
+	}
+
+	private boolean isUserTwoFactorAuthenticated()
+	{
+<span class="fc" id="L93">		boolean isTwoFactorAuthenticated = false;</span>
+<span class="fc" id="L94">		Authentication authentication = SecurityContextHolder.getContext().getAuthentication();</span>
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">		if (authentication instanceof TwoFactorAuthenticationToken)</span>
+		{
+<span class="nc" id="L97">			isTwoFactorAuthenticated = authentication.isAuthenticated();</span>
+		}
+
+<span class="fc" id="L100">		return isTwoFactorAuthenticated;</span>
+	}
+
+	private boolean isUserRecoveryAuthenticated()
+	{
+<span class="fc" id="L105">		boolean isRecoveryAuthenticated = false;</span>
+<span class="fc" id="L106">		Authentication authentication = SecurityContextHolder.getContext().getAuthentication();</span>
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">		if (authentication instanceof RecoveryAuthenticationToken)</span>
+		{
+<span class="nc" id="L109">			isRecoveryAuthenticated = authentication.isAuthenticated();</span>
+		}
+
+<span class="fc" id="L112">		return isRecoveryAuthenticated;</span>
+	}
+
+	/**
+	 * Check on authenticated RestAuthenticationToken
+	 *
+	 * @return authenticated {@link RestAuthenticationToken}
+	 */
+	private boolean hasAuthenticatedMolgenisToken()
+	{
+<span class="fc" id="L122">		boolean hasAuthenticatedMolgenisToken = false;</span>
+<span class="fc" id="L123">		Authentication authentication = SecurityContextHolder.getContext().getAuthentication();</span>
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">		if (authentication instanceof RestAuthenticationToken)</span>
+		{
+<span class="nc" id="L126">			hasAuthenticatedMolgenisToken = authentication.isAuthenticated();</span>
+		}
+<span class="fc" id="L128">		return hasAuthenticatedMolgenisToken;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

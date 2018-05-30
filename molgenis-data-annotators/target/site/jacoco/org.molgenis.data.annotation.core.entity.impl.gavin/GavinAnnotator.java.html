@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GavinAnnotator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.entity.impl.gavin</a> &gt; <span class="el_source">GavinAnnotator.java</span></div><h1>GavinAnnotator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.entity.impl.gavin;
+
+import com.google.common.collect.Iterables;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.annotation.core.EffectBasedAnnotator;
+import org.molgenis.data.annotation.core.effects.EffectsMetaData;
+import org.molgenis.data.annotation.core.entity.AnnotatorConfig;
+import org.molgenis.data.annotation.core.entity.AnnotatorInfo;
+import org.molgenis.data.annotation.core.entity.EntityAnnotator;
+import org.molgenis.data.annotation.core.entity.impl.framework.QueryAnnotatorImpl;
+import org.molgenis.data.annotation.core.entity.impl.snpeff.Impact;
+import org.molgenis.data.annotation.core.query.GeneNameQueryCreator;
+import org.molgenis.data.annotation.core.resources.Resource;
+import org.molgenis.data.annotation.core.resources.Resources;
+import org.molgenis.data.annotation.core.resources.impl.RepositoryFactory;
+import org.molgenis.data.annotation.core.resources.impl.SingleResourceConfig;
+import org.molgenis.data.annotation.core.resources.impl.emx.EmxResourceImpl;
+import org.molgenis.data.annotation.core.resources.impl.emx.InMemoryRepositoryFactory;
+import org.molgenis.data.annotation.core.utils.AnnotatorUtils;
+import org.molgenis.data.importer.emx.EmxMetaDataParser;
+import org.molgenis.data.meta.EntityTypeDependencyResolver;
+import org.molgenis.data.meta.model.*;
+import org.molgenis.data.vcf.model.VcfAttributes;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
+
+import static org.molgenis.data.annotation.core.effects.EffectsMetaData.GENE_NAME;
+import static org.molgenis.data.annotation.core.effects.EffectsMetaData.PUTATIVE_IMPACT;
+import static org.molgenis.data.annotation.core.entity.AnnotatorInfo.Status.READY;
+import static org.molgenis.data.annotation.core.entity.AnnotatorInfo.Type.PATHOGENICITY_ESTIMATE;
+import static org.molgenis.data.annotation.core.entity.impl.CaddAnnotator.CADD_SCALED;
+import static org.molgenis.data.annotation.core.entity.impl.CaddAnnotator.createCaddScaledAttr;
+import static org.molgenis.data.annotation.core.entity.impl.ExacAnnotator.EXAC_AF;
+import static org.molgenis.data.annotation.core.entity.impl.ExacAnnotator.getExacAFAttr;
+import static org.molgenis.data.annotation.web.settings.GavinAnnotatorSettings.Meta.VARIANT_FILE_LOCATION;
+import static org.molgenis.data.meta.AttributeType.STRING;
+import static org.molgenis.data.meta.AttributeType.XREF;
+import static org.molgenis.data.vcf.model.VcfAttributes.ALT;
+import static org.molgenis.data.vcf.utils.VcfWriterUtils.VARIANT;
+
+@Configuration
+<span class="fc" id="L49">public class GavinAnnotator implements AnnotatorConfig</span>
+{
+	public static final String NAME = &quot;Gavin&quot;;
+	public static final String RESOURCE = &quot;gavin&quot;;
+	public static final String RESOURCE_ENTITY_NAME = &quot;base_gavin&quot;;
+
+	public static final String CLASSIFICATION = &quot;Classification&quot;;
+	public static final String CONFIDENCE = &quot;Confidence&quot;;
+	public static final String REASON = &quot;Reason&quot;;
+
+<span class="fc" id="L59">	private final GavinAlgorithm gavinAlgorithm = new GavinAlgorithm();</span>
+
+	@Autowired
+	private Entity gavinAnnotatorSettings;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private Resources resources;
+
+	@Autowired
+	private VcfAttributes vcfAttributes;
+
+	@Autowired
+	private PackageFactory packageFactory;
+
+	@Autowired
+	private EntityTypeFactory entityTypeFactory;
+
+	@Autowired
+	private AttributeFactory attributeFactory;
+
+	@Autowired
+	private EffectsMetaData effectsMetaData;
+
+	@Autowired
+	private EntityTypeDependencyResolver entityTypeDependencyResolver;
+
+	@Autowired
+	GeneNameQueryCreator geneNameQueryCreator;
+
+	@Bean
+	Resource GavinResource()
+	{
+<span class="fc" id="L94">		return new EmxResourceImpl(RESOURCE, new SingleResourceConfig(VARIANT_FILE_LOCATION, gavinAnnotatorSettings))</span>
+<span class="fc" id="L95">		{</span>
+			@Override
+			public RepositoryFactory getRepositoryFactory()
+			{
+<span class="fc" id="L99">				return new InMemoryRepositoryFactory(RESOURCE_ENTITY_NAME, RESOURCE,</span>
+<span class="fc" id="L100">						new EmxMetaDataParser(packageFactory, attributeFactory, entityTypeFactory,</span>
+<span class="fc" id="L101">								entityTypeDependencyResolver), entityTypeFactory, attributeFactory);</span>
+			}
+		};
+	}
+
+	private EffectBasedAnnotator annotator;
+
+	@Bean
+	public EffectBasedAnnotator gavin()
+	{
+<span class="fc" id="L111">		annotator = new EffectBasedAnnotator(NAME);</span>
+<span class="fc" id="L112">		return annotator;</span>
+	}
+
+	public void init()
+	{
+<span class="fc" id="L117">		LinkedList&lt;Attribute&gt; attributes = createGavinOutputAttributes();</span>
+
+<span class="fc" id="L119">		String description = &quot;Please note that this annotator processes the results from a SnpEff annotation\nTherefor it should be used on the result entity rather than the variant entity itself.\nThe corresponding variant entity should also be annotated with CADD and EXaC&quot;;</span>
+
+<span class="fc" id="L121">		AnnotatorInfo gavinInfo = AnnotatorInfo.create(READY, PATHOGENICITY_ESTIMATE, NAME, description, attributes);</span>
+<span class="fc" id="L122">		EntityAnnotator entityAnnotator = new QueryAnnotatorImpl(RESOURCE, gavinInfo, geneNameQueryCreator, dataService,</span>
+<span class="nc" id="L123">				resources, (annotationSourceFileName) -&gt; gavinAnnotatorSettings.set(VARIANT_FILE_LOCATION,</span>
+				annotationSourceFileName))
+<span class="fc" id="L125">		{</span>
+			@Override
+			public List&lt;Attribute&gt; createAnnotatorAttributes(AttributeFactory attributeFactory)
+			{
+<span class="nc" id="L129">				return createGavinOutputAttributes();</span>
+			}
+
+			@Override
+			public List&lt;Attribute&gt; getRequiredAttributes()
+			{
+<span class="nc" id="L135">				List&lt;Attribute&gt; requiredAttributes = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L136">				EntityType entityType = entityTypeFactory.create(VARIANT);</span>
+<span class="nc" id="L137">				List&lt;Attribute&gt; refAttributesList = Arrays.asList(createCaddScaledAttr(attributeFactory),</span>
+<span class="nc" id="L138">						getExacAFAttr(attributeFactory), vcfAttributes.getAltAttribute());</span>
+<span class="nc" id="L139">				entityType.addAttributes(refAttributesList);</span>
+<span class="nc" id="L140">				Attribute refAttr = attributeFactory.create()</span>
+<span class="nc" id="L141">													.setName(VARIANT)</span>
+<span class="nc" id="L142">													.setDataType(XREF)</span>
+<span class="nc" id="L143">													.setRefEntity(entityType)</span>
+<span class="nc" id="L144">													.setDescription(</span>
+															&quot;This annotator needs a references to an entity containing: &quot;
+<span class="nc" id="L146">																	+ StreamSupport.stream(</span>
+<span class="nc" id="L147">																	refAttributesList.spliterator(), false)</span>
+<span class="nc" id="L148">																				   .map(Attribute::getName)</span>
+<span class="nc" id="L149">																				   .collect(Collectors.joining(&quot;, &quot;)));</span>
+
+<span class="nc" id="L151">				requiredAttributes.addAll(</span>
+<span class="nc" id="L152">						Arrays.asList(effectsMetaData.getGeneNameAttr(), effectsMetaData.getPutativeImpactAttr(),</span>
+<span class="nc" id="L153">								refAttr, effectsMetaData.getAltAttr()));</span>
+<span class="nc" id="L154">				return requiredAttributes;</span>
+			}
+
+			@Override
+			protected void processQueryResults(Entity entity, Iterable&lt;Entity&gt; annotationSourceEntities,
+					boolean updateMode)
+			{
+<span class="pc bpc" id="L161" title="1 of 2 branches missed.">				if (updateMode)</span>
+				{
+<span class="nc" id="L163">					throw new MolgenisDataException(&quot;This annotator/filter does not support updating of values&quot;);</span>
+				}
+<span class="fc" id="L165">				String alt = entity.getString(EffectsMetaData.ALT);</span>
+<span class="pc bpc" id="L166" title="1 of 2 branches missed.">				if (alt == null)</span>
+				{
+<span class="nc" id="L168">					entity.set(CLASSIFICATION, &quot;&quot;);</span>
+<span class="nc" id="L169">					entity.set(CONFIDENCE, &quot;&quot;);</span>
+<span class="nc" id="L170">					entity.set(REASON, &quot;Missing ALT allele no judgment could be determined.&quot;);</span>
+<span class="nc" id="L171">					return;</span>
+				}
+<span class="pc bpc" id="L173" title="1 of 2 branches missed.">				if (alt.contains(&quot;,&quot;))</span>
+				{
+<span class="nc" id="L175">					throw new MolgenisDataException(</span>
+							&quot;The gavin annotator only accepts single allele input ('effect entities').&quot;);
+				}
+<span class="fc" id="L178">				int sourceEntitiesSize = Iterables.size(annotationSourceEntities);</span>
+
+<span class="fc" id="L180">				Entity variantEntity = entity.getEntity(VARIANT);</span>
+
+<span class="fc" id="L182">				Map&lt;String, Double&gt; caddMap = AnnotatorUtils.toAlleleMap(variantEntity.getString(ALT),</span>
+<span class="fc" id="L183">						variantEntity.getString(CADD_SCALED));</span>
+<span class="fc" id="L184">				Map&lt;String, Double&gt; exacMap = AnnotatorUtils.toAlleleMap(variantEntity.getString(ALT),</span>
+<span class="fc" id="L185">						variantEntity.getString(EXAC_AF));</span>
+
+<span class="fc" id="L187">				Impact impact = Impact.valueOf(entity.getString(PUTATIVE_IMPACT));</span>
+<span class="fc" id="L188">				Double exacMAF = exacMap.get(alt);</span>
+<span class="fc" id="L189">				Double caddScaled = caddMap.get(alt);</span>
+<span class="fc" id="L190">				String gene = entity.getString(GENE_NAME);</span>
+<span class="pc bpc" id="L191" title="1 of 2 branches missed.">				if (exacMAF == null)</span>
+				{
+<span class="nc" id="L193">					exacMAF = 0.0;</span>
+				}
+
+<span class="fc bfc" id="L196" title="All 2 branches covered.">				if (sourceEntitiesSize == 1)</span>
+				{
+<span class="fc" id="L198">					Entity annotationSourceEntity = annotationSourceEntities.iterator().next();</span>
+<span class="fc" id="L199">					Judgment judgment = gavinAlgorithm.classifyVariant(impact, caddScaled, exacMAF, gene,</span>
+<span class="fc" id="L200">							GavinThresholds.fromEntity(annotationSourceEntity));</span>
+<span class="fc" id="L201">					entity.set(CLASSIFICATION, judgment.getClassification().toString());</span>
+<span class="fc" id="L202">					entity.set(CONFIDENCE, judgment.getConfidence().toString());</span>
+<span class="fc" id="L203">					entity.set(REASON, judgment.getReason());</span>
+<span class="fc" id="L204">				}</span>
+<span class="pc bpc" id="L205" title="1 of 2 branches missed.">				else if (sourceEntitiesSize == 0)</span>
+				{
+					// if we have no data for this gene, immediately fall back to the naive method
+<span class="fc" id="L208">					Judgment judgment = gavinAlgorithm.genomewideClassifyVariant(impact, caddScaled, exacMAF, gene);</span>
+<span class="fc" id="L209">					entity.set(CLASSIFICATION, judgment.getClassification().toString());</span>
+<span class="fc" id="L210">					entity.set(CONFIDENCE, judgment.getConfidence().toString());</span>
+<span class="fc" id="L211">					entity.set(REASON, judgment.getReason());</span>
+<span class="fc" id="L212">				}</span>
+				else
+				{
+<span class="nc" id="L215">					String message = &quot;invalid number [&quot; + sourceEntitiesSize</span>
+							+ &quot;] of results for this gene in annotation resource&quot;;
+<span class="nc" id="L217">					entity.set(REASON, message);</span>
+<span class="nc" id="L218">					throw new MolgenisDataException(message);</span>
+				}
+<span class="fc" id="L220">			}</span>
+
+		};
+<span class="fc" id="L223">		annotator.init(entityAnnotator);</span>
+<span class="fc" id="L224">	}</span>
+
+	private LinkedList&lt;Attribute&gt; createGavinOutputAttributes()
+	{
+<span class="fc" id="L228">		LinkedList&lt;Attribute&gt; attributes = new LinkedList&lt;&gt;();</span>
+<span class="fc" id="L229">		Attribute classification = attributeFactory.create()</span>
+<span class="fc" id="L230">												   .setName(CLASSIFICATION)</span>
+<span class="fc" id="L231">												   .setDataType(STRING)</span>
+<span class="fc" id="L232">												   .setDescription(CLASSIFICATION)</span>
+<span class="fc" id="L233">												   .setLabel(CLASSIFICATION);</span>
+<span class="fc" id="L234">		Attribute confidence = attributeFactory.create()</span>
+<span class="fc" id="L235">											   .setName(CONFIDENCE)</span>
+<span class="fc" id="L236">											   .setDataType(STRING)</span>
+<span class="fc" id="L237">											   .setDescription(CONFIDENCE)</span>
+<span class="fc" id="L238">											   .setLabel(CONFIDENCE);</span>
+<span class="fc" id="L239">		Attribute reason = attributeFactory.create()</span>
+<span class="fc" id="L240">										   .setName(REASON)</span>
+<span class="fc" id="L241">										   .setDataType(STRING)</span>
+<span class="fc" id="L242">										   .setDescription(REASON)</span>
+<span class="fc" id="L243">										   .setLabel(REASON);</span>
+
+<span class="fc" id="L245">		attributes.add(classification);</span>
+<span class="fc" id="L246">		attributes.add(confidence);</span>
+<span class="fc" id="L247">		attributes.add(reason);</span>
+<span class="fc" id="L248">		return attributes;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

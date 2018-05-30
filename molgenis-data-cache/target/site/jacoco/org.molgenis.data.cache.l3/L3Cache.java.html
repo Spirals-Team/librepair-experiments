@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>L3Cache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-cache</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.cache.l3</a> &gt; <span class="el_source">L3Cache.java</span></div><h1>L3Cache.java</h1><pre class="source lang-java linenums">package org.molgenis.data.cache.l3;
+
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.guava.CaffeinatedGuava;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Fetch;
+import org.molgenis.data.Query;
+import org.molgenis.data.Repository;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.data.transaction.DefaultMolgenisTransactionListener;
+import org.molgenis.data.transaction.TransactionInformation;
+import org.molgenis.data.transaction.TransactionManager;
+import org.slf4j.Logger;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import javax.annotation.Nonnull;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentMap;
+
+import static com.google.common.collect.Maps.newConcurrentMap;
+import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.MINUTES;
+import static java.util.stream.Collectors.toList;
+import static org.slf4j.LoggerFactory.getLogger;
+
+/**
+ * In-memory Query cache containing Queries and resulting ids from cacheable repositories
+ */
+@Service
+public class L3Cache extends DefaultMolgenisTransactionListener
+{
+<span class="fc" id="L36">	private static final Logger LOG = getLogger(L3Cache.class);</span>
+	private static final int MAX_CACHE_SIZE_PER_QUERY = 1000;
+
+	/**
+	 * maps entity name to the loading cache with Query key and List of Identifiers
+	 */
+<span class="fc" id="L42">	private final ConcurrentMap&lt;String, LoadingCache&lt;Query&lt;Entity&gt;, List&lt;Object&gt;&gt;&gt; caches = newConcurrentMap();</span>
+	private final TransactionInformation transactionInformation;
+
+	public L3Cache(TransactionManager transactionManager, TransactionInformation transactionInformation)
+<span class="fc" id="L46">	{</span>
+<span class="fc" id="L47">		this.transactionInformation = requireNonNull(transactionInformation);</span>
+<span class="fc" id="L48">		requireNonNull(transactionManager).addTransactionListener(this);</span>
+<span class="fc" id="L49">	}</span>
+
+	@Override
+	public void afterCommitTransaction(String transactionId)
+	{
+<span class="fc" id="L54">		transactionInformation.getDirtyRepositories().forEach(caches::remove);</span>
+<span class="fc" id="L55">	}</span>
+
+	public List&lt;Object&gt; get(Repository&lt;Entity&gt; repository, Query&lt;Entity&gt; query)
+	{
+		// Set fetch to null because we are only caching identifiers
+<span class="fc" id="L60">		LoadingCache&lt;Query&lt;Entity&gt;, List&lt;Object&gt;&gt; cache = getQueryCache(repository);</span>
+<span class="fc" id="L61">		Query&lt;Entity&gt; fetchlessQuery = new QueryImpl&lt;&gt;(query);</span>
+<span class="fc" id="L62">		fetchlessQuery.setFetch(null);</span>
+<span class="fc" id="L63">		return cache.getUnchecked(fetchlessQuery);</span>
+	}
+
+	private LoadingCache&lt;Query&lt;Entity&gt;, List&lt;Object&gt;&gt; getQueryCache(Repository&lt;Entity&gt; repository)
+	{
+<span class="fc" id="L68">		String id = repository.getEntityType().getId();</span>
+<span class="fc bfc" id="L69" title="All 2 branches covered.">		if (!caches.containsKey(id))</span>
+		{
+<span class="fc" id="L71">			caches.putIfAbsent(id, createQueryCache(repository));</span>
+		}
+<span class="fc" id="L73">		return caches.get(id);</span>
+	}
+
+	private LoadingCache&lt;Query&lt;Entity&gt;, List&lt;Object&gt;&gt; createQueryCache(Repository&lt;Entity&gt; repository)
+	{
+<span class="fc" id="L78">		LOG.trace(&quot;Creating Query cache for repository {}&quot;, repository.getName());</span>
+<span class="fc" id="L79">		return CaffeinatedGuava.build(Caffeine.newBuilder()</span>
+<span class="fc" id="L80">											  .recordStats()</span>
+<span class="fc" id="L81">											  .maximumSize(MAX_CACHE_SIZE_PER_QUERY)</span>
+<span class="fc" id="L82">											  .expireAfterAccess(10, MINUTES), createCacheLoader(repository));</span>
+	}
+
+	/**
+	 * Create a cacheloader that loads entity ids from the repository and stores them together with their query
+	 *
+	 * @return the {@link CacheLoader}
+	 */
+	private CacheLoader&lt;Query&lt;Entity&gt;, List&lt;Object&gt;&gt; createCacheLoader(final Repository&lt;Entity&gt; repository)
+	{
+<span class="fc" id="L92">		String repositoryName = repository.getName();</span>
+<span class="fc" id="L93">		Fetch idAttributeFetch = new Fetch().field(repository.getEntityType().getIdAttribute().getName());</span>
+<span class="fc" id="L94">		return new CacheLoader&lt;Query&lt;Entity&gt;, List&lt;Object&gt;&gt;()</span>
+<span class="fc" id="L95">		{</span>
+			/**
+			 * Loads {@link Entity} identifiers for a {@link Query}
+			 * @param query the cache key to load
+			 * @return {@link List} of identifier {@link Object}s
+			 */
+			@Override
+			public List&lt;Object&gt; load(@Nonnull Query&lt;Entity&gt; query)
+			{
+<span class="fc" id="L104">				LOG.trace(&quot;Loading identifiers from repository {} for query {}&quot;, repositoryName, query);</span>
+<span class="fc" id="L105">				return repository.findAll(new QueryImpl&lt;&gt;(query).fetch(idAttributeFetch))</span>
+<span class="fc" id="L106">								 .map(Entity::getIdValue)</span>
+<span class="fc" id="L107">								 .collect(toList());</span>
+			}
+		};
+	}
+
+	/**
+	 * Logs cumulative cache statistics for all known caches.
+	 */
+	@Scheduled(fixedRate = 60000)
+	public void logStatistics()
+	{
+		//TODO: do we want to log diff with last log instead?
+<span class="nc bnc" id="L119" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L121">			LOG.debug(&quot;Cache stats:&quot;);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">			for (Map.Entry&lt;String, LoadingCache&lt;Query&lt;Entity&gt;, List&lt;Object&gt;&gt;&gt; cacheEntry : caches.entrySet())</span>
+			{
+<span class="nc" id="L124">				LOG.debug(&quot;{}:{}&quot;, cacheEntry.getKey(), cacheEntry.getValue().stats());</span>
+<span class="nc" id="L125">			}</span>
+		}
+<span class="nc" id="L127">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

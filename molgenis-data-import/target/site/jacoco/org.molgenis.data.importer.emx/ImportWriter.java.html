@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ImportWriter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-import</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.importer.emx</a> &gt; <span class="el_source">ImportWriter.java</span></div><h1>ImportWriter.java</h1><pre class="source lang-java linenums">package org.molgenis.data.importer.emx;
+
+import com.google.common.collect.ImmutableCollection;
+import com.google.common.collect.ImmutableList;
+import org.molgenis.data.DatabaseAction;
+import org.molgenis.data.EntityManager;
+import org.molgenis.data.RepositoryCollection;
+import org.molgenis.data.importer.DataPersister;
+import org.molgenis.data.importer.DataPersister.DataMode;
+import org.molgenis.data.importer.EntityImportReport;
+import org.molgenis.data.importer.ParsedMetaData;
+import org.molgenis.data.importer.PersistResult;
+import org.molgenis.data.meta.MetaDataService;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.meta.model.Tag;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.permission.PermissionSystemService;
+import org.molgenis.data.validation.ConstraintViolation;
+import org.molgenis.data.validation.MolgenisValidationException;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.util.UnexpectedEnumException;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.collectingAndThen;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.importer.DataPersister.MetadataMode.UPSERT;
+import static org.molgenis.data.security.EntityTypePermission.READ_METADATA;
+import static org.molgenis.security.core.runas.RunAsSystemAspect.runAsSystem;
+
+/**
+ * Writes the imported metadata and data to target {@link RepositoryCollection}.
+ */
+public class ImportWriter
+{
+	private final MetaDataService metaDataService;
+	private final PermissionSystemService permissionSystemService;
+	private final UserPermissionEvaluator permissionService;
+	private final EntityManager entityManager;
+	private final DataPersister dataPersister;
+
+	ImportWriter(MetaDataService metaDataService, PermissionSystemService permissionSystemService,
+			UserPermissionEvaluator permissionService, EntityManager entityManager, DataPersister dataPersister)
+<span class="nc" id="L50">	{</span>
+<span class="nc" id="L51">		this.metaDataService = requireNonNull(metaDataService);</span>
+<span class="nc" id="L52">		this.permissionSystemService = requireNonNull(permissionSystemService);</span>
+<span class="nc" id="L53">		this.permissionService = requireNonNull(permissionService);</span>
+<span class="nc" id="L54">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="nc" id="L55">		this.dataPersister = requireNonNull(dataPersister);</span>
+<span class="nc" id="L56">	}</span>
+
+	@Transactional
+	public EntityImportReport doImport(EmxImportJob job)
+	{
+<span class="nc" id="L61">		importTags(job.parsedMetaData);</span>
+<span class="nc" id="L62">		importPackages(job.parsedMetaData);</span>
+
+<span class="nc" id="L64">		GroupedEntityTypes groupedEntityTypes = groupEntityTypes(job.parsedMetaData.getEntities());</span>
+
+<span class="nc" id="L66">		validateEntityTypePermissions(groupedEntityTypes.getUpdatedEntityTypes());</span>
+
+<span class="nc" id="L68">		PersistResult persistResult = dataPersister.persist(new EmxDataProvider(job, entityManager), UPSERT,</span>
+<span class="nc" id="L69">				toDataMode(job.dbAction));</span>
+<span class="nc" id="L70">		permissionSystemService.giveUserWriteMetaPermissions(groupedEntityTypes.getNewEntityTypes());</span>
+
+<span class="nc" id="L72">		persistResult.getNrPersistedEntitiesMap()</span>
+<span class="nc" id="L73">					 .forEach((key, value) -&gt; job.report.addEntityCount(key, Math.toIntExact(value)));</span>
+<span class="nc" id="L74">		groupedEntityTypes.getNewEntityTypes().stream().map(EntityType::getId).forEach(job.report::addNewEntity);</span>
+<span class="nc" id="L75">		return job.report;</span>
+	}
+
+	private void importTags(ParsedMetaData parsedMetaData)
+	{
+<span class="nc" id="L80">		ImmutableCollection&lt;Tag&gt; tags = parsedMetaData.getTags().values();</span>
+<span class="nc" id="L81">		metaDataService.upsertTags(tags);</span>
+<span class="nc" id="L82">	}</span>
+
+	private void importPackages(ParsedMetaData parsedMetaData)
+	{
+<span class="nc" id="L86">		ImmutableCollection&lt;Package&gt; packages = parsedMetaData.getPackages().values();</span>
+<span class="nc" id="L87">		metaDataService.upsertPackages(packages.stream().filter(Objects::nonNull));</span>
+<span class="nc" id="L88">	}</span>
+
+	private DataMode toDataMode(DatabaseAction databaseAction)
+	{
+		DataMode dataMode;
+<span class="nc bnc" id="L93" title="All 5 branches missed.">		switch (databaseAction)</span>
+		{
+			case ADD:
+<span class="nc" id="L96">				dataMode = DataMode.ADD;</span>
+<span class="nc" id="L97">				break;</span>
+			case ADD_UPDATE_EXISTING:
+<span class="nc" id="L99">				dataMode = DataMode.UPSERT;</span>
+<span class="nc" id="L100">				break;</span>
+			case UPDATE:
+<span class="nc" id="L102">				dataMode = DataMode.UPDATE;</span>
+<span class="nc" id="L103">				break;</span>
+			case ADD_IGNORE_EXISTING:
+<span class="nc" id="L105">				throw new IllegalArgumentException(&quot;Only ADD, ADD_UPDATE_EXISTING and UPDATE are supported&quot;);</span>
+			default:
+<span class="nc" id="L107">				throw new UnexpectedEnumException(databaseAction);</span>
+		}
+<span class="nc" id="L109">		return dataMode;</span>
+	}
+
+	private void validateEntityTypePermissions(ImmutableCollection&lt;EntityType&gt; entityTypes)
+	{
+<span class="nc" id="L114">		entityTypes.forEach(this::validateEntityTypePermission);</span>
+<span class="nc" id="L115">	}</span>
+
+	private void validateEntityTypePermission(EntityType entityType)
+	{
+<span class="nc" id="L119">		String entityTypeName = entityType.getId();</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">		if (!permissionService.hasPermission(new EntityTypeIdentity(entityTypeName), READ_METADATA))</span>
+		{
+<span class="nc" id="L122">			throw new MolgenisValidationException(</span>
+<span class="nc" id="L123">					new ConstraintViolation(format(&quot;Permission denied on existing entity type [%s]&quot;, entityTypeName)));</span>
+		}
+<span class="nc" id="L125">	}</span>
+
+	private GroupedEntityTypes groupEntityTypes(ImmutableCollection&lt;EntityType&gt; entities)
+	{
+<span class="nc" id="L129">		return runAsSystem(() -&gt;</span>
+		{
+<span class="nc" id="L131">			Map&lt;String, EntityType&gt; existingEntityTypeMap = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">			for (EntityType entityType : entities)</span>
+			{
+<span class="nc" id="L134">				EntityType existing = metaDataService.getEntityTypeById(entityType.getId());</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">				if (existing != null)</span>
+				{
+<span class="nc" id="L137">					existingEntityTypeMap.put(entityType.getId(), entityType);</span>
+				}
+<span class="nc" id="L139">			}</span>
+
+<span class="nc" id="L141">			ImmutableCollection&lt;EntityType&gt; newEntityTypes = entities.stream()</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">																	 .filter(entityType -&gt; !existingEntityTypeMap.containsKey(</span>
+<span class="nc" id="L143">																			 entityType.getId()))</span>
+<span class="nc" id="L144">																	 .collect(collectingAndThen(toList(),</span>
+																			 ImmutableList::copyOf));
+
+<span class="nc" id="L147">			ImmutableCollection&lt;EntityType&gt; existingEntityTypes = entities.stream()</span>
+<span class="nc" id="L148">																		  .filter(entityType -&gt; existingEntityTypeMap.containsKey(</span>
+<span class="nc" id="L149">																				  entityType.getId()))</span>
+<span class="nc" id="L150">																		  .collect(collectingAndThen(toList(),</span>
+																				  ImmutableList::copyOf));
+
+<span class="nc" id="L153">			return new GroupedEntityTypes(newEntityTypes, existingEntityTypes);</span>
+		});
+	}
+
+	private static class GroupedEntityTypes
+	{
+		private final ImmutableCollection&lt;EntityType&gt; newEntityTypes;
+		private final ImmutableCollection&lt;EntityType&gt; updatedEntityTypes;
+
+		GroupedEntityTypes(ImmutableCollection&lt;EntityType&gt; newEntityTypes,
+				ImmutableCollection&lt;EntityType&gt; updatedEntityTypes)
+<span class="nc" id="L164">		{</span>
+<span class="nc" id="L165">			this.newEntityTypes = requireNonNull(newEntityTypes);</span>
+<span class="nc" id="L166">			this.updatedEntityTypes = requireNonNull(updatedEntityTypes);</span>
+<span class="nc" id="L167">		}</span>
+
+		ImmutableCollection&lt;EntityType&gt; getNewEntityTypes()
+		{
+<span class="nc" id="L171">			return newEntityTypes;</span>
+		}
+
+		ImmutableCollection&lt;EntityType&gt; getUpdatedEntityTypes()
+		{
+<span class="nc" id="L176">			return updatedEntityTypes;</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexJobSchedulerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-index</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.index.job</a> &gt; <span class="el_source">IndexJobSchedulerImpl.java</span></div><h1>IndexJobSchedulerImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.data.index.job;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.index.meta.IndexActionGroup;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.jobs.JobExecutor;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.counting;
+import static java.util.stream.Collectors.groupingBy;
+import static org.molgenis.data.index.meta.IndexActionGroupMetaData.INDEX_ACTION_GROUP;
+import static org.molgenis.data.index.meta.IndexActionMetaData.*;
+import static org.molgenis.jobs.model.JobExecution.Status.SUCCESS;
+import static org.molgenis.jobs.model.JobExecutionMetaData.END_DATE;
+import static org.molgenis.jobs.model.JobExecutionMetaData.STATUS;
+import static org.molgenis.security.core.runas.RunAsSystemAspect.runAsSystem;
+
+public class IndexJobSchedulerImpl implements IndexJobScheduler
+{
+<span class="fc" id="L33">	private static final Logger LOG = LoggerFactory.getLogger(IndexJobSchedulerImpl.class);</span>
+
+	private final DataService dataService;
+	private final IndexJobExecutionFactory indexJobExecutionFactory;
+	// the executor for the index jobs.
+<span class="fc" id="L38">	private ExecutorService executorService = Executors.newSingleThreadExecutor();</span>
+	private final JobExecutor jobExecutor;
+<span class="fc" id="L40">	private final IndexStatus indexStatus = new IndexStatus();</span>
+
+	public IndexJobSchedulerImpl(DataService dataService, IndexJobExecutionFactory indexJobExecutionFactory,
+			JobExecutor jobExecutor)
+<span class="fc" id="L44">	{</span>
+<span class="fc" id="L45">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L46">		this.indexJobExecutionFactory = requireNonNull(indexJobExecutionFactory);</span>
+<span class="fc" id="L47">		this.jobExecutor = requireNonNull(jobExecutor);</span>
+<span class="fc" id="L48">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void scheduleIndexJob(String transactionId)
+	{
+<span class="fc" id="L54">		LOG.trace(&quot;Index transaction with id {}...&quot;, transactionId);</span>
+<span class="fc" id="L55">		IndexActionGroup indexActionGroup = dataService.findOneById(INDEX_ACTION_GROUP, transactionId,</span>
+				IndexActionGroup.class);
+
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">		if (indexActionGroup != null)</span>
+		{
+<span class="nc" id="L60">			Stream&lt;Entity&gt; indexActions = dataService.findAll(INDEX_ACTION,</span>
+<span class="nc" id="L61">					new QueryImpl&lt;&gt;().eq(INDEX_ACTION_GROUP_ATTR, indexActionGroup));</span>
+<span class="nc" id="L62">			Map&lt;String, Long&gt; numberOfActionsPerEntity = indexActions.collect(</span>
+<span class="nc" id="L63">					groupingBy(indexAction -&gt; indexAction.getString(ENTITY_TYPE_ID), counting()));</span>
+<span class="nc" id="L64">			indexStatus.addActionCounts(numberOfActionsPerEntity);</span>
+
+<span class="nc" id="L66">			IndexJobExecution indexJobExecution = indexJobExecutionFactory.create();</span>
+<span class="nc" id="L67">			indexJobExecution.setUser(&quot;admin&quot;);</span>
+<span class="nc" id="L68">			indexJobExecution.setIndexActionJobID(transactionId);</span>
+<span class="nc" id="L69">			jobExecutor.submit(indexJobExecution, executorService)</span>
+<span class="nc" id="L70">					   .whenComplete((a, b) -&gt; indexStatus.removeActionCounts(numberOfActionsPerEntity));</span>
+<span class="nc" id="L71">		}</span>
+		else
+		{
+<span class="fc" id="L74">			LOG.debug(&quot;No index job found for id [{}].&quot;, transactionId);</span>
+		}
+<span class="fc" id="L76">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void waitForAllIndicesStable() throws InterruptedException
+	{
+<span class="nc" id="L82">		indexStatus.waitForAllEntitiesToBeStable();</span>
+<span class="nc" id="L83">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void waitForIndexToBeStableIncludingReferences(EntityType entityType) throws InterruptedException
+	{
+<span class="nc" id="L89">		indexStatus.waitForIndexToBeStableIncludingReferences(entityType);</span>
+<span class="nc" id="L90">	}</span>
+
+	/**
+	 * Cleans up successful IndexJobExecutions that finished longer than five minutes ago.
+	 * delay for a minute to allow the transaction manager to become available
+	 */
+	@Scheduled(initialDelay = 1 * 60 * 1000, fixedRate = 5 * 60 * 1000)
+	public void cleanupJobExecutions()
+	{
+<span class="fc" id="L99">		runAsSystem(() -&gt;</span>
+		{
+<span class="fc" id="L101">			LOG.trace(&quot;Clean up Index job executions...&quot;);</span>
+<span class="fc" id="L102">			Instant fiveMinutesAgo = Instant.now().minus(5, ChronoUnit.MINUTES);</span>
+<span class="fc" id="L103">			boolean indexJobExecutionExists = dataService.hasRepository(IndexJobExecutionMeta.INDEX_JOB_EXECUTION);</span>
+<span class="pc bpc" id="L104" title="1 of 2 branches missed.">			if (indexJobExecutionExists)</span>
+			{
+<span class="fc" id="L106">				Stream&lt;Entity&gt; executions = dataService.getRepository(IndexJobExecutionMeta.INDEX_JOB_EXECUTION)</span>
+<span class="fc" id="L107">													   .query()</span>
+<span class="fc" id="L108">													   .lt(END_DATE, fiveMinutesAgo)</span>
+<span class="fc" id="L109">													   .and()</span>
+<span class="fc" id="L110">													   .eq(STATUS, SUCCESS.toString())</span>
+<span class="fc" id="L111">													   .findAll();</span>
+<span class="fc" id="L112">				dataService.delete(IndexJobExecutionMeta.INDEX_JOB_EXECUTION, executions);</span>
+<span class="fc" id="L113">				LOG.debug(&quot;Cleaned up Index job executions.&quot;);</span>
+<span class="fc" id="L114">			}</span>
+			else
+			{
+<span class="nc" id="L117">				LOG.warn(IndexJobExecutionMeta.INDEX_JOB_EXECUTION + &quot; does not exist&quot;);</span>
+			}
+<span class="fc" id="L119">		});</span>
+<span class="fc" id="L120">	}</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

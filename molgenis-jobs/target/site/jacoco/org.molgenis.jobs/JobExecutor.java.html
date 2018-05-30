@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JobExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jobs</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.jobs</a> &gt; <span class="el_source">JobExecutor.java</span></div><h1>JobExecutor.java</h1><pre class="source lang-java linenums">package org.molgenis.jobs;
+
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+import org.molgenis.data.DataService;
+import org.molgenis.data.EntityManager;
+import org.molgenis.jobs.model.JobExecution;
+import org.molgenis.jobs.model.ScheduledJob;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.security.token.RunAsUserTokenFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanWrapper;
+import org.springframework.beans.MutablePropertyValues;
+import org.springframework.beans.PropertyAccessorFactory;
+import org.springframework.mail.MailSender;
+import org.springframework.security.access.intercept.RunAsUserToken;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.stereotype.Service;
+
+import java.lang.reflect.Type;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.EntityManager.CreationMode.POPULATE;
+import static org.molgenis.jobs.model.ScheduledJobMetadata.SCHEDULED_JOB;
+
+/**
+ * Executes {@link ScheduledJob}s.
+ */
+@Service
+public class JobExecutor
+{
+<span class="fc" id="L37">	private static final Type MAP_TOKEN = new TypeToken&lt;Map&lt;String, Object&gt;&gt;()</span>
+<span class="fc" id="L38">	{</span>
+<span class="fc" id="L39">	}.getType();</span>
+<span class="fc" id="L40">	private static final Logger LOG = LoggerFactory.getLogger(JobExecutor.class);</span>
+
+	private final DataService dataService;
+	private final EntityManager entityManager;
+<span class="fc" id="L44">	private final JobExecutionTemplate jobExecutionTemplate = new JobExecutionTemplate();</span>
+	private final JobExecutionUpdater jobExecutionUpdater;
+	private final MailSender mailSender;
+	private final UserDetailsService userDetailsService;
+	private final ExecutorService executorService;
+	private final JobFactoryRegistry jobFactoryRegistry;
+	private final Gson gson;
+	private final RunAsUserTokenFactory runAsUserTokenFactory;
+
+	public JobExecutor(DataService dataService, EntityManager entityManager, UserDetailsService userDetailsService,
+			JobExecutionUpdater jobExecutionUpdater, MailSender mailSender, ExecutorService executorService,
+			JobFactoryRegistry jobFactoryRegistry, RunAsUserTokenFactory runAsUserTokenFactory)
+<span class="fc" id="L56">	{</span>
+<span class="fc" id="L57">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L58">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L59">		this.userDetailsService = requireNonNull(userDetailsService);</span>
+<span class="fc" id="L60">		this.jobExecutionUpdater = requireNonNull(jobExecutionUpdater);</span>
+<span class="fc" id="L61">		this.mailSender = requireNonNull(mailSender);</span>
+<span class="fc" id="L62">		this.executorService = requireNonNull(executorService);</span>
+<span class="fc" id="L63">		this.jobFactoryRegistry = jobFactoryRegistry;</span>
+<span class="fc" id="L64">		this.runAsUserTokenFactory = requireNonNull(runAsUserTokenFactory);</span>
+<span class="fc" id="L65">		this.gson = new Gson();</span>
+<span class="fc" id="L66">	}</span>
+
+	/**
+	 * Executes a {@link ScheduledJob} in the current thread.
+	 *
+	 * @param scheduledJobId ID of the {@link ScheduledJob} to run
+	 */
+	@RunAsSystem
+	public void executeScheduledJob(String scheduledJobId)
+	{
+<span class="fc" id="L76">		ScheduledJob scheduledJob = dataService.findOneById(SCHEDULED_JOB, scheduledJobId, ScheduledJob.class);</span>
+<span class="fc" id="L77">		JobExecution jobExecution = createJobExecution(scheduledJob);</span>
+<span class="fc" id="L78">		Job molgenisJob = saveExecutionAndCreateJob(jobExecution);</span>
+
+		try
+		{
+<span class="fc" id="L82">			runJob(jobExecution, molgenisJob);</span>
+		}
+<span class="nc" id="L84">		catch (Exception ex)</span>
+		{
+<span class="nc" id="L86">			LOG.error(&quot;Error creating job for JobExecution.&quot;, ex);</span>
+<span class="nc" id="L87">			jobExecution.setStatus(JobExecution.Status.FAILED);</span>
+<span class="nc" id="L88">			jobExecution.setProgressMessage(ex.getMessage());</span>
+<span class="nc" id="L89">			dataService.update(jobExecution.getEntityType().getId(), jobExecution);</span>
+<span class="nc" id="L90">			throw ex;</span>
+<span class="fc" id="L91">		}</span>
+<span class="fc" id="L92">	}</span>
+
+	private JobExecution createJobExecution(ScheduledJob scheduledJob)
+	{
+<span class="fc" id="L96">		JobExecution jobExecution = (JobExecution) entityManager.create(scheduledJob.getType().getJobExecutionType(),</span>
+				POPULATE);
+<span class="fc" id="L98">		writePropertyValues(jobExecution, getPropertyValues(scheduledJob.getParameters()));</span>
+<span class="fc" id="L99">		jobExecution.setFailureEmail(scheduledJob.getFailureEmail());</span>
+<span class="fc" id="L100">		jobExecution.setSuccessEmail(scheduledJob.getSuccessEmail());</span>
+<span class="fc" id="L101">		jobExecution.setUser(scheduledJob.getUser());</span>
+<span class="fc" id="L102">		jobExecution.setScheduledJobId(scheduledJob.getId());</span>
+<span class="fc" id="L103">		return jobExecution;</span>
+	}
+
+	/**
+	 * Saves execution in the current thread, then creates a Job and submits that for asynchronous execution.
+	 *
+	 * @param jobExecution the {@link JobExecution} to save and submit.
+	 */
+	@RunAsSystem
+	public CompletableFuture&lt;Void&gt; submit(JobExecution jobExecution)
+	{
+<span class="fc" id="L114">		return submit(jobExecution, executorService);</span>
+	}
+
+	/**
+	 * Saves execution in the current thread, then creates a Job and submits that for asynchronous execution to a
+	 * specific ExecutorService.
+	 *
+	 * @param jobExecution    the {@link JobExecution} to save and submit.
+	 * @param executorService the ExecutorService to run the submitted job on
+	 */
+	@RunAsSystem
+	public CompletableFuture&lt;Void&gt; submit(JobExecution jobExecution, ExecutorService executorService)
+	{
+<span class="fc" id="L127">		Job molgenisJob = saveExecutionAndCreateJob(jobExecution);</span>
+<span class="fc" id="L128">		return CompletableFuture.runAsync(() -&gt; runJob(jobExecution, molgenisJob), executorService);</span>
+	}
+
+	private Job saveExecutionAndCreateJob(JobExecution jobExecution)
+	{
+<span class="fc" id="L133">		String entityTypeId = jobExecution.getEntityType().getId();</span>
+<span class="fc" id="L134">		dataService.add(entityTypeId, jobExecution);</span>
+		try
+		{
+<span class="fc" id="L137">			JobFactory jobFactory = jobFactoryRegistry.getJobFactory(jobExecution);</span>
+<span class="fc" id="L138">			return jobFactory.createJob(jobExecution);</span>
+		}
+<span class="fc" id="L140">		catch (RuntimeException ex)</span>
+		{
+<span class="fc" id="L142">			LOG.error(&quot;Error creating job for JobExecution.&quot;, ex);</span>
+<span class="fc" id="L143">			jobExecution.setStatus(JobExecution.Status.FAILED);</span>
+<span class="fc" id="L144">			dataService.update(entityTypeId, jobExecution);</span>
+<span class="fc" id="L145">			throw ex;</span>
+		}
+	}
+
+	private void runJob(JobExecution jobExecution, Job&lt;?&gt; molgenisJob)
+	{
+<span class="fc" id="L151">		jobExecutionTemplate.call(molgenisJob, new ProgressImpl(jobExecution, jobExecutionUpdater, mailSender),</span>
+<span class="fc" id="L152">				createAuthorization(jobExecution.getUser()));</span>
+<span class="fc" id="L153">	}</span>
+
+	private RunAsUserToken createAuthorization(String username)
+	{
+<span class="fc" id="L157">		UserDetails userDetails = userDetailsService.loadUserByUsername(username);</span>
+<span class="fc" id="L158">		return runAsUserTokenFactory.create(&quot;Job Execution&quot;, userDetails, null);</span>
+	}
+
+	private void writePropertyValues(JobExecution jobExecution, MutablePropertyValues pvs)
+	{
+<span class="fc" id="L163">		BeanWrapper bw = PropertyAccessorFactory.forBeanPropertyAccess(jobExecution);</span>
+<span class="fc" id="L164">		bw.setPropertyValues(pvs, true);</span>
+<span class="fc" id="L165">	}</span>
+
+	private MutablePropertyValues getPropertyValues(String parameterJson)
+	{
+<span class="fc" id="L169">		Map&lt;String, Object&gt; parameters = gson.fromJson(parameterJson, MAP_TOKEN);</span>
+<span class="fc" id="L170">		MutablePropertyValues pvs = new MutablePropertyValues();</span>
+<span class="fc" id="L171">		pvs.addPropertyValues(parameters);</span>
+<span class="fc" id="L172">		return pvs;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

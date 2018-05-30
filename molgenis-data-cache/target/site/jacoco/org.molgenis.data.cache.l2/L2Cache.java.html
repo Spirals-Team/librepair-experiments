@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>L2Cache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-cache</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.cache.l2</a> &gt; <span class="el_source">L2Cache.java</span></div><h1>L2Cache.java</h1><pre class="source lang-java linenums">package org.molgenis.data.cache.l2;
+
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.guava.CaffeinatedGuava;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
+import org.molgenis.data.Entity;
+import org.molgenis.data.EntityKey;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.Repository;
+import org.molgenis.data.cache.utils.EntityHydration;
+import org.molgenis.data.meta.MetaDataService;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.transaction.DefaultMolgenisTransactionListener;
+import org.molgenis.data.transaction.TransactionInformation;
+import org.molgenis.data.transaction.TransactionManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import javax.annotation.Nonnull;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Maps.newConcurrentMap;
+import static java.util.Objects.requireNonNull;
+import static java.util.Optional.empty;
+import static java.util.concurrent.TimeUnit.MINUTES;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.StreamSupport.stream;
+
+/**
+ * In-memory cache of entities read from cacheable repositories.
+ */
+@Service
+public class L2Cache extends DefaultMolgenisTransactionListener
+{
+<span class="fc" id="L44">	private static final Logger LOG = LoggerFactory.getLogger(L2Cache.class);</span>
+	private static final int MAX_CACHE_SIZE_PER_ENTITY = 1000;
+	/**
+	 * maps entity id to the loading cache with Object key and Optional dehydrated entity value
+	 */
+	private final ConcurrentMap&lt;String, LoadingCache&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt;&gt; caches;
+	private final EntityHydration entityHydration;
+	private final TransactionInformation transactionInformation;
+
+	public L2Cache(TransactionManager transactionManager, EntityHydration entityHydration,
+			TransactionInformation transactionInformation)
+<span class="fc" id="L55">	{</span>
+<span class="fc" id="L56">		this.entityHydration = requireNonNull(entityHydration);</span>
+<span class="fc" id="L57">		this.transactionInformation = requireNonNull(transactionInformation);</span>
+<span class="fc" id="L58">		caches = newConcurrentMap();</span>
+<span class="fc" id="L59">		requireNonNull(transactionManager).addTransactionListener(this);</span>
+<span class="fc" id="L60">	}</span>
+
+	@Override
+	public void afterCommitTransaction(String transactionId)
+	{
+		//TODO: trace logging
+<span class="fc" id="L66">		transactionInformation.getEntirelyDirtyRepositories().forEach(caches::remove);</span>
+<span class="fc" id="L67">		transactionInformation.getDirtyEntities().forEach(this::evict);</span>
+<span class="fc" id="L68">	}</span>
+
+	private void evict(EntityKey entityKey)
+	{
+<span class="fc" id="L72">		LoadingCache&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt; cache = caches.get(entityKey.getEntityTypeId());</span>
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">		if (cache != null)</span>
+		{
+<span class="fc" id="L75">			cache.invalidate(entityKey.getId());</span>
+		}
+<span class="fc" id="L77">	}</span>
+
+	/**
+	 * Retrieves an entity from the cache or the underlying repository.
+	 *
+	 * @param repository the underlying repository
+	 * @param id         the ID of the entity to retrieve
+	 * @return the retrieved Entity, or null if the entity is not present.
+	 * @throws com.google.common.util.concurrent.UncheckedExecutionException if the repository throws an error when
+	 *                                                                       loading the entity
+	 */
+	public Entity get(Repository&lt;Entity&gt; repository, Object id)
+	{
+<span class="fc" id="L90">		LoadingCache&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt; cache = getEntityCache(repository);</span>
+<span class="fc" id="L91">		EntityType entityType = repository.getEntityType();</span>
+<span class="fc" id="L92">		return cache.getUnchecked(id).map(e -&gt; entityHydration.hydrate(e, entityType)).orElse(null);</span>
+	}
+
+	/**
+	 * Retrieves a list of entities from the cache. If the cache doesn't yet exist, will create the cache.
+	 *
+	 * @param repository the underlying repository, used to create the cache loader or to retrieve the existing cache
+	 * @param ids        {@link Iterable} of the ids of the entities to retrieve
+	 * @return List containing the retrieved entities, missing values are excluded
+	 * @throws RuntimeException if the cache failed to load the entities
+	 */
+	public List&lt;Entity&gt; getBatch(Repository&lt;Entity&gt; repository, Iterable&lt;Object&gt; ids)
+	{
+		try
+		{
+<span class="fc" id="L107">			return getEntityCache(repository).getAll(ids)</span>
+<span class="fc" id="L108">											 .values()</span>
+<span class="fc" id="L109">											 .stream()</span>
+<span class="fc" id="L110">											 .filter(Optional::isPresent)</span>
+<span class="fc" id="L111">											 .map(Optional::get)</span>
+<span class="fc" id="L112">											 .map(e -&gt; entityHydration.hydrate(e, repository.getEntityType()))</span>
+<span class="fc" id="L113">											 .collect(Collectors.toList());</span>
+		}
+<span class="nc" id="L115">		catch (ExecutionException exception)</span>
+		{
+			// rethrow unchecked
+<span class="nc bnc" id="L118" title="All 4 branches missed.">			if (exception.getCause() != null &amp;&amp; exception.getCause() instanceof RuntimeException)</span>
+			{
+<span class="nc" id="L120">				throw (RuntimeException) exception.getCause();</span>
+			}
+<span class="nc" id="L122">			throw new MolgenisDataException(exception);</span>
+		}
+	}
+
+	/**
+	 * Logs cumulative cache statistics for all known caches.
+	 */
+	@Scheduled(fixedRate = 60000)
+	public void logStatistics()
+	{
+		//TODO: do we want to log diff with last log instead?
+<span class="nc bnc" id="L133" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L135">			LOG.debug(&quot;Cache stats:&quot;);</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">			for (Map.Entry&lt;String, LoadingCache&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt;&gt; cacheEntry : caches.entrySet())</span>
+			{
+<span class="nc" id="L138">				LOG.debug(&quot;{}:{}&quot;, cacheEntry.getKey(), cacheEntry.getValue().stats());</span>
+<span class="nc" id="L139">			}</span>
+		}
+<span class="nc" id="L141">	}</span>
+
+	/**
+	 * Gets the existing entity cache for a {@link Repository} or creates a new one if no cache exists yet.
+	 *
+	 * @param repository the Repository used to create a new cache if none found, otherwise only the id of the
+	 *                   repository is used to look up the existing cache
+	 * @return the LoadingCache for the repository
+	 */
+	private LoadingCache&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt; getEntityCache(Repository&lt;Entity&gt; repository)
+	{
+<span class="fc" id="L152">		String id = repository.getEntityType().getId();</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">		if (!caches.containsKey(id))</span>
+		{
+<span class="fc" id="L155">			caches.putIfAbsent(id, createEntityCache(repository));</span>
+		}
+<span class="fc" id="L157">		return caches.get(id);</span>
+	}
+
+	/**
+	 * Creates a new Entity cache
+	 *
+	 * @param repository the {@link Repository} to load the entities from
+	 * @return newly created LoadingCache
+	 */
+	private LoadingCache&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt; createEntityCache(Repository&lt;Entity&gt; repository)
+	{
+<span class="fc" id="L168">		Caffeine&lt;Object, Object&gt; cacheBuilder = Caffeine.newBuilder().recordStats().expireAfterAccess(10, MINUTES);</span>
+<span class="pc bpc" id="L169" title="1 of 2 branches missed.">		if (!MetaDataService.isMetaEntityType(repository.getEntityType()))</span>
+		{
+<span class="fc" id="L171">			cacheBuilder.maximumSize(MAX_CACHE_SIZE_PER_ENTITY);</span>
+		}
+<span class="fc" id="L173">		return CaffeinatedGuava.build(cacheBuilder, createCacheLoader(repository));</span>
+	}
+
+	/**
+	 * Creates a CacheLoader that loads entities from the repository and dehydrates them.
+	 *
+	 * @param repository the Repository to load the entities from
+	 * @return the {@link CacheLoader}
+	 */
+	private CacheLoader&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt; createCacheLoader(final Repository&lt;Entity&gt; repository)
+	{
+<span class="fc" id="L184">		return new CacheLoader&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt;()</span>
+<span class="fc" id="L185">		{</span>
+			/**
+			 * Loads a single entity from the repository.
+			 * @param id ID value of the entity to retrieve
+			 * @return dehydrated entity or empty if the entity was not present in the repository
+			 */
+			@Override
+			public Optional&lt;Map&lt;String, Object&gt;&gt; load(@Nonnull Object id)
+			{
+<span class="fc" id="L194">				return Optional.ofNullable(repository.findOneById(id)).map(entityHydration::dehydrate);</span>
+			}
+
+			/**
+			 * Loads multiple entities from the repository.
+			 * @param ids Iterable of String representations of the ID values
+			 * @return Map mapping id to loaded entity, or to empty optional if the entity was not present in the repository
+			 */
+			@Override
+			public Map&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt; loadAll(Iterable&lt;?&gt; ids)
+			{
+<span class="fc" id="L205">				Stream&lt;Object&gt; typedIds = stream(ids.spliterator(), false).map(id -&gt; id);</span>
+<span class="fc" id="L206">				Map&lt;Object, Optional&lt;Map&lt;String, Object&gt;&gt;&gt; result = repository.findAll(typedIds)</span>
+<span class="fc" id="L207">																			  .collect(toMap(Entity::getIdValue,</span>
+																					  this::dehydrateEntity));
+<span class="fc bfc" id="L209" title="All 2 branches covered.">				for (Object key : ids)</span>
+				{
+					// cache the absence of these entities in the backend as empty values
+<span class="fc" id="L212">					result.putIfAbsent(key, empty());</span>
+<span class="fc" id="L213">				}</span>
+<span class="fc" id="L214">				return result;</span>
+			}
+
+			private Optional&lt;Map&lt;String, Object&gt;&gt; dehydrateEntity(Entity entity)
+			{
+<span class="fc" id="L219">				return Optional.of(entityHydration.dehydrate(entity));</span>
+			}
+		};
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

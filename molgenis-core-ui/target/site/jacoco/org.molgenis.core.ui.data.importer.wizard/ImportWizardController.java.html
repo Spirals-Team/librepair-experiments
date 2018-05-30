@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ImportWizardController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">core-ui</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.core.ui.data.importer.wizard</a> &gt; <span class="el_source">ImportWizardController.java</span></div><h1>ImportWizardController.java</h1><pre class="source lang-java linenums">package org.molgenis.core.ui.data.importer.wizard;
+
+import org.molgenis.core.ui.wizard.AbstractWizardController;
+import org.molgenis.core.ui.wizard.Wizard;
+import org.molgenis.data.DataService;
+import org.molgenis.data.DatabaseAction;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.RepositoryCollection;
+import org.molgenis.data.file.FileRepositoryCollectionFactory;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.data.file.util.FileExtensionUtils;
+import org.molgenis.data.importer.*;
+import org.molgenis.data.rest.util.Href;
+import org.molgenis.security.core.utils.SecurityUtils;
+import org.molgenis.web.PluginController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.multipart.MultipartFile;
+
+import javax.servlet.http.HttpServletRequest;
+import java.io.File;
+import java.io.IOException;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.text.MessageFormat;
+import java.util.Arrays;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import static org.apache.commons.io.FilenameUtils.getBaseName;
+import static org.apache.commons.io.FilenameUtils.getExtension;
+import static org.molgenis.core.ui.data.importer.wizard.ImportWizardController.URI;
+import static org.molgenis.data.meta.DefaultPackage.PACKAGE_DEFAULT;
+import static org.springframework.http.MediaType.TEXT_PLAIN;
+
+@Controller
+@RequestMapping(URI)
+public class ImportWizardController extends AbstractWizardController
+{
+	public static final String ID = &quot;importwizard&quot;;
+	public static final String URI = PluginController.PLUGIN_URI_PREFIX + ID;
+
+	private final UploadWizardPage uploadWizardPage;
+	private final OptionsWizardPage optionsWizardPage;
+	private final ValidationResultWizardPage validationResultWizardPage;
+	private final ImportResultsWizardPage importResultsWizardPage;
+	private final PackageWizardPage packageWizardPage;
+
+	private ImportServiceFactory importServiceFactory;
+	private FileStore fileStore;
+	private FileRepositoryCollectionFactory fileRepositoryCollectionFactory;
+	private ImportRunService importRunService;
+	private ExecutorService asyncImportJobs;
+	private DataService dataService;
+<span class="fc" id="L65">	private static final Logger LOG = LoggerFactory.getLogger(ImportWizardController.class);</span>
+
+	@Autowired
+	public ImportWizardController(UploadWizardPage uploadWizardPage, OptionsWizardPage optionsWizardPage,
+			PackageWizardPage packageWizardPage, ValidationResultWizardPage validationResultWizardPage,
+			ImportResultsWizardPage importResultsWizardPage, DataService dataService,
+			ImportServiceFactory importServiceFactory, FileStore fileStore,
+			FileRepositoryCollectionFactory fileRepositoryCollectionFactory, ImportRunService importRunService)
+	{
+<span class="fc" id="L74">		super(URI, &quot;importWizard&quot;);</span>
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">		if (uploadWizardPage == null) throw new IllegalArgumentException(&quot;UploadWizardPage is null&quot;);</span>
+<span class="pc bpc" id="L76" title="1 of 2 branches missed.">		if (optionsWizardPage == null) throw new IllegalArgumentException(&quot;OptionsWizardPage is null&quot;);</span>
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">		if (validationResultWizardPage == null)</span>
+		{
+<span class="nc" id="L79">			throw new IllegalArgumentException(&quot;ValidationResultWizardPage is null&quot;);</span>
+		}
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">		if (importResultsWizardPage == null) throw new IllegalArgumentException(&quot;ImportResultsWizardPage is null&quot;);</span>
+<span class="fc" id="L82">		this.uploadWizardPage = uploadWizardPage;</span>
+<span class="fc" id="L83">		this.optionsWizardPage = optionsWizardPage;</span>
+<span class="fc" id="L84">		this.validationResultWizardPage = validationResultWizardPage;</span>
+<span class="fc" id="L85">		this.importResultsWizardPage = importResultsWizardPage;</span>
+<span class="fc" id="L86">		this.packageWizardPage = packageWizardPage;</span>
+<span class="fc" id="L87">		this.dataService = dataService;</span>
+<span class="fc" id="L88">		this.importServiceFactory = importServiceFactory;</span>
+<span class="fc" id="L89">		this.fileStore = fileStore;</span>
+<span class="fc" id="L90">		this.fileRepositoryCollectionFactory = fileRepositoryCollectionFactory;</span>
+<span class="fc" id="L91">		this.importRunService = importRunService;</span>
+<span class="fc" id="L92">		this.dataService = dataService;</span>
+<span class="fc" id="L93">		this.asyncImportJobs = Executors.newSingleThreadExecutor();</span>
+<span class="fc" id="L94">	}</span>
+
+	public ImportWizardController(UploadWizardPage uploadWizardPage, OptionsWizardPage optionsWizardPage,
+			PackageWizardPage packageWizardPage, ValidationResultWizardPage validationResultWizardPage,
+			ImportResultsWizardPage importResultsWizardPage, DataService dataService,
+			ImportServiceFactory importServiceFactory, FileStore fileStore,
+			FileRepositoryCollectionFactory fileRepositoryCollectionFactory, ImportRunService importRunService,
+			ExecutorService executorService)
+	{
+<span class="fc" id="L103">		super(URI, &quot;importWizard&quot;);</span>
+<span class="pc bpc" id="L104" title="1 of 2 branches missed.">		if (uploadWizardPage == null) throw new IllegalArgumentException(&quot;UploadWizardPage is null&quot;);</span>
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">		if (optionsWizardPage == null) throw new IllegalArgumentException(&quot;OptionsWizardPage is null&quot;);</span>
+<span class="pc bpc" id="L106" title="1 of 2 branches missed.">		if (validationResultWizardPage == null)</span>
+<span class="nc" id="L107">			throw new IllegalArgumentException(&quot;ValidationResultWizardPage is null&quot;);</span>
+<span class="pc bpc" id="L108" title="1 of 2 branches missed.">		if (importResultsWizardPage == null) throw new IllegalArgumentException(&quot;ImportResultsWizardPage is null&quot;);</span>
+<span class="fc" id="L109">		this.uploadWizardPage = uploadWizardPage;</span>
+<span class="fc" id="L110">		this.optionsWizardPage = optionsWizardPage;</span>
+<span class="fc" id="L111">		this.validationResultWizardPage = validationResultWizardPage;</span>
+<span class="fc" id="L112">		this.importResultsWizardPage = importResultsWizardPage;</span>
+<span class="fc" id="L113">		this.packageWizardPage = packageWizardPage;</span>
+<span class="fc" id="L114">		this.dataService = dataService;</span>
+<span class="fc" id="L115">		this.importServiceFactory = importServiceFactory;</span>
+<span class="fc" id="L116">		this.fileStore = fileStore;</span>
+<span class="fc" id="L117">		this.fileRepositoryCollectionFactory = fileRepositoryCollectionFactory;</span>
+<span class="fc" id="L118">		this.importRunService = importRunService;</span>
+<span class="fc" id="L119">		this.dataService = dataService;</span>
+<span class="fc" id="L120">		this.asyncImportJobs = executorService;</span>
+<span class="fc" id="L121">	}</span>
+
+	@Override
+	protected Wizard createWizard()
+	{
+<span class="fc" id="L126">		Wizard wizard = new ImportWizard();</span>
+<span class="fc" id="L127">		wizard.addPage(uploadWizardPage);</span>
+<span class="fc" id="L128">		wizard.addPage(optionsWizardPage);</span>
+<span class="fc" id="L129">		wizard.addPage(packageWizardPage);</span>
+<span class="fc" id="L130">		wizard.addPage(validationResultWizardPage);</span>
+<span class="fc" id="L131">		wizard.addPage(importResultsWizardPage);</span>
+
+<span class="fc" id="L133">		return wizard;</span>
+	}
+
+	/**
+	 * Imports entities present in the submitted file
+	 *
+	 * @param url URL from which a file is downloaded
+	 */
+	@PostMapping(&quot;/importByUrl&quot;)
+	@ResponseBody
+	public ResponseEntity&lt;String&gt; importFileByUrl(HttpServletRequest request, @RequestParam(&quot;url&quot;) String url,
+			@RequestParam(value = &quot;entityTypeId&quot;, required = false) String entityTypeId,
+			@RequestParam(value = &quot;packageId&quot;, required = false) String packageId,
+			@RequestParam(value = &quot;action&quot;, required = false) String action,
+			@RequestParam(value = &quot;notify&quot;, required = false) Boolean notify) throws IOException, URISyntaxException
+	{
+		ImportRun importRun;
+		try
+		{
+<span class="nc" id="L152">			File tmpFile = fileLocationToStoredRenamedFile(url, entityTypeId);</span>
+<span class="nc bnc" id="L153" title="All 4 branches missed.">			if (packageId != null &amp;&amp; dataService.getMeta().getPackage(packageId) == null)</span>
+			{
+<span class="nc" id="L155">				return ResponseEntity.badRequest()</span>
+<span class="nc" id="L156">									 .contentType(TEXT_PLAIN)</span>
+<span class="nc" id="L157">									 .body(MessageFormat.format(&quot;Package [{0}] does not exist.&quot;, packageId));</span>
+			}
+<span class="nc bnc" id="L159" title="All 2 branches missed.">			if (packageId == null) packageId = PACKAGE_DEFAULT;</span>
+<span class="nc" id="L160">			importRun = importFile(request, tmpFile, action, notify, packageId);</span>
+		}
+<span class="nc" id="L162">		catch (Exception e)</span>
+		{
+<span class="nc" id="L164">			LOG.error(e.getMessage());</span>
+<span class="nc" id="L165">			return ResponseEntity.badRequest().contentType(TEXT_PLAIN).body(e.getMessage());</span>
+<span class="nc" id="L166">		}</span>
+<span class="nc" id="L167">		return createCreatedResponseEntity(importRun);</span>
+	}
+
+	/**
+	 * Imports entities present in the submitted file
+	 *
+	 * @param file         File containing entities. Can be VCF, VCF.gz, or EMX
+	 * @param entityTypeId Only for VCF and VCF.gz. If set, uses this ID for the table name. Is ignored when uploading EMX
+	 * @param packageId    Only for VCF and VCF.gz. If set, places the VCF under the provided package. Is ignored when uploading EMX. If not set, uses the default package 'base'. Throws an error when the supplied package does not exist
+	 * @param action       Specifies the import method. Supported: ADD, ADD_UPDATE
+	 * @param notify       Should admin be notified when the import fails?
+	 * @return ResponseEntity containing the API URL with the current import status
+	 */
+	@PostMapping(&quot;/importFile&quot;)
+	public ResponseEntity&lt;String&gt; importFile(HttpServletRequest request,
+			@RequestParam(value = &quot;file&quot;) MultipartFile file,
+			@RequestParam(value = &quot;entityTypeId&quot;, required = false) String entityTypeId,
+			@RequestParam(value = &quot;packageId&quot;, required = false) String packageId,
+			@RequestParam(value = &quot;action&quot;, required = false) String action,
+			@RequestParam(value = &quot;notify&quot;, required = false) Boolean notify) throws IOException, URISyntaxException
+	{
+		ImportRun importRun;
+		String filename;
+		try
+		{
+<span class="fc" id="L192">			filename = getFilename(file.getOriginalFilename(), entityTypeId);</span>
+<span class="fc" id="L193">			File tmpFile = fileStore.store(file.getInputStream(), filename);</span>
+
+<span class="pc bpc" id="L195" title="3 of 4 branches missed.">			if (packageId != null &amp;&amp; dataService.getMeta().getPackage(packageId) == null)</span>
+			{
+<span class="nc" id="L197">				return ResponseEntity.badRequest()</span>
+<span class="nc" id="L198">									 .contentType(TEXT_PLAIN)</span>
+<span class="nc" id="L199">									 .body(MessageFormat.format(&quot;Package [{0}] does not exist.&quot;, packageId));</span>
+			}
+<span class="pc bpc" id="L201" title="1 of 2 branches missed.">			if (packageId == null) packageId = PACKAGE_DEFAULT;</span>
+
+<span class="fc" id="L203">			importRun = importFile(request, tmpFile, action, notify, packageId);</span>
+		}
+<span class="fc" id="L205">		catch (Exception e)</span>
+		{
+<span class="fc" id="L207">			LOG.error(e.getMessage());</span>
+<span class="fc" id="L208">			return ResponseEntity.badRequest().contentType(TEXT_PLAIN).body(e.getMessage());</span>
+<span class="fc" id="L209">		}</span>
+<span class="fc" id="L210">		return createCreatedResponseEntity(importRun);</span>
+	}
+
+	private ResponseEntity&lt;String&gt; createCreatedResponseEntity(ImportRun importRun) throws URISyntaxException
+	{
+<span class="fc" id="L215">		String href = Href.concatEntityHref(&quot;/api/v2&quot;, importRun.getEntityType().getId(), importRun.getIdValue());</span>
+<span class="fc" id="L216">		return ResponseEntity.created(new java.net.URI(href)).contentType(TEXT_PLAIN).body(href);</span>
+	}
+
+	private File fileLocationToStoredRenamedFile(String fileLocation, String entityTypeId) throws IOException
+	{
+<span class="nc" id="L221">		Path path = Paths.get(fileLocation);</span>
+<span class="nc" id="L222">		String filename = path.getFileName().toString();</span>
+<span class="nc" id="L223">		URL url = new URL(fileLocation);</span>
+
+<span class="nc" id="L225">		return fileStore.store(url.openStream(), getFilename(filename, entityTypeId));</span>
+	}
+
+	private String getFilename(String originalFileName, String entityTypeId)
+	{
+		String filename;
+<span class="fc" id="L231">		String extension = FileExtensionUtils.findExtensionFromPossibilities(originalFileName,</span>
+<span class="fc" id="L232">				importServiceFactory.getSupportedFileExtensions());</span>
+<span class="fc bfc" id="L233" title="All 2 branches covered.">		if (entityTypeId == null)</span>
+		{
+<span class="fc" id="L235">			filename = originalFileName;</span>
+		}
+		else
+		{
+<span class="fc" id="L239">			filename = entityTypeId + &quot;.&quot; + extension;</span>
+		}
+<span class="fc" id="L241">		return filename;</span>
+	}
+
+	private ImportRun importFile(HttpServletRequest request, File file, String action, Boolean notify, String packageId)
+	{
+		// no action specified? default is ADD just like the importerPlugin
+		ImportRun importRun;
+<span class="fc" id="L248">		String fileExtension = getExtension(file.getName());</span>
+<span class="fc" id="L249">		DatabaseAction databaseAction = getDatabaseAction(file, action);</span>
+<span class="pc bpc" id="L250" title="1 of 4 branches missed.">		if (fileExtension.contains(&quot;vcf&quot;) &amp;&amp; dataService.hasRepository(getBaseName(file.getName())))</span>
+		{
+<span class="fc" id="L252">			throw new MolgenisDataException(</span>
+<span class="fc" id="L253">					&quot;A repository with name &quot; + getBaseName(file.getName()) + &quot; already exists&quot;);</span>
+		}
+<span class="fc" id="L255">		ImportService importService = importServiceFactory.getImportService(file.getName());</span>
+<span class="fc" id="L256">		RepositoryCollection repositoryCollection = fileRepositoryCollectionFactory.createFileRepositoryCollection(</span>
+				file);
+
+<span class="fc" id="L259">		importRun = importRunService.addImportRun(SecurityUtils.getCurrentUsername(), Boolean.TRUE.equals(notify));</span>
+<span class="fc" id="L260">		asyncImportJobs.execute(</span>
+<span class="fc" id="L261">				new ImportJob(importService, SecurityContextHolder.getContext(), repositoryCollection, databaseAction,</span>
+<span class="fc" id="L262">						importRun.getId(), importRunService, request.getSession(), packageId));</span>
+
+<span class="fc" id="L264">		return importRun;</span>
+	}
+
+	private DatabaseAction getDatabaseAction(File file, String action)
+	{
+<span class="fc" id="L269">		DatabaseAction databaseAction = DatabaseAction.ADD;</span>
+<span class="pc bpc" id="L270" title="1 of 2 branches missed.">		if (action != null)</span>
+		{
+			try
+			{
+<span class="fc" id="L274">				databaseAction = DatabaseAction.valueOf(action.toUpperCase());</span>
+			}
+<span class="fc" id="L276">			catch (IllegalArgumentException e)</span>
+			{
+<span class="fc" id="L278">				throw new IllegalArgumentException(</span>
+<span class="fc" id="L279">						&quot;Invalid action:[&quot; + action.toUpperCase() + &quot;] valid values: &quot; + (Arrays.toString(</span>
+<span class="fc" id="L280">								DatabaseAction.values())));</span>
+<span class="fc" id="L281">			}</span>
+		}
+<span class="fc" id="L283">		return databaseAction;</span>
+	}
+
+	/**
+	 * Added for testability
+	 */
+	void setExecutorService(ExecutorService executorService)
+	{
+<span class="fc" id="L291">		this.asyncImportJobs = executorService;</span>
+<span class="fc" id="L292">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

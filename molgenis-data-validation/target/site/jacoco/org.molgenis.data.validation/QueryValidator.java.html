@@ -1,0 +1,503 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QueryValidator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-validation</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.validation</a> &gt; <span class="el_source">QueryValidator.java</span></div><h1>QueryValidator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.validation;
+
+import org.molgenis.data.*;
+import org.molgenis.data.file.model.FileMeta;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.util.MolgenisDateFormat;
+import org.molgenis.util.UnexpectedEnumException;
+import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.List;
+
+import static java.lang.Boolean.FALSE;
+import static java.lang.Boolean.TRUE;
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.util.MolgenisDateFormat.*;
+
+/**
+ * Validates {@link Query queries} based on the {@link EntityType entity type} that will be queried. Converts query
+ * values to the correct class type if possible.
+ *
+ * @see &lt;a href=&quot;https://github.com/molgenis/molgenis/issues/5248&quot;&gt;https://github.com/molgenis/molgenis/issues/5248&lt;/a&gt;
+ */
+@Component
+public class QueryValidator
+{
+	private final EntityManager entityManager;
+
+	public QueryValidator(EntityManager entityManager)
+<span class="fc" id="L37">	{</span>
+<span class="fc" id="L38">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L39">	}</span>
+
+	/**
+	 * Validates query based on the given entity type, converts query values to the expected type if necessary.
+	 *
+	 * @param query      query
+	 * @param entityType entity type
+	 * @throws MolgenisValidationException if query is invalid
+	 */
+	public void validate(Query&lt;? extends Entity&gt; query, EntityType entityType)
+	{
+<span class="fc" id="L50">		query.getRules().forEach(queryRule -&gt; validateQueryRule(queryRule, entityType));</span>
+<span class="fc" id="L51">	}</span>
+
+	private void validateQueryRule(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L55">		QueryRule.Operator operator = queryRule.getOperator();</span>
+<span class="pc bpc" id="L56" title="4 of 6 branches missed.">		switch (operator)</span>
+		{
+			case AND:
+			case NOT:
+			case OR:
+<span class="nc" id="L61">				break;</span>
+			case EQUALS:
+			case FUZZY_MATCH:
+			case FUZZY_MATCH_NGRAM:
+			case GREATER:
+			case GREATER_EQUAL:
+			case LESS:
+			case LESS_EQUAL:
+			case LIKE:
+			{
+<span class="fc" id="L71">				Attribute attr = getQueryRuleAttribute(queryRule, entityType);</span>
+<span class="fc" id="L72">				Object value = toQueryRuleValue(queryRule.getValue(), attr);</span>
+<span class="fc" id="L73">				queryRule.setValue(value);</span>
+<span class="fc" id="L74">				break;</span>
+			}
+			case SEARCH:
+			{
+<span class="nc" id="L78">				Object queryRuleValue = queryRule.getValue();</span>
+<span class="nc bnc" id="L79" title="All 4 branches missed.">				if (queryRuleValue != null &amp;&amp; !(queryRuleValue instanceof String))</span>
+				{
+					// fix value type
+<span class="nc" id="L82">					queryRule.setValue(queryRuleValue.toString());</span>
+				}
+				break;
+			}
+			case IN:
+			case RANGE:
+			{
+<span class="fc" id="L89">				Attribute attr = getQueryRuleAttribute(queryRule, entityType);</span>
+<span class="fc" id="L90">				Object queryRuleValue = queryRule.getValue();</span>
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">				if (queryRuleValue != null)</span>
+				{
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">					if (!(queryRuleValue instanceof Iterable&lt;?&gt;))</span>
+					{
+<span class="nc" id="L95">						throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="nc" id="L96">								format(&quot;Query rule with operator [%s] value is of type [%s] instead of [Iterable]&quot;,</span>
+<span class="nc" id="L97">										operator, queryRuleValue.getClass().getSimpleName())));</span>
+					}
+
+					// fix value types
+<span class="fc" id="L101">					Iterable&lt;?&gt; queryRuleValues = (Iterable&lt;?&gt;) queryRuleValue;</span>
+<span class="fc" id="L102">					List&lt;Object&gt; values = stream(queryRuleValues.spliterator(), false).map(</span>
+<span class="fc" id="L103">							value -&gt; toQueryRuleValue(value, attr)).collect(toList());</span>
+<span class="fc" id="L104">					queryRule.setValue(values);</span>
+<span class="fc" id="L105">				}</span>
+				break;
+			}
+			case DIS_MAX:
+			case NESTED:
+			case SHOULD:
+<span class="nc" id="L111">				queryRule.getNestedRules().forEach(nestedQueryRule -&gt; validateQueryRule(nestedQueryRule, entityType));</span>
+<span class="nc" id="L112">				break;</span>
+			default:
+<span class="nc" id="L114">				throw new UnexpectedEnumException(operator);</span>
+		}
+<span class="fc" id="L116">	}</span>
+
+	private Attribute getQueryRuleAttribute(QueryRule queryRule, EntityType entityType)
+	{
+		try
+		{
+<span class="fc" id="L122">			return QueryUtils.getQueryRuleAttribute(queryRule, entityType);</span>
+		}
+<span class="fc" id="L124">		catch (UnknownAttributeException e)</span>
+		{
+<span class="fc" id="L126">			throw new MolgenisValidationException(new ConstraintViolation(e.getMessage()));</span>
+		}
+	}
+
+	private Object toQueryRuleValue(Object queryRuleValue, Attribute attr)
+	{
+		Object value;
+<span class="fc" id="L133">		AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L134" title="1 of 12 branches missed.">		switch (attrType)</span>
+		{
+			case BOOL:
+<span class="fc" id="L137">				value = convertBool(attr, queryRuleValue);</span>
+<span class="fc" id="L138">				break;</span>
+			case EMAIL:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L145">				value = convertString(attr, queryRuleValue);</span>
+<span class="fc" id="L146">				break;</span>
+			case ENUM:
+<span class="fc" id="L148">				value = convertEnum(attr, queryRuleValue);</span>
+<span class="fc" id="L149">				break;</span>
+			case CATEGORICAL:
+			case XREF:
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="fc" id="L155">				value = convertRef(attr, queryRuleValue);</span>
+<span class="fc" id="L156">				break;</span>
+			case DATE:
+<span class="fc" id="L158">				value = convertDate(attr, queryRuleValue);</span>
+<span class="fc" id="L159">				break;</span>
+			case DATE_TIME:
+<span class="fc" id="L161">				value = convertDateTime(attr, queryRuleValue);</span>
+<span class="fc" id="L162">				break;</span>
+			case DECIMAL:
+<span class="fc" id="L164">				value = convertDecimal(attr, queryRuleValue);</span>
+<span class="fc" id="L165">				break;</span>
+			case FILE:
+<span class="fc" id="L167">				value = convertFile(attr, queryRuleValue);</span>
+<span class="fc" id="L168">				break;</span>
+			case INT:
+<span class="fc" id="L170">				value = convertInt(attr, queryRuleValue);</span>
+<span class="fc" id="L171">				break;</span>
+			case LONG:
+<span class="fc" id="L173">				value = convertLong(attr, queryRuleValue);</span>
+<span class="fc" id="L174">				break;</span>
+			case COMPOUND:
+<span class="fc" id="L176">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L177">						format(&quot;Attribute [%s] type [%s] is not allowed&quot;, attr.getName(), attrType.toString())));</span>
+			default:
+<span class="nc" id="L179">				throw new UnexpectedEnumException(attrType);</span>
+		}
+<span class="fc" id="L181">		return value;</span>
+	}
+
+	private static String convertEnum(Attribute attr, Object value)
+	{
+<span class="fc bfc" id="L186" title="All 2 branches covered.">		if (value == null)</span>
+		{
+<span class="fc" id="L188">			return null;</span>
+		}
+
+		String stringValue;
+<span class="fc bfc" id="L192" title="All 2 branches covered.">		if (value instanceof String)</span>
+		{
+<span class="fc" id="L194">			stringValue = (String) value;</span>
+		}
+<span class="fc bfc" id="L196" title="All 2 branches covered.">		else if (value instanceof Enum)</span>
+		{
+<span class="fc" id="L198">			stringValue = value.toString();</span>
+		}
+		else
+		{
+<span class="fc" id="L202">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L203">					format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="fc" id="L204">							value.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="fc" id="L205">							Enum.class.getSimpleName())));</span>
+		}
+
+<span class="fc bfc" id="L208" title="All 2 branches covered.">		if (!attr.getEnumOptions().contains(stringValue))</span>
+		{
+<span class="fc" id="L210">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L211">					format(&quot;Attribute [%s] value [%s] is not a valid enum option&quot;, attr.getName(), stringValue)));</span>
+		}
+
+<span class="fc" id="L214">		return stringValue;</span>
+	}
+
+	private static Long convertLong(Attribute attr, Object value)
+	{
+<span class="fc bfc" id="L219" title="All 2 branches covered.">		if (value instanceof Long)</span>
+		{
+<span class="fc" id="L221">			return (Long) value;</span>
+		}
+
+<span class="fc bfc" id="L224" title="All 2 branches covered.">		if (value == null)</span>
+		{
+<span class="fc" id="L226">			return null;</span>
+		}
+
+		// try to convert value
+		Long longValue;
+<span class="fc bfc" id="L231" title="All 2 branches covered.">		if (value instanceof String)</span>
+		{
+			try
+			{
+<span class="fc" id="L235">				longValue = Long.valueOf((String) value);</span>
+			}
+<span class="fc" id="L237">			catch (NumberFormatException e)</span>
+			{
+<span class="fc" id="L239">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L240">						format(&quot;Attribute [%s] value [%s] cannot be converter to type [%s]&quot;, attr.getName(), value,</span>
+<span class="fc" id="L241">								Long.class.getSimpleName())));</span>
+<span class="fc" id="L242">			}</span>
+		}
+<span class="fc bfc" id="L244" title="All 2 branches covered.">		else if (value instanceof Number)</span>
+		{
+<span class="fc" id="L246">			longValue = ((Number) value).longValue();</span>
+		}
+		else
+		{
+<span class="fc" id="L250">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L251">					format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="fc" id="L252">							value.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="fc" id="L253">							Number.class.getSimpleName())));</span>
+		}
+<span class="fc" id="L255">		return longValue;</span>
+	}
+
+	private static Integer convertInt(Attribute attr, Object value)
+	{
+<span class="fc bfc" id="L260" title="All 2 branches covered.">		if (value instanceof Integer)</span>
+		{
+<span class="fc" id="L262">			return (Integer) value;</span>
+		}
+
+<span class="fc bfc" id="L265" title="All 2 branches covered.">		if (value == null)</span>
+		{
+<span class="fc" id="L267">			return null;</span>
+		}
+
+		// try to convert value
+		Integer integerValue;
+<span class="fc bfc" id="L272" title="All 2 branches covered.">		if (value instanceof String)</span>
+		{
+			try
+			{
+<span class="fc" id="L276">				integerValue = Integer.valueOf((String) value);</span>
+			}
+<span class="fc" id="L278">			catch (NumberFormatException e)</span>
+			{
+<span class="fc" id="L280">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L281">						format(&quot;Attribute [%s] value [%s] cannot be converter to type [%s]&quot;, attr.getName(), value,</span>
+<span class="fc" id="L282">								Integer.class.getSimpleName())));</span>
+<span class="fc" id="L283">			}</span>
+		}
+<span class="fc bfc" id="L285" title="All 2 branches covered.">		else if (value instanceof Number)</span>
+		{
+<span class="fc" id="L287">			integerValue = ((Number) value).intValue();</span>
+		}
+		else
+		{
+<span class="fc" id="L291">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L292">					format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="fc" id="L293">							value.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="fc" id="L294">							Number.class.getSimpleName())));</span>
+		}
+<span class="fc" id="L296">		return integerValue;</span>
+	}
+
+	private FileMeta convertFile(Attribute attr, Object paramValue)
+	{
+<span class="fc" id="L301">		Entity entity = convertRef(attr, paramValue);</span>
+<span class="pc bpc" id="L302" title="1 of 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="fc" id="L304">			return null;</span>
+		}
+<span class="nc bnc" id="L306" title="All 2 branches missed.">		if (!(entity instanceof FileMeta))</span>
+		{
+<span class="nc" id="L308">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="nc" id="L309">					format(&quot;Attribute [%s] value is of type [%s] instead of [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L310">							entity.getClass().getSimpleName(), FileMeta.class.getSimpleName())));</span>
+		}
+<span class="nc" id="L312">		return (FileMeta) entity;</span>
+	}
+
+	private static Double convertDecimal(Attribute attr, Object value)
+	{
+<span class="fc bfc" id="L317" title="All 2 branches covered.">		if (value instanceof Double)</span>
+		{
+<span class="fc" id="L319">			return (Double) value;</span>
+		}
+
+<span class="fc bfc" id="L322" title="All 2 branches covered.">		if (value == null)</span>
+		{
+<span class="fc" id="L324">			return null;</span>
+		}
+
+		// try to convert value
+		Double doubleValue;
+<span class="fc bfc" id="L329" title="All 2 branches covered.">		if (value instanceof String)</span>
+		{
+			try
+			{
+<span class="fc" id="L333">				doubleValue = Double.valueOf((String) value);</span>
+			}
+<span class="fc" id="L335">			catch (NumberFormatException e)</span>
+			{
+<span class="fc" id="L337">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L338">						format(&quot;Attribute [%s] value [%s] cannot be converter to type [%s]&quot;, attr.getName(), value,</span>
+<span class="fc" id="L339">								Double.class.getSimpleName())));</span>
+<span class="fc" id="L340">			}</span>
+		}
+<span class="fc bfc" id="L342" title="All 2 branches covered.">		else if (value instanceof Number)</span>
+		{
+<span class="fc" id="L344">			doubleValue = ((Number) value).doubleValue();</span>
+		}
+		else
+		{
+<span class="fc" id="L348">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L349">					format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="fc" id="L350">							value.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="fc" id="L351">							Number.class.getSimpleName())));</span>
+		}
+<span class="fc" id="L353">		return doubleValue;</span>
+	}
+
+	private static Instant convertDateTime(Attribute attr, Object value)
+	{
+<span class="fc bfc" id="L358" title="All 2 branches covered.">		if (value instanceof Instant)</span>
+		{
+<span class="fc" id="L360">			return (Instant) value;</span>
+		}
+
+<span class="fc bfc" id="L363" title="All 2 branches covered.">		if (value == null)</span>
+		{
+<span class="fc" id="L365">			return null;</span>
+		}
+
+		// try to convert value
+		Instant dateValue;
+<span class="fc bfc" id="L370" title="All 2 branches covered.">		if (value instanceof String)</span>
+		{
+<span class="fc" id="L372">			String paramStrValue = (String) value;</span>
+			try
+			{
+<span class="fc" id="L375">				dateValue = MolgenisDateFormat.parseInstant(paramStrValue);</span>
+			}
+<span class="fc" id="L377">			catch (DateTimeParseException e)</span>
+			{
+<span class="fc" id="L379">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L380">						format(FAILED_TO_PARSE_ATTRIBUTE_AS_DATETIME_MESSAGE, attr.getName(), paramStrValue)));</span>
+<span class="fc" id="L381">			}</span>
+<span class="fc" id="L382">		}</span>
+		else
+		{
+<span class="fc" id="L385">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L386">					format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="fc" id="L387">							value.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="fc" id="L388">							Instant.class.getSimpleName())));</span>
+		}
+<span class="fc" id="L390">		return dateValue;</span>
+	}
+
+	private static LocalDate convertDate(Attribute attr, Object value)
+	{
+<span class="fc bfc" id="L395" title="All 2 branches covered.">		if (value instanceof LocalDate)</span>
+		{
+<span class="fc" id="L397">			return (LocalDate) value;</span>
+		}
+
+<span class="fc bfc" id="L400" title="All 2 branches covered.">		if (value == null)</span>
+		{
+<span class="fc" id="L402">			return null;</span>
+		}
+
+		// try to convert value
+		LocalDate dateValue;
+<span class="fc bfc" id="L407" title="All 2 branches covered.">		if (value instanceof String)</span>
+		{
+<span class="fc" id="L409">			String paramStrValue = (String) value;</span>
+			try
+			{
+<span class="fc" id="L412">				dateValue = parseLocalDate(paramStrValue);</span>
+			}
+<span class="fc" id="L414">			catch (DateTimeParseException e)</span>
+			{
+<span class="fc" id="L416">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L417">						format(FAILED_TO_PARSE_ATTRIBUTE_AS_DATE_MESSAGE, attr.getName(), paramStrValue)));</span>
+<span class="fc" id="L418">			}</span>
+<span class="fc" id="L419">		}</span>
+		else
+		{
+<span class="fc" id="L422">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L423">					format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s].&quot;, attr.getName(),</span>
+<span class="fc" id="L424">							value.getClass().getSimpleName(), LocalDate.class.getSimpleName(),</span>
+<span class="fc" id="L425">							String.class.getSimpleName())));</span>
+		}
+<span class="fc" id="L427">		return dateValue;</span>
+	}
+
+	private Entity convertRef(Attribute attr, Object value)
+	{
+<span class="pc bpc" id="L432" title="1 of 2 branches missed.">		if (value instanceof Entity)</span>
+		{
+<span class="nc" id="L434">			return (Entity) value;</span>
+		}
+
+<span class="fc bfc" id="L437" title="All 2 branches covered.">		if (value == null)</span>
+		{
+<span class="fc" id="L439">			return null;</span>
+		}
+
+		// try to convert value
+<span class="fc" id="L443">		Object idValue = toQueryRuleValue(value, attr.getRefEntity().getIdAttribute());</span>
+<span class="fc" id="L444">		return entityManager.getReference(attr.getRefEntity(), idValue);</span>
+	}
+
+	private static String convertString(@SuppressWarnings(&quot;unused&quot;) Attribute attr, Object value)
+	{
+<span class="fc bfc" id="L449" title="All 2 branches covered.">		if (value instanceof String)</span>
+		{
+<span class="fc" id="L451">			return (String) value;</span>
+		}
+
+<span class="fc bfc" id="L454" title="All 2 branches covered.">		if (value == null)</span>
+		{
+<span class="fc" id="L456">			return null;</span>
+		}
+
+<span class="fc" id="L459">		return value.toString();</span>
+	}
+
+	private static Boolean convertBool(Attribute attr, Object value)
+	{
+<span class="fc bfc" id="L464" title="All 2 branches covered.">		if (value instanceof Boolean)</span>
+		{
+<span class="fc" id="L466">			return (Boolean) value;</span>
+		}
+
+<span class="fc bfc" id="L469" title="All 2 branches covered.">		if (value == null)</span>
+		{
+<span class="fc" id="L471">			return null;</span>
+		}
+
+		Boolean booleanValue;
+<span class="fc bfc" id="L475" title="All 2 branches covered.">		if (value instanceof String)</span>
+		{
+<span class="fc" id="L477">			String stringValue = (String) value;</span>
+<span class="fc bfc" id="L478" title="All 2 branches covered.">			if (stringValue.equalsIgnoreCase(TRUE.toString()))</span>
+			{
+<span class="fc" id="L480">				booleanValue = true;</span>
+			}
+<span class="fc bfc" id="L482" title="All 2 branches covered.">			else if (stringValue.equalsIgnoreCase(FALSE.toString()))</span>
+			{
+<span class="fc" id="L484">				booleanValue = false;</span>
+			}
+			else
+			{
+<span class="fc" id="L488">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L489">						format(&quot;Attribute [%s] value [%s] cannot be converter to type [%s]&quot;, attr.getName(), value,</span>
+<span class="fc" id="L490">								Boolean.class.getSimpleName())));</span>
+			}
+<span class="fc" id="L492">		}</span>
+		else
+		{
+<span class="fc" id="L495">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L496">					format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="fc" id="L497">							value.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="fc" id="L498">							Boolean.class.getSimpleName())));</span>
+		}
+<span class="fc" id="L500">		return booleanValue;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

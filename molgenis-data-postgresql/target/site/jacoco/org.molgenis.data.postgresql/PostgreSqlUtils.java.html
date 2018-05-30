@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PostgreSqlUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.postgresql</a> &gt; <span class="el_source">PostgreSqlUtils.java</span></div><h1>PostgreSqlUtils.java</h1><pre class="source lang-java linenums">package org.molgenis.data.postgresql;
+
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.file.model.FileMeta;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.util.UnexpectedEnumException;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+
+import static java.lang.String.format;
+import static java.time.ZoneOffset.UTC;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.StreamSupport.stream;
+
+/**
+ * PostgreSQL utilities such as entity value to PostgreSQL value conversion.
+ */
+class PostgreSqlUtils
+{
+	private PostgreSqlUtils()
+	{
+	}
+
+	/**
+	 * Returns the PostgreSQL value for the given entity attribute
+	 *
+	 * @param entity entity
+	 * @param attr   attribute
+	 * @return PostgreSQL value
+	 */
+	static Object getPostgreSqlValue(Entity entity, Attribute attr)
+	{
+<span class="fc" id="L37">		String attrName = attr.getName();</span>
+<span class="fc" id="L38">		AttributeType attrType = attr.getDataType();</span>
+
+<span class="pc bpc" id="L40" title="1 of 12 branches missed.">		switch (attrType)</span>
+		{
+			case BOOL:
+<span class="fc" id="L43">				return entity.getBoolean(attrName);</span>
+			case CATEGORICAL:
+			case XREF:
+<span class="fc" id="L46">				Entity xrefEntity = entity.getEntity(attrName);</span>
+<span class="fc bfc" id="L47" title="All 2 branches covered.">				return xrefEntity != null ? getPostgreSqlValue(xrefEntity,</span>
+<span class="fc" id="L48">						xrefEntity.getEntityType().getIdAttribute()) : null;</span>
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="fc" id="L52">				Iterable&lt;Entity&gt; entities = entity.getEntities(attrName);</span>
+<span class="fc" id="L53">				return stream(entities.spliterator(), false).map(</span>
+<span class="fc" id="L54">						mrefEntity -&gt; getPostgreSqlValue(mrefEntity, mrefEntity.getEntityType().getIdAttribute()))</span>
+<span class="fc" id="L55">															.collect(toList());</span>
+			case DATE:
+<span class="fc" id="L57">				return entity.getLocalDate(attrName);</span>
+			case DATE_TIME:
+				// As a workaround for #5674, we don't store milliseconds
+<span class="fc" id="L60">				Instant instant = entity.getInstant(attrName);</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">				return instant != null ? instant.truncatedTo(ChronoUnit.SECONDS).atOffset(UTC) : null;</span>
+			case DECIMAL:
+<span class="fc" id="L63">				return entity.getDouble(attrName);</span>
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L71">				return entity.getString(attrName);</span>
+			case FILE:
+<span class="fc" id="L73">				FileMeta fileEntity = entity.getEntity(attrName, FileMeta.class);</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">				return fileEntity != null ? getPostgreSqlValue(fileEntity,</span>
+<span class="fc" id="L75">						fileEntity.getEntityType().getIdAttribute()) : null;</span>
+			case INT:
+<span class="fc" id="L77">				return entity.getInt(attrName);</span>
+			case LONG:
+<span class="fc" id="L79">				return entity.getLong(attrName);</span>
+			case COMPOUND:
+<span class="fc" id="L81">				throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+			default:
+<span class="nc" id="L83">				throw new UnexpectedEnumException(attrType);</span>
+		}
+	}
+
+	/**
+	 * Returns the PostgreSQL query value for the given entity attribute. For query operators requiring a list of
+	 * values (e.g. IN or RANGE) this method must be called for each individual query value.
+	 *
+	 * @param queryValue value of the type that matches the attribute type
+	 * @param attr       attribute
+	 * @return PostgreSQL value
+	 */
+	static Object getPostgreSqlQueryValue(Object queryValue, Attribute attr)
+	{
+		while (true)
+		{
+<span class="fc" id="L99">			String attrName = attr.getName();</span>
+<span class="fc" id="L100">			AttributeType attrType = attr.getDataType();</span>
+
+<span class="pc bpc" id="L102" title="1 of 11 branches missed.">			switch (attrType)</span>
+			{
+				case BOOL:
+<span class="fc bfc" id="L105" title="All 4 branches covered.">					if (queryValue != null &amp;&amp; !(queryValue instanceof Boolean))</span>
+					{
+<span class="fc" id="L107">						throw new MolgenisDataException(</span>
+<span class="fc" id="L108">								format(&quot;Attribute [%s] query value is of type [%s] instead of [%s]&quot;, attrName,</span>
+<span class="fc" id="L109">										queryValue.getClass().getSimpleName(), Boolean.class.getSimpleName()));</span>
+					}
+<span class="fc" id="L111">					return queryValue;</span>
+				case CATEGORICAL:
+				case CATEGORICAL_MREF: // one query value
+				case FILE:
+				case MREF: // one query value
+				case XREF:
+				case ONE_TO_MANY:
+					// queries values referencing an entity can either be the entity itself or the entity id
+<span class="fc bfc" id="L119" title="All 2 branches covered.">					if (queryValue != null)</span>
+					{
+<span class="fc bfc" id="L121" title="All 2 branches covered.">						if (queryValue instanceof Entity)</span>
+						{
+<span class="fc" id="L123">							queryValue = ((Entity) queryValue).getIdValue();</span>
+						}
+<span class="fc" id="L125">						attr = attr.getRefEntity().getIdAttribute();</span>
+<span class="fc" id="L126">						continue;</span>
+					}
+					else
+					{
+<span class="fc" id="L130">						return null;</span>
+					}
+				case DATE:
+<span class="fc bfc" id="L133" title="All 4 branches covered.">					if (queryValue != null &amp;&amp; !(queryValue instanceof LocalDate))</span>
+					{
+<span class="fc" id="L135">						throw new MolgenisDataException(</span>
+<span class="fc" id="L136">								format(&quot;Attribute [%s] query value is of type [%s] instead of [%s]&quot;, attrName,</span>
+<span class="fc" id="L137">										queryValue.getClass().getSimpleName(), LocalDate.class.getSimpleName()));</span>
+					}
+<span class="fc" id="L139">					return queryValue;</span>
+				case DATE_TIME:
+<span class="fc bfc" id="L141" title="All 2 branches covered.">					if (queryValue == null)</span>
+					{
+<span class="fc" id="L143">						return null;</span>
+					}
+<span class="fc bfc" id="L145" title="All 2 branches covered.">					if (!(queryValue instanceof Instant))</span>
+					{
+<span class="fc" id="L147">						throw new MolgenisDataException(</span>
+<span class="fc" id="L148">								format(&quot;Attribute [%s] query value is of type [%s] instead of [%s]&quot;, attrName,</span>
+<span class="fc" id="L149">										queryValue.getClass().getSimpleName(), Instant.class.getSimpleName()));</span>
+					}
+<span class="fc" id="L151">					return ((Instant) queryValue).atOffset(UTC);</span>
+				case DECIMAL:
+<span class="fc bfc" id="L153" title="All 4 branches covered.">					if (queryValue != null &amp;&amp; !(queryValue instanceof Double))</span>
+					{
+<span class="fc" id="L155">						throw new MolgenisDataException(</span>
+<span class="fc" id="L156">								format(&quot;Attribute [%s] query value is of type [%s] instead of [%s]&quot;, attrName,</span>
+<span class="fc" id="L157">										queryValue.getClass().getSimpleName(), Double.class.getSimpleName()));</span>
+					}
+<span class="fc" id="L159">					return queryValue;</span>
+				case ENUM:
+					// enum query values can be an enum or enum string
+<span class="fc bfc" id="L162" title="All 2 branches covered.">					if (queryValue != null)</span>
+					{
+<span class="fc bfc" id="L164" title="All 2 branches covered.">						if (queryValue instanceof String)</span>
+						{
+<span class="fc" id="L166">							return queryValue;</span>
+						}
+<span class="fc bfc" id="L168" title="All 2 branches covered.">						else if (queryValue instanceof Enum&lt;?&gt;)</span>
+						{
+<span class="fc" id="L170">							return queryValue.toString();</span>
+						}
+						else
+						{
+<span class="fc" id="L174">							throw new MolgenisDataException(</span>
+<span class="fc" id="L175">									format(&quot;Attribute [%s] query value is of type [%s] instead of [%s] or [%s]&quot;,</span>
+<span class="fc" id="L176">											attrName, queryValue.getClass().getSimpleName(),</span>
+<span class="fc" id="L177">											String.class.getSimpleName(), Enum.class.getSimpleName()));</span>
+						}
+					}
+					else
+					{
+<span class="fc" id="L182">						return null;</span>
+					}
+				case EMAIL:
+				case HTML:
+				case HYPERLINK:
+				case SCRIPT:
+				case STRING:
+				case TEXT:
+<span class="fc bfc" id="L190" title="All 4 branches covered.">					if (queryValue != null &amp;&amp; !(queryValue instanceof String))</span>
+					{
+<span class="fc" id="L192">						throw new MolgenisDataException(</span>
+<span class="fc" id="L193">								format(&quot;Attribute [%s] query value is of type [%s] instead of [%s]&quot;, attrName,</span>
+<span class="fc" id="L194">										queryValue.getClass().getSimpleName(), String.class.getSimpleName()));</span>
+					}
+<span class="fc" id="L196">					return queryValue;</span>
+				case INT:
+<span class="fc bfc" id="L198" title="All 4 branches covered.">					if (queryValue != null &amp;&amp; !(queryValue instanceof Integer))</span>
+					{
+<span class="fc" id="L200">						throw new MolgenisDataException(</span>
+<span class="fc" id="L201">								format(&quot;Attribute [%s] query value is of type [%s] instead of [%s]&quot;, attrName,</span>
+<span class="fc" id="L202">										queryValue.getClass().getSimpleName(), Integer.class.getSimpleName()));</span>
+					}
+<span class="fc" id="L204">					return queryValue;</span>
+				case LONG:
+<span class="fc bfc" id="L206" title="All 4 branches covered.">					if (queryValue != null &amp;&amp; !(queryValue instanceof Long))</span>
+					{
+<span class="fc" id="L208">						throw new MolgenisDataException(</span>
+<span class="fc" id="L209">								format(&quot;Attribute [%s] query value is of type [%s] instead of [%s]&quot;, attrName,</span>
+<span class="fc" id="L210">										queryValue.getClass().getSimpleName(), Long.class.getSimpleName()));</span>
+					}
+<span class="fc" id="L212">					return queryValue;</span>
+				case COMPOUND:
+<span class="fc" id="L214">					throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+				default:
+<span class="nc" id="L216">					throw new UnexpectedEnumException(attrType);</span>
+			}
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

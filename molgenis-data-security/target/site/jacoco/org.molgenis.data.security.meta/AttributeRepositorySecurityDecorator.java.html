@@ -1,0 +1,336 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AttributeRepositorySecurityDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.security.meta</a> &gt; <span class="el_source">AttributeRepositorySecurityDecorator.java</span></div><h1>AttributeRepositorySecurityDecorator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.security.meta;
+
+import org.molgenis.data.*;
+import org.molgenis.data.aggregation.AggregateQuery;
+import org.molgenis.data.aggregation.AggregateResult;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.system.SystemEntityTypeRegistry;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.EntityTypePermission;
+import org.molgenis.data.security.exception.SystemMetadataModificationException;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.data.util.EntityUtils;
+import org.molgenis.security.core.UserPermissionEvaluator;
+
+import java.util.Iterator;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.security.core.utils.SecurityUtils.currentUserIsSuOrSystem;
+
+/**
+ * Decorator for the attribute repository:
+ * - filters requested entities based on the entity permissions of the current user.
+ * &lt;p&gt;
+ * TODO replace permission based entity filtering with generic row-level security once available
+ */
+public class AttributeRepositorySecurityDecorator extends AbstractRepositoryDecorator&lt;Attribute&gt;
+{
+	private final SystemEntityTypeRegistry systemEntityTypeRegistry;
+	private final UserPermissionEvaluator permissionService;
+
+	public AttributeRepositorySecurityDecorator(Repository&lt;Attribute&gt; delegateRepository,
+			SystemEntityTypeRegistry systemEntityTypeRegistry, UserPermissionEvaluator permissionService)
+	{
+<span class="fc" id="L40">		super(delegateRepository);</span>
+<span class="fc" id="L41">		this.systemEntityTypeRegistry = requireNonNull(systemEntityTypeRegistry);</span>
+<span class="fc" id="L42">		this.permissionService = requireNonNull(permissionService);</span>
+<span class="fc" id="L43">	}</span>
+
+	@Override
+	public long count()
+	{
+<span class="fc bfc" id="L48" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L50">			return delegate().count();</span>
+		}
+		else
+		{
+<span class="fc" id="L54">			Stream&lt;Attribute&gt; attrs = StreamSupport.stream(delegate().spliterator(), false);</span>
+<span class="fc" id="L55">			return filterReadMetadataPermission(attrs).count();</span>
+		}
+	}
+
+	@Override
+	public long count(Query&lt;Attribute&gt; q)
+	{
+<span class="fc bfc" id="L62" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L64">			return delegate().count(q);</span>
+		}
+		else
+		{
+			// ignore query offset and page size
+<span class="fc" id="L69">			Query&lt;Attribute&gt; qWithoutLimitOffset = new QueryImpl&lt;&gt;(q);</span>
+<span class="fc" id="L70">			qWithoutLimitOffset.offset(0).pageSize(Integer.MAX_VALUE);</span>
+<span class="fc" id="L71">			Stream&lt;Attribute&gt; attrs = delegate().findAll(qWithoutLimitOffset);</span>
+<span class="fc" id="L72">			return filterReadMetadataPermission(attrs).count();</span>
+		}
+	}
+
+	@Override
+	public Stream&lt;Attribute&gt; findAll(Query&lt;Attribute&gt; q)
+	{
+<span class="fc bfc" id="L79" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L81">			return delegate().findAll(q);</span>
+		}
+		else
+		{
+<span class="fc" id="L85">			Query&lt;Attribute&gt; qWithoutLimitOffset = new QueryImpl&lt;&gt;(q);</span>
+<span class="fc" id="L86">			qWithoutLimitOffset.offset(0).pageSize(Integer.MAX_VALUE);</span>
+<span class="fc" id="L87">			Stream&lt;Attribute&gt; attrs = delegate().findAll(qWithoutLimitOffset);</span>
+<span class="fc" id="L88">			Stream&lt;Attribute&gt; filteredAttrs = filterReadMetadataPermission(attrs);</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">			if (q.getOffset() &gt; 0)</span>
+			{
+<span class="fc" id="L91">				filteredAttrs = filteredAttrs.skip(q.getOffset());</span>
+			}
+<span class="fc bfc" id="L93" title="All 2 branches covered.">			if (q.getPageSize() &gt; 0)</span>
+			{
+<span class="fc" id="L95">				filteredAttrs = filteredAttrs.limit(q.getPageSize());</span>
+			}
+<span class="fc" id="L97">			return filteredAttrs;</span>
+		}
+
+	}
+
+	@Override
+	public Iterator&lt;Attribute&gt; iterator()
+	{
+<span class="fc bfc" id="L105" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L107">			return delegate().iterator();</span>
+		}
+		else
+		{
+<span class="fc" id="L111">			Stream&lt;Attribute&gt; attrs = StreamSupport.stream(delegate().spliterator(), false);</span>
+<span class="fc" id="L112">			return filterReadMetadataPermission(attrs).iterator();</span>
+		}
+	}
+
+	@Override
+	public void forEachBatched(Fetch fetch, Consumer&lt;List&lt;Attribute&gt;&gt; consumer, int batchSize)
+	{
+<span class="fc bfc" id="L119" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L121">			delegate().forEachBatched(fetch, consumer, batchSize);</span>
+		}
+		else
+		{
+<span class="fc" id="L125">			FilteredConsumer filteredConsumer = new FilteredConsumer(consumer);</span>
+<span class="fc" id="L126">			delegate().forEachBatched(fetch, filteredConsumer::filter, batchSize);</span>
+		}
+<span class="fc" id="L128">	}</span>
+
+	@Override
+	public Attribute findOne(Query&lt;Attribute&gt; q)
+	{
+<span class="fc bfc" id="L133" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L135">			return delegate().findOne(q);</span>
+		}
+		else
+		{
+			// ignore query offset and page size
+<span class="fc" id="L140">			return filterReadPermission(delegate().findOne(q));</span>
+		}
+	}
+
+	@Override
+	public Attribute findOneById(Object id)
+	{
+<span class="fc bfc" id="L147" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L149">			return delegate().findOneById(id);</span>
+		}
+		else
+		{
+<span class="fc" id="L153">			return filterReadPermission(delegate().findOneById(id));</span>
+		}
+	}
+
+	@Override
+	public Attribute findOneById(Object id, Fetch fetch)
+	{
+<span class="pc bpc" id="L160" title="1 of 2 branches missed.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="nc" id="L162">			return delegate().findOneById(id, fetch);</span>
+		}
+		else
+		{
+<span class="fc" id="L166">			return filterReadPermission(delegate().findOneById(id, fetch));</span>
+		}
+	}
+
+	@Override
+	public Stream&lt;Attribute&gt; findAll(Stream&lt;Object&gt; ids)
+	{
+<span class="fc bfc" id="L173" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L175">			return delegate().findAll(ids);</span>
+		}
+		else
+		{
+<span class="fc" id="L179">			return filterReadMetadataPermission(delegate().findAll(ids));</span>
+		}
+	}
+
+	@Override
+	public Stream&lt;Attribute&gt; findAll(Stream&lt;Object&gt; ids, Fetch fetch)
+	{
+<span class="fc bfc" id="L186" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L188">			return delegate().findAll(ids, fetch);</span>
+		}
+		else
+		{
+<span class="fc" id="L192">			return filterReadMetadataPermission(delegate().findAll(ids, fetch));</span>
+		}
+	}
+
+	@Override
+	public AggregateResult aggregate(AggregateQuery aggregateQuery)
+	{
+<span class="fc bfc" id="L199" title="All 2 branches covered.">		if (currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L201">			return delegate().aggregate(aggregateQuery);</span>
+		}
+		else
+		{
+<span class="fc" id="L205">			throw new MolgenisDataAccessException(format(&quot;Aggregation on entity [%s] not allowed&quot;, getName()));</span>
+		}
+	}
+
+	@Override
+	public void update(Attribute attr)
+	{
+<span class="nc" id="L212">		validateUpdateAllowed(attr);</span>
+<span class="nc" id="L213">		delegate().update(attr);</span>
+<span class="nc" id="L214">	}</span>
+
+	@Override
+	public void update(Stream&lt;Attribute&gt; attrs)
+	{
+<span class="nc" id="L219">		delegate().update(attrs.filter(attr -&gt;</span>
+		{
+<span class="nc" id="L221">			validateUpdateAllowed(attr);</span>
+<span class="nc" id="L222">			return true;</span>
+		}));
+<span class="nc" id="L224">	}</span>
+
+	@Override
+	public void delete(Attribute attr)
+	{
+<span class="fc" id="L229">		validateDeleteAllowed(attr);</span>
+<span class="fc" id="L230">		delegate().delete(attr);</span>
+<span class="fc" id="L231">	}</span>
+
+	@Override
+	public void delete(Stream&lt;Attribute&gt; attrs)
+	{
+		// The validateDeleteAllowed check if querying the table in which we are deleting. Since the decorated repo only
+		// guarantees that the attributes are deleted after the operation completes we have to delete the attributes one
+		// by one
+<span class="fc" id="L239">		attrs.forEach(this::delete);</span>
+<span class="fc" id="L240">	}</span>
+
+	@Override
+	public void deleteById(Object id)
+	{
+<span class="nc" id="L245">		Attribute attr = findOneById(id);</span>
+<span class="nc" id="L246">		delete(attr);</span>
+<span class="nc" id="L247">	}</span>
+
+	@Override
+	public void deleteAll(Stream&lt;Object&gt; ids)
+	{
+<span class="nc" id="L252">		delete(findAll(ids));</span>
+<span class="nc" id="L253">	}</span>
+
+	@Override
+	public void deleteAll()
+	{
+<span class="nc" id="L258">		delete(this.query().findAll());</span>
+<span class="nc" id="L259">	}</span>
+
+	@Override
+	public void add(Attribute attr)
+	{
+<span class="nc" id="L264">		delegate().add(attr);</span>
+<span class="nc" id="L265">	}</span>
+
+	@Override
+	public Integer add(Stream&lt;Attribute&gt; attrs)
+	{
+<span class="nc" id="L270">		return delegate().add(attrs);</span>
+	}
+
+	/**
+	 * Updating attribute meta data is allowed for non-system attributes. For system attributes updating attribute meta
+	 * data is only allowed if the meta data defined in Java differs from the meta data stored in the database (in other
+	 * words the Java code was updated).
+	 *
+	 * @param attr attribute
+	 */
+	private void validateUpdateAllowed(Attribute attr)
+	{
+<span class="fc" id="L282">		String attrIdentifier = attr.getIdentifier();</span>
+<span class="fc" id="L283">		Attribute systemAttr = systemEntityTypeRegistry.getSystemAttribute(attrIdentifier);</span>
+<span class="pc bpc" id="L284" title="2 of 4 branches missed.">		if (systemAttr != null &amp;&amp; !EntityUtils.equals(attr, systemAttr))</span>
+		{
+<span class="fc" id="L286">			throw new SystemMetadataModificationException();</span>
+		}
+<span class="nc" id="L288">	}</span>
+
+	/**
+	 * Deleting attribute meta data is allowed for non-system attributes.
+	 *
+	 * @param attr attribute
+	 */
+	private void validateDeleteAllowed(Attribute attr)
+	{
+<span class="fc" id="L297">		String attrIdentifier = attr.getIdentifier();</span>
+<span class="fc bfc" id="L298" title="All 2 branches covered.">		if (systemEntityTypeRegistry.hasSystemAttribute(attrIdentifier))</span>
+		{
+<span class="fc" id="L300">			throw new SystemMetadataModificationException();</span>
+		}
+<span class="fc" id="L302">	}</span>
+
+	private Stream&lt;Attribute&gt; filterReadMetadataPermission(Stream&lt;Attribute&gt; attrs)
+	{
+<span class="fc" id="L306">		return filterPermission(attrs, EntityTypePermission.READ_METADATA);</span>
+	}
+
+	private Attribute filterReadPermission(Attribute attr)
+	{
+<span class="pc bpc" id="L311" title="1 of 2 branches missed.">		return attr != null ? filterReadMetadataPermission(Stream.of(attr)).findFirst().orElse(null) : null;</span>
+	}
+
+	private Stream&lt;Attribute&gt; filterPermission(Stream&lt;Attribute&gt; attrs, EntityTypePermission permission)
+	{
+<span class="fc" id="L316">		return attrs.filter(</span>
+<span class="fc" id="L317">				attr -&gt; permissionService.hasPermission(new EntityTypeIdentity(attr.getEntity().getId()), permission));</span>
+	}
+
+	private class FilteredConsumer
+	{
+		private final Consumer&lt;List&lt;Attribute&gt;&gt; consumer;
+
+		FilteredConsumer(Consumer&lt;List&lt;Attribute&gt;&gt; consumer)
+<span class="fc" id="L325">		{</span>
+<span class="fc" id="L326">			this.consumer = requireNonNull(consumer);</span>
+<span class="fc" id="L327">		}</span>
+
+		public void filter(List&lt;Attribute&gt; attrs)
+		{
+<span class="fc" id="L331">			Stream&lt;Attribute&gt; filteredAttrs = filterPermission(attrs.stream(), EntityTypePermission.READ_METADATA);</span>
+<span class="fc" id="L332">			consumer.accept(filteredAttrs.collect(toList()));</span>
+<span class="fc" id="L333">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

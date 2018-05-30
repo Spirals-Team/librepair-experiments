@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MolgenisRSQLVisitor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">web</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.web.rsql</a> &gt; <span class="el_source">MolgenisRSQLVisitor.java</span></div><h1>MolgenisRSQLVisitor.java</h1><pre class="source lang-java linenums">package org.molgenis.web.rsql;
+
+import cz.jirutka.rsql.parser.ast.*;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisQueryException;
+import org.molgenis.data.Query;
+import org.molgenis.data.UnknownAttributeException;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.QueryImpl;
+
+import java.util.Iterator;
+import java.util.List;
+
+import static java.util.stream.Collectors.toList;
+
+/**
+ * RSQLVisitor implementation that creates {@link Query} objects for an RSQL tree.
+ *
+ * @see &lt;a href=&quot;https://github.com/jirutka/rsql-parser&quot;&gt;https://github.com/jirutka/rsql-parser&lt;/a&gt;
+ */
+public class MolgenisRSQLVisitor extends NoArgRSQLVisitorAdapter&lt;Query&lt;Entity&gt;&gt;
+{
+<span class="fc" id="L24">	private final QueryImpl&lt;Entity&gt; q = new QueryImpl&lt;&gt;();</span>
+	private final EntityType entityType;
+<span class="fc" id="L26">	private final RSQLValueParser rsqlValueParser = new RSQLValueParser();</span>
+
+	public MolgenisRSQLVisitor(EntityType entityType)
+<span class="fc" id="L29">	{</span>
+<span class="fc" id="L30">		this.entityType = entityType;</span>
+<span class="fc" id="L31">	}</span>
+
+	@Override
+	public Query&lt;Entity&gt; visit(AndNode node)
+	{
+<span class="fc" id="L36">		q.nest(); // TODO only nest if more than one child</span>
+
+<span class="fc bfc" id="L38" title="All 2 branches covered.">		for (Iterator&lt;Node&gt; it = node.iterator(); it.hasNext(); )</span>
+		{
+<span class="fc" id="L40">			Node child = it.next();</span>
+<span class="fc" id="L41">			child.accept(this);</span>
+
+<span class="fc bfc" id="L43" title="All 2 branches covered.">			if (it.hasNext())</span>
+			{
+<span class="fc" id="L45">				q.and();</span>
+			}
+<span class="fc" id="L47">		}</span>
+
+<span class="fc" id="L49">		q.unnest();</span>
+
+<span class="fc" id="L51">		return q;</span>
+	}
+
+	@Override
+	public Query&lt;Entity&gt; visit(OrNode node)
+	{
+<span class="fc" id="L57">		q.nest(); // TODO only nest if more than one child</span>
+
+<span class="fc bfc" id="L59" title="All 2 branches covered.">		for (Iterator&lt;Node&gt; it = node.iterator(); it.hasNext(); )</span>
+		{
+<span class="fc" id="L61">			Node child = it.next();</span>
+<span class="fc" id="L62">			child.accept(this);</span>
+
+<span class="fc bfc" id="L64" title="All 2 branches covered.">			if (it.hasNext())</span>
+			{
+<span class="fc" id="L66">				q.or();</span>
+			}
+<span class="fc" id="L68">		}</span>
+
+<span class="fc" id="L70">		q.unnest();</span>
+
+<span class="fc" id="L72">		return q;</span>
+	}
+
+	@Override
+	public Query&lt;Entity&gt; visit(ComparisonNode node)
+	{
+<span class="fc" id="L78">		String attrName = node.getSelector();</span>
+<span class="fc" id="L79">		String symbol = node.getOperator().getSymbol();</span>
+<span class="fc" id="L80">		List&lt;String&gt; values = node.getArguments();</span>
+<span class="pc bpc" id="L81" title="10 of 15 branches missed.">		switch (symbol)</span>
+		{
+			case &quot;=notlike=&quot;:
+<span class="nc" id="L84">				String notLikeValue = values.get(0);</span>
+<span class="nc" id="L85">				q.not().like(attrName, notLikeValue);</span>
+<span class="nc" id="L86">				break;</span>
+			case &quot;=q=&quot;:
+<span class="nc" id="L88">				String searchValue = values.get(0);</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">				if (attrName.equals(&quot;*&quot;))</span>
+				{
+<span class="nc" id="L91">					q.search(searchValue);</span>
+				}
+				else
+				{
+<span class="nc" id="L95">					q.search(attrName, searchValue);</span>
+				}
+<span class="nc" id="L97">				break;</span>
+			case &quot;==&quot;:
+<span class="fc" id="L99">				Object eqValue = rsqlValueParser.parse(values.get(0), getAttribute(node));</span>
+<span class="fc" id="L100">				q.eq(attrName, eqValue);</span>
+<span class="fc" id="L101">				break;</span>
+			case &quot;=in=&quot;:
+<span class="nc" id="L103">				Attribute inAttr = getAttribute(node);</span>
+<span class="nc" id="L104">				q.in(attrName, values.stream().map(value -&gt; rsqlValueParser.parse(value, inAttr)).collect(toList()));</span>
+<span class="nc" id="L105">				break;</span>
+			case &quot;=lt=&quot;:
+			case &quot;&lt;&quot;:
+<span class="fc" id="L108">				Attribute ltAttr = getAttribute(node);</span>
+<span class="fc" id="L109">				validateNumericOrDate(ltAttr);</span>
+<span class="fc" id="L110">				Object ltValue = rsqlValueParser.parse(values.get(0), ltAttr);</span>
+<span class="fc" id="L111">				q.lt(attrName, ltValue);</span>
+<span class="fc" id="L112">				break;</span>
+			case &quot;=le=&quot;:
+			case &quot;&lt;=&quot;:
+<span class="fc" id="L115">				Attribute leAttr = getAttribute(node);</span>
+<span class="fc" id="L116">				validateNumericOrDate(leAttr);</span>
+<span class="fc" id="L117">				Object leValue = rsqlValueParser.parse(values.get(0), leAttr);</span>
+<span class="fc" id="L118">				q.le(attrName, leValue);</span>
+<span class="fc" id="L119">				break;</span>
+			case &quot;=gt=&quot;:
+			case &quot;&gt;&quot;:
+<span class="fc" id="L122">				Attribute gtAttr = getAttribute(node);</span>
+<span class="fc" id="L123">				validateNumericOrDate(gtAttr);</span>
+<span class="fc" id="L124">				Object gtValue = rsqlValueParser.parse(values.get(0), gtAttr);</span>
+<span class="fc" id="L125">				q.gt(attrName, gtValue);</span>
+<span class="fc" id="L126">				break;</span>
+			case &quot;=ge=&quot;:
+			case &quot;&gt;=&quot;:
+<span class="fc" id="L129">				Attribute geAttr = getAttribute(node);</span>
+<span class="fc" id="L130">				validateNumericOrDate(geAttr);</span>
+<span class="fc" id="L131">				Object geValue = rsqlValueParser.parse(values.get(0), geAttr);</span>
+<span class="fc" id="L132">				q.ge(attrName, geValue);</span>
+<span class="fc" id="L133">				break;</span>
+			case &quot;=rng=&quot;:
+<span class="nc" id="L135">				Attribute rngAttr = getAttribute(node);</span>
+<span class="nc" id="L136">				validateNumericOrDate(rngAttr);</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">				Object fromValue = values.get(0) != null ? rsqlValueParser.parse(values.get(0), rngAttr) : null;</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">				Object toValue = values.get(1) != null ? rsqlValueParser.parse(values.get(1), rngAttr) : null;</span>
+<span class="nc" id="L139">				q.rng(attrName, fromValue, toValue);</span>
+<span class="nc" id="L140">				break;</span>
+			case &quot;=like=&quot;:
+<span class="nc" id="L142">				String likeValue = values.get(0);</span>
+<span class="nc" id="L143">				q.like(attrName, likeValue);</span>
+<span class="nc" id="L144">				break;</span>
+			case &quot;!=&quot;:
+<span class="nc" id="L146">				Object notEqValue = rsqlValueParser.parse(values.get(0), getAttribute(node));</span>
+<span class="nc" id="L147">				q.not().eq(attrName, notEqValue);</span>
+<span class="nc" id="L148">				break;</span>
+			case &quot;=should=&quot;:
+<span class="nc" id="L150">				throw new MolgenisQueryException(&quot;Unsupported RSQL query operator [&quot; + symbol + &quot;]&quot;);</span>
+			case &quot;=dismax=&quot;:
+<span class="nc" id="L152">				throw new MolgenisQueryException(&quot;Unsupported RSQL query operator [&quot; + symbol + &quot;]&quot;);</span>
+			case &quot;=fuzzy=&quot;:
+<span class="nc" id="L154">				throw new MolgenisQueryException(&quot;Unsupported RSQL query operator [&quot; + symbol + &quot;]&quot;);</span>
+			default:
+<span class="nc" id="L156">				throw new MolgenisQueryException(&quot;Unknown RSQL query operator [&quot; + symbol + &quot;]&quot;);</span>
+		}
+<span class="fc" id="L158">		return q;</span>
+	}
+
+	private void validateNumericOrDate(Attribute attr)
+	{
+<span class="pc bfc" id="L163" title="All 2 branches covered.">		switch (attr.getDataType())</span>
+		{
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case INT:
+			case LONG:
+<span class="fc" id="L170">				break;</span>
+			// $CASES-OMITTED$
+			default:
+<span class="fc" id="L173">				throw new IllegalArgumentException(</span>
+<span class="fc" id="L174">						&quot;Can't perform operator '\&quot; + symbol + \&quot;' on attribute '\&quot;&quot; + attr.getName() + &quot;\&quot;&quot;);</span>
+		}
+<span class="fc" id="L176">	}</span>
+
+	private Attribute getAttribute(ComparisonNode node)
+	{
+<span class="fc" id="L180">		String attrName = node.getSelector();</span>
+
+<span class="fc" id="L182">		String[] attrTokens = attrName.split(&quot;\\.&quot;);</span>
+<span class="fc" id="L183">		Attribute attr = entityType.getAttribute(attrTokens[0]);</span>
+<span class="fc bfc" id="L184" title="All 2 branches covered.">		if (attr == null)</span>
+		{
+<span class="fc" id="L186">			throw new UnknownAttributeException(entityType, attrName);</span>
+		}
+		EntityType entityTypeAtDepth;
+<span class="pc bpc" id="L189" title="1 of 2 branches missed.">		for (int i = 1; i &lt; attrTokens.length; ++i)</span>
+		{
+<span class="nc" id="L191">			entityTypeAtDepth = attr.getRefEntity();</span>
+<span class="nc" id="L192">			attr = entityTypeAtDepth.getAttribute(attrTokens[i]);</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">			if (attr == null)</span>
+			{
+<span class="nc" id="L195">				throw new UnknownAttributeException(entityTypeAtDepth, attrName);</span>
+			}
+		}
+
+<span class="fc" id="L199">		return attr;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

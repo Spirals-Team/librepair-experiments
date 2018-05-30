@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>L2CacheRepositoryDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-cache</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.cache.l2</a> &gt; <span class="el_source">L2CacheRepositoryDecorator.java</span></div><h1>L2CacheRepositoryDecorator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.cache.l2;
+
+import com.google.common.collect.Iterators;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Multimaps;
+import org.molgenis.data.*;
+import org.molgenis.data.transaction.TransactionInformation;
+
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Iterators.partition;
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Maps.newHashMap;
+import static com.google.common.collect.Maps.uniqueIndex;
+import static java.util.Objects.requireNonNull;
+import static java.util.Spliterator.ORDERED;
+import static java.util.Spliterator.SORTED;
+import static java.util.Spliterators.spliteratorUnknownSize;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.RepositoryCapability.CACHEABLE;
+
+/**
+ * Adds, removes and retrieves entities from the {@link L2Cache} when a {@link Repository} is
+ * {@link RepositoryCapability#CACHEABLE}.
+ * &lt;p&gt;
+ * Delegates to the underlying repository when an action is not supported by the cache or when the cache doesn't contain
+ * the needed entity.
+ */
+public class L2CacheRepositoryDecorator extends AbstractRepositoryDecorator&lt;Entity&gt;
+{
+	private static final int ID_BATCH_SIZE = 1000;
+
+	private final L2Cache l2Cache;
+
+	private final boolean cacheable;
+
+	private final TransactionInformation transactionInformation;
+
+	public L2CacheRepositoryDecorator(Repository&lt;Entity&gt; delegateRepository, L2Cache l2Cache,
+			TransactionInformation transactionInformation)
+	{
+<span class="fc" id="L48">		super(delegateRepository);</span>
+<span class="fc" id="L49">		this.l2Cache = requireNonNull(l2Cache);</span>
+<span class="fc" id="L50">		this.cacheable = delegateRepository.getCapabilities().containsAll(newArrayList(CACHEABLE));</span>
+<span class="fc" id="L51">		this.transactionInformation = transactionInformation;</span>
+<span class="fc" id="L52">	}</span>
+
+	/**
+	 * Retrieves a single entity by id.
+	 *
+	 * @param id the entity's ID value
+	 * @return the retrieved Entity, or null if not present.
+	 */
+	@Override
+	public Entity findOneById(Object id)
+	{
+<span class="pc bpc" id="L63" title="1 of 4 branches missed.">		if (cacheable &amp;&amp; !transactionInformation.isEntireRepositoryDirty(getEntityType())</span>
+<span class="fc bfc" id="L64" title="All 2 branches covered.">				&amp;&amp; !transactionInformation.isEntityDirty(EntityKey.create(getEntityType(), id)))</span>
+		{
+<span class="fc" id="L66">			return l2Cache.get(delegate(), id);</span>
+		}
+<span class="fc" id="L68">		return delegate().findOneById(id);</span>
+	}
+
+	/**
+	 * Retrieves multiple entities by id.
+	 * &lt;p&gt;
+	 * If the repository is cacheable and the current transaction hasn't completely dirtied it, will split the stream
+	 * into batches and load the batches through {@link #findAllBatch(List)}.
+	 * &lt;p&gt;
+	 * Otherwise, will delegate this call to the decorated repository.
+	 *
+	 * @param ids {@link Stream} of ids to retrieve
+	 * @return {@link Stream} of retrieved {@link Entity}s, missing ones excluded
+	 */
+	@Override
+	public Stream&lt;Entity&gt; findAll(Stream&lt;Object&gt; ids)
+	{
+<span class="pc bpc" id="L85" title="2 of 4 branches missed.">		if (cacheable &amp;&amp; !transactionInformation.isEntireRepositoryDirty(getEntityType()))</span>
+		{
+<span class="fc" id="L87">			Iterator&lt;List&lt;Object&gt;&gt; idBatches = partition(ids.iterator(), ID_BATCH_SIZE);</span>
+<span class="fc" id="L88">			Iterator&lt;List&lt;Entity&gt;&gt; entityBatches = Iterators.transform(idBatches, this::findAllBatch);</span>
+<span class="fc" id="L89">			return stream(spliteratorUnknownSize(entityBatches, SORTED | ORDERED), false).flatMap(List::stream);</span>
+		}
+<span class="nc" id="L91">		return delegate().findAll(ids);</span>
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; findAll(Stream&lt;Object&gt; ids, Fetch fetch)
+	{
+<span class="nc" id="L97">		return findAll(ids);</span>
+	}
+
+	@Override
+	public Entity findOneById(Object id, Fetch fetch)
+	{
+<span class="fc" id="L103">		return findOneById(id);</span>
+	}
+
+	/**
+	 * Retrieves a batch of Entity IDs.
+	 * &lt;p&gt;
+	 * If currently in transaction, splits the ids into those that have been dirtied in the current transaction
+	 * and those that have been left untouched. The untouched ids are loaded through the cache, the dirtied ids
+	 * are loaded from the decorated repository directly.
+	 *
+	 * @param ids list of entity IDs to retrieve
+	 * @return List of {@link Entity}s, missing ones excluded.
+	 */
+	private List&lt;Entity&gt; findAllBatch(List&lt;Object&gt; ids)
+	{
+<span class="fc" id="L118">		String entityTypeId = getEntityType().getId();</span>
+<span class="fc" id="L119">		Multimap&lt;Boolean, Object&gt; partitionedIds = Multimaps.index(ids,</span>
+<span class="fc" id="L120">				id -&gt; transactionInformation.isEntityDirty(EntityKey.create(entityTypeId, id)));</span>
+<span class="fc" id="L121">		Collection&lt;Object&gt; cleanIds = partitionedIds.get(false);</span>
+<span class="fc" id="L122">		Collection&lt;Object&gt; dirtyIds = partitionedIds.get(true);</span>
+
+<span class="fc" id="L124">		Map&lt;Object, Entity&gt; result = newHashMap(</span>
+<span class="fc" id="L125">				uniqueIndex(l2Cache.getBatch(delegate(), cleanIds), Entity::getIdValue));</span>
+<span class="fc" id="L126">		result.putAll(delegate().findAll(dirtyIds.stream()).collect(toMap(Entity::getIdValue, e -&gt; e)));</span>
+
+<span class="fc" id="L128">		return ids.stream().filter(result::containsKey).map(result::get).collect(toList());</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

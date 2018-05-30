@@ -1,0 +1,424 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MapOfStringsExpressionEvaluator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.support</a> &gt; <span class="el_source">MapOfStringsExpressionEvaluator.java</span></div><h1>MapOfStringsExpressionEvaluator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.support;
+
+import com.google.common.collect.ImmutableMap;
+import com.google.gson.Gson;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Range;
+import org.molgenis.data.Sort;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.Tag;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+
+public class MapOfStringsExpressionEvaluator implements ExpressionEvaluator
+{
+	private final Attribute targetAttribute;
+	private Map&lt;String, ExpressionEvaluator&gt; evaluators;
+
+	/**
+	 * Constructs a new expression evaluator for an attribute whose expression is a simple string.
+	 *
+	 * @param attribute  attribute meta data
+	 * @param entityType entity meta data
+	 */
+	public MapOfStringsExpressionEvaluator(Attribute attribute, EntityType entityType)
+<span class="fc" id="L31">	{</span>
+<span class="fc" id="L32">		targetAttribute = attribute;</span>
+<span class="fc" id="L33">		String expression = attribute.getExpression();</span>
+<span class="fc bfc" id="L34" title="All 2 branches covered.">		if (expression == null)</span>
+		{
+<span class="fc" id="L36">			throw new NullPointerException(&quot;Attribute has no expression.&quot;);</span>
+		}
+<span class="fc" id="L38">		EntityType refEntity = attribute.getRefEntity();</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">		if (refEntity == null)</span>
+		{
+<span class="fc" id="L41">			throw new NullPointerException(&quot;refEntity not specified.&quot;);</span>
+		}
+<span class="fc" id="L43">		Gson gson = new Gson();</span>
+		try
+		{
+			@SuppressWarnings(&quot;unchecked&quot;)
+<span class="fc" id="L47">			Map&lt;String, String&gt; attributeExpressions = gson.fromJson(expression, Map.class);</span>
+<span class="fc" id="L48">			ImmutableMap.Builder&lt;String, ExpressionEvaluator&gt; builder = ImmutableMap.builder();</span>
+<span class="fc bfc" id="L49" title="All 2 branches covered.">			for (Entry&lt;String, String&gt; entry : attributeExpressions.entrySet())</span>
+			{
+<span class="fc" id="L51">				Attribute targetAttribute = refEntity.getAttribute(entry.getKey());</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">				if (targetAttribute == null)</span>
+				{
+<span class="fc" id="L54">					throw new IllegalArgumentException(&quot;Unknown target attribute: &quot; + entry.getKey() + '.');</span>
+				}
+<span class="fc" id="L56">				Attribute amd = new AttributeWithJsonExpression(targetAttribute, entry.getValue());</span>
+<span class="fc" id="L57">				StringExpressionEvaluator evaluator = new StringExpressionEvaluator(amd, entityType);</span>
+<span class="fc" id="L58">				builder.put(entry.getKey(), evaluator);</span>
+<span class="fc" id="L59">			}</span>
+<span class="fc" id="L60">			evaluators = builder.build();</span>
+		}
+<span class="fc" id="L62">		catch (ClassCastException ex)</span>
+		{
+<span class="fc" id="L64">			throw new IllegalArgumentException(</span>
+					&quot;Nested expressions not supported, expression must be Map&lt;String,String&gt;.&quot;);
+<span class="fc" id="L66">		}</span>
+
+<span class="fc" id="L68">	}</span>
+
+	@Override
+	public Object evaluate(Entity entity)
+	{
+<span class="fc" id="L73">		Entity result = new DynamicEntity(targetAttribute.getRefEntity());</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">		for (Entry&lt;String, ExpressionEvaluator&gt; entry : evaluators.entrySet())</span>
+		{
+<span class="fc" id="L76">			result.set(entry.getKey(), entry.getValue().evaluate(entity));</span>
+<span class="fc" id="L77">		}</span>
+<span class="fc" id="L78">		return result;</span>
+	}
+
+	private static class AttributeWithJsonExpression extends Attribute
+	{
+		private final Attribute attr;
+		private final String expression;
+
+		public AttributeWithJsonExpression(Attribute attr, String expression)
+		{
+<span class="fc" id="L88">			super(attr.getEntityType());</span>
+<span class="fc" id="L89">			this.attr = attr;</span>
+<span class="fc" id="L90">			this.expression = expression;</span>
+<span class="fc" id="L91">		}</span>
+
+		@Override
+		public String getExpression()
+		{
+<span class="fc" id="L96">			return expression;</span>
+		}
+
+		@Override
+		public Object get(String attributeName)
+		{
+<span class="nc" id="L102">			return attr.get(attributeName);</span>
+		}
+
+		@Override
+		public Iterable&lt;String&gt; getAttributeNames()
+		{
+<span class="nc" id="L108">			return attr.getAttributeNames();</span>
+		}
+
+		@Override
+		public Boolean getBoolean(String attributeName)
+		{
+<span class="nc" id="L114">			return attr.getBoolean(attributeName);</span>
+		}
+
+		@Override
+		public Double getDouble(String attributeName)
+		{
+<span class="nc" id="L120">			return attr.getDouble(attributeName);</span>
+		}
+
+		@Override
+		public Iterable&lt;Entity&gt; getEntities(String attributeName)
+		{
+<span class="nc" id="L126">			return attr.getEntities(attributeName);</span>
+		}
+
+		@Override
+		public &lt;E extends Entity&gt; Iterable&lt;E&gt; getEntities(String attributeName, Class&lt;E&gt; clazz)
+		{
+<span class="nc" id="L132">			return attr.getEntities(attributeName, clazz);</span>
+		}
+
+		@Override
+		public Entity getEntity(String attributeName)
+		{
+<span class="nc" id="L138">			return attr.getEntity(attributeName);</span>
+		}
+
+		@Override
+		public &lt;E extends Entity&gt; E getEntity(String attributeName, Class&lt;E&gt; clazz)
+		{
+<span class="nc" id="L144">			return attr.getEntity(attributeName, clazz);</span>
+		}
+
+		@Override
+		public EntityType getEntityType()
+		{
+<span class="nc" id="L150">			return attr.getEntityType();</span>
+		}
+
+		@Override
+		public Object getIdValue()
+		{
+<span class="nc" id="L156">			return attr.getIdValue();</span>
+		}
+
+		@Override
+		public Integer getInt(String attributeName)
+		{
+<span class="nc" id="L162">			return attr.getInt(attributeName);</span>
+		}
+
+		@Override
+		public Object getLabelValue()
+		{
+<span class="nc" id="L168">			return attr.getLabelValue();</span>
+		}
+
+		@Override
+		public Long getLong(String attributeName)
+		{
+<span class="nc" id="L174">			return attr.getLong(attributeName);</span>
+		}
+
+		@Override
+		public String getString(String attributeName)
+		{
+<span class="nc" id="L180">			return attr.getString(attributeName);</span>
+		}
+
+		@Override
+		public LocalDate getLocalDate(String attributeName)
+		{
+<span class="nc" id="L186">			return attr.getLocalDate(attributeName);</span>
+		}
+
+		@Override
+		public Instant getInstant(String attributeName)
+		{
+<span class="nc" id="L192">			return attr.getInstant(attributeName);</span>
+		}
+
+		@Override
+		public String getIdentifier()
+		{
+<span class="nc" id="L198">			return attr.getIdentifier();</span>
+		}
+
+		@Override
+		public String getName()
+		{
+<span class="fc" id="L204">			return attr.getName();</span>
+		}
+
+		@Override
+		public Integer getSequenceNumber()
+		{
+<span class="nc" id="L210">			return attr.getSequenceNumber();</span>
+		}
+
+		@Override
+		public EntityType getEntity()
+		{
+<span class="nc" id="L216">			return attr.getEntity();</span>
+		}
+
+		@Override
+		public boolean isIdAttribute()
+		{
+<span class="nc" id="L222">			return attr.isIdAttribute();</span>
+		}
+
+		@Override
+		public boolean isLabelAttribute()
+		{
+<span class="nc" id="L228">			return attr.isLabelAttribute();</span>
+		}
+
+		@Override
+		public Integer getLookupAttributeIndex()
+		{
+<span class="nc" id="L234">			return attr.getLookupAttributeIndex();</span>
+		}
+
+		@Override
+		public String getLabel()
+		{
+<span class="nc" id="L240">			return attr.getLabel();</span>
+		}
+
+		@Override
+		public String getLabel(String languageCode)
+		{
+<span class="nc" id="L246">			return attr.getLabel(languageCode);</span>
+		}
+
+		@Override
+		public String getDescription()
+		{
+<span class="nc" id="L252">			return attr.getDescription();</span>
+		}
+
+		@Override
+		public String getDescription(String languageCode)
+		{
+<span class="nc" id="L258">			return attr.getDescription(languageCode);</span>
+		}
+
+		@Override
+		public AttributeType getDataType()
+		{
+<span class="fc" id="L264">			return attr.getDataType();</span>
+		}
+
+		@Override
+		public Iterable&lt;Attribute&gt; getChildren()
+		{
+<span class="nc" id="L270">			return attr.getChildren();</span>
+		}
+
+		@Override
+		public EntityType getRefEntity()
+		{
+<span class="nc" id="L276">			return attr.getRefEntity();</span>
+		}
+
+		@Override
+		public Attribute getMappedBy()
+		{
+<span class="nc" id="L282">			return attr.getMappedBy();</span>
+		}
+
+		@Override
+		public boolean isMappedBy()
+		{
+<span class="nc" id="L288">			return attr.isMappedBy();</span>
+		}
+
+		@Override
+		public Sort getOrderBy()
+		{
+<span class="nc" id="L294">			return attr.getOrderBy();</span>
+		}
+
+		@Override
+		public boolean hasExpression()
+		{
+<span class="nc" id="L300">			return attr.hasExpression();</span>
+		}
+
+		@Override
+		public boolean isNillable()
+		{
+<span class="nc" id="L306">			return attr.isNillable();</span>
+		}
+
+		@Override
+		public boolean isAuto()
+		{
+<span class="nc" id="L312">			return attr.isAuto();</span>
+		}
+
+		@Override
+		public boolean isVisible()
+		{
+<span class="nc" id="L318">			return attr.isVisible();</span>
+		}
+
+		@Override
+		public boolean isAggregatable()
+		{
+<span class="nc" id="L324">			return attr.isAggregatable();</span>
+		}
+
+		@Override
+		public List&lt;String&gt; getEnumOptions()
+		{
+<span class="nc" id="L330">			return attr.getEnumOptions();</span>
+		}
+
+		@Override
+		public Long getRangeMin()
+		{
+<span class="nc" id="L336">			return attr.getRangeMin();</span>
+		}
+
+		@Override
+		public Long getRangeMax()
+		{
+<span class="nc" id="L342">			return attr.getRangeMax();</span>
+		}
+
+		@Override
+		public boolean isReadOnly()
+		{
+<span class="nc" id="L348">			return attr.isReadOnly();</span>
+		}
+
+		@Override
+		public boolean isUnique()
+		{
+<span class="nc" id="L354">			return attr.isUnique();</span>
+		}
+
+		@Override
+		public String getNullableExpression()
+		{
+<span class="nc" id="L360">			return attr.getNullableExpression();</span>
+		}
+
+		@Override
+		public String getVisibleExpression()
+		{
+<span class="nc" id="L366">			return attr.getVisibleExpression();</span>
+		}
+
+		@Override
+		public String getValidationExpression()
+		{
+<span class="nc" id="L372">			return attr.getValidationExpression();</span>
+		}
+
+		@Override
+		public String getDefaultValue()
+		{
+<span class="nc" id="L378">			return attr.getDefaultValue();</span>
+		}
+
+		@Override
+		public Range getRange()
+		{
+<span class="nc" id="L384">			return attr.getRange();</span>
+		}
+
+		@Override
+		public Attribute getParent()
+		{
+<span class="nc" id="L390">			return attr.getParent();</span>
+		}
+
+		@Override
+		public Attribute getChild(String attrName)
+		{
+<span class="nc" id="L396">			return attr.getChild(attrName);</span>
+		}
+
+		@Override
+		public Iterable&lt;Tag&gt; getTags()
+		{
+<span class="nc" id="L402">			return attr.getTags();</span>
+		}
+
+		@Override
+		public String toString()
+		{
+<span class="nc" id="L408">			return attr.toString();</span>
+		}
+
+		@Override
+		public Attribute getInversedBy()
+		{
+<span class="nc" id="L414">			return attr.getInversedBy();</span>
+		}
+
+		@Override
+		public boolean isInversedBy()
+		{
+<span class="nc" id="L420">			return attr.isInversedBy();</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

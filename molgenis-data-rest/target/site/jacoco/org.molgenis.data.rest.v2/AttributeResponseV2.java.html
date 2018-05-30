@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AttributeResponseV2.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-rest</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.rest.v2</a> &gt; <span class="el_source">AttributeResponseV2.java</span></div><h1>AttributeResponseV2.java</h1><pre class="source lang-java linenums">package org.molgenis.data.rest.v2;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Fetch;
+import org.molgenis.data.Range;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.rest.util.Href;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.security.core.UserPermissionEvaluator;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+import static com.google.common.collect.Streams.stream;
+import static org.molgenis.data.meta.AttributeType.COMPOUND;
+import static org.molgenis.i18n.LanguageService.getCurrentUserLanguageCode;
+
+class AttributeResponseV2
+{
+	private final String href;
+	private final AttributeType fieldType;
+	private final String name;
+	private final String label;
+	private final String description;
+	private final List&lt;?&gt; attributes;
+	private final List&lt;String&gt; enumOptions;
+	private final Long maxLength;
+	private final Object refEntity;
+	private final String mappedBy;
+	private final Boolean auto;
+	private final Boolean nillable;
+	private final Boolean readOnly;
+	private final Object defaultValue;
+	private final Boolean labelAttribute;
+	private final Boolean unique;
+	private final Boolean visible;
+	private Boolean lookupAttribute;
+	private Boolean isAggregatable;
+	private Range range;
+	private String expression;
+	private String nullableExpression;
+	private String visibleExpression;
+	private String validationExpression;
+	private List&lt;CategoricalOptionV2&gt; categoricalOptions;
+
+	/**
+	 * Constructs AttributeResponseV2 using params
+	 *
+	 * @param fetch             set of lowercase attribute names to include in response
+	 * @param includeCategories if set to true includes options list for CATEGORICAL and CATEGORICAL_MREF types in the attribute metadata
+	 */
+	public AttributeResponseV2(final String entityParentName, EntityType entityType, Attribute attr, Fetch fetch,
+			UserPermissionEvaluator permissionService, DataService dataService, boolean includeCategories)
+<span class="fc" id="L56">	{</span>
+<span class="fc" id="L57">		String attrName = attr.getName();</span>
+<span class="fc" id="L58">		this.href = Href.concatMetaAttributeHref(RestControllerV2.BASE_URI, entityParentName, attrName);</span>
+
+<span class="fc" id="L60">		this.fieldType = attr.getDataType();</span>
+<span class="fc" id="L61">		this.name = attrName;</span>
+<span class="fc" id="L62">		this.label = attr.getLabel(getCurrentUserLanguageCode());</span>
+<span class="fc" id="L63">		this.description = attr.getDescription(getCurrentUserLanguageCode());</span>
+<span class="fc bfc" id="L64" title="All 2 branches covered.">		this.enumOptions = attr.getDataType() == AttributeType.ENUM ? attr.getEnumOptions() : null;</span>
+<span class="fc" id="L65">		this.maxLength = attr.getDataType().getMaxLength();</span>
+<span class="fc" id="L66">		this.expression = attr.getExpression();</span>
+
+<span class="fc" id="L68">		EntityType refEntity = attr.getRefEntity();</span>
+<span class="fc bfc" id="L69" title="All 2 branches covered.">		if (refEntity != null)</span>
+		{
+<span class="fc" id="L71">			this.refEntity = new EntityTypeResponseV2(refEntity, fetch, permissionService, dataService,</span>
+					includeCategories);
+
+<span class="fc bfc" id="L74" title="All 6 branches covered.">			if (includeCategories &amp;&amp; (this.fieldType == AttributeType.CATEGORICAL</span>
+					|| this.fieldType == AttributeType.CATEGORICAL_MREF))
+			{
+<span class="fc" id="L77">				this.categoricalOptions = CategoricalUtils.getCategoricalOptionsForRefEntity(dataService, refEntity);</span>
+			}
+		}
+		else
+		{
+<span class="fc" id="L82">			this.refEntity = null;</span>
+		}
+
+<span class="fc" id="L85">		Attribute mappedByAttr = attr.getMappedBy();</span>
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">		this.mappedBy = mappedByAttr != null ? mappedByAttr.getName() : null;</span>
+
+<span class="fc" id="L88">		Iterable&lt;Attribute&gt; attrParts = attr.getChildren();</span>
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">		if (attrParts != null)</span>
+		{
+			// filter attribute parts
+<span class="fc" id="L92">			attrParts = filterAttributes(fetch, attrParts);</span>
+<span class="fc" id="L93">			this.attributes = stream(attrParts).map(attrPart -&gt;</span>
+			{
+				Fetch subAttrFetch;
+<span class="pc bpc" id="L96" title="1 of 2 branches missed.">				if (fetch != null)</span>
+				{
+<span class="fc bfc" id="L98" title="All 2 branches covered.">					if (attrPart.getDataType() == AttributeType.COMPOUND)</span>
+					{
+<span class="fc" id="L100">						subAttrFetch = fetch;</span>
+					}
+					else
+					{
+<span class="fc" id="L104">						subAttrFetch = fetch.getFetch(attrPart);</span>
+					}
+				}
+<span class="nc bnc" id="L107" title="All 2 branches missed.">				else if (EntityTypeUtils.isReferenceType(attrPart))</span>
+				{
+<span class="nc" id="L109">					subAttrFetch = AttributeFilterToFetchConverter.createDefaultAttributeFetch(attrPart,</span>
+<span class="nc" id="L110">							getCurrentUserLanguageCode());</span>
+				}
+				else
+				{
+<span class="nc" id="L114">					subAttrFetch = null;</span>
+				}
+<span class="fc" id="L116">				return new AttributeResponseV2(entityParentName, entityType, attrPart, subAttrFetch, permissionService,</span>
+						dataService, includeCategories);
+<span class="fc" id="L118">			}).collect(Collectors.toList());</span>
+		}
+		else
+		{
+<span class="nc" id="L122">			this.attributes = null;</span>
+		}
+
+<span class="fc" id="L125">		this.auto = attr.isAuto();</span>
+<span class="fc" id="L126">		this.nillable = attr.isNillable();</span>
+<span class="fc" id="L127">		this.readOnly = attr.isReadOnly();</span>
+<span class="fc" id="L128">		this.defaultValue = attr.getDefaultValue();</span>
+<span class="fc" id="L129">		this.labelAttribute = attr.equals(entityType.getLabelAttribute());</span>
+<span class="fc" id="L130">		this.unique = attr.isUnique();</span>
+<span class="fc bfc" id="L131" title="All 2 branches covered.">		this.lookupAttribute = entityType.getLookupAttribute(attr.getName()) != null;</span>
+<span class="fc" id="L132">		this.isAggregatable = attr.isAggregatable();</span>
+<span class="fc" id="L133">		this.range = attr.getRange();</span>
+<span class="fc" id="L134">		this.visible = attr.isVisible();</span>
+<span class="fc" id="L135">		this.nullableExpression = attr.getNullableExpression();</span>
+<span class="fc" id="L136">		this.visibleExpression = attr.getVisibleExpression();</span>
+<span class="fc" id="L137">		this.validationExpression = attr.getValidationExpression();</span>
+<span class="fc" id="L138">	}</span>
+
+	/**
+	 * Default AttributeResponseV2 with @param includeCategories set to false
+	 *
+	 * @param fetch set of lowercase attribute names to include in response
+	 */
+	public AttributeResponseV2(final String entityParentName, EntityType entityType, Attribute attr, Fetch fetch,
+			UserPermissionEvaluator permissionService, DataService dataService)
+	{
+<span class="fc" id="L148">		this(entityParentName, entityType, attr, fetch, permissionService, dataService, false);</span>
+<span class="fc" id="L149">	}</span>
+
+	public static Iterable&lt;Attribute&gt; filterAttributes(Fetch fetch, Iterable&lt;Attribute&gt; attrs)
+	{
+<span class="fc bfc" id="L153" title="All 2 branches covered.">		if (fetch != null)</span>
+		{
+<span class="fc" id="L155">			return stream(attrs).filter(attr -&gt; filterAttributeRec(fetch, attr)).collect(Collectors.toList());</span>
+		}
+		else
+		{
+<span class="fc" id="L159">			return attrs;</span>
+		}
+	}
+
+	public static boolean filterAttributeRec(Fetch fetch, Attribute attr)
+	{
+<span class="fc bfc" id="L165" title="All 2 branches covered.">		if (attr.getDataType() == COMPOUND)</span>
+		{
+<span class="fc bfc" id="L167" title="All 2 branches covered.">			for (Attribute attrPart : attr.getChildren())</span>
+			{
+<span class="fc bfc" id="L169" title="All 2 branches covered.">				if (filterAttributeRec(fetch, attrPart))</span>
+				{
+<span class="fc" id="L171">					return true;</span>
+				}
+<span class="fc" id="L173">			}</span>
+<span class="fc" id="L174">			return false;</span>
+		}
+		else
+		{
+<span class="fc" id="L178">			return fetch.hasField(attr);</span>
+		}
+	}
+
+	public String getHref()
+	{
+<span class="fc" id="L184">		return href;</span>
+	}
+
+	public AttributeType getFieldType()
+	{
+<span class="nc" id="L189">		return fieldType;</span>
+	}
+
+	public String getName()
+	{
+<span class="fc" id="L194">		return name;</span>
+	}
+
+	public String getLabel()
+	{
+<span class="nc" id="L199">		return label;</span>
+	}
+
+	public String getDescription()
+	{
+<span class="fc" id="L204">		return description;</span>
+	}
+
+	public List&lt;?&gt; getAttributes()
+	{
+<span class="nc" id="L209">		return attributes;</span>
+	}
+
+	public List&lt;String&gt; getEnumOptions()
+	{
+<span class="nc" id="L214">		return enumOptions;</span>
+	}
+
+	public Long getMaxLength()
+	{
+<span class="nc" id="L219">		return maxLength;</span>
+	}
+
+	public Object getRefEntity()
+	{
+<span class="nc" id="L224">		return refEntity;</span>
+	}
+
+	public String getMappedBy()
+	{
+<span class="nc" id="L229">		return mappedBy;</span>
+	}
+
+	public boolean isAuto()
+	{
+<span class="nc" id="L234">		return auto;</span>
+	}
+
+	public boolean isNillable()
+	{
+<span class="nc" id="L239">		return nillable;</span>
+	}
+
+	public boolean isReadOnly()
+	{
+<span class="nc" id="L244">		return readOnly;</span>
+	}
+
+	public Object getDefaultValue()
+	{
+<span class="nc" id="L249">		return defaultValue;</span>
+	}
+
+	public boolean isLabelAttribute()
+	{
+<span class="nc" id="L254">		return labelAttribute;</span>
+	}
+
+	public boolean isUnique()
+	{
+<span class="nc" id="L259">		return unique;</span>
+	}
+
+	public boolean isVisible()
+	{
+<span class="nc" id="L264">		return visible;</span>
+	}
+
+	public Boolean getLookupAttribute()
+	{
+<span class="nc" id="L269">		return lookupAttribute;</span>
+	}
+
+	public Boolean isAggregatable()
+	{
+<span class="nc" id="L274">		return isAggregatable;</span>
+	}
+
+	public Boolean getNillable()
+	{
+<span class="nc" id="L279">		return nillable;</span>
+	}
+
+	public Boolean getReadOnly()
+	{
+<span class="nc" id="L284">		return readOnly;</span>
+	}
+
+	public Boolean getLabelAttribute()
+	{
+<span class="nc" id="L289">		return labelAttribute;</span>
+	}
+
+	public Boolean getUnique()
+	{
+<span class="nc" id="L294">		return unique;</span>
+	}
+
+	public Boolean getAggregatable()
+	{
+<span class="nc" id="L299">		return isAggregatable;</span>
+	}
+
+	public Range getRange()
+	{
+<span class="nc" id="L304">		return range;</span>
+	}
+
+	public String getExpression()
+	{
+<span class="nc" id="L309">		return expression;</span>
+	}
+
+	public String getNullableExpression()
+	{
+<span class="nc" id="L314">		return nullableExpression;</span>
+	}
+
+	public String getVisibleExpression()
+	{
+<span class="nc" id="L319">		return visibleExpression;</span>
+	}
+
+	public String getValidationExpression()
+	{
+<span class="nc" id="L324">		return validationExpression;</span>
+	}
+
+	public List&lt;CategoricalOptionV2&gt; getCategoricalOptions()
+	{
+<span class="nc" id="L329">		return categoricalOptions;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

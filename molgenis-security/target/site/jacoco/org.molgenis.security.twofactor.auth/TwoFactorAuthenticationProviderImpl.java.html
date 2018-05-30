@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TwoFactorAuthenticationProviderImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security.twofactor.auth</a> &gt; <span class="el_source">TwoFactorAuthenticationProviderImpl.java</span></div><h1>TwoFactorAuthenticationProviderImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.security.twofactor.auth;
+
+import org.molgenis.security.twofactor.service.OtpService;
+import org.molgenis.security.twofactor.service.RecoveryService;
+import org.molgenis.security.twofactor.service.TwoFactorAuthenticationService;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+
+import static java.util.Objects.requireNonNull;
+
+/**
+ * AuthenticationProvider that uses the TwoFactorAuthenticationService and expects a TwoFactorAuthenticationToken
+ * &lt;p&gt;
+ * Checks if 2 factor authentication is configured for user.
+ * &lt;p&gt;
+ * If it is then check only with verificationKey
+ */
+public class TwoFactorAuthenticationProviderImpl implements TwoFactorAuthenticationProvider
+{
+	private final TwoFactorAuthenticationService twoFactorAuthenticationService;
+	private final OtpService otpService;
+	private final RecoveryService recoveryService;
+
+	public TwoFactorAuthenticationProviderImpl(TwoFactorAuthenticationService twoFactorAuthenticationService,
+			OtpService otpService, RecoveryService recoveryService)
+<span class="fc" id="L28">	{</span>
+<span class="fc" id="L29">		this.twoFactorAuthenticationService = requireNonNull(twoFactorAuthenticationService);</span>
+<span class="fc" id="L30">		this.otpService = requireNonNull(otpService);</span>
+<span class="fc" id="L31">		this.recoveryService = requireNonNull(recoveryService);</span>
+<span class="fc" id="L32">	}</span>
+
+	@Override
+	public Authentication authenticate(Authentication authentication)
+	{
+<span class="fc bfc" id="L37" title="All 2 branches covered.">		if (!supports(authentication.getClass()))</span>
+		{
+<span class="fc" id="L39">			throw new IllegalArgumentException(&quot;Only TwoFactorAuthenticationToken is supported&quot;);</span>
+		}
+
+<span class="fc" id="L42">		TwoFactorAuthenticationToken authToken = (TwoFactorAuthenticationToken) authentication;</span>
+
+<span class="fc bfc" id="L44" title="All 2 branches covered.">		if (!twoFactorAuthenticationService.isConfiguredForUser())</span>
+		{
+<span class="fc bfc" id="L46" title="All 2 branches covered.">			if (authToken.getSecretKey() != null)</span>
+			{
+<span class="pc bpc" id="L48" title="1 of 2 branches missed.">				if (otpService.tryVerificationCode(authToken.getVerificationCode(), authToken.getSecretKey()))</span>
+				{
+<span class="fc" id="L50">					activateTwoFactorAuthentication(authToken);</span>
+<span class="fc" id="L51">					UserDetails userDetails = (UserDetails) SecurityContextHolder.getContext()</span>
+<span class="fc" id="L52">																				 .getAuthentication()</span>
+<span class="fc" id="L53">																				 .getPrincipal();</span>
+
+<span class="fc" id="L55">					authToken = new TwoFactorAuthenticationToken(userDetails, userDetails.getPassword(),</span>
+<span class="fc" id="L56">							userDetails.getAuthorities(), authToken.getVerificationCode(), authToken.getSecretKey());</span>
+<span class="fc" id="L57">				}</span>
+			}
+			else
+			{
+<span class="fc" id="L61">				throw new BadCredentialsException(&quot;Invalid secret generated&quot;);</span>
+			}
+		}
+		else
+		{
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">			if (authToken.getVerificationCode() != null)</span>
+			{
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">				if (twoFactorAuthenticationService.isVerificationCodeValidForUser(authToken.getVerificationCode()))</span>
+				{
+<span class="fc" id="L70">					UserDetails userDetails = (UserDetails) SecurityContextHolder.getContext()</span>
+<span class="fc" id="L71">																				 .getAuthentication()</span>
+<span class="fc" id="L72">																				 .getPrincipal();</span>
+					// if token is invalid
+<span class="fc" id="L74">					authToken = new TwoFactorAuthenticationToken(userDetails, userDetails.getPassword(),</span>
+<span class="fc" id="L75">							userDetails.getAuthorities(), authToken.getVerificationCode(), null);</span>
+<span class="fc" id="L76">				}</span>
+			}
+			else
+			{
+<span class="nc" id="L80">				throw new BadCredentialsException(&quot;Invalid verification code entered&quot;);</span>
+			}
+		}
+
+<span class="fc" id="L84">		return authToken;</span>
+	}
+
+	private void activateTwoFactorAuthentication(TwoFactorAuthenticationToken authToken)
+	{
+<span class="fc" id="L89">		twoFactorAuthenticationService.enableForUser();</span>
+<span class="fc" id="L90">		twoFactorAuthenticationService.saveSecretForUser(authToken.getSecretKey());</span>
+<span class="fc" id="L91">		recoveryService.generateRecoveryCodes();</span>
+<span class="fc" id="L92">	}</span>
+
+	@Override
+	public boolean supports(Class&lt;?&gt; authentication)
+	{
+<span class="fc" id="L97">		return TwoFactorAuthenticationToken.class.isAssignableFrom(authentication);</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>
