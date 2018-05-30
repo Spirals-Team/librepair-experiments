@@ -1,0 +1,507 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:cache="http://www.springframework.org/schema/cache"
+       xmlns:util="http://www.springframework.org/schema/util" xmlns:tx="http://www.springframework.org/schema/tx"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-4.2.xsd
+        http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-4.2.xsd
+        http://www.springframework.org/schema/cache http://www.springframework.org/schema/cache/spring-cache-4.2.xsd
+        http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util-4.2.xsd http://www.springframework.org/schema/tx http://www.springframework.org/schema/tx/spring-tx.xsd">
+
+    <!--
+    Configuring Context Parameters
+    -->
+    <import resource="jpa-context.xml"/>
+    <import resource="monitoring-context.xml"/>
+
+    <tx:annotation-driven transaction-manager="transactionManager"/>
+
+    <bean class="net.contargo.iris.security.SecurityConfig"/>
+    <context:annotation-config/>
+    <cache:annotation-driven cache-manager="cacheManager" />
+
+    <context:property-placeholder ignore-resource-not-found="true"
+                                  location="classpath:application.properties, classpath:application-${environment:dev}.properties"/>
+
+    <!-- this is needed to find the messages in messages.properties -->
+    <bean id="messageSource" class="org.springframework.context.support.ResourceBundleMessageSource">
+        <property name="basename" value="messages.messages"/>
+        <property name="useCodeAsDefaultMessage" value="true"/>
+    </bean>
+
+    <!--
+    logback
+    -->
+    <bean class="org.springframework.beans.factory.config.MethodInvokingFactoryBean">
+        <property name="targetClass" value="ch.qos.logback.ext.spring.LogbackConfigurer"/>
+        <property name="targetMethod" value="initLogging"/>
+        <property name="arguments" value="classpath:${logback.configuration.file}"/>
+    </bean>
+
+    <!--
+    EH Cache Infrastructure
+    -->
+    <bean class="net.contargo.iris.config.CacheMBeanConfiguration"/>
+    <bean id="cacheManager" class="org.springframework.cache.ehcache.EhCacheCacheManager">
+        <property name="cacheManager" ref="ehCacheManager"/>
+    </bean>
+    <bean id="ehCacheManager" class="org.springframework.cache.ehcache.EhCacheManagerFactoryBean">
+        <property name="configLocation" value="classpath:ehcache.xml"/>
+        <property name="shared" value="true"/>
+    </bean>
+
+    <bean id="ehCacheFactory" class="org.springframework.cache.ehcache.EhCacheFactoryBean">
+        <property name="cacheManager" ref="ehCacheManager"/>
+        <property name="cacheName" value="addressCache"/>
+    </bean>
+
+    <bean id="addressCache" class="org.springframework.cache.ehcache.EhCacheCache">
+        <constructor-arg name="ehcache" ref="ehCacheFactory"/>
+    </bean>
+
+    <bean id="roundingService" class="net.contargo.iris.rounding.RoundingServiceImpl"/>
+
+    <bean id="urlSerializationService" class="net.contargo.iris.route.service.RouteUrlSerializationServiceImpl"/>
+
+    <bean id="irisStartupWatcher" class="net.contargo.iris.startup.IrisStartupWatcher">
+        <constructor-arg ref="staticAddressService"/>
+    </bean>
+
+    <!--
+    All Beans for Addresses
+    -->
+    <bean id="addressSorter" class="net.contargo.iris.address.nominatim.service.AddressSorter">
+        <constructor-arg name="gisService" ref="gisService"/>
+    </bean>
+
+    <bean id="addressHelper" class="net.contargo.iris.address.nominatim.service.AddressServiceHelper"/>
+
+    <bean id="addressValidator" class="net.contargo.iris.address.nominatim.service.AddressValidator"/>
+
+    <bean id="addressService" class="net.contargo.iris.address.nominatim.service.NominatimAddressService">
+        <constructor-arg>
+            <bean class="net.contargo.iris.address.nominatim.service.NominatimUrlBuilder">
+                <constructor-arg name="baseUrl" value="${nominatim.base.url}"/>
+                <constructor-arg name="language" value="${nominatim.language}"/>
+                <constructor-arg name="countryService" ref="countryService"/>
+            </bean>
+        </constructor-arg>
+        <constructor-arg>
+            <bean class="net.contargo.iris.address.nominatim.service.NominatimJsonResponseParser">
+                <constructor-arg name="nominatimRestClient">
+                    <bean class="org.springframework.web.client.RestTemplate"/>
+                </constructor-arg>
+            </bean>
+        </constructor-arg>
+        <constructor-arg name="addressSorter" ref="addressSorter"/>
+        <constructor-arg name="addressHelper" ref="addressHelper"/>
+        <constructor-arg name="addressValidator" ref="addressValidator"/>
+    </bean>
+
+    <bean id="normalizerService" class="net.contargo.iris.normalizer.NormalizerServiceImpl"/>
+
+    <bean id="staticAddressService" class="net.contargo.iris.address.staticsearch.service.StaticAddressServiceImpl">
+        <constructor-arg name="repository" ref="staticAddressRepository"/>
+        <constructor-arg ref="uniqueIdSequenceService"/>
+        <constructor-arg ref="normalizerService"/>
+    </bean>
+
+    <bean id="staticAddressDtoService" class="net.contargo.iris.address.staticsearch.dto.StaticAddressDtoServiceImpl">
+        <constructor-arg name="staticAddressService" ref="staticAddressService"/>
+    </bean>
+
+    <bean id="addressServiceWrapper" class="net.contargo.iris.address.service.AddressServiceWrapper">
+        <constructor-arg name="addressService" ref="addressService"/>
+        <constructor-arg name="staticAddressService" ref="staticAddressService"/>
+        <constructor-arg name="cache">
+            <bean class="net.contargo.iris.address.service.AddressCache">
+                <constructor-arg ref="addressCache"/>
+            </bean>
+        </constructor-arg>
+        <constructor-arg name="normalizerService" ref="normalizerService"/>
+    </bean>
+    
+    <bean id="addressListFilter" class="net.contargo.iris.address.service.AddressListFilterImpl"/>
+
+    <bean id="addressDtoService" class="net.contargo.iris.address.dto.AddressDtoServiceImpl">
+        <constructor-arg name="addressService" ref="addressService"/>
+        <constructor-arg name="addressServiceWrapper" ref="addressServiceWrapper"/>
+    </bean>
+
+
+    <!--
+    All beans for countries
+    -->
+    <bean id="countryService" class="net.contargo.iris.countries.service.CountryCodeCountryService"/>
+
+    <bean id="countryDtoService" class="net.contargo.iris.countries.dto.CountryCodeCountryDtoService">
+        <constructor-arg name="service" ref="countryService"/>
+    </bean>
+
+
+    <!--
+    All beans for airline distance
+    -->
+    <bean id="gisService" class="net.contargo.iris.gis.service.GisServiceImpl"/>
+
+    <bean id="airlineDistanceDtoService" class="net.contargo.iris.gis.dto.AirlineDistanceDtoServiceImpl">
+        <constructor-arg name="gisService" ref="gisService"/>
+    </bean>
+
+    <bean id="airlineDistanceResponseAssembler" class="net.contargo.iris.gis.api.AirlineDistanceResponseAssembler"/>
+
+    <bean id="uniqueIdSequenceService" class="net.contargo.iris.sequence.service.UniqueIdSequenceServiceImpl">
+        <constructor-arg ref="uniqueIdSequenceRepository"/>
+    </bean>
+
+
+    <!-- All beans for seaport -->
+    <bean id="seaportService" class="net.contargo.iris.seaport.service.SeaportServiceImpl">
+        <constructor-arg name="seaportRepository" ref="seaportRepository"/>
+        <constructor-arg ref="uniqueIdSequenceService"/>
+    </bean>
+
+    <bean id="seaportDtoService" class="net.contargo.iris.seaport.dto.SeaportDtoServiceImpl">
+        <constructor-arg ref="seaportService"/>
+    </bean>
+
+    <!-- All beans for terminals -->
+    <bean id="terminalService" class="net.contargo.iris.terminal.service.TerminalServiceImpl">
+        <constructor-arg ref="terminalRepository"/>
+        <constructor-arg ref="uniqueIdSequenceService"/>
+    </bean>
+
+    <bean id="terminalDtoService" class="net.contargo.iris.terminal.dto.TerminalDtoServiceImpl">
+        <constructor-arg ref="terminalService"/>
+    </bean>
+
+    <!--
+    All Beans for Truck Routing
+    -->
+    <bean id="duplicateDetectionObjectMapper"
+          class="org.springframework.http.converter.json.Jackson2ObjectMapperFactoryBean">
+        <property name="featuresToEnable">
+            <array>
+                <util:constant
+                        static-field="com.fasterxml.jackson.core.JsonGenerator.Feature.STRICT_DUPLICATE_DETECTION"/>
+            </array>
+        </property>
+    </bean>
+
+    <bean id="routingQueryStrategyProvider" class="net.contargo.iris.routing.RoutingQueryStrategyProvider">
+        <constructor-arg name="restTemplate">
+            <bean class="org.springframework.web.client.RestTemplate"/>
+        </constructor-arg>
+        <constructor-arg name="baseUri" value="${osrm.url}"/>
+    </bean>
+
+    <bean id="truckRouteService" class="net.contargo.iris.truck.service.OSRMTruckRouteService">
+        <constructor-arg name="routingQueryStrategyProvider" ref="routingQueryStrategyProvider"/>
+    </bean>
+
+
+    <!-- All Beans for Connection -->
+    <bean id="connectionService" class="net.contargo.iris.connection.service.MainRunConnectionServiceImpl">
+        <constructor-arg name="mainRunConnectionRepository" ref="mainRunConnectionRepository"/>
+        <constructor-arg name="seaportService" ref="seaportService"/>
+        <constructor-arg name="terminalService" ref="terminalService"/>
+        <constructor-arg name="bargeRailConnectionFinderService" ref="bargeRailConnectionFinderService"/>
+    </bean>
+
+    <bean id="seaportTerminalConnectionService"
+          class="net.contargo.iris.connection.service.SeaportTerminalConnectionServiceImpl">
+        <constructor-arg name="mainRunConnectionRepository" ref="mainRunConnectionRepository"/>
+        <constructor-arg name="seaportService" ref="seaportService"/>
+        <constructor-arg name="terminalService" ref="terminalService"/>
+    </bean>
+
+    <bean id="seaportTerminalConnectionDtoService"
+          class="net.contargo.iris.connection.dto.SeaportTerminalConnectionDtoServiceImpl">
+        <constructor-arg name="seaportTerminalConnectionService" ref="seaportTerminalConnectionService"/>
+    </bean>
+
+    <bean id="seaportConnectionRoutesService"
+          class="net.contargo.iris.connection.service.SeaportConnectionRoutesServiceImpl">
+        <constructor-arg name="seaportTerminalConnectionService" ref="seaportTerminalConnectionService"/>
+        <constructor-arg name="mainRunAdvisor" ref="mainRunAdvisor"/>
+        <constructor-arg name="dtruckActive" value="${feature.dtruck}"/>
+    </bean>
+
+    <bean id="mainRunDurationService" class="net.contargo.iris.mainrun.service.MainRunDurationServiceImpl">
+        <constructor-arg name="roundingService" ref="roundingService"/>
+    </bean>
+
+    <bean id="connectionDistanceService" class="net.contargo.iris.distance.service.ConnectionDistanceServiceImpl">
+        <constructor-arg name="roundingService" ref="roundingService"/>
+    </bean>
+
+    <bean id="distanceService" class="net.contargo.iris.distance.service.DistanceServiceImpl">
+        <constructor-arg name="roundingService" ref="roundingService"/>
+    </bean>
+
+    <bean id="durationService" class="net.contargo.iris.duration.service.DurationServiceImpl">
+        <constructor-arg name="roundingService" ref="roundingService"/>
+    </bean>
+
+    <bean id="mainRunAdvisor" class="net.contargo.iris.connection.advice.MainRunAdvisor">
+        <constructor-arg name="mainRunRoundTripImportAdvice">
+            <bean class="net.contargo.iris.connection.advice.MainRunRoundTripImportStrategy"/>
+        </constructor-arg>
+        <constructor-arg name="mainRunRoundTripExportAdvice">
+            <bean class="net.contargo.iris.connection.advice.MainRunRoundTripExportStrategy"/>
+        </constructor-arg>
+        <constructor-arg name="mainRunOneWayImportAdvice">
+            <bean class="net.contargo.iris.connection.advice.MainRunOneWayImportStrategy"/>
+        </constructor-arg>
+        <constructor-arg name="mainRunOneWayExportAdvice">
+            <bean class="net.contargo.iris.connection.advice.MainRunOneWayExportStrategy"/>
+        </constructor-arg>
+    </bean>
+
+    <bean id="geoLocationService" class="net.contargo.iris.location.GeoLocationServiceImpl">
+        <constructor-arg name="terminalService" ref="terminalService"/>
+        <constructor-arg name="seaportService" ref="seaportService"/>
+        <constructor-arg name="addressServiceWrapper" ref="addressServiceWrapper"/>
+    </bean>
+
+    <bean id="seaportConnectionRoutesDtoService"
+          class="net.contargo.iris.connection.dto.SeaportConnectionRoutesDtoServiceImpl">
+        <constructor-arg name="seaportConnectionRoutesService" ref="seaportConnectionRoutesService"/>
+    </bean>
+
+    <bean id="bargeRailConnectionFinderService" class="net.contargo.iris.connection.service.BargeRailConnectionFinderService"/>
+
+    <bean id="enricherService" class="net.contargo.iris.route.service.EnricherServiceImpl">
+        <constructor-arg name="routePartEnricherList">
+            <!-- Please keep in mind that the order of the enrichers is very important - before you add or remove something -->
+            <list>
+                <bean class="net.contargo.iris.route.service.GeoLocationPartEnricher">
+                    <constructor-arg name="geoLocationService" ref="geoLocationService"/>
+                </bean>
+                <bean id="swissPartEnricher" class="net.contargo.iris.route.service.SwissPartEnricher">
+                    <constructor-arg name="nominatimToStaticAddressMapper" ref="nominatimToStaticAddressMapper"/>
+                </bean>
+                <bean class="net.contargo.iris.route.service.AirLineDistancePartEnricher">
+                    <constructor-arg name="gisService" ref="gisService"/>
+                    <constructor-arg name="roundingService" ref="roundingService"/>
+                </bean>
+                <bean class="net.contargo.iris.route.service.MainRunPartEnricher">
+                    <constructor-arg name="mainRunConnectionService" ref="connectionService"/>
+                    <constructor-arg name="mainRunDurationService" ref="mainRunDurationService"/>
+                    <constructor-arg name="connectionDistanceService" ref="connectionDistanceService"/>
+                </bean>
+                <bean class="net.contargo.iris.route.service.TruckRoutingPartEnricher">
+                    <constructor-arg name="truckRouteService" ref="truckRouteService"/>
+                    <constructor-arg name="durationService" ref="durationService"/>
+                    <constructor-arg name="distanceService" ref="distanceService"/>
+                </bean>
+                <bean class="net.contargo.iris.route.service.Co2PartEnricher"/>
+                <bean class="net.contargo.iris.route.service.RouteDataRevisionPartEnricher">
+                    <constructor-arg name="routeDataRevisionService" ref="routeDataRevisionService"/>
+                    <constructor-arg name="addressListFilter" ref="addressListFilter"/>
+                </bean>
+            </list>
+        </constructor-arg>
+        <constructor-arg name="routeTotalEnricherList">
+            <!-- Please keep in mind that the order of the enrichers is very important - before you add or remove something -->
+            <list>
+                <bean class="net.contargo.iris.route.service.RouteDataRevisionEnricher"/>
+                <bean class="net.contargo.iris.route.service.Co2TotalEnricher"/>
+                <bean class="net.contargo.iris.route.service.TruckingTotalEnricher"/>
+                <bean class="net.contargo.iris.route.service.TotalEnricher"/>
+            </list>
+        </constructor-arg>
+    </bean>
+
+    <bean id="routeDataRevisionService"
+          class="net.contargo.iris.routedatarevision.service.RouteDataRevisionServiceImpl">
+        <constructor-arg name="routeDataRevisionRepository" ref="routeDataRevisionRepository"/>
+        <constructor-arg name="terminalService" ref="terminalService"/>
+        <constructor-arg name="addressServiceWrapper" ref="addressServiceWrapper"/>
+        <constructor-arg name="normalizerService" ref="normalizerService"/>
+    </bean>
+
+    <bean id="routeDataRevisionCleanupTask"
+          class="net.contargo.iris.routedatarevision.service.cleanup.RouteDataRevisionCleanupTask">
+        <constructor-arg name="cleanupService" ref="routeDataRevisionCleanupService"/>
+    </bean>
+
+    <bean id="routeDataRevisionCleanupService"
+          class="net.contargo.iris.routedatarevision.service.cleanup.RouteDataRevisionCleanupService">
+        <constructor-arg name="routeDataRevisionRepository" ref="routeDataRevisionRepository"/>
+        <constructor-arg name="truckRouteService" ref="truckRouteService"/>
+        <constructor-arg name="roundingService" ref="roundingService"/>
+        <constructor-arg name="emailService" ref="mailService"/>
+        <constructor-arg name="csvService" ref="routeDataRevisionCsvService"/>
+    </bean>
+
+    <bean id="routeDataRevisionCsvService" class="net.contargo.iris.routedatarevision.service.cleanup.RouteDataRevisionCsvService"/>
+
+    <bean id="routeDataRevisionDtoService"
+          class="net.contargo.iris.routedatarevision.dto.RouteDataRevisionDtoServiceImpl">
+        <constructor-arg name="routeDataRevisionService" ref="routeDataRevisionService"/>
+        <constructor-arg name="terminalService" ref="terminalService"/>
+    </bean>
+
+    <bean id="enricherDtoService" class="net.contargo.iris.route.dto.EnricherDtoServiceImpl">
+        <constructor-arg ref="enricherService"/>
+    </bean>
+
+    <bean id="directTruckRouteBuilder" class="net.contargo.iris.route.builder.DirectTruckRouteBuilder">
+        <constructor-arg name="truckRouteService" ref="truckRouteService"/>
+    </bean>
+
+    <bean id="co2Service" class="net.contargo.iris.co2.service.Co2ServiceImpl">
+        <constructor-arg name="directTruckRouteBuilder" ref="directTruckRouteBuilder"/>
+        <constructor-arg name="co2PartStrategyAdvisor" ref="co2PartStrategyAdvisor"/>
+    </bean>
+
+    <bean id="co2BargeRegionMap" class="net.contargo.iris.co2.advice.Co2BargeRegionMap"/>
+
+    <bean id="co2PartStrategyAdvisor" class="net.contargo.iris.co2.advice.Co2PartStrategyAdvisor">
+        <constructor-arg name="bargeStrategy">
+            <bean class="net.contargo.iris.co2.advice.Co2PartBargeStrategy">
+                <constructor-arg name="co2BargeRegionMap" ref="co2BargeRegionMap"/>
+            </bean>
+        </constructor-arg>
+        <constructor-arg name="railStrategy">
+            <bean class="net.contargo.iris.co2.advice.Co2PartRailStrategy"/>
+        </constructor-arg>
+        <constructor-arg name="truckStrategy">
+            <bean class="net.contargo.iris.co2.advice.Co2PartTruckStrategy"/>
+        </constructor-arg>
+        <constructor-arg name="bargeRailStrategy">
+            <bean class="net.contargo.iris.co2.advice.Co2PartBargeRailStrategy">
+                <constructor-arg name="co2BargeRegionMap" ref="co2BargeRegionMap"/>
+            </bean>
+        </constructor-arg>
+        <constructor-arg name="dtruckStrategy">
+            <bean class="net.contargo.iris.co2.advice.Co2PartDtruckStrategy"/>
+        </constructor-arg>
+    </bean>
+
+    <bean id="userAuthenticationService" class="net.contargo.iris.security.SpringUserAuthenticationService">
+        <constructor-arg name="classificationsByUser">
+            <util:properties location="classpath:userclassification.properties, classpath:userclassification-${environment:dev}.properties"/>
+        </constructor-arg>
+    </bean>
+
+    <bean class="net.contargo.iris.connection.dto.MainRunConnectionDtoServiceImpl">
+        <constructor-arg name="mainRunConnectionService" ref="connectionService"/>
+    </bean>
+
+    <bean class="net.contargo.iris.address.staticsearch.validator.HashKeyValidator"/>
+    <bean id="nominatimToStaticAddressMapper"
+          class="net.contargo.iris.address.staticsearch.service.NominatimToStaticAddressMapperImpl">
+        <constructor-arg name="mappingProcessor" ref="postcodeCitySuburbStaticAddressMappingProcessor"/>
+        <constructor-arg name="selector">
+            <bean class="net.contargo.iris.address.staticsearch.service.StaticAddressSelectorImpl">
+                <constructor-arg name="gisService" ref="gisService"/>
+            </bean>
+        </constructor-arg>
+    </bean>
+    
+    <bean id="postcodeCitySuburbStaticAddressMappingProcessor" class="net.contargo.iris.address.staticsearch.service.PostcodeCitySuburbStaticAddressMappingProcessor">
+        <constructor-arg name="next" ref="postcodeCityStaticAddressMappingProcessor"/>
+        <constructor-arg name="normalizerService" ref="normalizerService"/>
+        <constructor-arg name="staticAddressService" ref="staticAddressService"/>
+    </bean>
+    <bean id="postcodeCityStaticAddressMappingProcessor" class="net.contargo.iris.address.staticsearch.service.PostcodeCityStaticAddressMappingProcessor">
+        <constructor-arg name="next" ref="postcodeStaticAddressMappingProcessor"/>
+        <constructor-arg name="staticAddressService" ref="staticAddressService"/>
+        <constructor-arg name="normalizerService" ref="normalizerService"/>
+    </bean>
+    <bean id="postcodeStaticAddressMappingProcessor" class="net.contargo.iris.address.staticsearch.service.PostcodeStaticAddressMappingProcessor">
+         <constructor-arg name="next">
+            <null/>
+        </constructor-arg>
+        <constructor-arg ref="staticAddressService" name="staticAddressService"/>
+    </bean>
+    <bean class="net.contargo.iris.startup.RouteRevisionStartupService">
+        <constructor-arg name="service" ref="routeDataRevisionService"/>
+    </bean>
+    <bean class="net.contargo.iris.address.service.BestMatchServiceImpl" name="addressBestMatchService">
+        <constructor-arg name="addressServiceWrapper" ref="addressServiceWrapper"/>
+    </bean>
+
+    <bean id="staticAddressCsvService"
+          class="net.contargo.iris.address.staticsearch.upload.csv.StaticAddressCsvService">
+        <constructor-arg name="fileService" ref="staticAddressFileService"/>
+    </bean>
+    <bean id="staticAddressResolverService" class="net.contargo.iris.address.staticsearch.upload.service.StaticAddressResolverServiceImpl">
+        <constructor-arg name="nominatimAddressService" ref="addressService"/>
+        <constructor-arg name="staticAddressService" ref="staticAddressService"/>
+    </bean>
+    <bean id="addressMailService" class="net.contargo.iris.address.staticsearch.upload.service.AddressMailService">
+        <constructor-arg name="emailService" ref="mailService"/>
+    </bean>
+    <bean id="staticAddressImportService"
+          class="net.contargo.iris.address.staticsearch.upload.service.StaticAddressImportServiceImpl">
+        <constructor-arg name="csvService" ref="staticAddressCsvService"/>
+        <constructor-arg name="resolverService" ref="staticAddressResolverService"/>
+    </bean>
+    <bean id="staticAddressJobService"
+          class="net.contargo.iris.address.staticsearch.upload.service.StaticAddressImportJobServiceImpl">
+        <constructor-arg name="repository" ref="staticAddressImportJobRepository"/>
+    </bean>
+    <bean id="staticAddressImportTask" class="net.contargo.iris.address.staticsearch.upload.StaticAddressImportTask">
+        <constructor-arg name="jobService" ref="staticAddressJobService"/>
+        <constructor-arg name="importService" ref="staticAddressImportService"/>
+        <constructor-arg name="fileService" ref="staticAddressFileService"/>
+        <constructor-arg name="addressMailService" ref="addressMailService"/>
+    </bean>
+    <bean id="staticAddressImportJob" class="org.springframework.scheduling.quartz.MethodInvokingJobDetailFactoryBean">
+        <property name="targetObject" ref="staticAddressImportTask"/>
+        <property name="targetMethod" value="processNextJob"/>
+        <property name="concurrent" value="false"/>
+    </bean>
+    <bean id="staticAddressImportTrigger" class="org.springframework.scheduling.quartz.CronTriggerFactoryBean">
+        <property name="jobDetail" ref="staticAddressImportJob"/>
+        <property name="cronExpression" value="${addresses.cron}"/>
+    </bean>
+
+    <bean class="org.springframework.scheduling.quartz.SchedulerFactoryBean">
+        <property name="triggers">
+            <list>
+                <ref bean="staticAddressImportTrigger"/>
+            </list>
+        </property>
+    </bean>
+
+    <bean id="freemarkerConfiguration" class="org.springframework.ui.freemarker.FreeMarkerConfigurationFactoryBean">
+        <property name="templateLoaderPath" value="${mail.templatepath}"/>
+    </bean>
+    <bean id="templateService" class="net.contargo.iris.mail.service.TemplateServiceImpl">
+        <constructor-arg name="configuration" ref="freemarkerConfiguration"/>
+    </bean>
+    <bean name="emailConfig" class="net.contargo.iris.config.EmailConfig"/>
+
+    <bean id="staticAddressFileService"
+          class="net.contargo.iris.address.staticsearch.upload.file.StaticAddressFileService">
+        <constructor-arg name="directory" value="${addresses.csvdir}"/>
+    </bean>
+
+    <bean class="net.contargo.iris.route2.service.RouteService" id="routeService">
+        <constructor-arg ref="routingQueryStrategyProvider"/>
+    </bean>
+
+    <bean id="conversionService" class="org.springframework.context.support.ConversionServiceFactoryBean">
+        <property name="converters">
+            <set>
+                <bean class="net.contargo.iris.transport.service.TransportSiteToGeoLocationConverter">
+                    <constructor-arg ref="seaportService"/>
+                    <constructor-arg ref="terminalService"/>
+                </bean>
+            </set>
+        </property>
+    </bean>
+
+    <bean class="net.contargo.iris.transport.service.TransportDescriptionExtender">
+        <constructor-arg ref="routeService"/>
+        <constructor-arg ref="conversionService"/>
+    </bean>
+
+    <bean class="net.contargo.iris.transport.service.DescriptionGenerator" id="descriptionGenerator"/>
+
+</beans>
