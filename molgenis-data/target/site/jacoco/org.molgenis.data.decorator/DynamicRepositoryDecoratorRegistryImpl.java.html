@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DynamicRepositoryDecoratorRegistryImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.decorator</a> &gt; <span class="el_source">DynamicRepositoryDecoratorRegistryImpl.java</span></div><h1>DynamicRepositoryDecoratorRegistryImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.data.decorator;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Query;
+import org.molgenis.data.Repository;
+import org.molgenis.data.decorator.meta.DecoratorConfiguration;
+import org.molgenis.data.decorator.meta.DynamicDecorator;
+import org.molgenis.data.event.BootstrappingEvent;
+import org.molgenis.data.support.QueryImpl;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.decorator.meta.DecoratorConfigurationMetadata.DECORATOR_CONFIGURATION;
+import static org.molgenis.data.decorator.meta.DecoratorConfigurationMetadata.ENTITY_TYPE_ID;
+import static org.molgenis.data.event.BootstrappingEvent.BootstrappingStatus.FINISHED;
+
+@Component
+public class DynamicRepositoryDecoratorRegistryImpl implements DynamicRepositoryDecoratorRegistry
+{
+<span class="fc" id="L28">	private final Map&lt;String, DynamicRepositoryDecoratorFactory&gt; factories = new HashMap&lt;&gt;();</span>
+	private final DataService dataService;
+<span class="fc" id="L30">	private boolean bootstrappingDone = false;</span>
+
+	public DynamicRepositoryDecoratorRegistryImpl(DataService dataService)
+<span class="fc" id="L33">	{</span>
+<span class="fc" id="L34">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L35">	}</span>
+
+	@Override
+	public synchronized void addFactory(DynamicRepositoryDecoratorFactory factory)
+	{
+<span class="fc" id="L40">		String factoryId = factory.getId();</span>
+<span class="pc bpc" id="L41" title="1 of 2 branches missed.">		if (factories.containsKey(factoryId))</span>
+		{
+<span class="nc" id="L43">			throw new IllegalStateException(String.format(&quot;Duplicate decorator id [%s]&quot;, factoryId));</span>
+		}
+<span class="fc" id="L45">		factories.put(factoryId, factory);</span>
+<span class="fc" id="L46">	}</span>
+
+	@Override
+	public Stream&lt;String&gt; getFactoryIds()
+	{
+<span class="nc" id="L51">		return factories.keySet().stream();</span>
+	}
+
+	@Override
+	public DynamicRepositoryDecoratorFactory getFactory(String id)
+	{
+<span class="nc" id="L57">		return factories.get(id);</span>
+	}
+
+	@Override
+	public synchronized Repository&lt;Entity&gt; decorate(Repository&lt;Entity&gt; repository)
+	{
+<span class="fc" id="L63">		String entityTypeId = repository.getEntityType().getId();</span>
+
+<span class="pc bpc" id="L65" title="2 of 4 branches missed.">		if (!entityTypeId.equals(DECORATOR_CONFIGURATION) &amp;&amp; bootstrappingDone)</span>
+		{
+<span class="fc" id="L67">			Query query = new QueryImpl().eq(ENTITY_TYPE_ID, entityTypeId);</span>
+<span class="fc" id="L68">			DecoratorConfiguration configuration = dataService.findOne(DECORATOR_CONFIGURATION, query,</span>
+					DecoratorConfiguration.class);
+
+<span class="fc bfc" id="L71" title="All 2 branches covered.">			if (configuration != null)</span>
+			{
+<span class="fc" id="L73">				repository = decorateRepository(repository, configuration);</span>
+			}
+		}
+
+<span class="fc" id="L77">		return repository;</span>
+	}
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	private Repository&lt;Entity&gt; decorateRepository(Repository&lt;Entity&gt; repository, DecoratorConfiguration configuration)
+	{
+<span class="fc" id="L83">		List&lt;DynamicDecorator&gt; decorators = configuration.getDecorators().collect(toList());</span>
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">		if (decorators.isEmpty())</span>
+		{
+<span class="nc" id="L86">			return repository;</span>
+		}
+
+<span class="fc bfc" id="L89" title="All 2 branches covered.">		for (DynamicDecorator decorator : decorators)</span>
+		{
+<span class="fc" id="L91">			DynamicRepositoryDecoratorFactory factory = factories.get(decorator.getId());</span>
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">			if (factory != null)</span>
+			{
+<span class="fc" id="L94">				repository = factory.createDecoratedRepository(repository);</span>
+			}
+<span class="fc" id="L96">		}</span>
+<span class="fc" id="L97">		return repository;</span>
+	}
+
+	@EventListener
+	public void onApplicationEvent(BootstrappingEvent bootstrappingEvent)
+	{
+<span class="pc bpc" id="L103" title="1 of 2 branches missed.">		this.bootstrappingDone = bootstrappingEvent.getStatus() == FINISHED;</span>
+<span class="fc" id="L104">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

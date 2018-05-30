@@ -1,0 +1,802 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityType.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.meta.model</a> &gt; <span class="el_source">EntityType.java</span></div><h1>EntityType.java</h1><pre class="source lang-java linenums">package org.molgenis.data.meta.model;
+
+import com.google.common.collect.Maps;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.support.StaticEntity;
+import org.molgenis.i18n.Labeled;
+import org.molgenis.util.UnexpectedEnumException;
+
+import javax.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static com.google.common.collect.Iterables.concat;
+import static com.google.common.collect.Iterables.removeAll;
+import static com.google.common.collect.Lists.newArrayList;
+import static java.lang.String.format;
+import static java.util.Collections.singletonList;
+import static java.util.stream.Collectors.*;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.meta.AttributeType.COMPOUND;
+import static org.molgenis.data.meta.model.AttributeMetadata.DESCRIPTION;
+import static org.molgenis.data.meta.model.AttributeMetadata.LABEL;
+import static org.molgenis.data.meta.model.EntityType.AttributeCopyMode.DEEP_COPY_ATTRS;
+import static org.molgenis.data.meta.model.EntityType.AttributeCopyMode.SHALLOW_COPY_ATTRS;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.*;
+import static org.molgenis.data.support.AttributeUtils.getI18nAttributeName;
+
+/**
+ * EntityType defines the structure and attributes of an Entity. Attributes are unique. Other software components
+ * can use this to interact with Entity and/or to configure backends and frontends, including Repository instances.
+ */
+public class EntityType extends StaticEntity implements Labeled
+{
+	private transient Map&lt;String, Attribute&gt; cachedOwnAttrs;
+	private transient Boolean cachedHasAttrWithExpression;
+
+	public EntityType(Entity entity)
+	{
+<span class="nc" id="L45">		super(entity);</span>
+<span class="nc" id="L46">	}</span>
+
+	/**
+	 * Creates a new entity meta data.
+	 */
+	protected EntityType()
+<span class="fc" id="L52">	{</span>
+<span class="fc" id="L53">	}</span>
+
+	/**
+	 * Creates a new entity meta data. Normally called by its {@link EntityTypeFactory entity factory}.
+	 *
+	 * @param entityType entity meta data
+	 */
+	public EntityType(EntityType entityType)
+	{
+<span class="fc" id="L62">		super(entityType);</span>
+<span class="fc" id="L63">		setDefaultValues();</span>
+<span class="fc" id="L64">	}</span>
+
+	/**
+	 * Creates a new entity meta data with the given identifier. Normally called by its {@link EntityTypeFactory entity factory}.
+	 *
+	 * @param entityId   entity identifier (fully qualified entity name)
+	 * @param entityType entity meta data
+	 */
+	public EntityType(String entityId, EntityType entityType)
+	{
+<span class="nc" id="L74">		super(entityType);</span>
+<span class="nc" id="L75">		setDefaultValues();</span>
+<span class="nc" id="L76">		setId(entityId);</span>
+<span class="nc" id="L77">	}</span>
+
+<span class="fc" id="L79">	public enum AttributeCopyMode</span>
+	{
+<span class="fc" id="L81">		SHALLOW_COPY_ATTRS, DEEP_COPY_ATTRS</span>
+	}
+
+	/**
+	 * Copy-factory (instead of copy-constructor to avoid accidental method overloading to
+	 * {@link #EntityType(EntityType)}). Creates shallow-copy of package, tags and extended entity.
+	 *
+	 * @param entityType entity meta data
+	 * @return copy of entity meta data
+	 */
+	public static EntityType newInstance(EntityType entityType)
+	{
+<span class="fc" id="L93">		return newInstance(entityType, SHALLOW_COPY_ATTRS, null);</span>
+	}
+
+	/**
+	 * Copy-factory (instead of copy-constructor to avoid accidental method overloading to
+	 * {@link #EntityType(EntityType)}). Creates shallow-copy of package, tags and extended entity.
+	 *
+	 * @param entityType   entity meta data
+	 * @param attrCopyMode attribute copy mode that defines whether to deep-copy or shallow-copy attributes
+	 * @param attrFactory  attribute factory used to create new attributes in deep-copy mode
+	 * @return copy of entity meta data
+	 */
+	public static EntityType newInstance(EntityType entityType, AttributeCopyMode attrCopyMode,
+			AttributeFactory attrFactory)
+	{
+<span class="fc" id="L108">		EntityType entityTypeCopy = new EntityType(entityType.getEntityType()); // do not deep-copy</span>
+<span class="fc" id="L109">		entityTypeCopy.setId(entityType.getId());</span>
+<span class="fc" id="L110">		entityTypeCopy.setPackage(entityType.getPackage()); // do not deep-copy</span>
+<span class="fc" id="L111">		entityTypeCopy.setLabel(entityType.getLabel());</span>
+<span class="fc" id="L112">		entityTypeCopy.setDescription(entityType.getDescription());</span>
+
+		// Own attributes (deep copy or shallow copy)
+<span class="fc bfc" id="L115" title="All 2 branches covered.">		if (attrCopyMode == DEEP_COPY_ATTRS)</span>
+		{
+			// step #1: deep copy attributes
+<span class="fc" id="L118">			LinkedHashMap&lt;String, Attribute&gt; ownAttrMap = stream(entityType.getOwnAllAttributes().spliterator(),</span>
+<span class="pc" id="L119">					false).map(attr -&gt; Attribute.newInstance(attr, attrCopyMode, attrFactory))</span>
+<span class="pc" id="L120">						  .map(attrCopy -&gt; attrCopy.setEntity(entityTypeCopy))</span>
+<span class="fc" id="L121">						  .collect(toMap(Attribute::getName, Function.identity(), (u, v) -&gt;</span>
+						  {
+<span class="nc" id="L123">							  throw new IllegalStateException(String.format(&quot;Duplicate key %s&quot;, u));</span>
+						  }, LinkedHashMap::new));
+
+			// step #2: update attribute.parent relations
+<span class="fc" id="L127">			ownAttrMap.forEach((attrName, ownAttr) -&gt;</span>
+			{
+<span class="nc" id="L129">				Attribute ownAttrParent = ownAttr.getParent();</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">				if (ownAttrParent != null)</span>
+				{
+<span class="nc" id="L132">					ownAttr.setParent(ownAttrMap.get(ownAttrParent.getName()));</span>
+				}
+<span class="nc" id="L134">			});</span>
+
+<span class="fc" id="L136">			entityTypeCopy.setOwnAllAttributes(ownAttrMap.values());</span>
+<span class="fc" id="L137">		}</span>
+		else
+		{
+<span class="fc" id="L140">			entityTypeCopy.setOwnAllAttributes(newArrayList(entityType.getOwnAllAttributes()));</span>
+		}
+
+<span class="fc" id="L143">		entityTypeCopy.setAbstract(entityType.isAbstract());</span>
+<span class="fc" id="L144">		entityTypeCopy.setExtends(entityType.getExtends()); // do not deep-copy</span>
+<span class="fc" id="L145">		entityTypeCopy.setTags(newArrayList(entityType.getTags())); // do not deep-copy</span>
+<span class="fc" id="L146">		entityTypeCopy.setBackend(entityType.getBackend());</span>
+
+<span class="fc" id="L148">		return entityTypeCopy;</span>
+	}
+
+	@Override
+	public Iterable&lt;String&gt; getAttributeNames()
+	{
+<span class="nc" id="L154">		return stream(getEntities(ATTRIBUTES, Attribute.class).spliterator(), false).map(Attribute::getName)::iterator;</span>
+	}
+
+	public String getId()
+	{
+<span class="fc" id="L159">		return getString(ID);</span>
+	}
+
+	public EntityType setId(String id)
+	{
+<span class="fc" id="L164">		set(ID, id);</span>
+<span class="fc" id="L165">		return this;</span>
+	}
+
+	/**
+	 * Human readable entity label
+	 *
+	 * @return entity label
+	 */
+	public String getLabel()
+	{
+<span class="fc" id="L175">		return getString(LABEL);</span>
+	}
+
+	/**
+	 * Label of the entity in the requested language
+	 *
+	 * @return entity label
+	 */
+	public String getLabel(String languageCode)
+	{
+<span class="nc" id="L185">		String i18nLabel = getString(getI18nAttributeName(LABEL, languageCode));</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">		return i18nLabel != null ? i18nLabel : getLabel();</span>
+	}
+
+	public EntityType setLabel(String label)
+	{
+<span class="fc" id="L191">		set(LABEL, label);</span>
+<span class="fc" id="L192">		return this;</span>
+	}
+
+	public EntityType setLabel(String languageCode, String label)
+	{
+<span class="nc" id="L197">		set(getI18nAttributeName(LABEL, languageCode), label);</span>
+<span class="nc" id="L198">		return this;</span>
+	}
+
+	/**
+	 * Description of the entity
+	 *
+	 * @return entity description
+	 */
+	@Nullable
+	public String getDescription()
+	{
+<span class="fc" id="L209">		return getString(DESCRIPTION);</span>
+	}
+
+	/**
+	 * Description of the entity in the requested language
+	 *
+	 * @return entity description
+	 */
+	@Nullable
+	public String getDescription(String languageCode)
+	{
+<span class="nc" id="L220">		String i18nDescription = getString(getI18nAttributeName(DESCRIPTION, languageCode));</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">		return i18nDescription != null ? i18nDescription : getDescription();</span>
+	}
+
+	public EntityType setDescription(String description)
+	{
+<span class="fc" id="L226">		set(DESCRIPTION, description);</span>
+<span class="fc" id="L227">		return this;</span>
+	}
+
+	public EntityType setDescription(String languageCode, String description)
+	{
+<span class="nc" id="L232">		set(getI18nAttributeName(DESCRIPTION, languageCode), description);</span>
+<span class="nc" id="L233">		return this;</span>
+	}
+
+	/**
+	 * The name of the repostory collection/backend where the entities of this type are stored
+	 *
+	 * @return backend name
+	 */
+	public String getBackend()
+	{
+<span class="fc" id="L243">		return getString(BACKEND);</span>
+	}
+
+	public EntityType setBackend(String backend)
+	{
+<span class="fc" id="L248">		set(BACKEND, backend);</span>
+<span class="fc" id="L249">		return this;</span>
+	}
+
+	/**
+	 * Gets the package where this entity belongs to
+	 *
+	 * @return package
+	 */
+	@Nullable
+	public Package getPackage()
+	{
+<span class="fc" id="L260">		return getEntity(PACKAGE, Package.class);</span>
+	}
+
+	public EntityType setPackage(Package package_)
+	{
+<span class="fc" id="L265">		set(PACKAGE, package_);</span>
+<span class="fc" id="L266">		return this;</span>
+	}
+
+	/**
+	 * Attribute that is used as unique Id. Id attribute should always be provided.
+	 *
+	 * @return id attribute
+	 */
+	public Attribute getIdAttribute()
+	{
+<span class="fc" id="L276">		Attribute idAttr = getOwnIdAttribute();</span>
+<span class="pc bpc" id="L277" title="1 of 2 branches missed.">		if (idAttr == null)</span>
+		{
+<span class="nc" id="L279">			EntityType extends_ = getExtends();</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">			if (extends_ != null)</span>
+			{
+<span class="nc" id="L282">				idAttr = extends_.getIdAttribute();</span>
+			}
+		}
+<span class="fc" id="L285">		return idAttr;</span>
+	}
+
+	/**
+	 * Same as {@link #getIdAttribute()} but returns null if the id attribute is defined in its parent class.
+	 *
+	 * @return id attribute
+	 */
+	public Attribute getOwnIdAttribute()
+	{
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">		for (Attribute ownAttr : getOwnAllAttributes())</span>
+		{
+<span class="fc bfc" id="L297" title="All 2 branches covered.">			if (ownAttr.isIdAttribute())</span>
+			{
+<span class="fc" id="L299">				return ownAttr;</span>
+			}
+<span class="fc" id="L301">		}</span>
+<span class="nc" id="L302">		return null;</span>
+	}
+
+	/**
+	 * Attribute that is used as unique label. If no label exist, returns null.
+	 *
+	 * @return label attribute
+	 */
+	public Attribute getLabelAttribute()
+	{
+<span class="fc" id="L312">		Attribute labelAttr = getOwnLabelAttribute();</span>
+<span class="fc bfc" id="L313" title="All 2 branches covered.">		if (labelAttr == null)</span>
+		{
+<span class="fc" id="L315">			EntityType extends_ = getExtends();</span>
+<span class="pc bpc" id="L316" title="1 of 2 branches missed.">			if (extends_ != null)</span>
+			{
+<span class="nc" id="L318">				labelAttr = extends_.getLabelAttribute();</span>
+			}
+		}
+<span class="fc" id="L321">		return labelAttr;</span>
+	}
+
+	/**
+	 * Gets the correct label attribute for the given language, or the default if not found
+	 *
+	 * @param langCode language code
+	 * @return label attribute
+	 */
+	public Attribute getLabelAttribute(String langCode)
+	{
+<span class="nc" id="L332">		Attribute labelAttr = getLabelAttribute();</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">		Attribute i18nLabelAttr = labelAttr != null ? getAttribute(labelAttr.getName() + '-' + langCode) : null;</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">		return i18nLabelAttr != null ? i18nLabelAttr : labelAttr;</span>
+	}
+
+	/**
+	 * Same as {@link #getLabelAttribute()} but returns null if the label does not exist or the label exists in its
+	 * parent class.
+	 *
+	 * @return label attribute
+	 */
+	// FIXME cache own label attribute
+	public Attribute getOwnLabelAttribute()
+	{
+<span class="fc bfc" id="L346" title="All 2 branches covered.">		for (Attribute ownAttr : getOwnAllAttributes())</span>
+		{
+<span class="fc bfc" id="L348" title="All 2 branches covered.">			if (ownAttr.isLabelAttribute())</span>
+			{
+<span class="fc" id="L350">				return ownAttr;</span>
+			}
+<span class="fc" id="L352">		}</span>
+<span class="fc" id="L353">		return null;</span>
+	}
+
+	public Attribute getOwnLabelAttribute(String languageCode)
+	{
+<span class="nc" id="L358">		Attribute labelAttr = getOwnLabelAttribute();</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">		if (labelAttr != null)</span>
+		{
+<span class="nc" id="L361">			return getEntity(getI18nAttributeName(labelAttr.getName(), languageCode), Attribute.class);</span>
+		}
+		else
+		{
+<span class="nc" id="L365">			return null;</span>
+		}
+	}
+
+	/**
+	 * Get lookup attribute by name (case insensitive), returns null if not found
+	 *
+	 * @param lookupAttrName lookup attribute name
+	 * @return lookup attribute or &lt;tt&gt;null&lt;/tt&gt;
+	 */
+	public Attribute getLookupAttribute(String lookupAttrName)
+	{
+<span class="nc" id="L377">		return stream(getLookupAttributes().spliterator(), false).filter(</span>
+<span class="nc" id="L378">				lookupAttr -&gt; lookupAttr.getName().equals(lookupAttrName)).findFirst().orElse(null);</span>
+	}
+
+	/**
+	 * Returns attributes that must be searched in case of xref/mref search
+	 *
+	 * @return lookup attributes
+	 */
+	public Iterable&lt;Attribute&gt; getLookupAttributes()
+	{
+<span class="fc" id="L388">		Iterable&lt;Attribute&gt; lookupAttributes = getOwnLookupAttributes();</span>
+<span class="fc" id="L389">		EntityType extends_ = getExtends();</span>
+<span class="pc bpc" id="L390" title="1 of 2 branches missed.">		if (extends_ != null)</span>
+		{
+<span class="nc" id="L392">			lookupAttributes = concat(lookupAttributes, extends_.getLookupAttributes());</span>
+		}
+<span class="fc" id="L394">		return lookupAttributes;</span>
+	}
+
+	/**
+	 * Returns attributes that must be searched in case of xref/mref search
+	 *
+	 * @return lookup attributes
+	 */
+	public Iterable&lt;Attribute&gt; getOwnLookupAttributes()
+	{
+<span class="fc" id="L404">		List&lt;Attribute&gt; ownLookupAttrs = stream(getOwnAllAttributes().spliterator(), false).filter(</span>
+<span class="fc bfc" id="L405" title="All 2 branches covered.">				attr -&gt; attr.getLookupAttributeIndex() != null).collect(toCollection(ArrayList::new));</span>
+<span class="pc bpc" id="L406" title="1 of 2 branches missed.">		if (ownLookupAttrs.size() &gt; 1)</span>
+		{
+<span class="pc bpc" id="L408" title="1 of 2 branches missed.">			ownLookupAttrs.sort((o1, o2) -&gt; o1.getLookupAttributeIndex() &lt; o2.getLookupAttributeIndex() ? -1 : 1);</span>
+		}
+<span class="fc" id="L410">		return ownLookupAttrs;</span>
+	}
+
+	/**
+	 * Entities can be abstract (analogous an 'interface' or 'protocol'). Use is to define reusable Entity model
+	 * components that cannot be instantiated themselves (i.e. there cannot be data attached to this entity meta data).
+	 *
+	 * @return whether or not this entity is an abstract entity
+	 */
+	public boolean isAbstract()
+	{
+<span class="fc" id="L421">		Boolean abstract_ = getBoolean(IS_ABSTRACT);</span>
+<span class="pc bpc" id="L422" title="1 of 2 branches missed.">		return abstract_ != null ? abstract_ : false;</span>
+	}
+
+	public EntityType setAbstract(boolean abstract_)
+	{
+<span class="fc" id="L427">		set(IS_ABSTRACT, abstract_);</span>
+<span class="fc" id="L428">		return this;</span>
+	}
+
+	/**
+	 * Entity can extend another entity, adding its properties to their own
+	 *
+	 * @return parent entity
+	 */
+	@Nullable
+	public EntityType getExtends()
+	{
+<span class="fc" id="L439">		return getEntity(EXTENDS, EntityType.class);</span>
+	}
+
+	public EntityType setExtends(EntityType extends_)
+	{
+<span class="fc" id="L444">		set(EXTENDS, extends_);</span>
+<span class="fc" id="L445">		return this;</span>
+	}
+
+	/**
+	 * Same as {@link #getAttributes()} but does not return attributes of its parent class.
+	 *
+	 * @return entity attributes without extended entity attributes
+	 */
+	public Iterable&lt;Attribute&gt; getOwnAttributes()
+	{
+<span class="pc bpc" id="L455" title="1 of 2 branches missed.">		return stream(getOwnAllAttributes().spliterator(), false).filter(attr -&gt; attr.getParent() == null)</span>
+<span class="fc" id="L456">																 .collect(toList());</span>
+	}
+
+	public EntityType setOwnAllAttributes(Iterable&lt;Attribute&gt; attrs)
+	{
+<span class="fc" id="L461">		invalidateCachedOwnAttrs();</span>
+<span class="fc" id="L462">		set(ATTRIBUTES, attrs);</span>
+<span class="fc" id="L463">		return this;</span>
+	}
+
+	// FIXME add getter/setter for tags
+
+	/**
+	 * Returns all attributes. In case of compound attributes (attributes consisting of atomic attributes) only the
+	 * compound attribute is returned. This attribute can be used to retrieve parts of the compound attribute.
+	 * &lt;p&gt;
+	 * In case EntityType extends other EntityType then the attributes of this EntityType as well as its
+	 * parent class are returned.
+	 *
+	 * @return entity attributes
+	 */
+	public Iterable&lt;Attribute&gt; getAttributes()
+	{
+<span class="fc" id="L479">		Iterable&lt;Attribute&gt; attrs = getOwnAttributes();</span>
+<span class="fc" id="L480">		EntityType extends_ = getExtends();</span>
+<span class="pc bpc" id="L481" title="1 of 2 branches missed.">		if (extends_ != null)</span>
+		{
+<span class="nc" id="L483">			attrs = concat(attrs, extends_.getAttributes());</span>
+		}
+<span class="fc" id="L485">		return attrs;</span>
+	}
+
+	/**
+	 * Returns all atomic attributes. In case of compound attributes (attributes consisting of atomic attributes) only
+	 * the descendant atomic attributes are returned. The compound attribute itself is not returned.
+	 * &lt;p&gt;
+	 * In case EntityType extends other EntityType then the attributes of this EntityType as well as its
+	 * parent class are returned.
+	 *
+	 * @return atomic attributes
+	 */
+	public Iterable&lt;Attribute&gt; getAtomicAttributes()
+	{
+<span class="fc" id="L499">		Iterable&lt;Attribute&gt; atomicAttrs = getOwnAtomicAttributes();</span>
+<span class="fc" id="L500">		EntityType extends_ = getExtends();</span>
+<span class="pc bpc" id="L501" title="1 of 2 branches missed.">		if (extends_ != null)</span>
+		{
+<span class="nc" id="L503">			atomicAttrs = concat(atomicAttrs, extends_.getAtomicAttributes());</span>
+		}
+<span class="fc" id="L505">		return atomicAttrs;</span>
+	}
+
+	public Iterable&lt;Attribute&gt; getAllAttributes()
+	{
+<span class="fc" id="L510">		Iterable&lt;Attribute&gt; allAttrs = getOwnAllAttributes();</span>
+<span class="fc" id="L511">		EntityType extends_ = getExtends();</span>
+<span class="pc bpc" id="L512" title="1 of 2 branches missed.">		if (extends_ != null)</span>
+		{
+<span class="nc" id="L514">			allAttrs = concat(allAttrs, extends_.getAllAttributes());</span>
+		}
+<span class="fc" id="L516">		return allAttrs;</span>
+	}
+
+	public Iterable&lt;Attribute&gt; getOwnAllAttributes()
+	{
+<span class="fc" id="L521">		return getCachedOwnAttrs().values();</span>
+	}
+
+	/**
+	 * Get attribute by name
+	 *
+	 * @return attribute or &lt;tt&gt;null&lt;/tt&gt;
+	 */
+	public Attribute getAttribute(String attrName)
+	{
+<span class="fc" id="L531">		Attribute attr = getCachedOwnAttrs().get(attrName);</span>
+<span class="fc bfc" id="L532" title="All 2 branches covered.">		if (attr == null)</span>
+		{
+			// look up attribute in parent entity
+<span class="fc" id="L535">			EntityType extendsEntityType = getExtends();</span>
+<span class="pc bpc" id="L536" title="1 of 2 branches missed.">			if (extendsEntityType != null)</span>
+			{
+<span class="nc" id="L538">				attr = extendsEntityType.getAttribute(attrName);</span>
+			}
+		}
+<span class="fc" id="L541">		return attr;</span>
+	}
+
+	public EntityType addAttribute(Attribute attr, AttributeRole... attrTypes)
+	{
+<span class="fc" id="L546">		invalidateCachedOwnAttrs();</span>
+
+<span class="fc" id="L548">		Iterable&lt;Attribute&gt; attrs = getEntities(ATTRIBUTES, Attribute.class);</span>
+		// validate that no other attribute exists with the same name
+<span class="fc" id="L550">		attrs.forEach(existingAttr -&gt;</span>
+		{
+<span class="fc bfc" id="L552" title="All 2 branches covered.">			if (existingAttr.getName().equals(attr.getName()))</span>
+			{
+<span class="fc" id="L554">				throw new MolgenisDataException(</span>
+<span class="fc" id="L555">						format(&quot;Entity [%s] already contains attribute with name [%s], duplicate attribute names are not allowed&quot;,</span>
+<span class="fc" id="L556">								this.getLabel(), attr.getName()));</span>
+			}
+<span class="fc" id="L558">		});</span>
+
+<span class="fc" id="L560">		attr.setEntity(this);</span>
+<span class="fc" id="L561">		this.addSequenceNumber(attr, attrs);</span>
+<span class="fc" id="L562">		set(ATTRIBUTES, concat(attrs, singletonList(attr)));</span>
+
+<span class="fc" id="L564">		setAttributeRoles(attr, attrTypes);</span>
+<span class="fc" id="L565">		return this;</span>
+	}
+
+	/**
+	 * Add a sequence number to the attribute.
+	 * If the sequence number exists add it ot the attribute.
+	 * If the sequence number does not exists then find the highest sequence number.
+	 * If Entity has not attributes with sequence numbers put 0.
+	 *
+	 * @param attr  the attribute to add
+	 * @param attrs existing attributes
+	 */
+	static void addSequenceNumber(Attribute attr, Iterable&lt;Attribute&gt; attrs)
+	{
+<span class="fc" id="L579">		Integer sequenceNumber = attr.getSequenceNumber();</span>
+<span class="fc bfc" id="L580" title="All 2 branches covered.">		if (null == sequenceNumber)</span>
+		{
+<span class="fc" id="L582">			int i = StreamSupport.stream(attrs.spliterator(), false)</span>
+<span class="fc bfc" id="L583" title="All 2 branches covered.">								 .filter(a -&gt; null != a.getSequenceNumber())</span>
+<span class="fc" id="L584">								 .mapToInt(Attribute::getSequenceNumber)</span>
+<span class="fc" id="L585">								 .max()</span>
+<span class="fc" id="L586">								 .orElse(-1);</span>
+<span class="fc bfc" id="L587" title="All 2 branches covered.">			if (i == -1) attr.setSequenceNumber(0);</span>
+<span class="fc" id="L588">			else attr.setSequenceNumber(++i);</span>
+		}
+<span class="fc" id="L590">	}</span>
+
+	public void addAttributes(Iterable&lt;Attribute&gt; attrs)
+	{
+<span class="nc" id="L594">		attrs.forEach(this::addAttribute);</span>
+<span class="nc" id="L595">	}</span>
+
+	protected void setAttributeRoles(Attribute attr, AttributeRole... attrTypes)
+	{
+<span class="pc bpc" id="L599" title="1 of 2 branches missed.">		if (attrTypes != null)</span>
+		{
+<span class="fc bfc" id="L601" title="All 2 branches covered.">			for (AttributeRole attrType : attrTypes)</span>
+			{
+<span class="pc bpc" id="L603" title="1 of 4 branches missed.">				switch (attrType)</span>
+				{
+					case ROLE_ID:
+<span class="fc" id="L606">						attr.setIdAttribute(true);</span>
+<span class="pc bpc" id="L607" title="1 of 2 branches missed.">						if (getLabelAttribute() == null)</span>
+						{
+<span class="fc" id="L609">							attr.setLabelAttribute(true);</span>
+						}
+						break;
+					case ROLE_LABEL:
+<span class="fc" id="L613">						Attribute currentLabelAttr = getLabelAttribute();</span>
+<span class="pc bpc" id="L614" title="1 of 2 branches missed.">						if (currentLabelAttr != null)</span>
+						{
+<span class="fc" id="L616">							currentLabelAttr.setLabelAttribute(false);</span>
+						}
+<span class="fc" id="L618">						attr.setLabelAttribute(true);</span>
+<span class="fc" id="L619">						break;</span>
+					case ROLE_LOOKUP:
+<span class="fc" id="L621">						attr.setLookupAttributeIndex(0); // FIXME assign unique lookup attribute index</span>
+<span class="fc" id="L622">						break;</span>
+					default:
+<span class="nc" id="L624">						throw new UnexpectedEnumException(attrType);</span>
+				}
+			}
+		}
+<span class="fc" id="L628">	}</span>
+
+	/**
+	 * Returns whether this entity has an attribute with expression
+	 *
+	 * @return whether this entity has an attribute with expression
+	 */
+	public boolean hasAttributeWithExpression()
+	{
+<span class="nc" id="L637">		return getCachedHasAttrWithExpession();</span>
+	}
+
+	private boolean getCachedHasAttrWithExpession()
+	{
+<span class="nc bnc" id="L642" title="All 2 branches missed.">		if (cachedHasAttrWithExpression == null)</span>
+		{
+<span class="nc" id="L644">			cachedHasAttrWithExpression = stream(getAtomicAttributes().spliterator(), false).anyMatch(</span>
+<span class="nc bnc" id="L645" title="All 2 branches missed.">					attr -&gt; attr.getExpression() != null);</span>
+		}
+<span class="nc" id="L647">		return cachedHasAttrWithExpression;</span>
+	}
+
+	public void removeAttribute(Attribute attr)
+	{
+<span class="nc" id="L652">		Map&lt;String, Attribute&gt; cachedOwnAttrs = getCachedOwnAttrs();</span>
+<span class="nc" id="L653">		cachedOwnAttrs.remove(attr.getName());</span>
+<span class="nc" id="L654">		set(ATTRIBUTES, cachedOwnAttrs.values());</span>
+<span class="nc" id="L655">	}</span>
+
+	/**
+	 * Get all tags for this entity
+	 *
+	 * @return entity tags
+	 */
+	public Iterable&lt;Tag&gt; getTags()
+	{
+<span class="fc" id="L664">		return getEntities(TAGS, Tag.class);</span>
+	}
+
+	/**
+	 * Set tags for this entity
+	 *
+	 * @param tags entity tags
+	 * @return this entity
+	 */
+	public EntityType setTags(Iterable&lt;Tag&gt; tags)
+	{
+<span class="fc" id="L675">		set(TAGS, tags);</span>
+<span class="fc" id="L676">		return this;</span>
+	}
+
+	/**
+	 * Add a tag for this entity
+	 *
+	 * @param tag entity tag
+	 */
+	public void addTag(Tag tag)
+	{
+<span class="nc" id="L686">		set(TAGS, concat(getTags(), singletonList(tag)));</span>
+<span class="nc" id="L687">	}</span>
+
+	/**
+	 * Add a tag for this entity
+	 *
+	 * @param tag entity tag
+	 */
+	public void removeTag(Tag tag)
+	{
+<span class="nc" id="L696">		Iterable&lt;Tag&gt; tags = getTags();</span>
+<span class="nc" id="L697">		removeAll(tags, singletonList(tag));</span>
+<span class="nc" id="L698">		set(TAGS, tag);</span>
+<span class="nc" id="L699">	}</span>
+
+	public EntityType setIndexingDepth(int indexingDepth)
+	{
+<span class="fc" id="L703">		set(INDEXING_DEPTH, indexingDepth);</span>
+<span class="fc" id="L704">		return this;</span>
+	}
+
+	public int getIndexingDepth()
+	{
+<span class="nc" id="L709">		return getInt(INDEXING_DEPTH);</span>
+	}
+
+	/**
+	 * Returns all atomic attributes. In case of compound attributes (attributes consisting of atomic attributes) only
+	 * the descendant atomic attributes are returned. The compound attribute itself is not returned.
+	 * &lt;p&gt;
+	 * In case EntityType extends other EntityType then the attributes of this EntityType as well as its
+	 * parent class are returned.
+	 *
+	 * @return atomic attributes without extended entity atomic attributes
+	 */
+	public Iterable&lt;Attribute&gt; getOwnAtomicAttributes()
+	{
+<span class="pc bpc" id="L723" title="1 of 2 branches missed.">		return () -&gt; getCachedOwnAttrs().values().stream().filter(attr -&gt; attr.getDataType() != COMPOUND).iterator();</span>
+	}
+
+	public boolean hasBidirectionalAttributes()
+	{
+<span class="nc bnc" id="L728" title="All 4 branches missed.">		return hasMappedByAttributes() || hasInversedByAttributes();</span>
+	}
+
+	public boolean hasMappedByAttributes()
+	{
+<span class="nc bnc" id="L733" title="All 2 branches missed.">		return getMappedByAttributes().findFirst().orElse(null) != null;</span>
+	}
+
+	public Stream&lt;Attribute&gt; getOwnMappedByAttributes()
+	{
+<span class="nc" id="L738">		return stream(getOwnAtomicAttributes().spliterator(), false).filter(Attribute::isMappedBy);</span>
+	}
+
+	public Stream&lt;Attribute&gt; getMappedByAttributes()
+	{
+<span class="nc" id="L743">		return stream(getAtomicAttributes().spliterator(), false).filter(Attribute::isMappedBy);</span>
+	}
+
+	public boolean hasInversedByAttributes()
+	{
+<span class="nc bnc" id="L748" title="All 2 branches missed.">		return getInversedByAttributes().findFirst().orElse(null) != null;</span>
+	}
+
+	public Stream&lt;Attribute&gt; getInversedByAttributes()
+	{
+<span class="nc" id="L753">		return stream(getAtomicAttributes().spliterator(), false).filter(Attribute::isInversedBy);</span>
+	}
+
+	@Override
+	public void set(String attributeName, Object value)
+	{
+<span class="fc" id="L759">		super.set(attributeName, value);</span>
+<span class="pc bpc" id="L760" title="1 of 6 branches missed.">		switch (attributeName)</span>
+		{
+			case ATTRIBUTES:
+<span class="fc" id="L763">				invalidateCachedOwnAttrs();</span>
+<span class="fc" id="L764">				break;</span>
+			default:
+				break;
+		}
+<span class="fc" id="L768">	}</span>
+
+	protected void setDefaultValues()
+	{
+<span class="fc" id="L772">		setAbstract(false);</span>
+<span class="fc" id="L773">		setIndexingDepth(1);</span>
+<span class="fc" id="L774">	}</span>
+
+	private Map&lt;String, Attribute&gt; getCachedOwnAttrs()
+	{
+<span class="fc bfc" id="L778" title="All 2 branches covered.">		if (cachedOwnAttrs == null)</span>
+		{
+<span class="fc" id="L780">			cachedOwnAttrs = Maps.newLinkedHashMap();</span>
+<span class="fc" id="L781">			getEntities(ATTRIBUTES, Attribute.class).forEach(attr -&gt; cachedOwnAttrs.put(attr.getName(), attr));</span>
+		}
+<span class="fc" id="L783">		return cachedOwnAttrs;</span>
+	}
+
+	private void invalidateCachedOwnAttrs()
+	{
+<span class="fc" id="L788">		cachedOwnAttrs = null;</span>
+<span class="fc" id="L789">	}</span>
+
+<span class="fc" id="L791">	public enum AttributeRole</span>
+	{
+<span class="fc" id="L793">		ROLE_ID, ROLE_LABEL, ROLE_LOOKUP</span>
+	}
+
+	@Override
+	public String toString()
+	{
+<span class="nc" id="L799">		return &quot;EntityType{&quot; + &quot;name=&quot; + getId() + '}';</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

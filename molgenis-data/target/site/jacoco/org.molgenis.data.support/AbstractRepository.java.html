@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.support</a> &gt; <span class="el_source">AbstractRepository.java</span></div><h1>AbstractRepository.java</h1><pre class="source lang-java linenums">package org.molgenis.data.support;
+
+import com.google.common.collect.Iterators;
+import com.google.common.collect.Sets;
+import org.molgenis.data.*;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.aggregation.AggregateQuery;
+import org.molgenis.data.aggregation.AggregateResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static com.google.common.base.Predicates.notNull;
+import static com.google.common.collect.Iterables.*;
+import static com.google.common.collect.Maps.uniqueIndex;
+
+/**
+ * Base class for repositories. Subclasses can override supported methods
+ */
+<span class="fc" id="L25">public abstract class AbstractRepository implements Repository&lt;Entity&gt;</span>
+{
+	private static final int FIND_ALL_BATCH_SIZE = 1000;
+
+<span class="fc" id="L29">	private final Logger LOG = LoggerFactory.getLogger(getClass());</span>
+
+	private String name;
+
+	@Override
+	public String getName()
+	{
+<span class="nc bnc" id="L36" title="All 2 branches missed.">		if (name == null) name = getEntityType().getId();</span>
+<span class="nc" id="L37">		return name;</span>
+	}
+
+	@Override
+	public Set&lt;Operator&gt; getQueryOperators()
+	{
+<span class="nc bnc" id="L43" title="All 2 branches missed.">		if (!getCapabilities().contains(RepositoryCapability.QUERYABLE))</span>
+		{
+<span class="nc" id="L45">			return Collections.emptySet();</span>
+		}
+		else
+		{
+<span class="nc" id="L49">			return EnumSet.allOf(Operator.class);</span>
+		}
+	}
+
+	public Query&lt;Entity&gt; query()
+	{
+<span class="nc" id="L55">		return new QueryImpl&lt;&gt;(this);</span>
+	}
+
+	@Override
+	public long count()
+	{
+<span class="nc" id="L61">		return count(new QueryImpl&lt;&gt;());</span>
+	}
+
+	@Override
+	public void close() throws IOException
+	{
+<span class="nc" id="L67">	}</span>
+
+	@Override
+	public long count(Query&lt;Entity&gt; q)
+	{
+<span class="nc" id="L72">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; findAll(Query&lt;Entity&gt; q)
+	{
+<span class="nc" id="L78">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public Entity findOne(Query&lt;Entity&gt; q)
+	{
+<span class="nc" id="L84">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public Entity findOneById(Object id)
+	{
+<span class="nc" id="L90">		return findOneById(id, null);</span>
+	}
+
+	@Override
+	public Entity findOneById(Object id, Fetch fetch)
+	{
+<span class="fc" id="L96">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; findAll(Stream&lt;Object&gt; ids)
+	{
+<span class="fc" id="L102">		return findAll(ids, null);</span>
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; findAll(Stream&lt;Object&gt; ids, Fetch fetch)
+	{
+<span class="fc" id="L108">		Iterator&lt;List&lt;Object&gt;&gt; batches = Iterators.partition(ids.iterator(), FIND_ALL_BATCH_SIZE);</span>
+<span class="fc" id="L109">		Iterable&lt;List&lt;Object&gt;&gt; iterable = () -&gt; batches;</span>
+<span class="fc" id="L110">		return StreamSupport.stream(iterable.spliterator(), false)</span>
+<span class="fc" id="L111">							.flatMap(batch -&gt; StreamSupport.stream(findAllBatched(batch, fetch).spliterator(), false));</span>
+	}
+
+	private Iterable&lt;Entity&gt; findAllBatched(List&lt;Object&gt; ids, Fetch fetch)
+	{
+<span class="fc" id="L116">		String fieldIdAttributeName = getEntityType().getIdAttribute().getName();</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">		if (fetch != null) fetch.field(fieldIdAttributeName);</span>
+<span class="fc" id="L118">		Query&lt;Entity&gt; inQuery = new QueryImpl&lt;&gt;().in(fieldIdAttributeName, Sets.newHashSet(ids)).fetch(fetch);</span>
+<span class="fc" id="L119">		Map&lt;Object, Entity&gt; indexedEntities = uniqueIndex(findAll(inQuery).iterator(), Entity::getIdValue);</span>
+<span class="fc" id="L120">		return filter(transform(ids, id -&gt; lookup(indexedEntities, id)), notNull());</span>
+	}
+
+	private Entity lookup(Map&lt;Object, Entity&gt; index, Object id)
+	{
+<span class="fc" id="L125">		Entity result = index.get(id);</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">		if (result == null)</span>
+		{
+<span class="nc" id="L128">			LOG.debug(&quot;Lookup: Couldn't find {} for id {}.&quot;, getName(), id);</span>
+		}
+<span class="fc" id="L130">		return result;</span>
+	}
+
+	@Override
+	public AggregateResult aggregate(AggregateQuery aggregateQuery)
+	{
+<span class="nc" id="L136">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void update(Entity entity)
+	{
+<span class="nc" id="L142">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void update(Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L148">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void delete(Entity entity)
+	{
+<span class="nc" id="L154">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void delete(Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L160">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void deleteById(Object id)
+	{
+<span class="nc" id="L166">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void deleteAll(Stream&lt;Object&gt; ids)
+	{
+<span class="nc" id="L172">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void deleteAll()
+	{
+<span class="nc" id="L178">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void add(Entity entity)
+	{
+<span class="nc" id="L184">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public Integer add(Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L190">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void forEachBatched(Fetch fetch, Consumer&lt;List&lt;Entity&gt;&gt; consumer, int batchSize)
+	{
+		// by default: ignore fetch
+<span class="nc bnc" id="L197" title="All 2 branches missed.">		for (List&lt;Entity&gt; entities : partition(this, batchSize))</span>
+		{
+<span class="nc" id="L199">			consumer.accept(entities);</span>
+<span class="nc" id="L200">		}</span>
+<span class="nc" id="L201">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>
