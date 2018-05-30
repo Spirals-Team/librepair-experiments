@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UserServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">DigitalCollections: Blueprints 2 (Business IMPL)</a> &gt; <a href="index.source.html" class="el_package">de.digitalcollections.blueprints.crud.business.impl.service</a> &gt; <span class="el_source">UserServiceImpl.java</span></div><h1>UserServiceImpl.java</h1><pre class="source lang-java linenums">package de.digitalcollections.blueprints.crud.business.impl.service;
+
+import de.digitalcollections.blueprints.crud.backend.api.repository.UserRepository;
+import de.digitalcollections.blueprints.crud.business.api.service.RoleService;
+import de.digitalcollections.blueprints.crud.business.api.service.UserService;
+import de.digitalcollections.blueprints.crud.model.api.security.Operation;
+import de.digitalcollections.blueprints.crud.model.api.security.Role;
+import de.digitalcollections.blueprints.crud.model.api.security.User;
+import java.util.ArrayList;
+import java.util.List;
+import de.digitalcollections.blueprints.crud.business.impl.validators.PasswordsValidatorParams;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.domain.Sort;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import org.springframework.validation.Errors;
+import org.springframework.validation.Validator;
+
+/**
+ * Service for User handling.
+ */
+@Service
+@Transactional(readOnly = true)
+<span class="fc" id="L30">public class UserServiceImpl implements UserService&lt;User, Long&gt; {</span>
+
+  @Autowired
+  @Qualifier(&quot;passwordsValidator&quot;)
+  private Validator passwordsValidator;
+
+  @Autowired
+  @Qualifier(&quot;uniqueUsernameValidator&quot;)
+  private Validator uniqueUsernameValidator;
+
+  @Autowired
+  private RoleService roleService;
+
+  @Autowired
+  private UserRepository userRepository;
+
+  @Override
+  @Transactional(readOnly = false)
+  public User activate(Long id) {
+<span class="nc" id="L49">    User user = (User) userRepository.findOne(id);</span>
+<span class="nc" id="L50">    user.setEnabled(true);</span>
+<span class="nc" id="L51">    userRepository.save(user);</span>
+<span class="nc" id="L52">    return user;</span>
+  }
+
+  @Override
+  public User create() {
+<span class="nc" id="L57">    return userRepository.create();</span>
+  }
+
+  @Override
+  @Transactional(readOnly = false)
+  public User create(User user, String password1, String password2, Errors results) {
+<span class="nc" id="L63">    uniqueUsernameValidator.validate(user, results);</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">    if (!results.hasErrors()) {</span>
+<span class="nc" id="L65">      return save(password1, password2, user, results);</span>
+    }
+<span class="nc" id="L67">    return null;</span>
+  }
+
+  @Override
+  public User createAdminUser() {
+<span class="nc" id="L72">    User user = create();</span>
+<span class="nc" id="L73">    Role adminRole = roleService.getAdminRole();</span>
+<span class="nc" id="L74">    List&lt;Role&gt; roles = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L75">    roles.add(adminRole);</span>
+<span class="nc" id="L76">    user.setRoles(roles);</span>
+<span class="nc" id="L77">    return user;</span>
+  }
+
+  @Override
+  @Transactional(readOnly = false)
+  public User deactivate(Long id) {
+<span class="nc" id="L83">    User user = (User) userRepository.findOne(id);</span>
+<span class="nc" id="L84">    user.setEnabled(false);</span>
+<span class="nc" id="L85">    userRepository.save(user);</span>
+<span class="nc" id="L86">    return user;</span>
+  }
+
+  @Override
+  public boolean doesActiveAdminUserExist() {
+<span class="nc" id="L91">    List findActiveAdminUsers = userRepository.findActiveAdminUsers();</span>
+<span class="nc bnc" id="L92" title="All 4 branches missed.">    if (findActiveAdminUsers != null &amp;&amp; !findActiveAdminUsers.isEmpty()) {</span>
+<span class="nc" id="L93">      return true;</span>
+    }
+<span class="nc" id="L95">    return false;</span>
+  }
+
+  @Override
+  public User get(Long id) {
+<span class="nc" id="L100">    return (User) userRepository.findOne(id);</span>
+  }
+
+  @Override
+  public List&lt;User&gt; getAll() {
+<span class="nc" id="L105">    return userRepository.findAll(new Sort(Sort.Direction.ASC, &quot;lastname&quot;));</span>
+  }
+
+  /*
+     see: http://stackoverflow.com/questions/19302196/transaction-marked-as-rollback-only-how-do-i-find-the-cause
+     When you mark your method as @Transactional, occurrence of any exception inside your method will mark the surrounding TX as roll-back only (even if you catch them). You can use other attributes of @Transactional annotation to prevent it of rolling back like:
+
+     @Transactional(rollbackFor=MyException.class, noRollbackFor=MyException2.class)
+   */
+  @Override
+  @Transactional(readOnly = true, noRollbackFor = UsernameNotFoundException.class)
+  public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+<span class="fc" id="L117">    User user = userRepository.findByEmail(username);</span>
+<span class="pc bpc" id="L118" title="2 of 4 branches missed.">    if (user == null || !user.isEnabled()) {</span>
+<span class="nc" id="L119">      throw new UsernameNotFoundException(String.format(&quot;User \&quot;%s\&quot; was not found.&quot;, username));</span>
+    }
+<span class="fc" id="L121">    List&lt;GrantedAuthority&gt; authorities = collectUserAuthorities(user);</span>
+
+<span class="fc" id="L123">    return buildUserForAuthentication(user, authorities);</span>
+  }
+
+  private List&lt;GrantedAuthority&gt; collectUserAuthorities(User user) {
+<span class="fc" id="L127">    List&lt;GrantedAuthority&gt; result = new ArrayList&lt;&gt;();</span>
+    // Build user's authorities
+<span class="fc" id="L129">    List&lt;Role&gt; userRoles = user.getRoles();</span>
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">    for (Role userRole : userRoles) {</span>
+<span class="nc" id="L131">      result.add(new SimpleGrantedAuthority(userRole.getName()));</span>
+<span class="nc" id="L132">      List&lt;Operation&gt; allowedOperations = userRole.getAllowedOperations();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">      for (Operation allowedOperation : allowedOperations) {</span>
+<span class="nc" id="L134">        result.add(new SimpleGrantedAuthority(allowedOperation.getName()));</span>
+<span class="nc" id="L135">      }</span>
+<span class="nc" id="L136">    }</span>
+<span class="fc" id="L137">    return result;</span>
+  }
+
+  private org.springframework.security.core.userdetails.User buildUserForAuthentication(User user, List&lt;GrantedAuthority&gt; authorities) {
+<span class="fc" id="L141">    return new org.springframework.security.core.userdetails.User(user.getEmail(), user.getPasswordHash(),</span>
+<span class="fc" id="L142">            user.isEnabled(), true, true, true, authorities);</span>
+  }
+
+  @Override
+  @Transactional(readOnly = false)
+  public User update(User user, String password1, String password2, Errors results) {
+<span class="nc" id="L148">    return save(password1, password2, user, results);</span>
+  }
+
+  private User save(String password1, String password2, User user, Errors results) {
+<span class="nc" id="L152">    final PasswordsValidatorParams passwordsValidatorParams = new PasswordsValidatorParams(password1, password2, user.</span>
+<span class="nc" id="L153">            getPasswordHash());</span>
+<span class="nc" id="L154">    passwordsValidator.validate(passwordsValidatorParams, results);</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">    if (!results.hasErrors()) {</span>
+<span class="nc" id="L156">      String password = passwordsValidatorParams.getPassword1();</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">      if (!StringUtils.isEmpty(password)) {</span>
+<span class="nc" id="L158">        user.setPasswordHash(password);</span>
+      }
+<span class="nc" id="L160">      userRepository.save(user);</span>
+    }
+<span class="nc" id="L162">    return user;</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>
