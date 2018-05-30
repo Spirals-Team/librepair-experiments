@@ -1,0 +1,29 @@
+package spoon.test.fieldaccesses.testclasses;
+
+
+public class Tacos {
+    public void m() {
+        inv(spoon.test.fieldaccesses.testclasses.internal.Foo.i);
+        inv(spoon.test.fieldaccesses.testclasses.internal.Foo.i);
+        inv(spoon.test.fieldaccesses.testclasses.internal.Foo.SubInner.j);
+        inv(spoon.test.fieldaccesses.testclasses.internal.Foo.SubInner.j);
+        runIteratorTest(spoon.test.fieldaccesses.testclasses.internal.Foo.KnownOrder.KNOWN_ORDER);
+        runIteratorTest(spoon.test.fieldaccesses.testclasses.internal.Foo.KnownOrder.KNOWN_ORDER);
+    }
+
+    private void runIteratorTest(spoon.test.fieldaccesses.testclasses.internal.Foo.KnownOrder knownOrder) {
+    }
+
+    private void inv(spoon.test.fieldaccesses.testclasses.internal.Foo.SubInner foo) {
+    }
+
+    private void inv(int i) {
+    }
+
+    private static class Burritos {
+        public boolean add(java.lang.Object e) {
+            throw new java.lang.UnsupportedOperationException();
+        }
+    }
+}
+
