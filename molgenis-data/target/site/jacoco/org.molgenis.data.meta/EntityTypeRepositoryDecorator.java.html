@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityTypeRepositoryDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.meta</a> &gt; <span class="el_source">EntityTypeRepositoryDecorator.java</span></div><h1>EntityTypeRepositoryDecorator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.meta;
+
+import com.google.common.collect.TreeTraverser;
+import org.molgenis.data.*;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+
+import javax.annotation.Nonnull;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Spliterator;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Lists.reverse;
+import static com.google.common.collect.Sets.difference;
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.Spliterators.spliteratorUnknownSize;
+import static java.util.function.Function.identity;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+
+/**
+ * Decorator for the entity meta data repository:
+ * - filters requested entities based on the permissions of the current user.
+ * - applies updates to the repository collection for entity meta data adds/deletes
+ * - adds and removes attribute columns to the repository collection for entity meta data updates
+ * &lt;p&gt;
+ * TODO replace permission based entity filtering with generic row-level security once available
+ */
+public class EntityTypeRepositoryDecorator extends AbstractRepositoryDecorator&lt;EntityType&gt;
+{
+	private final DataService dataService;
+	private final EntityTypeDependencyResolver entityTypeDependencyResolver;
+
+	public EntityTypeRepositoryDecorator(Repository&lt;EntityType&gt; delegateRepository, DataService dataService,
+			EntityTypeDependencyResolver entityTypeDependencyResolver)
+	{
+<span class="fc" id="L43">		super(delegateRepository);</span>
+<span class="fc" id="L44">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L45">		this.entityTypeDependencyResolver = entityTypeDependencyResolver;</span>
+<span class="fc" id="L46">	}</span>
+
+	@Override
+	public void update(EntityType entity)
+	{
+<span class="fc" id="L51">		updateEntity(entity);</span>
+<span class="fc" id="L52">	}</span>
+
+	@Override
+	public void update(Stream&lt;EntityType&gt; entities)
+	{
+<span class="nc" id="L57">		entities.forEach(this::updateEntity);</span>
+<span class="nc" id="L58">	}</span>
+
+	@Override
+	public void delete(EntityType entity)
+	{
+<span class="fc" id="L63">		deleteEntityType(entity);</span>
+<span class="fc" id="L64">	}</span>
+
+	@Override
+	public void delete(Stream&lt;EntityType&gt; entities)
+	{
+<span class="fc" id="L69">		Map&lt;String, EntityType&gt; resolvedEntityTypes = resolveDependencies(entities.collect(toList()));</span>
+<span class="fc" id="L70">		removeMappedByAttributes(resolvedEntityTypes);</span>
+<span class="fc" id="L71">		resolvedEntityTypes.values().forEach(this::deleteEntityType);</span>
+<span class="fc" id="L72">	}</span>
+
+	@Override
+	public void deleteById(Object id)
+	{
+<span class="nc" id="L77">		EntityType entityType = findOneById(id);</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">		if (entityType == null)</span>
+		{
+<span class="nc" id="L80">			throw new UnknownEntityTypeException(id.toString());</span>
+		}
+<span class="nc" id="L82">		deleteEntityType(entityType);</span>
+<span class="nc" id="L83">	}</span>
+
+	@Override
+	public void deleteAll(Stream&lt;Object&gt; ids)
+	{
+<span class="nc" id="L88">		delete(findAll(ids));</span>
+<span class="nc" id="L89">	}</span>
+
+	@Override
+	public void deleteAll()
+	{
+<span class="nc" id="L94">		delete(stream(spliteratorUnknownSize(iterator(), Spliterator.ORDERED), false));</span>
+<span class="nc" id="L95">	}</span>
+
+	@Override
+	public void add(EntityType entity)
+	{
+<span class="fc" id="L100">		addEntityType(entity);</span>
+<span class="fc" id="L101">	}</span>
+
+	@Override
+	public Integer add(Stream&lt;EntityType&gt; entities)
+	{
+<span class="nc" id="L106">		AtomicInteger count = new AtomicInteger();</span>
+<span class="nc" id="L107">		entities.filter(entity -&gt;</span>
+		{
+<span class="nc" id="L109">			count.incrementAndGet();</span>
+<span class="nc" id="L110">			return true;</span>
+<span class="nc" id="L111">		}).forEach(this::addEntityType);</span>
+<span class="nc" id="L112">		return count.get();</span>
+	}
+
+	private void addEntityType(EntityType entityType)
+	{
+		// add row to entities table
+<span class="fc" id="L118">		delegate().add(entityType);</span>
+<span class="pc bpc" id="L119" title="2 of 4 branches missed.">		if (!entityType.isAbstract() &amp;&amp; !MetaDataService.isMetaEntityType(entityType))</span>
+		{
+<span class="fc" id="L121">			RepositoryCollection repoCollection = dataService.getMeta().getBackend(entityType);</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">			if (repoCollection == null)</span>
+			{
+<span class="fc" id="L124">				throw new MolgenisDataException(format(&quot;Unknown backend [%s]&quot;, entityType.getBackend()));</span>
+			}
+<span class="fc" id="L126">			repoCollection.createRepository(entityType);</span>
+		}
+<span class="fc" id="L128">	}</span>
+
+	private void updateEntity(EntityType newEntityType)
+	{
+<span class="fc" id="L132">		addAndRemoveAttributesInBackend(newEntityType);</span>
+<span class="fc" id="L133">		updateEntityTypeInBackend(newEntityType);</span>
+		// update entity
+<span class="fc" id="L135">		delegate().update(newEntityType);</span>
+<span class="fc" id="L136">	}</span>
+
+	private void updateEntityTypeInBackend(EntityType updatedEntityType)
+	{
+<span class="fc" id="L140">		EntityType existingEntityType = delegate().findOneById(updatedEntityType.getId());</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">		if (!existingEntityType.isAbstract())</span>
+		{
+<span class="fc" id="L143">			RepositoryCollection backend = dataService.getMeta().getBackend(existingEntityType);</span>
+<span class="fc" id="L144">			backend.updateRepository(existingEntityType, updatedEntityType);</span>
+		}
+<span class="fc" id="L146">	}</span>
+
+	/**
+	 * Add and remove entity attributes in the backend for an {@link EntityType}.
+	 * If the {@link EntityType} is abstract, will update all concrete extending {@link EntityType}s.
+	 * Attribute updates are handled by the {@link AttributeRepositoryDecorator}.
+	 *
+	 * @param entityType {@link EntityType} containing the desired situation.
+	 */
+	private void addAndRemoveAttributesInBackend(EntityType entityType)
+	{
+<span class="fc" id="L157">		EntityType existingEntityType = delegate().findOneById(entityType.getId());</span>
+<span class="fc" id="L158">		Map&lt;String, Attribute&gt; attrsMap = toAttributesMap(entityType);</span>
+<span class="fc" id="L159">		Map&lt;String, Attribute&gt; existingAttrsMap = toAttributesMap(existingEntityType);</span>
+
+<span class="fc" id="L161">		dataService.getMeta().getConcreteChildren(entityType).forEach(concreteEntityType -&gt;</span>
+		{
+<span class="fc" id="L163">			RepositoryCollection backend = dataService.getMeta().getBackend(concreteEntityType);</span>
+<span class="fc" id="L164">			EntityType concreteExistingEntityType = delegate().findOneById(concreteEntityType.getId());</span>
+
+<span class="fc" id="L166">			addNewAttributesInBackend(attrsMap, existingAttrsMap, backend, concreteExistingEntityType);</span>
+<span class="fc" id="L167">			deleteRemovedAttributesInBackend(attrsMap, existingAttrsMap, backend, concreteExistingEntityType);</span>
+<span class="fc" id="L168">		});</span>
+<span class="fc" id="L169">	}</span>
+
+	private Map&lt;String, Attribute&gt; toAttributesMap(EntityType entityType)
+	{
+<span class="fc" id="L173">		return stream(entityType.getOwnAllAttributes().spliterator(), false).collect(</span>
+<span class="fc" id="L174">				toMap(Attribute::getName, identity()));</span>
+	}
+
+	private void deleteRemovedAttributesInBackend(Map&lt;String, Attribute&gt; attrsMap,
+			Map&lt;String, Attribute&gt; existingAttrsMap, RepositoryCollection backend,
+			EntityType concreteExistingEntityType)
+	{
+<span class="fc" id="L181">		difference(existingAttrsMap.keySet(), attrsMap.keySet()).stream()</span>
+<span class="fc" id="L182">																.map(existingAttrsMap::get)</span>
+<span class="fc" id="L183">																.forEach(removedAttribute -&gt; backend.deleteAttribute(</span>
+																		concreteExistingEntityType, removedAttribute));
+<span class="fc" id="L185">	}</span>
+
+	private void addNewAttributesInBackend(Map&lt;String, Attribute&gt; attrsMap, Map&lt;String, Attribute&gt; existingAttrsMap,
+			RepositoryCollection backend, EntityType concreteExistingEntityType)
+	{
+<span class="fc" id="L190">		difference(attrsMap.keySet(), existingAttrsMap.keySet()).stream()</span>
+<span class="fc" id="L191">																.map(attrsMap::get)</span>
+<span class="fc" id="L192">																.forEach(addedAttribute -&gt; backend.addAttribute(</span>
+																		concreteExistingEntityType, addedAttribute));
+<span class="fc" id="L194">	}</span>
+
+	private LinkedHashMap&lt;String, EntityType&gt; resolveDependencies(List&lt;EntityType&gt; entityTypes)
+	{
+<span class="fc" id="L198">		List&lt;EntityType&gt; resolvedEntityTypes = reverse(entityTypeDependencyResolver.resolve(entityTypes));</span>
+<span class="fc" id="L199">		return resolvedEntityTypes.stream()</span>
+<span class="pc" id="L200">								  .collect(toMap(EntityType::getId, identity(), (u, v) -&gt; u, LinkedHashMap::new));</span>
+	}
+
+	/**
+	 * Removes the mappedBy attributes of each OneToMany pair in the supplied map of EntityTypes
+	 */
+	private void removeMappedByAttributes(Map&lt;String, EntityType&gt; resolvedEntityTypes)
+	{
+<span class="fc" id="L208">		resolvedEntityTypes.values()</span>
+<span class="fc" id="L209">						   .stream()</span>
+<span class="fc" id="L210">						   .flatMap(EntityType::getMappedByAttributes)</span>
+<span class="fc" id="L211">						   .filter(attribute -&gt; resolvedEntityTypes.containsKey(attribute.getEntity().getId()))</span>
+<span class="fc" id="L212">						   .forEach(attribute -&gt; dataService.delete(ATTRIBUTE_META_DATA, attribute));</span>
+<span class="fc" id="L213">	}</span>
+
+	private void deleteEntityType(EntityType entityType)
+	{
+		// delete EntityType table
+<span class="fc bfc" id="L218" title="All 2 branches covered.">		if (!entityType.isAbstract())</span>
+		{
+<span class="fc" id="L220">			deleteEntityRepository(entityType);</span>
+		}
+
+		// delete rows from attributes table
+<span class="fc" id="L224">		deleteEntityAttributes(entityType);</span>
+
+		// delete row from entities table
+<span class="fc" id="L227">		delegate().delete(entityType);</span>
+<span class="fc" id="L228">	}</span>
+
+	private void deleteEntityAttributes(EntityType entityType)
+	{
+<span class="fc" id="L232">		Iterable&lt;Attribute&gt; rootAttrs = entityType.getOwnAttributes();</span>
+<span class="fc" id="L233">		Stream&lt;Attribute&gt; allAttrs = stream(rootAttrs.spliterator(), false).flatMap(</span>
+<span class="fc" id="L234">				attrEntity -&gt; stream(new AttributeTreeTraverser().preOrderTraversal(attrEntity).spliterator(), false));</span>
+<span class="fc" id="L235">		dataService.delete(ATTRIBUTE_META_DATA, allAttrs);</span>
+<span class="fc" id="L236">	}</span>
+
+	private void deleteEntityRepository(EntityType entityType)
+	{
+<span class="fc" id="L240">		String backend = entityType.getBackend();</span>
+<span class="fc" id="L241">		dataService.getMeta().getBackend(backend).deleteRepository(entityType);</span>
+<span class="fc" id="L242">	}</span>
+
+	private static class AttributeTreeTraverser extends TreeTraverser&lt;Attribute&gt;
+	{
+		@Override
+		public Iterable&lt;Attribute&gt; children(@Nonnull Attribute attr)
+		{
+<span class="fc" id="L249">			return attr.getChildren();</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

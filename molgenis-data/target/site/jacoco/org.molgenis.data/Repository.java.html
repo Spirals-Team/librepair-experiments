@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Repository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data</a> &gt; <span class="el_source">Repository.java</span></div><h1>Repository.java</h1><pre class="source lang-java linenums">package org.molgenis.data;
+
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.aggregation.AggregateQuery;
+import org.molgenis.data.aggregation.AggregateResult;
+import org.molgenis.data.meta.model.EntityType;
+
+import java.io.Closeable;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+
+import static java.lang.Boolean.FALSE;
+import static java.lang.Boolean.TRUE;
+import static java.util.stream.Collectors.partitioningBy;
+import static java.util.stream.Collectors.toSet;
+
+/**
+ * Repository gives access to a collection of Entity. Synonyms: EntityReader, EntitySource, EntityCollection
+ */
+public interface Repository&lt;E extends Entity&gt; extends Iterable&lt;E&gt;, Closeable
+{
+	/**
+	 * Checks if IDs are present in this {@link Repository}.
+	 *
+	 * @param ids the set of ID values to check
+	 * @return the {@link Set} of IDs that are present in the repository
+	 */
+	default Set&lt;Object&gt; getExistingIDs(Set&lt;Object&gt; ids)
+	{
+<span class="fc" id="L33">		Fetch idFetch = new Fetch().field(getEntityType().getIdAttribute().getName());</span>
+<span class="fc" id="L34">		return findAll(ids.stream(), idFetch).map(Entity::getIdValue).collect(toSet());</span>
+	}
+
+	/**
+	 * Upserts a batch of entities into this repository.
+	 * Entities that are already present are updated, new entities are added.
+	 *
+	 * @param entities List of Entities to upsert
+	 */
+	default void upsertBatch(List&lt;E&gt; entities)
+	{
+<span class="fc" id="L45">		Set&lt;Object&gt; existingIDs = getExistingIDs(entities.stream().map(Entity::getIdValue).collect(toSet()));</span>
+<span class="fc" id="L46">		Map&lt;Boolean, List&lt;E&gt;&gt; partitioned = entities.stream()</span>
+<span class="fc" id="L47">													.collect(partitioningBy(</span>
+<span class="fc" id="L48">															entity -&gt; existingIDs.contains(entity.getIdValue())));</span>
+<span class="fc" id="L49">		add(partitioned.get(FALSE).stream());</span>
+<span class="fc" id="L50">		update(partitioned.get(TRUE).stream());</span>
+<span class="fc" id="L51">	}</span>
+
+	/**
+	 * Executes a function for each batch of entities.
+	 *
+	 * @param consumer  function to call for each batch of entities
+	 * @param batchSize size of the batches to feed to the consumer
+	 */
+	default void forEachBatched(Consumer&lt;List&lt;E&gt;&gt; consumer, int batchSize)
+	{
+<span class="nc" id="L61">		forEachBatched(null, consumer, batchSize);</span>
+<span class="nc" id="L62">	}</span>
+
+	/**
+	 * Executes a function for each batch of entities.
+	 *
+	 * @param fetch     fetch defining which attributes to retrieve
+	 * @param consumer  function to call for each batch of entities
+	 * @param batchSize size of the batches to feed to the consumer
+	 */
+	void forEachBatched(Fetch fetch, Consumer&lt;List&lt;E&gt;&gt; consumer, int batchSize);
+
+	/**
+	 * Returns repository capabilities, e.g. writable
+	 *
+	 * @return all capabilities of this repository
+	 */
+	Set&lt;RepositoryCapability&gt; getCapabilities();
+
+	/**
+	 * Returns query operators supported by this repository, e.g. equals
+	 *
+	 * @return all query operators supported by this repository
+	 */
+	Set&lt;Operator&gt; getQueryOperators();
+
+	/**
+	 * Returns the repository name
+	 *
+	 * @return repository name
+	 */
+	String getName();
+
+	/**
+	 * Returns the repository meta data
+	 *
+	 * @return repository meta data
+	 */
+	EntityType getEntityType();
+
+	/**
+	 * Returns the number of entities in this repository
+	 *
+	 * @return the number of entities in this repository
+	 */
+	long count();
+
+	/**
+	 * Returns a new query used to retrieve data from this repository
+	 *
+	 * @return repository query
+	 */
+	Query&lt;E&gt; query();
+
+	/**
+	 * return number of entities matched by query
+	 *
+	 * @param q query
+	 */
+	long count(Query&lt;E&gt; q);
+
+	/**
+	 * Find entities that match a query. Returns empty stream if no matches.
+	 *
+	 * @param q query
+	 * @return (empty) Stream, never null
+	 */
+	Stream&lt;E&gt; findAll(Query&lt;E&gt; q);
+
+	/**
+	 * Find an entity base on a query
+	 * &lt;p&gt;
+	 * Returns null if not exists.
+	 * &lt;p&gt;
+	 * Returns first result if multiple found
+	 *
+	 * @param q query
+	 */
+	E findOne(Query&lt;E&gt; q);
+
+	/**
+	 * Type-safe find one entity based on id. Returns null if not exists
+	 */
+	E findOneById(Object id);
+
+	/**
+	 * Find one entity based on id.
+	 *
+	 * @param id    entity id
+	 * @param fetch fetch defining which attributes to retrieve
+	 * @return entity or null
+	 * @throws MolgenisDataAccessException if access to entity with the given id is not allowed
+	 */
+	E findOneById(Object id, Fetch fetch);
+
+	/**
+	 * Finds all entities with the given IDs. Returns empty stream if no matches.
+	 *
+	 * @param ids entity ids
+	 * @return (empty) Stream where the order of entities matches the order of ids, never null
+	 */
+	Stream&lt;E&gt; findAll(Stream&lt;Object&gt; ids);
+
+	/**
+	 * Finds all entities with the given IDs, with a fetch. Returns empty stream if no matches.
+	 *
+	 * @param ids   entity ids
+	 * @param fetch fetch defining which attributes to retrieve
+	 * @return (empty) Stream where the order of entities matches the order of ids, never null
+	 * @throws MolgenisDataAccessException if access to an entity one of the given IDs is not allowed
+	 */
+	Stream&lt;E&gt; findAll(Stream&lt;Object&gt; ids, Fetch fetch);
+
+	/**
+	 * @param aggregateQuery aggregation query
+	 * @return aggregated values for the given query
+	 */
+	AggregateResult aggregate(AggregateQuery aggregateQuery);
+
+	/**
+	 * Update one entity
+	 *
+	 * @param entity entity to update
+	 */
+	void update(E entity);
+
+	/**
+	 * Updates the given entities
+	 *
+	 * @param entities entity stream
+	 */
+	void update(Stream&lt;E&gt; entities);
+
+	/**
+	 * Delete one entity
+	 *
+	 * @param entity entity to delete
+	 */
+	void delete(E entity);
+
+	/**
+	 * Delete entities from repository
+	 *
+	 * @param entities entity stream
+	 */
+	void delete(Stream&lt;E&gt; entities);
+
+	/* Delete one entity based on id */
+
+	/**
+	 * Delete one entity by id
+	 *
+	 * @param id entity id
+	 */
+	void deleteById(Object id);
+
+	/**
+	 * Delete entities by id
+	 *
+	 * @param ids entity ids
+	 */
+	void deleteAll(Stream&lt;Object&gt; ids);
+
+	/**
+	 * Delete all entities
+	 */
+	void deleteAll();
+
+	/**
+	 * Add one entity
+	 *
+	 * @param entity entity to add
+	 */
+	void add(E entity);
+
+	/**
+	 * Add entities to repository
+	 *
+	 * @param entities entity stream
+	 * @return number of added entities
+	 */
+	Integer add(Stream&lt;E&gt; entities);
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

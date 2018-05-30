@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractRowLevelSecurityRepositoryDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.security.owned</a> &gt; <span class="el_source">AbstractRowLevelSecurityRepositoryDecorator.java</span></div><h1>AbstractRowLevelSecurityRepositoryDecorator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.security.owned;
+
+import org.molgenis.data.*;
+import org.molgenis.data.aggregation.AggregateQuery;
+import org.molgenis.data.aggregation.AggregateResult;
+import org.molgenis.data.support.QueryImpl;
+import org.springframework.security.acls.model.MutableAclService;
+import org.springframework.security.acls.model.ObjectIdentity;
+
+import java.util.Iterator;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.security.owned.AbstractRowLevelSecurityRepositoryDecorator.Action.*;
+import static org.molgenis.security.core.utils.SecurityUtils.currentUserIsSuOrSystem;
+
+/**
+ * RepositoryDecorator that works on EntityTypes that are row-level secured.
+ */
+public abstract class AbstractRowLevelSecurityRepositoryDecorator&lt;E extends Entity&gt;
+		extends AbstractRepositoryDecorator&lt;E&gt;
+{
+	private final MutableAclService mutableAclService;
+
+	/**
+	 * The operation that is being performed on this repository.
+	 */
+<span class="fc" id="L32">	public enum Action</span>
+	{
+<span class="fc" id="L34">		COUNT, READ, CREATE, UPDATE, DELETE</span>
+	}
+
+	public AbstractRowLevelSecurityRepositoryDecorator(Repository&lt;E&gt; delegateRepository,
+			MutableAclService mutableAclService)
+	{
+<span class="fc" id="L40">		super(delegateRepository);</span>
+<span class="fc" id="L41">		this.mutableAclService = requireNonNull(mutableAclService);</span>
+<span class="fc" id="L42">	}</span>
+
+	@Override
+	public Iterator&lt;E&gt; iterator()
+	{
+<span class="fc" id="L47">		Iterable&lt;E&gt; iterable = () -&gt; delegate().iterator();</span>
+<span class="fc" id="L48">		return stream(iterable.spliterator(), false).filter(entity -&gt; isActionPermitted(entity, READ))</span>
+<span class="fc" id="L49">													.iterator();</span>
+	}
+
+	@Override
+	public void forEachBatched(Fetch fetch, Consumer&lt;List&lt;E&gt;&gt; consumer, int batchSize)
+	{
+<span class="fc" id="L55">		delegate().forEachBatched(fetch, entities -&gt; consumer.accept(</span>
+<span class="fc" id="L56">				entities.stream().filter(entity -&gt; isActionPermitted(entity, READ)).collect(toList())),</span>
+				batchSize);
+<span class="fc" id="L58">	}</span>
+
+	@Override
+	public long count()
+	{
+<span class="fc" id="L63">		return findAllPermitted(COUNT).count();</span>
+	}
+
+	@Override
+	public long count(Query&lt;E&gt; q)
+	{
+<span class="fc" id="L69">		return findAllPermitted(q, COUNT).count();</span>
+	}
+
+	@Override
+	public Stream&lt;E&gt; findAll(Query&lt;E&gt; q)
+	{
+<span class="fc" id="L75">		return findAllPermitted(q, READ);</span>
+	}
+
+	@Override
+	public E findOne(Query&lt;E&gt; q)
+	{
+<span class="fc" id="L81">		return findAllPermitted(q, READ).findFirst().orElse(null);</span>
+	}
+
+	@Override
+	public E findOneById(Object id)
+	{
+<span class="fc" id="L87">		E entity = null;</span>
+
+<span class="fc bfc" id="L89" title="All 2 branches covered.">		if (isActionPermitted(id, READ))</span>
+		{
+<span class="fc" id="L91">			entity = delegate().findOneById(id);</span>
+		}
+<span class="fc" id="L93">		return entity;</span>
+	}
+
+	@Override
+	public E findOneById(Object id, Fetch fetch)
+	{
+<span class="fc" id="L99">		E entity = null;</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">		if (isActionPermitted(id, READ))</span>
+		{
+<span class="fc" id="L102">			entity = delegate().findOneById(id, fetch);</span>
+		}
+<span class="fc" id="L104">		return entity;</span>
+	}
+
+	@Override
+	public Stream&lt;E&gt; findAll(Stream&lt;Object&gt; ids)
+	{
+<span class="fc" id="L110">		Stream&lt;E&gt; entities = delegate().findAll(ids);</span>
+<span class="fc" id="L111">		entities = entities.filter(entity -&gt; isActionPermitted(entity, READ));</span>
+<span class="fc" id="L112">		return entities;</span>
+	}
+
+	@Override
+	public Stream&lt;E&gt; findAll(Stream&lt;Object&gt; ids, Fetch fetch)
+	{
+<span class="fc" id="L118">		return delegate().findAll(ids, fetch).filter(entity -&gt; isActionPermitted(entity, READ));</span>
+	}
+
+	@Override
+	public AggregateResult aggregate(AggregateQuery aggregateQuery)
+	{
+<span class="fc bfc" id="L124" title="All 2 branches covered.">		if (!currentUserIsSuOrSystem())</span>
+		{
+<span class="fc" id="L126">			throw new UnsupportedOperationException();</span>
+		}
+<span class="fc" id="L128">		return delegate().aggregate(aggregateQuery);</span>
+	}
+
+	@Override
+	public void update(E entity)
+	{
+<span class="fc bfc" id="L134" title="All 2 branches covered.">		if (!isActionPermitted(entity, UPDATE))</span>
+		{
+<span class="nc" id="L136">			throwPermissionException(entity, UPDATE);</span>
+		}
+<span class="fc" id="L138">		delegate().update(entity);</span>
+<span class="fc" id="L139">		updateAcl(entity);</span>
+<span class="fc" id="L140">	}</span>
+
+	@Override
+	public void update(Stream&lt;E&gt; entities)
+	{
+<span class="fc" id="L145">		delegate().update(entities.filter((E entity) -&gt;</span>
+		{
+<span class="fc" id="L147">			boolean result = isActionPermitted(entity, UPDATE);</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">			if (result)</span>
+			{
+<span class="fc" id="L150">				updateAcl(entity);</span>
+			}
+<span class="fc" id="L152">			return result;</span>
+		}));
+<span class="fc" id="L154">	}</span>
+
+	@Override
+	public void delete(E entity)
+	{
+<span class="fc bfc" id="L159" title="All 2 branches covered.">		if (!isActionPermitted(entity, DELETE))</span>
+		{
+<span class="nc" id="L161">			throwPermissionException(entity, DELETE);</span>
+		}
+<span class="fc" id="L163">		deleteAcl(entity);</span>
+<span class="fc" id="L164">		delegate().delete(entity);</span>
+<span class="fc" id="L165">	}</span>
+
+	@Override
+	public void delete(Stream&lt;E&gt; entities)
+	{
+<span class="fc" id="L170">		deleteStream(entities);</span>
+<span class="fc" id="L171">	}</span>
+
+	@Override
+	public void deleteById(Object id)
+	{
+<span class="fc bfc" id="L176" title="All 2 branches covered.">		if (isActionPermitted(id, DELETE))</span>
+		{
+<span class="fc" id="L178">			deleteAcl(id);</span>
+<span class="fc" id="L179">			delegate().deleteById(id);</span>
+		}
+<span class="fc" id="L181">	}</span>
+
+	@Override
+	public void deleteAll(Stream&lt;Object&gt; ids)
+	{
+<span class="fc" id="L186">		delegate().deleteAll(ids.filter(id -&gt;</span>
+		{
+<span class="fc" id="L188">			boolean deleteAllowed = isActionPermitted(id, DELETE);</span>
+<span class="fc bfc" id="L189" title="All 2 branches covered.">			if (deleteAllowed)</span>
+			{
+<span class="fc" id="L191">				deleteAcl(id);</span>
+			}
+<span class="fc" id="L193">			return deleteAllowed;</span>
+		}));
+<span class="fc" id="L195">	}</span>
+
+	@Override
+	public void deleteAll()
+	{
+<span class="fc" id="L200">		delegate().delete(findAllPermitted(new QueryImpl&lt;&gt;(), DELETE));</span>
+<span class="fc" id="L201">	}</span>
+
+	@Override
+	public void add(E entity)
+	{
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">		if (isActionPermitted(entity, Action.CREATE))</span>
+		{
+<span class="fc" id="L208">			createAcl(entity);</span>
+<span class="fc" id="L209">			delegate().add(entity);</span>
+		}
+<span class="fc" id="L211">	}</span>
+
+	@Override
+	public Integer add(Stream&lt;E&gt; entities)
+	{
+<span class="fc" id="L216">		return delegate().add(entities.filter(entity -&gt;</span>
+		{
+			//throws exception if no permission on the containing package
+<span class="fc" id="L219">			isActionPermitted(entity, Action.CREATE);</span>
+<span class="fc" id="L220">			createAcl(entity);</span>
+<span class="fc" id="L221">			return true;</span>
+		}));
+	}
+
+	private void deleteStream(Stream&lt;E&gt; entityStream)
+	{
+<span class="fc" id="L227">		delegate().delete(entityStream.filter(entity -&gt;</span>
+		{
+<span class="fc" id="L229">			boolean deleteAllowed = isActionPermitted(entity, DELETE);</span>
+<span class="fc bfc" id="L230" title="All 2 branches covered.">			if (deleteAllowed)</span>
+			{
+<span class="fc" id="L232">				deleteAcl(entity);</span>
+			}
+<span class="fc" id="L234">			return deleteAllowed;</span>
+		}));
+<span class="fc" id="L236">	}</span>
+
+	private Stream&lt;E&gt; findAllPermitted(Action action)
+	{
+<span class="fc" id="L240">		return findAllPermitted(new QueryImpl&lt;&gt;(), action);</span>
+	}
+
+	private Stream&lt;E&gt; findAllPermitted(Query&lt;E&gt; query, Action action)
+	{
+<span class="fc" id="L245">		Query&lt;E&gt; qWithoutLimitOffset = new QueryImpl&lt;&gt;(query);</span>
+<span class="fc" id="L246">		qWithoutLimitOffset.offset(0).pageSize(Integer.MAX_VALUE);</span>
+<span class="fc" id="L247">		Stream&lt;E&gt; permittedEntityStream = delegate().findAll(qWithoutLimitOffset)</span>
+<span class="fc" id="L248">													.filter(entity -&gt; isActionPermitted(entity, action));</span>
+<span class="fc bfc" id="L249" title="All 2 branches covered.">		if (query.getOffset() &gt; 0)</span>
+		{
+<span class="fc" id="L251">			permittedEntityStream = permittedEntityStream.skip(query.getOffset());</span>
+		}
+<span class="fc bfc" id="L253" title="All 2 branches covered.">		if (query.getPageSize() &gt; 0)</span>
+		{
+<span class="fc" id="L255">			permittedEntityStream = permittedEntityStream.limit(query.getPageSize());</span>
+		}
+<span class="fc" id="L257">		return permittedEntityStream;</span>
+	}
+
+	void deleteAcl(ObjectIdentity objectIdentity)
+	{
+<span class="fc" id="L262">		mutableAclService.deleteAcl(objectIdentity, true);</span>
+<span class="fc" id="L263">	}</span>
+
+	public abstract boolean isActionPermitted(E entity, Action action);
+
+	public abstract boolean isActionPermitted(Object id, Action action);
+
+	public abstract void throwPermissionException(E entity, Action action);
+
+	public abstract void createAcl(E entity);
+
+	public abstract void deleteAcl(E entity);
+
+	public abstract void deleteAcl(Object id);
+
+	public abstract void updateAcl(E entity);
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

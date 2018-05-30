@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data</a> &gt; <span class="el_source">EntityManagerImpl.java</span></div><h1>EntityManagerImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.data;
+
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Iterators;
+import com.google.common.collect.SetMultimap;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.populate.EntityPopulator;
+import org.molgenis.data.support.DynamicEntity;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.data.support.EntityWithComputedAttributes;
+import org.molgenis.data.support.PartialEntity;
+import org.springframework.stereotype.Component;
+
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static java.util.Collections.singletonList;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.EntityManager.CreationMode.NO_POPULATE;
+import static org.molgenis.data.EntityManager.CreationMode.POPULATE;
+import static org.molgenis.data.support.EntityTypeUtils.isMultipleReferenceType;
+import static org.molgenis.data.support.EntityTypeUtils.isSingleReferenceType;
+
+/**
+ * Entity manager responsible for creating entities, entity references and resolving references of reference attributes.
+ */
+@Component
+public class EntityManagerImpl implements EntityManager
+{
+	private static final int BATCH_SIZE = 100;
+
+	private final DataService dataService;
+	private final EntityFactoryRegistry entityFactoryRegistry;
+	private final EntityPopulator entityPopulator;
+	private final EntityReferenceCreator entityReferenceCreator;
+
+	public EntityManagerImpl(DataService dataService, EntityFactoryRegistry entityFactoryRegistry,
+			EntityPopulator entityPopulator, EntityReferenceCreator entityReferenceCreator)
+<span class="fc" id="L45">	{</span>
+<span class="fc" id="L46">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L47">		this.entityFactoryRegistry = requireNonNull(entityFactoryRegistry);</span>
+<span class="fc" id="L48">		this.entityPopulator = requireNonNull(entityPopulator);</span>
+<span class="fc" id="L49">		this.entityReferenceCreator = requireNonNull(entityReferenceCreator);</span>
+<span class="fc" id="L50">	}</span>
+
+	@Override
+	public Entity create(EntityType entityType, CreationMode creationMode)
+	{
+<span class="nc" id="L55">		return create(entityType, null, creationMode);</span>
+	}
+
+	@Override
+	public Entity createFetch(EntityType entityType, Fetch fetch)
+	{
+<span class="nc" id="L61">		return create(entityType, fetch, NO_POPULATE);</span>
+	}
+
+	private Entity create(EntityType entityType, Fetch fetch, CreationMode creationMode)
+	{
+<span class="nc" id="L66">		Entity entity = new DynamicEntity(entityType);</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">		if (fetch != null)</span>
+		{
+			// create partial entity that loads attribute values not contained in the fetch on demand.
+<span class="nc" id="L70">			entity = new PartialEntity(entity, fetch, this);</span>
+		}
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">		if (entityType.hasAttributeWithExpression())</span>
+		{
+			// create entity that computed values based on expressions defined in meta data
+<span class="nc" id="L76">			entity = new EntityWithComputedAttributes(entity);</span>
+		}
+
+<span class="nc bnc" id="L79" title="All 2 branches missed.">		if (creationMode == POPULATE)</span>
+		{
+<span class="nc" id="L81">			entityPopulator.populate(entity);</span>
+		}
+
+<span class="nc" id="L84">		EntityFactory&lt;? extends Entity, ?&gt; entityFactory = entityFactoryRegistry.getEntityFactory(entityType);</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">		if (entityFactory != null)</span>
+		{
+			// create static entity (e.g. Tag, Language, Package) that wraps the constructed dynamic or partial entity.
+<span class="nc" id="L88">			return entityFactory.create(entity);</span>
+		}
+<span class="nc" id="L90">		return entity;</span>
+	}
+
+	@Override
+	public Entity getReference(EntityType entityType, Object id)
+	{
+<span class="fc" id="L96">		return entityReferenceCreator.getReference(entityType, id);</span>
+	}
+
+	@Override
+	public Iterable&lt;Entity&gt; getReferences(EntityType entityType, Iterable&lt;?&gt; ids)
+	{
+<span class="fc" id="L102">		return entityReferenceCreator.getReferences(entityType, ids);</span>
+	}
+
+	@Override
+	public Entity resolveReferences(EntityType entityType, Entity entity, Fetch fetch)
+	{
+		// no fetch exists that described what to resolve
+<span class="nc bnc" id="L109" title="All 2 branches missed.">		if (fetch == null)</span>
+		{
+<span class="nc" id="L111">			return entity;</span>
+		}
+<span class="nc" id="L113">		List&lt;Attribute&gt; resolvableAttrs = getResolvableAttrs(entityType, fetch);</span>
+
+		// entity has no references, nothing to resolve
+<span class="nc bnc" id="L116" title="All 2 branches missed.">		if (resolvableAttrs.isEmpty())</span>
+		{
+<span class="nc" id="L118">			return entity;</span>
+		}
+
+<span class="nc" id="L121">		return resolveReferences(resolvableAttrs, singletonList(entity), fetch).iterator().next();</span>
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; resolveReferences(EntityType entityType, Stream&lt;Entity&gt; entities, Fetch fetch)
+	{
+		// resolve lazy entity collections without references
+<span class="pc bpc" id="L128" title="3 of 4 branches missed.">		if (entities instanceof EntityStream &amp;&amp; ((EntityStream) entities).isLazy())</span>
+		{
+			// TODO remove cast after updating DataService/Repository interfaces to return EntityStream
+<span class="nc" id="L131">			return dataService.findAll(entityType.getId(), entities.map(Entity::getIdValue), fetch);</span>
+		}
+
+		// no fetch exists that described what to resolve
+<span class="pc bpc" id="L135" title="1 of 2 branches missed.">		if (fetch == null)</span>
+		{
+<span class="fc" id="L137">			return entities;</span>
+		}
+<span class="nc" id="L139">		List&lt;Attribute&gt; resolvableAttrs = getResolvableAttrs(entityType, fetch);</span>
+
+		// entity has no references, nothing to resolve
+<span class="nc bnc" id="L142" title="All 2 branches missed.">		if (resolvableAttrs.isEmpty())</span>
+		{
+<span class="nc" id="L144">			return entities;</span>
+		}
+
+<span class="nc" id="L147">		Iterable&lt;List&lt;Entity&gt;&gt; iterable = () -&gt; Iterators.partition(entities.iterator(), BATCH_SIZE);</span>
+<span class="nc" id="L148">		return stream(iterable.spliterator(), false).flatMap(batch -&gt;</span>
+		{
+<span class="nc" id="L150">			List&lt;Entity&gt; batchWithReferences = resolveReferences(resolvableAttrs, batch, fetch);</span>
+<span class="nc" id="L151">			return batchWithReferences.stream();</span>
+		});
+	}
+
+	private List&lt;Entity&gt; resolveReferences(List&lt;Attribute&gt; resolvableAttrs, List&lt;Entity&gt; entities, Fetch fetch)
+	{
+		// entity name --&gt; entity ids
+<span class="nc" id="L158">		SetMultimap&lt;String, Object&gt; lazyRefEntityIdsMap = HashMultimap.create(resolvableAttrs.size(), 16);</span>
+		// entity name --&gt; attributes referring to this entity
+<span class="nc" id="L160">		SetMultimap&lt;String, Attribute&gt; refEntityAttrsMap = HashMultimap.create(resolvableAttrs.size(), 2);</span>
+
+		// fill maps
+<span class="nc bnc" id="L163" title="All 2 branches missed.">		for (Attribute attr : resolvableAttrs)</span>
+		{
+<span class="nc" id="L165">			String refEntityName = attr.getRefEntity().getId();</span>
+
+<span class="nc bnc" id="L167" title="All 2 branches missed.">			if (isSingleReferenceType(attr))</span>
+			{
+<span class="nc bnc" id="L169" title="All 2 branches missed.">				for (Entity entity : entities)</span>
+				{
+<span class="nc" id="L171">					Entity lazyRefEntity = entity.getEntity(attr.getName());</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">					if (lazyRefEntity != null)</span>
+					{
+<span class="nc" id="L174">						lazyRefEntityIdsMap.put(refEntityName, lazyRefEntity.getIdValue());</span>
+					}
+<span class="nc" id="L176">				}</span>
+
+			}
+<span class="nc bnc" id="L179" title="All 2 branches missed.">			else if (isMultipleReferenceType(attr))</span>
+			{
+<span class="nc bnc" id="L181" title="All 2 branches missed.">				for (Entity entity : entities)</span>
+				{
+<span class="nc" id="L183">					Iterable&lt;Entity&gt; lazyRefEntities = entity.getEntities(attr.getName());</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">					for (Entity lazyRefEntity : lazyRefEntities)</span>
+					{
+<span class="nc" id="L186">						lazyRefEntityIdsMap.put(refEntityName, lazyRefEntity.getIdValue());</span>
+<span class="nc" id="L187">					}</span>
+<span class="nc" id="L188">				}</span>
+			}
+
+<span class="nc" id="L191">			refEntityAttrsMap.put(refEntityName, attr);</span>
+<span class="nc" id="L192">		}</span>
+
+		// batch retrieve referred entities and replace entity references with actual entities
+<span class="nc bnc" id="L195" title="All 2 branches missed.">		for (Entry&lt;String, Collection&lt;Object&gt;&gt; entry : lazyRefEntityIdsMap.asMap().entrySet())</span>
+		{
+<span class="nc" id="L197">			String refEntityName = entry.getKey();</span>
+
+			// create a fetch for the referenced entity which is a union of the fetches defined by attributes
+			// referencing this entity
+<span class="nc" id="L201">			Set&lt;Attribute&gt; attrs = refEntityAttrsMap.get(refEntityName);</span>
+<span class="nc" id="L202">			Fetch subFetch = createSubFetch(fetch, attrs);</span>
+
+			// retrieve referenced entities
+<span class="nc" id="L205">			Stream&lt;Entity&gt; refEntities = dataService.findAll(refEntityName, entry.getValue().stream(), subFetch);</span>
+
+<span class="nc" id="L207">			Map&lt;Object, Entity&gt; refEntitiesIdMap = refEntities.collect(</span>
+<span class="nc" id="L208">					Collectors.toMap(Entity::getIdValue, Function.identity()));</span>
+
+<span class="nc bnc" id="L210" title="All 2 branches missed.">			for (Attribute attr : attrs)</span>
+			{
+<span class="nc bnc" id="L212" title="All 2 branches missed.">				if (isSingleReferenceType(attr))</span>
+				{
+<span class="nc" id="L214">					String attrName = attr.getName();</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">					for (Entity entity : entities)</span>
+					{
+<span class="nc" id="L217">						Entity lazyRefEntity = entity.getEntity(attrName);</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">						if (lazyRefEntity != null)</span>
+						{
+							// replace lazy entity with real entity
+<span class="nc" id="L221">							Object refEntityId = lazyRefEntity.getIdValue();</span>
+<span class="nc" id="L222">							Entity refEntity = refEntitiesIdMap.get(refEntityId);</span>
+<span class="nc" id="L223">							entity.set(attrName, refEntity);</span>
+						}
+<span class="nc" id="L225">					}</span>
+<span class="nc" id="L226">				}</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">				else if (isMultipleReferenceType(attr))</span>
+				{
+<span class="nc" id="L229">					String attrName = attr.getName();</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">					for (Entity entity : entities)</span>
+					{
+						// replace lazy entities with real entities
+<span class="nc" id="L233">						Iterable&lt;Entity&gt; lazyRefEntities = entity.getEntities(attrName);</span>
+<span class="nc" id="L234">						List&lt;Entity&gt; mrefEntities = stream(lazyRefEntities.spliterator(), true).map(lazyRefEntity -&gt;</span>
+						{
+							// replace lazy entity with real entity
+<span class="nc" id="L237">							Object refEntityId = lazyRefEntity.getIdValue();</span>
+<span class="nc" id="L238">							return refEntitiesIdMap.get(refEntityId);</span>
+<span class="nc" id="L239">						}).filter(Objects::nonNull).collect(Collectors.toList());</span>
+<span class="nc" id="L240">						entity.set(attrName, mrefEntities);</span>
+<span class="nc" id="L241">					}</span>
+				}
+<span class="nc" id="L243">			}</span>
+<span class="nc" id="L244">		}</span>
+<span class="nc" id="L245">		return entities;</span>
+	}
+
+	private static Fetch createSubFetch(Fetch fetch, Iterable&lt;Attribute&gt; attrs)
+	{
+<span class="nc" id="L250">		Fetch subFetch = null;</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">		for (Attribute attr : attrs)</span>
+		{
+<span class="nc" id="L253">			Fetch attrSubFetch = fetch.getFetch(attr.getName());</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">			if (attrSubFetch != null)</span>
+			{
+				// lazy creation
+<span class="nc bnc" id="L257" title="All 2 branches missed.">				if (subFetch == null)</span>
+				{
+<span class="nc" id="L259">					subFetch = new Fetch();</span>
+				}
+
+<span class="nc bnc" id="L262" title="All 2 branches missed.">				for (Entry&lt;String, Fetch&gt; entry : attrSubFetch)</span>
+				{
+<span class="nc" id="L264">					mergeFetches(subFetch, entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L265">				}</span>
+			}
+			else
+			{
+				// prefer null value (=fetch all attributes) above other values (=filter some attributes)
+<span class="nc" id="L270">				subFetch = null;</span>
+<span class="nc" id="L271">				break;</span>
+			}
+<span class="nc" id="L273">		}</span>
+<span class="nc" id="L274">		return subFetch;</span>
+	}
+
+	private static void mergeFetches(Fetch fetch, String field, Fetch subFetch)
+	{
+<span class="nc bnc" id="L279" title="All 2 branches missed.">		if (subFetch == null)</span>
+		{
+			// prefer null value above specific value
+<span class="nc" id="L282">			fetch.field(field, null);</span>
+		}
+<span class="nc bnc" id="L284" title="All 2 branches missed.">		else if (fetch.hasField(field))</span>
+		{
+<span class="nc" id="L286">			Fetch existingSubFetch = fetch.getFetch(field);</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">			if (existingSubFetch != null)</span>
+			{
+<span class="nc bnc" id="L289" title="All 2 branches missed.">				for (Map.Entry&lt;String, Fetch&gt; entry : subFetch)</span>
+				{
+<span class="nc" id="L291">					mergeFetches(existingSubFetch, entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L292">				}</span>
+			}
+<span class="nc" id="L294">		}</span>
+		else
+		{
+			// first value for this field
+<span class="nc" id="L298">			fetch.field(field, subFetch);</span>
+		}
+<span class="nc" id="L300">	}</span>
+
+	/**
+	 * Return all resolvable attributes: non-computed reference attributes defined in fetch
+	 *
+	 * @param entityType entity meta data
+	 * @param fetch      entity fetch
+	 * @return resolved attributes
+	 */
+	private static List&lt;Attribute&gt; getResolvableAttrs(EntityType entityType, Fetch fetch)
+	{
+<span class="nc" id="L311">		return stream(entityType.getAtomicAttributes().spliterator(), false).filter(EntityTypeUtils::isReferenceType)</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">																			.filter(attr -&gt; attr.getExpression()</span>
+																					== null)
+<span class="nc" id="L314">																			.filter(attr -&gt; fetch.hasField(</span>
+<span class="nc" id="L315">																					attr.getName()))</span>
+<span class="nc" id="L316">																			.collect(Collectors.toList());</span>
+	}
+
+	private static class EntityIdIterable implements Iterable&lt;Object&gt;
+	{
+		private final Iterable&lt;Entity&gt; entities;
+
+		EntityIdIterable(Iterable&lt;Entity&gt; entities)
+<span class="nc" id="L324">		{</span>
+<span class="nc" id="L325">			this.entities = requireNonNull(entities);</span>
+<span class="nc" id="L326">		}</span>
+
+		@Override
+		public Iterator&lt;Object&gt; iterator()
+		{
+<span class="nc" id="L331">			return stream().iterator();</span>
+		}
+
+		public Stream&lt;Object&gt; stream()
+		{
+<span class="nc" id="L336">			return StreamSupport.stream(entities.spliterator(), false).map(Entity::getIdValue);</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>
