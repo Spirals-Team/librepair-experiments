@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TwoFactorAuthenticationServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security.twofactor.service</a> &gt; <span class="el_source">TwoFactorAuthenticationServiceImpl.java</span></div><h1>TwoFactorAuthenticationServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.security.twofactor.service;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.data.security.user.UserService;
+import org.molgenis.security.core.utils.SecurityUtils;
+import org.molgenis.security.twofactor.exceptions.InvalidVerificationCodeException;
+import org.molgenis.security.twofactor.exceptions.TooManyLoginAttemptsException;
+import org.molgenis.security.twofactor.model.UserSecret;
+import org.molgenis.security.twofactor.model.UserSecretFactory;
+import org.molgenis.security.twofactor.model.UserSecretMetaData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.authentication.InternalAuthenticationServiceException;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.stream.Stream;
+
+import static java.text.MessageFormat.format;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.populate.IdGenerator.Strategy.SECURE_RANDOM;
+import static org.molgenis.security.core.runas.RunAsSystemAspect.runAsSystem;
+import static org.molgenis.security.twofactor.model.UserSecretMetaData.USER_ID;
+import static org.molgenis.security.twofactor.model.UserSecretMetaData.USER_SECRET;
+
+@Service
+public class TwoFactorAuthenticationServiceImpl implements TwoFactorAuthenticationService
+{
+<span class="fc" id="L34">	private static final Logger LOG = LoggerFactory.getLogger(TwoFactorAuthenticationService.class);</span>
+
+	private static final int MAX_FAILED_LOGIN_ATTEMPTS = 3;
+	private static final int FAILED_LOGIN_ATTEMPT_ITERATION = 1;
+	private static final int BLOCKED_USER_INTERVAL = 30;
+
+	private final OtpService otpService;
+	private final DataService dataService;
+	private final UserService userService;
+	private final IdGenerator idGenerator;
+	private final UserSecretFactory userSecretFactory;
+
+	public TwoFactorAuthenticationServiceImpl(OtpService otpService, DataService dataService, UserService userService,
+			IdGenerator idGenerator, UserSecretFactory userSecretFactory)
+<span class="fc" id="L48">	{</span>
+<span class="fc" id="L49">		this.otpService = requireNonNull(otpService);</span>
+<span class="fc" id="L50">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L51">		this.userService = requireNonNull(userService);</span>
+<span class="fc" id="L52">		this.idGenerator = requireNonNull(idGenerator);</span>
+<span class="fc" id="L53">		this.userSecretFactory = requireNonNull(userSecretFactory);</span>
+<span class="fc" id="L54">	}</span>
+
+	@Override
+	public boolean isVerificationCodeValidForUser(String verificationCode)
+	{
+<span class="nc" id="L59">		boolean isValid = false;</span>
+
+<span class="nc" id="L61">		UserSecret userSecret = getSecret();</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">		if (!userIsBlocked())</span>
+		{
+			try
+			{
+<span class="nc bnc" id="L66" title="All 2 branches missed.">				if (otpService.tryVerificationCode(verificationCode, userSecret.getSecret()))</span>
+				{
+<span class="nc" id="L68">					isValid = true;</span>
+<span class="nc" id="L69">					updateFailedLoginAttempts(0);</span>
+				}
+			}
+<span class="nc" id="L72">			catch (InvalidVerificationCodeException err)</span>
+			{
+<span class="nc" id="L74">				updateFailedLoginAttempts(userSecret.getFailedLoginAttempts() + FAILED_LOGIN_ATTEMPT_ITERATION);</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">				if (!userIsBlocked())</span>
+				{
+<span class="nc" id="L77">					throw err;</span>
+				}
+
+<span class="nc" id="L80">			}</span>
+		}
+<span class="nc" id="L82">		return isValid;</span>
+	}
+
+	@Override
+	public boolean userIsBlocked()
+	{
+<span class="fc" id="L88">		UserSecret userSecret = getSecret();</span>
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">		if (userSecret.getFailedLoginAttempts() &gt;= MAX_FAILED_LOGIN_ATTEMPTS)</span>
+		{
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">			if (userSecret.getLastFailedAuthentication() != null &amp;&amp; (Instant.now().toEpochMilli()</span>
+<span class="fc" id="L92">					&lt; userSecret.getLastFailedAuthentication()</span>
+<span class="fc" id="L93">								.plus(Duration.ofSeconds(BLOCKED_USER_INTERVAL))</span>
+<span class="pc bpc" id="L94" title="1 of 2 branches missed.">								.toEpochMilli()))</span>
+			{
+<span class="fc" id="L96">				throw new TooManyLoginAttemptsException(</span>
+<span class="fc" id="L97">						format(&quot;You entered the wrong verification code {0} times, please wait for {1} seconds before you try again&quot;,</span>
+<span class="fc" id="L98">								MAX_FAILED_LOGIN_ATTEMPTS, BLOCKED_USER_INTERVAL));</span>
+			}
+		}
+<span class="nc" id="L101">		return false;</span>
+	}
+
+	@Override
+	public void saveSecretForUser(String secret)
+	{
+
+<span class="pc bpc" id="L108" title="1 of 2 branches missed.">		if (secret == null)</span>
+		{
+<span class="nc" id="L110">			throw new InternalAuthenticationServiceException(&quot;No secretKey found&quot;);</span>
+		}
+		else
+		{
+<span class="fc" id="L114">			User user = getUser();</span>
+<span class="fc" id="L115">			UserSecret userSecret = userSecretFactory.create();</span>
+<span class="fc" id="L116">			userSecret.setUserId(user.getId());</span>
+<span class="fc" id="L117">			userSecret.setSecret(secret);</span>
+<span class="fc" id="L118">			runAsSystem(() -&gt; dataService.add(USER_SECRET, userSecret));</span>
+		}
+<span class="fc" id="L120">	}</span>
+
+	@Override
+	public void resetSecretForUser()
+	{
+<span class="nc" id="L125">		User user = getUser();</span>
+<span class="nc" id="L126">		Stream&lt;UserSecret&gt; userSecrets = runAsSystem(</span>
+<span class="nc" id="L127">				() -&gt; dataService.query(USER_SECRET, UserSecret.class).eq(USER_ID, user.getId()).findAll());</span>
+		//noinspection RedundantCast
+<span class="nc" id="L129">		runAsSystem((Runnable) () -&gt; dataService.delete(USER_SECRET, userSecrets));</span>
+<span class="nc" id="L130">	}</span>
+
+	@Override
+	public void enableForUser()
+	{
+<span class="nc" id="L135">		User user = getUser();</span>
+<span class="nc" id="L136">		user.setTwoFactorAuthentication(true);</span>
+<span class="nc" id="L137">		userService.update(user);</span>
+<span class="nc" id="L138">	}</span>
+
+	@Override
+	public void disableForUser()
+	{
+<span class="fc" id="L143">		User user = getUser();</span>
+<span class="fc" id="L144">		user.setTwoFactorAuthentication(false);</span>
+<span class="fc" id="L145">		userService.update(user);</span>
+<span class="fc" id="L146">		UserSecret userSecret = getSecret();</span>
+<span class="fc" id="L147">		runAsSystem(() -&gt; dataService.delete(USER_SECRET, userSecret));</span>
+<span class="fc" id="L148">	}</span>
+
+	@Override
+	public String generateSecretKey()
+	{
+<span class="fc" id="L153">		return idGenerator.generateId(SECURE_RANDOM);</span>
+	}
+
+	@Override
+	public boolean isConfiguredForUser()
+	{
+<span class="fc" id="L159">		boolean isConfigured = false;</span>
+		try
+		{
+<span class="fc" id="L162">			UserSecret secret = getSecret();</span>
+<span class="pc bpc" id="L163" title="1 of 2 branches missed.">			if (StringUtils.hasText(secret.getSecret()))</span>
+			{
+<span class="fc" id="L165">				isConfigured = true;</span>
+			}
+		}
+<span class="nc" id="L168">		catch (InternalAuthenticationServiceException err)</span>
+		{
+<span class="nc" id="L170">			LOG.warn(err.getMessage());</span>
+<span class="fc" id="L171">		}</span>
+
+<span class="fc" id="L173">		return isConfigured;</span>
+	}
+
+	/**
+	 * Check if user has 3 or more failed login attempts
+	 * -&gt; then determine if the user is within the 30 seconds of the last failed login attempt
+	 * -&gt; if the user is not outside the timeframe than the failed login attempts are set to 1 because it is a failed login attempt
+	 * When the user has less than 3 failed login attempts
+	 * -&gt; the last failed login attempt is logged
+	 *
+	 * @param numberOfAttempts number of failed login attempts
+	 */
+	private void updateFailedLoginAttempts(int numberOfAttempts)
+	{
+<span class="nc" id="L187">		UserSecret userSecret = getSecret();</span>
+<span class="nc" id="L188">		userSecret.setFailedLoginAttempts(numberOfAttempts);</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">		if (userSecret.getFailedLoginAttempts() &gt;= MAX_FAILED_LOGIN_ATTEMPTS)</span>
+		{
+<span class="nc bnc" id="L191" title="All 2 branches missed.">			if (!(userSecret.getLastFailedAuthentication() != null &amp;&amp; (Instant.now().toEpochMilli()</span>
+<span class="nc" id="L192">					&lt; userSecret.getLastFailedAuthentication()</span>
+<span class="nc" id="L193">								.plus(Duration.ofSeconds(BLOCKED_USER_INTERVAL))</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">								.toEpochMilli())))</span>
+			{
+<span class="nc" id="L196">				userSecret.setFailedLoginAttempts(FAILED_LOGIN_ATTEMPT_ITERATION);</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L201">			userSecret.setLastFailedAuthentication(Instant.now());</span>
+		}
+<span class="nc" id="L203">		runAsSystem(() -&gt; dataService.update(USER_SECRET, userSecret));</span>
+<span class="nc" id="L204">	}</span>
+
+	private UserSecret getSecret()
+	{
+<span class="fc" id="L208">		User user = getUser();</span>
+<span class="fc" id="L209">		UserSecret secret = runAsSystem(() -&gt; dataService.query(USER_SECRET, UserSecret.class)</span>
+<span class="fc" id="L210">														 .eq(UserSecretMetaData.USER_ID, user.getId())</span>
+<span class="fc" id="L211">														 .findOne());</span>
+
+<span class="pc bpc" id="L213" title="1 of 2 branches missed.">		if (secret != null)</span>
+		{
+<span class="fc" id="L215">			return secret;</span>
+		}
+		else
+		{
+<span class="nc" id="L219">			throw new InternalAuthenticationServiceException(</span>
+<span class="nc" id="L220">					format(&quot;Secret not found, user: [{0}] is not configured for two factor authentication&quot;,</span>
+<span class="nc" id="L221">							user.getUsername()));</span>
+		}
+
+	}
+
+	private User getUser()
+	{
+<span class="fc" id="L228">		User user = userService.getUser(SecurityUtils.getCurrentUsername());</span>
+
+<span class="pc bpc" id="L230" title="1 of 2 branches missed.">		if (user != null)</span>
+		{
+<span class="fc" id="L232">			return user;</span>
+		}
+		else
+		{
+<span class="nc" id="L236">			throw new UsernameNotFoundException(format(&quot;Can not find user: [{0}]&quot;, SecurityUtils.getCurrentUsername()));</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

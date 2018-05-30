@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MolgenisLocaleResolver.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">web</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.web.i18n</a> &gt; <span class="el_source">MolgenisLocaleResolver.java</span></div><h1>MolgenisLocaleResolver.java</h1><pre class="source lang-java linenums">package org.molgenis.web.i18n;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.data.security.auth.UserMetaData;
+import org.molgenis.i18n.LanguageService;
+import org.springframework.web.servlet.LocaleResolver;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
+
+import static org.molgenis.data.security.auth.UserMetaData.USER;
+import static org.molgenis.i18n.LanguageService.DEFAULT_LANGUAGE_CODE;
+import static org.molgenis.security.core.runas.RunAsSystemAspect.runAsSystem;
+import static org.molgenis.security.core.utils.SecurityUtils.ANONYMOUS_USERNAME;
+import static org.molgenis.security.core.utils.SecurityUtils.getCurrentUsername;
+
+/**
+ * Resolves the locale.
+ */
+public class MolgenisLocaleResolver implements LocaleResolver
+{
+	private final DataService dataService;
+	private final Supplier&lt;Locale&gt; fallbackLocaleSupplier;
+
+	public MolgenisLocaleResolver(DataService dataService, Supplier&lt;Locale&gt; fallbackLocaleSupplier)
+<span class="fc" id="L32">	{</span>
+<span class="fc" id="L33">		this.dataService = dataService;</span>
+<span class="fc" id="L34">		this.fallbackLocaleSupplier = Objects.requireNonNull(fallbackLocaleSupplier);</span>
+<span class="fc" id="L35">	}</span>
+
+	@Override
+	public Locale resolveLocale(HttpServletRequest request)
+	{
+<span class="fc" id="L40">		Stream&lt;Supplier&lt;Optional&lt;String&gt;&gt;&gt; candidates = Stream.of(() -&gt; getCurrentUser().map(User::getLanguageCode),</span>
+<span class="fc" id="L41">				() -&gt; Optional.of(fallbackLocaleSupplier.get().getLanguage()));</span>
+<span class="fc" id="L42">		String languageCode = candidates.map(Supplier::get)</span>
+<span class="fc" id="L43">										.map(candidate -&gt; candidate.filter(LanguageService::hasLanguageCode))</span>
+<span class="fc" id="L44">										.filter(Optional::isPresent)</span>
+<span class="fc" id="L45">										.map(Optional::get)</span>
+<span class="fc" id="L46">										.findFirst()</span>
+<span class="fc" id="L47">										.orElse(DEFAULT_LANGUAGE_CODE);</span>
+<span class="fc" id="L48">		return Locale.forLanguageTag(languageCode);</span>
+	}
+
+	private Optional&lt;User&gt; getCurrentUser()
+	{
+<span class="fc" id="L53">		Optional&lt;String&gt; currentUserName = Optional.ofNullable(getCurrentUsername())</span>
+<span class="fc bfc" id="L54" title="All 2 branches covered.">												   .filter(username -&gt; !ANONYMOUS_USERNAME.equals(username));</span>
+<span class="fc" id="L55">		return runAsSystem(() -&gt; currentUserName.flatMap(name -&gt; Optional.ofNullable(</span>
+<span class="fc" id="L56">				dataService.query(USER, User.class).eq(UserMetaData.USERNAME, name).findOne())));</span>
+	}
+
+	@Override
+	public void setLocale(HttpServletRequest request, HttpServletResponse response, Locale locale)
+	{
+<span class="fc" id="L62">		String languageCode = locale.getLanguage();</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">		if (!LanguageService.hasLanguageCode(languageCode))</span>
+		{
+<span class="fc" id="L65">			throw new UnsupportedOperationException(&quot;Cannot set language to unsupported languageCode&quot;);</span>
+		}
+<span class="fc" id="L67">		User user = getCurrentUser().orElseThrow(</span>
+<span class="fc" id="L68">				() -&gt; new UnsupportedOperationException(&quot;Cannot change language if not logged in&quot;));</span>
+<span class="fc" id="L69">		user.setLanguageCode(locale.getLanguage());</span>
+<span class="fc" id="L70">		runAsSystem(() -&gt; dataService.update(USER, user));</span>
+<span class="fc" id="L71">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

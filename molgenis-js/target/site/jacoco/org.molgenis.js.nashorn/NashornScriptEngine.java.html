@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NashornScriptEngine.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">js</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.js.nashorn</a> &gt; <span class="el_source">NashornScriptEngine.java</span></div><h1>NashornScriptEngine.java</h1><pre class="source lang-java linenums">package org.molgenis.js.nashorn;
+
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.LoadingCache;
+import com.github.benmanes.caffeine.cache.Weigher;
+import jdk.nashorn.api.scripting.JSObject;
+import jdk.nashorn.api.scripting.NashornScriptEngineFactory;
+import jdk.nashorn.api.scripting.ScriptObjectMirror;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import javax.script.*;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.js.magma.JsMagmaScriptEvaluator.KEY_ID_VALUE;
+
+@Component
+public class NashornScriptEngine
+{
+<span class="fc" id="L23">	private static final Logger LOG = LoggerFactory.getLogger(NashornScriptEngine.class);</span>
+	private static final int MAX_COMPILED_EXPRESSIONS_SCRIPTS_LENGTH = 500_000;
+	private ScriptEngine scriptEngine;
+	private LoadingCache&lt;String, CompiledScript&gt; expressions;
+
+	public NashornScriptEngine()
+<span class="fc" id="L29">	{</span>
+<span class="fc" id="L30">		initScriptEngine();</span>
+<span class="fc" id="L31">	}</span>
+
+	public Object eval(String script) throws ScriptException
+	{
+<span class="fc" id="L35">		return convertNashornValue(scriptEngine.eval(script, new SimpleBindings()));</span>
+	}
+
+	/**
+	 * Evaluates an expression using the given bindings.
+	 *
+	 * @param bindings   the Bindings to use as ENGINE_SCOPE
+	 * @param expression the expression to evaluate
+	 * @return result of the evaluation
+	 * @throws ScriptException if the evaluation fails
+	 */
+	public Object eval(Bindings bindings, String expression) throws ScriptException
+	{
+<span class="fc" id="L48">		CompiledScript compiledExpression = requireNonNull(expressions.get(expression));</span>
+<span class="fc" id="L49">		Object returnValue = compiledExpression.eval(bindings);</span>
+<span class="fc" id="L50">		return convertNashornValue(returnValue);</span>
+	}
+
+	public ScriptObjectMirror newJSArray()
+	{
+<span class="fc" id="L55">		return (ScriptObjectMirror) ((JSObject) scriptEngine.get(&quot;Array&quot;)).newObject();</span>
+	}
+
+	private void initScriptEngine()
+	{
+<span class="fc" id="L60">		LOG.debug(&quot;Initializing Nashorn script engine ...&quot;);</span>
+<span class="fc" id="L61">		NashornScriptEngineFactory factory = new NashornScriptEngineFactory();</span>
+<span class="pc" id="L62">		scriptEngine = factory.getScriptEngine(s -&gt; false); // create engine with class filter exposing no classes</span>
+<span class="fc" id="L63">		expressions = Caffeine.newBuilder()</span>
+<span class="fc" id="L64">							  .maximumWeight(MAX_COMPILED_EXPRESSIONS_SCRIPTS_LENGTH)</span>
+<span class="fc" id="L65">							  .weigher((Weigher&lt;String, CompiledScript&gt;) (key, value) -&gt; key.length())</span>
+<span class="fc" id="L66">							  .build(((Compilable) this.scriptEngine)::compile);</span>
+<span class="fc" id="L67">		LOG.debug(&quot;Initialized Nashorn script engine&quot;);</span>
+<span class="fc" id="L68">	}</span>
+
+	private Object convertNashornValue(Object nashornValue)
+	{
+<span class="fc bfc" id="L72" title="All 2 branches covered.">		if (nashornValue == null)</span>
+		{
+<span class="fc" id="L74">			return null;</span>
+		}
+
+		Object convertedValue;
+<span class="fc bfc" id="L78" title="All 2 branches covered.">		if (nashornValue instanceof ScriptObjectMirror)</span>
+		{
+<span class="fc" id="L80">			ScriptObjectMirror scriptObjectMirror = (ScriptObjectMirror) nashornValue;</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">			if (scriptObjectMirror.isArray())</span>
+			{
+<span class="fc" id="L83">				convertedValue = scriptObjectMirror.values()</span>
+<span class="fc" id="L84">												   .stream()</span>
+<span class="fc" id="L85">												   .map(this::convertNashornValue)</span>
+<span class="fc" id="L86">												   .collect(Collectors.toList());</span>
+			}
+			else
+			{
+<span class="fc bfc" id="L90" title="All 2 branches covered.">				if (&quot;Date&quot;.equals(scriptObjectMirror.getClassName()))</span>
+				{
+					// convert to Java Interface
+<span class="fc" id="L93">					JsDate jsDate = ((Invocable) scriptEngine).getInterface(scriptObjectMirror, JsDate.class);</span>
+<span class="fc" id="L94">					return jsDate.getTime();</span>
+				}
+<span class="fc" id="L96">				else return ((ScriptObjectMirror) nashornValue).getOrDefault(KEY_ID_VALUE, null);</span>
+			}
+<span class="fc" id="L98">		}</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">		else if (nashornValue instanceof Map)</span>
+		{
+<span class="fc" id="L101">			Map mapValue = (Map) (nashornValue);</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">			if (mapValue.get(KEY_ID_VALUE) != null)</span>
+			{
+<span class="fc" id="L104">				convertedValue = mapValue.get(KEY_ID_VALUE);</span>
+			}
+			else
+			{
+<span class="nc" id="L108">				convertedValue = nashornValue;</span>
+			}
+<span class="fc" id="L110">		}</span>
+		else
+		{
+<span class="fc" id="L113">			convertedValue = nashornValue;</span>
+		}
+<span class="fc" id="L115">		return convertedValue;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

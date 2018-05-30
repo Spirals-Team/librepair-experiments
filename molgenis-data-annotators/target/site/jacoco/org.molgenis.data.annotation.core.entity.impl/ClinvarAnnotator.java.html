@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClinvarAnnotator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.entity.impl</a> &gt; <span class="el_source">ClinvarAnnotator.java</span></div><h1>ClinvarAnnotator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.entity.impl;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.annotation.core.entity.AnnotatorConfig;
+import org.molgenis.data.annotation.core.entity.AnnotatorInfo;
+import org.molgenis.data.annotation.core.entity.AnnotatorInfo.Status;
+import org.molgenis.data.annotation.core.entity.EntityAnnotator;
+import org.molgenis.data.annotation.core.entity.impl.framework.AbstractAnnotator;
+import org.molgenis.data.annotation.core.entity.impl.framework.RepositoryAnnotatorImpl;
+import org.molgenis.data.annotation.core.filter.ClinvarMultiAllelicResultFilter;
+import org.molgenis.data.annotation.core.query.LocusQueryCreator;
+import org.molgenis.data.annotation.core.resources.Resource;
+import org.molgenis.data.annotation.core.resources.Resources;
+import org.molgenis.data.annotation.core.resources.impl.RepositoryFactory;
+import org.molgenis.data.annotation.core.resources.impl.ResourceImpl;
+import org.molgenis.data.annotation.core.resources.impl.SingleResourceConfig;
+import org.molgenis.data.annotation.core.resources.impl.tabix.TabixVcfRepositoryFactory;
+import org.molgenis.data.annotation.web.settings.SingleFileLocationCmdLineAnnotatorSettingsConfigurer;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.vcf.model.VcfAttributes;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.molgenis.data.annotation.web.settings.ClinvarAnnotatorSettings.Meta.CLINVAR_LOCATION;
+import static org.molgenis.data.meta.AttributeType.STRING;
+
+@Configuration
+<span class="fc" id="L36">public class ClinvarAnnotator implements AnnotatorConfig</span>
+{
+	public static final String NAME = &quot;clinvar&quot;;
+	public static final String CLINVAR_CLNSIG = &quot;CLINVAR_CLNSIG&quot;;
+	public static final String CLINVAR_CLNSIG_LABEL = &quot;ClinVar clinical significance&quot;;
+	public static final String CLINVAR_CLNSIG_ResourceAttributeName = &quot;CLNSIG&quot;;
+	public static final String CLINVAR_CLNALLE = &quot;CLINVAR_CLNALLE&quot;;
+	public static final String CLINVAR_CLNALLE_LABEL = &quot;ClinVar clinical significant allele&quot;;
+	public static final String CLINVAR_CLINALL_ResourceAttributeName = &quot;CLNALLE&quot;;
+	public static final String CLINVAR_TABIX_RESOURCE = &quot;clinVarTabixResource&quot;;
+
+	@Autowired
+	private Entity clinvarAnnotatorSettings;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private Resources resources;
+
+	@Autowired
+	private VcfAttributes vcfAttributes;
+
+	@Autowired
+	private AttributeFactory attributeFactory;
+
+	@Autowired
+	private EntityTypeFactory entityTypeFactory;
+
+	private RepositoryAnnotatorImpl annotator;
+
+	@Bean
+	public RepositoryAnnotator clinvar()
+	{
+<span class="fc" id="L70">		annotator = new RepositoryAnnotatorImpl(NAME);</span>
+<span class="fc" id="L71">		return annotator;</span>
+	}
+
+	@Override
+	public void init()
+	{
+<span class="fc" id="L77">		List&lt;Attribute&gt; attributes = createClinvarOutputAttributes();</span>
+
+<span class="fc" id="L79">		AnnotatorInfo clinvarInfo = AnnotatorInfo.create(Status.READY, AnnotatorInfo.Type.PATHOGENICITY_ESTIMATE, NAME,</span>
+				&quot; ClinVar is a freely accessible, public archive of reports of the relationships&quot;
+						+ &quot; among human variations and phenotypes, with supporting evidence. ClinVar thus facilitates&quot;
+						+ &quot; access to and communication about the relationships asserted between human variation and &quot;
+						+ &quot;observed health status, and the history of that interpretation. ClinVar collects reports &quot;
+						+ &quot;of variants found in patient samples, assertions made regarding their clinical significance, &quot;
+						+ &quot;information about the submitter, and other supporting data. The alleles described in submissions &quot;
+						+ &quot;are mapped to reference sequences, and reported according to the HGVS standard. ClinVar then &quot;
+						+ &quot;presents the data for interactive users as well as those wishing to use ClinVar in daily &quot;
+						+ &quot;workflows and other local applications. ClinVar works in collaboration with interested &quot;
+						+ &quot;organizations to meet the needs of the medical genetics community as efficiently and effectively &quot;
+						+ &quot;as possible. Information about using ClinVar is available at: http://www.ncbi.nlm.nih.gov/clinvar/docs/help/.&quot;,
+				attributes);
+
+<span class="fc" id="L93">		LocusQueryCreator locusQueryCreator = new LocusQueryCreator(vcfAttributes);</span>
+<span class="fc" id="L94">		ClinvarMultiAllelicResultFilter clinvarMultiAllelicResultFilter = new ClinvarMultiAllelicResultFilter(</span>
+				vcfAttributes);
+<span class="fc" id="L96">		EntityAnnotator entityAnnotator = new AbstractAnnotator(CLINVAR_TABIX_RESOURCE, clinvarInfo, locusQueryCreator,</span>
+				clinvarMultiAllelicResultFilter, dataService, resources,
+				new SingleFileLocationCmdLineAnnotatorSettingsConfigurer(CLINVAR_LOCATION, clinvarAnnotatorSettings))
+<span class="fc" id="L99">		{</span>
+			@Override
+			public List&lt;Attribute&gt; createAnnotatorAttributes(AttributeFactory attributeFactory)
+			{
+<span class="nc" id="L103">				return createClinvarOutputAttributes();</span>
+			}
+
+			@Override
+			protected Object getResourceAttributeValue(Attribute attr, Entity sourceEntity)
+			{
+				String attrName;
+<span class="fc bfc" id="L110" title="All 2 branches covered.">				if (CLINVAR_CLNSIG.equals(attr.getName()))</span>
+				{
+<span class="fc" id="L112">					attrName = CLINVAR_CLNSIG_ResourceAttributeName;</span>
+				}
+<span class="pc bpc" id="L114" title="1 of 2 branches missed.">				else if (CLINVAR_CLNALLE.equals(attr.getName()))</span>
+				{
+<span class="fc" id="L116">					attrName = CLINVAR_CLINALL_ResourceAttributeName;</span>
+				}
+				else
+				{
+
+<span class="nc" id="L121">					attrName = attr.getName();</span>
+				}
+<span class="fc" id="L123">				return sourceEntity.get(attrName);</span>
+			}
+		};
+
+<span class="fc" id="L127">		annotator.init(entityAnnotator);</span>
+<span class="fc" id="L128">	}</span>
+
+	private List&lt;Attribute&gt; createClinvarOutputAttributes()
+	{
+<span class="fc" id="L132">		List&lt;Attribute&gt; attributes = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L134">		Attribute clinvar_clnsig = attributeFactory.create()</span>
+<span class="fc" id="L135">												   .setName(CLINVAR_CLNSIG)</span>
+<span class="fc" id="L136">												   .setDataType(STRING)</span>
+<span class="fc" id="L137">												   .setDescription(</span>
+														   &quot;Value representing clinical significant allele 0 means ref 1 means first alt allele etc.&quot;)
+<span class="fc" id="L139">												   .setLabel(CLINVAR_CLNSIG_LABEL);</span>
+
+<span class="fc" id="L141">		Attribute clinvar_clnalle = attributeFactory.create()</span>
+<span class="fc" id="L142">													.setName(CLINVAR_CLNALLE)</span>
+<span class="fc" id="L143">													.setDataType(STRING)</span>
+<span class="fc" id="L144">													.setDescription(</span>
+															&quot;Value representing the clinical significanct according to ClinVar&quot;)
+<span class="fc" id="L146">													.setLabel(CLINVAR_CLNALLE_LABEL);</span>
+
+<span class="fc" id="L148">		attributes.add(clinvar_clnsig);</span>
+<span class="fc" id="L149">		attributes.add(clinvar_clnalle);</span>
+<span class="fc" id="L150">		return attributes;</span>
+	}
+
+	@Bean
+	Resource clinVarTabixResource()
+	{
+<span class="fc" id="L156">		return new ResourceImpl(CLINVAR_TABIX_RESOURCE,</span>
+				new SingleResourceConfig(CLINVAR_LOCATION, clinvarAnnotatorSettings))
+<span class="fc" id="L158">		{</span>
+			@Override
+			public RepositoryFactory getRepositoryFactory()
+			{
+<span class="fc" id="L162">				return new TabixVcfRepositoryFactory(CLINVAR_TABIX_RESOURCE, vcfAttributes, entityTypeFactory,</span>
+<span class="fc" id="L163">						attributeFactory);</span>
+			}
+		};
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

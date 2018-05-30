@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MolgenisWebAppConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">core-ui</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.core.ui</a> &gt; <span class="el_source">MolgenisWebAppConfig.java</span></div><h1>MolgenisWebAppConfig.java</h1><pre class="source lang-java linenums">package org.molgenis.core.ui;
+
+import com.google.common.collect.Maps;
+import freemarker.template.Configuration;
+import freemarker.template.TemplateException;
+import org.molgenis.core.ui.converter.RdfConverter;
+import org.molgenis.core.ui.freemarker.LimitMethod;
+import org.molgenis.core.ui.freemarker.MolgenisFreemarkerObjectWrapper;
+import org.molgenis.core.ui.menu.MenuMolgenisUi;
+import org.molgenis.core.ui.menu.MenuReaderService;
+import org.molgenis.core.ui.menu.MenuReaderServiceImpl;
+import org.molgenis.core.ui.security.MolgenisUiPermissionDecorator;
+import org.molgenis.core.ui.style.StyleService;
+import org.molgenis.core.ui.style.ThemeFingerprintRegistry;
+import org.molgenis.core.util.ResourceFingerprintRegistry;
+import org.molgenis.data.DataService;
+import org.molgenis.data.convert.StringToDateConverter;
+import org.molgenis.data.convert.StringToDateTimeConverter;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.data.platform.config.PlatformConfig;
+import org.molgenis.i18n.PropertiesMessageSource;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.security.freemarker.HasPermissionDirective;
+import org.molgenis.security.freemarker.NotHasPermissionDirective;
+import org.molgenis.security.settings.AuthenticationSettings;
+import org.molgenis.security.token.TokenExtractor;
+import org.molgenis.settings.AppSettings;
+import org.molgenis.util.AppDataRootProvider;
+import org.molgenis.util.ApplicationContextProvider;
+import org.molgenis.web.PluginController;
+import org.molgenis.web.PluginInterceptor;
+import org.molgenis.web.Ui;
+import org.molgenis.web.converter.CsvHttpMessageConverter;
+import org.molgenis.web.i18n.MolgenisLocaleResolver;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.MessageSource;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.format.FormatterRegistry;
+import org.springframework.http.converter.BufferedImageHttpMessageConverter;
+import org.springframework.http.converter.HttpMessageConverter;
+import org.springframework.http.converter.ResourceHttpMessageConverter;
+import org.springframework.http.converter.StringHttpMessageConverter;
+import org.springframework.http.converter.json.GsonHttpMessageConverter;
+import org.springframework.web.method.support.HandlerMethodArgumentResolver;
+import org.springframework.web.multipart.MultipartResolver;
+import org.springframework.web.multipart.support.StandardServletMultipartResolver;
+import org.springframework.web.servlet.LocaleResolver;
+import org.springframework.web.servlet.ViewResolver;
+import org.springframework.web.servlet.config.annotation.*;
+import org.springframework.web.servlet.view.freemarker.FreeMarkerConfigurer;
+import org.springframework.web.servlet.view.freemarker.FreeMarkerViewResolver;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Properties;
+
+import static freemarker.template.Configuration.VERSION_2_3_23;
+import static org.molgenis.core.framework.ui.ResourcePathPatterns.*;
+import static org.molgenis.core.ui.FileStoreConstants.FILE_STORE_PLUGIN_APPS_PATH;
+import static org.molgenis.security.UriConstants.PATH_SEGMENT_APPS;
+
+@Import({ PlatformConfig.class, RdfConverter.class })
+<span class="nc" id="L74">public abstract class MolgenisWebAppConfig implements WebMvcConfigurer</span>
+{
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private AppSettings appSettings;
+
+	@Autowired
+	private AuthenticationSettings authenticationSettings;
+
+	@Autowired
+	private UserPermissionEvaluator permissionService;
+
+	@Autowired
+	private GsonHttpMessageConverter gsonHttpMessageConverter;
+
+	@Autowired
+	private RdfConverter rdfConverter;
+
+	@Autowired
+	private StyleService styleService;
+
+	@Autowired
+	private MessageSource messageSource;
+
+	@Override
+	public void addCorsMappings(CorsRegistry registry)
+	{
+<span class="nc" id="L103">		registry.addMapping(&quot;/api/**&quot;).allowedMethods(&quot;*&quot;);</span>
+<span class="nc" id="L104">	}</span>
+
+	@Override
+	public void addResourceHandlers(ResourceHandlerRegistry registry)
+	{
+		int cachePeriod;
+<span class="nc bnc" id="L110" title="All 2 branches missed.">		if (environment.equals(&quot;development&quot;))</span>
+		{
+<span class="nc" id="L112">			cachePeriod = 0;</span>
+		}
+		else
+		{
+<span class="nc" id="L116">			cachePeriod = 31536000; // a year</span>
+		}
+<span class="nc" id="L118">		registry.addResourceHandler(PATTERN_CSS)</span>
+<span class="nc" id="L119">				.addResourceLocations(&quot;/css/&quot;, &quot;classpath:/css/&quot;)</span>
+<span class="nc" id="L120">				.setCachePeriod(cachePeriod);</span>
+<span class="nc" id="L121">		registry.addResourceHandler(PATTERN_IMG)</span>
+<span class="nc" id="L122">				.addResourceLocations(&quot;/img/&quot;, &quot;classpath:/img/&quot;)</span>
+<span class="nc" id="L123">				.setCachePeriod(cachePeriod);</span>
+<span class="nc" id="L124">		registry.addResourceHandler(PATTERN_JS)</span>
+<span class="nc" id="L125">				.addResourceLocations(&quot;/js/&quot;, &quot;classpath:/js/&quot;)</span>
+<span class="nc" id="L126">				.setCachePeriod(cachePeriod);</span>
+<span class="nc" id="L127">		registry.addResourceHandler(PATTERN_FONTS)</span>
+<span class="nc" id="L128">				.addResourceLocations(&quot;/fonts/&quot;, &quot;classpath:/fonts/&quot;)</span>
+<span class="nc" id="L129">				.setCachePeriod(cachePeriod);</span>
+<span class="nc" id="L130">		registry.addResourceHandler(PATTERN_SWAGGER)</span>
+<span class="nc" id="L131">				.addResourceLocations(&quot;/swagger/&quot;, &quot;classpath:/swagger/&quot;)</span>
+<span class="nc" id="L132">				.setCachePeriod(cachePeriod);</span>
+<span class="nc" id="L133">		registry.addResourceHandler(&quot;/generated-doc/**&quot;).addResourceLocations(&quot;/generated-doc/&quot;).setCachePeriod(3600);</span>
+<span class="nc" id="L134">		registry.addResourceHandler(&quot;/html/**&quot;).addResourceLocations(&quot;/html/&quot;, &quot;classpath:/html/&quot;).setCachePeriod(3600);</span>
+
+		// Add resource handler for apps
+<span class="nc" id="L137">		FileStore fileStore = fileStore();</span>
+<span class="nc" id="L138">		registry.addResourceHandler(&quot;/&quot; + PATH_SEGMENT_APPS + &quot;/**&quot;)</span>
+<span class="nc" id="L139">				.addResourceLocations(&quot;file:///&quot; + fileStore.getStorageDir() + '/' + FILE_STORE_PLUGIN_APPS_PATH + '/');</span>
+<span class="nc" id="L140">		registry.addResourceHandler(&quot;/webjars/**&quot;)</span>
+<span class="nc" id="L141">				.addResourceLocations(&quot;classpath:/META-INF/resources/webjars/&quot;)</span>
+<span class="nc" id="L142">				.setCachePeriod(3600)</span>
+<span class="nc" id="L143">				.resourceChain(true);</span>
+		// see https://github.com/spring-projects/spring-boot/issues/4403 for why the resourceChain needs to be explicitly added.
+<span class="nc" id="L145">	}</span>
+
+	@Value(&quot;${environment:production}&quot;)
+	private String environment;
+
+	@Override
+	public void configureMessageConverters(List&lt;HttpMessageConverter&lt;?&gt;&gt; converters)
+	{
+<span class="nc" id="L153">		converters.add(gsonHttpMessageConverter);</span>
+<span class="nc" id="L154">		converters.add(new BufferedImageHttpMessageConverter());</span>
+<span class="nc" id="L155">		converters.add(new CsvHttpMessageConverter());</span>
+<span class="nc" id="L156">		converters.add(new ResourceHttpMessageConverter());</span>
+<span class="nc" id="L157">		converters.add(new StringHttpMessageConverter());</span>
+<span class="nc" id="L158">		converters.add(rdfConverter);</span>
+<span class="nc" id="L159">	}</span>
+
+	@Override
+	public void addArgumentResolvers(List&lt;HandlerMethodArgumentResolver&gt; argumentResolvers)
+	{
+<span class="nc" id="L164">		argumentResolvers.add(new TokenExtractor());</span>
+<span class="nc" id="L165">	}</span>
+
+	@Override
+	public void configurePathMatch(PathMatchConfigurer configurer)
+	{
+		// Fix for https://github.com/molgenis/molgenis/issues/5431
+<span class="nc" id="L171">		configurer.setUseRegisteredSuffixPatternMatch(true);</span>
+<span class="nc" id="L172">	}</span>
+
+	@Override
+	public void configureContentNegotiation(ContentNegotiationConfigurer configurer)
+	{
+		// Fix for https://github.com/molgenis/molgenis/issues/6575
+<span class="nc" id="L178">		configurer.favorPathExtension(false);</span>
+<span class="nc" id="L179">	}</span>
+
+	@Override
+	public void addInterceptors(InterceptorRegistry registry)
+	{
+<span class="nc" id="L184">		String pluginInterceptPattern = PluginController.PLUGIN_URI_PREFIX + &quot;**&quot;;</span>
+<span class="nc" id="L185">		registry.addInterceptor(molgenisInterceptor());</span>
+<span class="nc" id="L186">		registry.addInterceptor(molgenisPluginInterceptor()).addPathPatterns(pluginInterceptPattern);</span>
+<span class="nc" id="L187">	}</span>
+
+	@Override
+	public void addFormatters(FormatterRegistry registry)
+	{
+<span class="nc" id="L192">		registry.addConverter(new StringToDateTimeConverter());</span>
+<span class="nc" id="L193">		registry.addConverter(new StringToDateConverter());</span>
+<span class="nc" id="L194">	}</span>
+
+	@Bean
+	public ResourceFingerprintRegistry resourceFingerprintRegistry()
+	{
+<span class="nc" id="L199">		return new ResourceFingerprintRegistry();</span>
+	}
+
+	@Bean
+	public ThemeFingerprintRegistry themeFingerprintRegistry()
+	{
+<span class="nc" id="L205">		return new ThemeFingerprintRegistry(styleService);</span>
+	}
+
+	@Bean
+	public MolgenisInterceptor molgenisInterceptor()
+	{
+<span class="nc" id="L211">		return new MolgenisInterceptor(resourceFingerprintRegistry(), themeFingerprintRegistry(), appSettings,</span>
+				authenticationSettings, environment, messageSource);
+	}
+
+	@Bean
+	public PropertiesMessageSource formMessageSource()
+	{
+<span class="nc" id="L218">		return new PropertiesMessageSource(&quot;form&quot;);</span>
+	}
+
+	@Bean
+	public PropertiesMessageSource dataexplorerMessageSource()
+	{
+<span class="nc" id="L224">		return new PropertiesMessageSource(&quot;dataexplorer&quot;);</span>
+	}
+
+	@Bean
+	public PropertiesMessageSource uiFormMessageSource()
+	{
+<span class="nc" id="L230">		return new PropertiesMessageSource(&quot;ui-form&quot;);</span>
+	}
+
+	@Bean
+	public PluginInterceptor molgenisPluginInterceptor()
+	{
+<span class="nc" id="L236">		return new PluginInterceptor(molgenisUi(), permissionService);</span>
+	}
+
+	@Bean
+	public static PropertySourcesPlaceholderConfigurer properties() throws IOException
+	{
+<span class="nc" id="L242">		AppDataRootInitializer.init();</span>
+
+<span class="nc" id="L244">		PropertySourcesPlaceholderConfigurer pspc = new PropertySourcesPlaceholderConfigurer();</span>
+<span class="nc" id="L245">		Resource[] resources = new Resource[] { new FileSystemResource(</span>
+<span class="nc" id="L246">				AppDataRootProvider.getAppDataRoot().toString() + File.separator + &quot;molgenis-server.properties&quot;),</span>
+				new ClassPathResource(&quot;/molgenis.properties&quot;) };
+<span class="nc" id="L248">		pspc.setLocations(resources);</span>
+<span class="nc" id="L249">		pspc.setFileEncoding(&quot;UTF-8&quot;);</span>
+<span class="nc" id="L250">		pspc.setIgnoreUnresolvablePlaceholders(true);</span>
+<span class="nc" id="L251">		pspc.setIgnoreResourceNotFound(true);</span>
+<span class="nc" id="L252">		pspc.setNullValue(&quot;@null&quot;);</span>
+<span class="nc" id="L253">		return pspc;</span>
+	}
+
+	@Bean
+	public FileStore fileStore()
+	{
+		// get molgenis home directory
+<span class="nc" id="L260">		Path appDataRoot = AppDataRootProvider.getAppDataRoot();</span>
+
+		// create molgenis store directory in molgenis data directory if not exists
+<span class="nc" id="L263">		String molgenisFileStoreDirStr = Paths.get(appDataRoot.toString(), &quot;data&quot;, &quot;filestore&quot;).toString();</span>
+<span class="nc" id="L264">		File molgenisDataDir = new File(molgenisFileStoreDirStr);</span>
+<span class="nc bnc" id="L265" title="All 4 branches missed.">		if (!molgenisDataDir.exists() &amp;&amp; !molgenisDataDir.mkdirs())</span>
+		{
+<span class="nc" id="L267">			throw new RuntimeException(&quot;failed to create directory: &quot; + molgenisFileStoreDirStr);</span>
+		}
+
+<span class="nc" id="L270">		return new FileStore(molgenisFileStoreDirStr);</span>
+	}
+
+	/**
+	 * Enable spring freemarker viewresolver. All freemarker template names should end with '.ftl'
+	 */
+	@Bean
+	public ViewResolver viewResolver()
+	{
+<span class="nc" id="L279">		FreeMarkerViewResolver resolver = new FreeMarkerViewResolver();</span>
+<span class="nc" id="L280">		resolver.setCache(true);</span>
+<span class="nc" id="L281">		resolver.setSuffix(&quot;.ftl&quot;);</span>
+<span class="nc" id="L282">		resolver.setContentType(&quot;text/html;charset=UTF-8&quot;);</span>
+<span class="nc" id="L283">		return resolver;</span>
+	}
+
+	/**
+	 * Configure freemarker. All freemarker templates should be on the classpath in a package called 'freemarker'
+	 */
+	@Bean
+	public FreeMarkerConfigurer freeMarkerConfigurer()
+	{
+<span class="nc" id="L292">		FreeMarkerConfigurer result = new FreeMarkerConfigurer()</span>
+<span class="nc" id="L293">		{</span>
+			@Override
+			protected void postProcessConfiguration(Configuration config) throws IOException, TemplateException
+			{
+<span class="nc" id="L297">				config.setObjectWrapper(new MolgenisFreemarkerObjectWrapper(VERSION_2_3_23));</span>
+<span class="nc" id="L298">			}</span>
+		};
+<span class="nc" id="L300">		result.setPreferFileSystemAccess(false);</span>
+<span class="nc" id="L301">		result.setTemplateLoaderPath(&quot;classpath:/templates/&quot;);</span>
+<span class="nc" id="L302">		result.setDefaultEncoding(&quot;UTF-8&quot;);</span>
+<span class="nc" id="L303">		Properties freemarkerSettings = new Properties();</span>
+<span class="nc" id="L304">		freemarkerSettings.setProperty(Configuration.LOCALIZED_LOOKUP_KEY, Boolean.FALSE.toString());</span>
+<span class="nc" id="L305">		freemarkerSettings.setProperty(Configuration.NUMBER_FORMAT_KEY, &quot;computer&quot;);</span>
+<span class="nc" id="L306">		result.setFreemarkerSettings(freemarkerSettings);</span>
+<span class="nc" id="L307">		Map&lt;String, Object&gt; freemarkerVariables = Maps.newHashMap();</span>
+<span class="nc" id="L308">		freemarkerVariables.put(&quot;limit&quot;, new LimitMethod());</span>
+<span class="nc" id="L309">		freemarkerVariables.put(&quot;hasPermission&quot;, new HasPermissionDirective(permissionService));</span>
+<span class="nc" id="L310">		freemarkerVariables.put(&quot;notHasPermission&quot;, new NotHasPermissionDirective(permissionService));</span>
+<span class="nc" id="L311">		addFreemarkerVariables(freemarkerVariables);</span>
+
+<span class="nc" id="L313">		result.setFreemarkerVariables(freemarkerVariables);</span>
+
+<span class="nc" id="L315">		return result;</span>
+	}
+
+	// Override in subclass if you need more freemarker variables
+	@SuppressWarnings({ &quot;unused&quot;, &quot;WeakerAccess&quot; })
+	protected void addFreemarkerVariables(Map&lt;String, Object&gt; freemarkerVariables)
+	{
+
+<span class="nc" id="L323">	}</span>
+
+	@Bean
+	public MultipartResolver multipartResolver()
+	{
+<span class="nc" id="L328">		return new StandardServletMultipartResolver();</span>
+	}
+
+	@Bean
+	public MenuReaderService menuReaderService()
+	{
+<span class="nc" id="L334">		return new MenuReaderServiceImpl(appSettings);</span>
+	}
+
+	/**
+	 * Bean that allows referencing Spring managed beans from Java code which is not managed by Spring
+	 */
+	@Bean
+	public ApplicationContextProvider applicationContextProvider()
+	{
+<span class="nc" id="L343">		return new ApplicationContextProvider();</span>
+	}
+
+	@Bean
+	public Ui molgenisUi()
+	{
+<span class="nc" id="L349">		Ui molgenisUi = new MenuMolgenisUi(menuReaderService());</span>
+<span class="nc" id="L350">		return new MolgenisUiPermissionDecorator(molgenisUi, permissionService);</span>
+	}
+
+	@Bean
+	public LocaleResolver localeResolver()
+	{
+<span class="nc" id="L356">		return new MolgenisLocaleResolver(dataService, () -&gt; new Locale(appSettings.getLanguageCode()));</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

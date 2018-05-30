@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CaddAnnotator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.entity.impl</a> &gt; <span class="el_source">CaddAnnotator.java</span></div><h1>CaddAnnotator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.entity.impl;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.annotation.core.entity.AnnotatorConfig;
+import org.molgenis.data.annotation.core.entity.AnnotatorInfo;
+import org.molgenis.data.annotation.core.entity.EntityAnnotator;
+import org.molgenis.data.annotation.core.entity.impl.framework.AbstractAnnotator;
+import org.molgenis.data.annotation.core.entity.impl.framework.RepositoryAnnotatorImpl;
+import org.molgenis.data.annotation.core.filter.MultiAllelicResultFilter;
+import org.molgenis.data.annotation.core.query.LocusQueryCreator;
+import org.molgenis.data.annotation.core.resources.Resource;
+import org.molgenis.data.annotation.core.resources.Resources;
+import org.molgenis.data.annotation.core.resources.impl.RepositoryFactory;
+import org.molgenis.data.annotation.core.resources.impl.ResourceImpl;
+import org.molgenis.data.annotation.core.resources.impl.SingleResourceConfig;
+import org.molgenis.data.annotation.core.resources.impl.tabix.TabixRepositoryFactory;
+import org.molgenis.data.annotation.web.settings.CaddAnnotatorSettings;
+import org.molgenis.data.annotation.web.settings.SingleFileLocationCmdLineAnnotatorSettingsConfigurer;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.vcf.model.VcfAttributes;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.molgenis.data.meta.AttributeType.STRING;
+
+@Configuration
+<span class="fc" id="L36">public class CaddAnnotator implements AnnotatorConfig</span>
+{
+	public static final String NAME = &quot;cadd&quot;;
+	// FIXME: nomenclature: http://cadd.gs.washington.edu/info
+	public static final String CADD_SCALED = &quot;CADD_SCALED&quot;;
+	public static final String CADD_ABS = &quot;CADD&quot;;
+	public static final String CADD_SCALED_LABEL = &quot;CADDSCALED&quot;;
+	public static final String CADD_ABS_LABEL = &quot;CADDABS&quot;;
+	public static final String CADD_TABIX_RESOURCE = &quot;CADDTabixResource&quot;;
+
+	@Autowired
+	private Entity caddAnnotatorSettings;
+
+	@Autowired
+	private Resources resources;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private VcfAttributes vcfAttributes;
+
+	@Autowired
+	private EntityTypeFactory entityTypeFactory;
+
+	@Autowired
+	private AttributeFactory attributeFactory;
+
+	private RepositoryAnnotatorImpl annotator;
+
+	@Bean
+	public RepositoryAnnotator cadd()
+	{
+<span class="fc" id="L69">		annotator = new RepositoryAnnotatorImpl(NAME);</span>
+<span class="fc" id="L70">		return annotator;</span>
+	}
+
+	@Override
+	public void init()
+	{
+<span class="fc" id="L76">		List&lt;Attribute&gt; attributes = createCaddAnnotatorAttributes();</span>
+
+<span class="fc" id="L78">		AnnotatorInfo caddInfo = AnnotatorInfo.create(AnnotatorInfo.Status.READY,</span>
+				AnnotatorInfo.Type.PATHOGENICITY_ESTIMATE, NAME,
+				&quot;CADD is a tool for scoring the deleteriousness of single nucleotide variants as well as insertion/deletions variants in the human genome.\n&quot;
+						+ &quot;While many variant annotation and scoring utils are around, most annotations tend to exploit a single information type (e.g. conservation) &quot;
+						+ &quot;and/or are restricted in scope (e.g. to missense changes). &quot;
+						+ &quot;Thus, a broadly applicable metric that objectively weights and integrates diverse information is needed. &quot;
+						+ &quot;Combined Annotation Dependent Depletion (CADD) is a framework that integrates multiple &quot;
+						+ &quot;annotations into one metric by contrasting variants that survived natural selection with simulated mutations.\n&quot;
+						+ &quot;C-scores strongly correlate with allelic diversity, pathogenicity of both coding and non-coding variants, and experimentally measured &quot;
+						+ &quot;regulatory effects, and also highly rank causal variants within &quot;
+						+ &quot;individual genome sequences. Finally, C-scores of complex trait-associated variants from genome-wide association studies (GWAS) are &quot;
+						+ &quot;significantly higher than matched controls and correlate with study sample size, likely reflecting the increased accuracy of larger GWAS.\n&quot;
+						+ &quot;CADD can quantitatively prioritize functional, deleterious, and disease causal variants across a wide range of functional categories, &quot;
+						+ &quot;effect sizes and genetic architectures and can be used prioritize &quot;
+						+ &quot;causal variation in both research and clinical settings. (source: http://cadd.gs.washington.edu/info)&quot;,
+				attributes);
+<span class="fc" id="L94">		EntityAnnotator entityAnnotator = new AbstractAnnotator(CADD_TABIX_RESOURCE, caddInfo,</span>
+				new LocusQueryCreator(vcfAttributes), new MultiAllelicResultFilter(attributes, true, vcfAttributes),
+				dataService, resources,
+				new SingleFileLocationCmdLineAnnotatorSettingsConfigurer(CaddAnnotatorSettings.Meta.CADD_LOCATION,
+						caddAnnotatorSettings))
+<span class="fc" id="L99">		{</span>
+			@Override
+			public List&lt;Attribute&gt; createAnnotatorAttributes(AttributeFactory attributeFactory)
+			{
+<span class="nc" id="L103">				return createCaddAnnotatorAttributes();</span>
+			}
+		};
+<span class="fc" id="L106">		annotator.init(entityAnnotator);</span>
+<span class="fc" id="L107">	}</span>
+
+	private List&lt;Attribute&gt; createCaddAnnotatorAttributes()
+	{
+<span class="fc" id="L111">		List&lt;Attribute&gt; attributes = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L112">		Attribute cadd_abs = createCaddAbsAttr(attributeFactory);</span>
+<span class="fc" id="L113">		Attribute cadd_scaled = createCaddScaledAttr(attributeFactory);</span>
+
+<span class="fc" id="L115">		attributes.add(cadd_abs);</span>
+<span class="fc" id="L116">		attributes.add(cadd_scaled);</span>
+<span class="fc" id="L117">		return attributes;</span>
+	}
+
+	public static Attribute createCaddScaledAttr(AttributeFactory attributeFactory)
+	{
+<span class="fc" id="L122">		return attributeFactory.create()</span>
+<span class="fc" id="L123">							   .setName(CADD_SCALED)</span>
+<span class="fc" id="L124">							   .setDataType(STRING)</span>
+<span class="fc" id="L125">							   .setDescription(</span>
+									   &quot;Since the raw scores do have relative meaning, one can take a specific group of variants, define the rank for each variant within that group, and then use &quot;
+											   + &quot;that value as a \&quot;normalized\&quot; and now externally comparable unit of analysis. In our case, we scored and ranked all ~8.6 billion SNVs of the &quot;
+											   + &quot;GRCh37/hg19 reference and then \&quot;PHRED-scaled\&quot; those values by expressing the rank in order of magnitude terms rather than the precise rank itself. &quot;
+											   + &quot;For example, reference genome single nucleotide variants at the 10th-% of CADD scores are assigned to CADD-10, top 1% to CADD-20, top 0.1% to CADD-30, etc. &quot;
+											   + &quot;The results of this transformation are the \&quot;scaled\&quot; CADD scores.(source: http://cadd.gs.washington.edu/info)&quot;)
+<span class="fc" id="L131">							   .setLabel(CADD_SCALED_LABEL);</span>
+	}
+
+	static Attribute createCaddAbsAttr(AttributeFactory attributeFactory)
+	{
+<span class="fc" id="L136">		return attributeFactory.create()</span>
+<span class="fc" id="L137">							   .setName(CADD_ABS)</span>
+<span class="fc" id="L138">							   .setDataType(STRING)</span>
+<span class="fc" id="L139">							   .setDescription(</span>
+									   &quot;\&quot;Raw\&quot; CADD scores come straight from the model, and are interpretable as the extent to which the annotation profile for a given variant suggests that &quot;
+											   + &quot;that variant is likely to be \&quot;observed\&quot; (negative values) vs \&quot;simulated\&quot; (positive values). These values have no absolute unit of meaning and are &quot;
+											   + &quot;incomparable across distinct annotation combinations, training sets, or model parameters. However, raw values do have relative meaning, with higher values &quot;
+											   + &quot;indicating that a variant is more likely to be simulated (or \&quot;not observed\&quot;) and therefore more likely to have deleterious effects.&quot;
+											   + &quot;(source: http://cadd.gs.washington.edu/info)&quot;)
+<span class="fc" id="L145">							   .setLabel(CADD_ABS_LABEL);</span>
+	}
+
+	@Bean
+	Resource caddResource()
+	{
+<span class="fc" id="L151">		return new ResourceImpl(CADD_TABIX_RESOURCE,</span>
+				new SingleResourceConfig(CaddAnnotatorSettings.Meta.CADD_LOCATION, caddAnnotatorSettings))
+<span class="fc" id="L153">		{</span>
+			@Override
+			public RepositoryFactory getRepositoryFactory()
+			{
+<span class="fc" id="L157">				String idAttrName = &quot;id&quot;;</span>
+<span class="fc" id="L158">				EntityType repoMetaData = entityTypeFactory.create(CADD_TABIX_RESOURCE);</span>
+<span class="fc" id="L159">				repoMetaData.addAttribute(vcfAttributes.getChromAttribute());</span>
+<span class="fc" id="L160">				repoMetaData.addAttribute(vcfAttributes.getPosAttribute());</span>
+<span class="fc" id="L161">				repoMetaData.addAttribute(vcfAttributes.getRefAttribute());</span>
+<span class="fc" id="L162">				repoMetaData.addAttribute(vcfAttributes.getAltAttribute());</span>
+<span class="fc" id="L163">				repoMetaData.addAttribute(attributeFactory.create().setName(CADD_ABS).setDataType(STRING));</span>
+<span class="fc" id="L164">				repoMetaData.addAttribute(attributeFactory.create().setName(CADD_SCALED).setDataType(STRING));</span>
+<span class="fc" id="L165">				Attribute idAttribute = attributeFactory.create()</span>
+<span class="fc" id="L166">														.setName(idAttrName)</span>
+<span class="fc" id="L167">														.setVisible(false)</span>
+<span class="fc" id="L168">														.setIdAttribute(true);</span>
+<span class="fc" id="L169">				repoMetaData.addAttribute(idAttribute);</span>
+<span class="fc" id="L170">				return new TabixRepositoryFactory(repoMetaData);</span>
+			}
+		};
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

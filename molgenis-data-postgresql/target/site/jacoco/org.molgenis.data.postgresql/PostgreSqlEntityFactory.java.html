@@ -1,0 +1,309 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PostgreSqlEntityFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.postgresql</a> &gt; <span class="el_source">PostgreSqlEntityFactory.java</span></div><h1>PostgreSqlEntityFactory.java</h1><pre class="source lang-java linenums">package org.molgenis.data.postgresql;
+
+import org.molgenis.data.Entity;
+import org.molgenis.data.EntityManager;
+import org.molgenis.data.Fetch;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.util.UnexpectedEnumException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.sql.Array;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.Arrays;
+
+import static java.lang.String.format;
+import static java.time.ZoneOffset.UTC;
+import static java.util.Arrays.asList;
+import static java.util.Comparator.comparing;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.postgresql.PostgreSqlNameGenerator.getColumnName;
+import static org.molgenis.data.util.MolgenisDateFormat.parseInstant;
+import static org.molgenis.data.util.MolgenisDateFormat.parseLocalDate;
+
+@Component
+class PostgreSqlEntityFactory
+{
+	@SuppressWarnings(&quot;unused&quot;)
+<span class="fc" id="L36">	private static final Logger LOG = LoggerFactory.getLogger(PostgreSqlEntityFactory.class);</span>
+
+	private final EntityManager entityManager;
+
+	public PostgreSqlEntityFactory(EntityManager entityManager)
+<span class="fc" id="L41">	{</span>
+<span class="fc" id="L42">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L43">	}</span>
+
+	RowMapper&lt;Entity&gt; createRowMapper(EntityType entityType, Fetch fetch)
+	{
+<span class="fc" id="L47">		return new EntityMapper(entityManager, entityType, fetch);</span>
+	}
+
+	Iterable&lt;Entity&gt; getReferences(EntityType refEntityType, Iterable&lt;?&gt; ids)
+	{
+<span class="nc" id="L52">		return entityManager.getReferences(refEntityType, ids);</span>
+	}
+
+	private static class EntityMapper implements RowMapper&lt;Entity&gt;
+	{
+		private final EntityManager entityManager;
+		private final EntityType entityType;
+		private final Fetch fetch;
+
+		private EntityMapper(EntityManager entityManager, EntityType entityType, Fetch fetch)
+<span class="fc" id="L62">		{</span>
+<span class="fc" id="L63">			this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L64">			this.entityType = requireNonNull(entityType);</span>
+<span class="fc" id="L65">			this.fetch = fetch; // can be null</span>
+<span class="fc" id="L66">		}</span>
+
+		@Override
+		public Entity mapRow(ResultSet resultSet, int i) throws SQLException
+		{
+<span class="fc" id="L71">			Entity e = entityManager.createFetch(entityType, fetch);</span>
+
+			// TODO performance, iterate over fetch if available
+<span class="fc bfc" id="L74" title="All 2 branches covered.">			for (Attribute attr : entityType.getAtomicAttributes())</span>
+			{
+<span class="pc bpc" id="L76" title="3 of 4 branches missed.">				if (fetch == null || fetch.hasField(attr.getName()))</span>
+				{
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">					if (attr.getExpression() != null)</span>
+					{
+<span class="nc" id="L80">						continue;</span>
+					}
+
+<span class="fc" id="L83">					e.set(attr.getName(), mapValue(resultSet, attr));</span>
+				}
+<span class="fc" id="L85">			}</span>
+<span class="fc" id="L86">			return e;</span>
+		}
+
+		/**
+		 * Maps a single results set value to an entity value.
+		 * See the JDBC 4.0 specification appendix B titled &quot;Data Type Conversion Tables&quot; for conversion rules.
+		 *
+		 * @param resultSet result set
+		 * @param attr      attribute
+		 * @return value for the given attribute in the type defined by the attribute type
+		 * @throws SQLException if an error occurs reading from the result set
+		 */
+		private Object mapValue(ResultSet resultSet, Attribute attr) throws SQLException
+		{
+<span class="fc" id="L100">			return mapValue(resultSet, attr, getColumnName(attr, false));</span>
+		}
+
+		/**
+		 * Maps a single results set value to an entity value.
+		 * See the JDBC 4.0 specification appendix B titled &quot;Data Type Conversion Tables&quot; for conversion rules.
+		 *
+		 * @param resultSet result set
+		 * @param attr      attribute
+		 * @param colName   column name in the result set
+		 * @return value for the given attribute in the type defined by the attribute type
+		 * @throws SQLException if an error occurs reading from the result set
+		 */
+		private Object mapValue(ResultSet resultSet, Attribute attr, String colName) throws SQLException
+		{
+			try
+			{
+				Object value;
+<span class="pc bpc" id="L118" title="9 of 12 branches missed.">				switch (attr.getDataType())</span>
+				{
+					case BOOL:
+<span class="nc" id="L121">						boolean boolValue = resultSet.getBoolean(colName);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">						value = resultSet.wasNull() ? null : boolValue;</span>
+<span class="nc" id="L123">						break;</span>
+					case CATEGORICAL:
+					case FILE:
+					case XREF:
+<span class="fc" id="L127">						EntityType xrefEntityType = attr.getRefEntity();</span>
+<span class="fc" id="L128">						Object refIdValue = mapValue(resultSet, xrefEntityType.getIdAttribute(), colName);</span>
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">						value = refIdValue != null ? entityManager.getReference(xrefEntityType, refIdValue) : null;</span>
+<span class="fc" id="L130">						break;</span>
+					case CATEGORICAL_MREF:
+					case MREF:
+<span class="nc" id="L133">						EntityType mrefEntityMeta = attr.getRefEntity();</span>
+<span class="nc" id="L134">						Array mrefArrayValue = resultSet.getArray(colName);</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">						value = resultSet.wasNull() ? null : mapValueMref(mrefArrayValue, mrefEntityMeta);</span>
+<span class="nc" id="L136">						break;</span>
+					case ONE_TO_MANY:
+<span class="fc" id="L138">						Array oneToManyArrayValue = resultSet.getArray(colName);</span>
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">						value = resultSet.wasNull() ? null : mapValueOneToMany(oneToManyArrayValue, attr);</span>
+<span class="fc" id="L140">						break;</span>
+					case COMPOUND:
+<span class="nc" id="L142">						throw new RuntimeException(format(&quot;Value mapping not allowed for attribute type [%s]&quot;,</span>
+<span class="nc" id="L143">								attr.getDataType().toString()));</span>
+					case DATE:
+<span class="nc" id="L145">						value = resultSet.getObject(colName, LocalDate.class);</span>
+<span class="nc" id="L146">						break;</span>
+					case DATE_TIME:
+<span class="nc" id="L148">						OffsetDateTime offsetDateTime = resultSet.getObject(colName, OffsetDateTime.class);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">						value = resultSet.wasNull() ? null : offsetDateTime.toInstant();</span>
+<span class="nc" id="L150">						break;</span>
+					case DECIMAL:
+<span class="nc" id="L152">						BigDecimal bigDecimalValue = resultSet.getBigDecimal(colName);</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">						value = bigDecimalValue != null ? bigDecimalValue.doubleValue() : null;</span>
+<span class="nc" id="L154">						break;</span>
+					case EMAIL:
+					case ENUM:
+					case HTML:
+					case HYPERLINK:
+					case SCRIPT:
+					case STRING:
+					case TEXT:
+<span class="fc" id="L162">						value = resultSet.getString(colName);</span>
+<span class="fc" id="L163">						break;</span>
+					case INT:
+<span class="nc" id="L165">						int intValue = resultSet.getInt(colName);</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">						value = resultSet.wasNull() ? null : intValue;</span>
+<span class="nc" id="L167">						break;</span>
+					case LONG:
+<span class="nc" id="L169">						long longValue = resultSet.getLong(colName);</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">						value = resultSet.wasNull() ? null : longValue;</span>
+<span class="nc" id="L171">						break;</span>
+					default:
+<span class="nc" id="L173">						throw new UnexpectedEnumException(attr.getDataType());</span>
+				}
+<span class="fc" id="L175">				return value;</span>
+			}
+<span class="nc" id="L177">			catch (SQLException e)</span>
+			{
+<span class="nc" id="L179">				throw e;</span>
+			}
+		}
+
+		/**
+		 * Maps a single results set array value to an entity value for one-to-many attributes.
+		 *
+		 * @param arrayValue result set array value
+		 * @param attr       attribute meta data
+		 * @return mapped value
+		 * @throws SQLException if an error occurs while attempting to access the array
+		 */
+		private Object mapValueOneToMany(Array arrayValue, Attribute attr) throws SQLException
+		{
+<span class="fc" id="L193">			EntityType entityType = attr.getRefEntity();</span>
+			Object value;
+<span class="fc" id="L195">			Object[] postgreSqlMrefIds = (Object[]) arrayValue.getArray();</span>
+<span class="pc bpc" id="L196" title="2 of 4 branches missed.">			if (postgreSqlMrefIds.length &gt; 0 &amp;&amp; postgreSqlMrefIds[0] != null)</span>
+			{
+<span class="fc" id="L198">				Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="fc" id="L199">				Object[] mrefIds = new Object[postgreSqlMrefIds.length];</span>
+<span class="fc bfc" id="L200" title="All 2 branches covered.">				for (int i = 0; i &lt; postgreSqlMrefIds.length; ++i)</span>
+				{
+<span class="fc" id="L202">					Object mrefIdRaw = postgreSqlMrefIds[i];</span>
+<span class="pc bpc" id="L203" title="1 of 2 branches missed.">					Object mrefId = mrefIdRaw != null ? convertMrefIdValue(mrefIdRaw.toString(), idAttr) : null;</span>
+<span class="fc" id="L204">					mrefIds[i] = mrefId;</span>
+				}
+
+				// convert ids to (lazy) entities
+<span class="fc" id="L208">				value = entityManager.getReferences(entityType, asList(mrefIds));</span>
+<span class="fc" id="L209">			}</span>
+			else
+			{
+<span class="nc" id="L212">				value = null;</span>
+			}
+<span class="fc" id="L214">			return value;</span>
+		}
+
+		/**
+		 * Maps a single results set array value to an entity value for mref attributes.
+		 *
+		 * @param arrayValue result set array value
+		 * @param entityType entity meta data
+		 * @return mapped value
+		 * @throws SQLException if an error occurs while attempting to access the array
+		 */
+		private Object mapValueMref(Array arrayValue, EntityType entityType) throws SQLException
+		{
+			// ResultSet contains a two dimensional array for MREF attribute values:
+			// [[&lt;order_nr_as_string&gt;,&lt;mref_id_as_string&gt;],[&lt;order_nr_as_string&gt;,&lt;mref_id_as_string&gt;], ...]
+			// In case there are no MREF attribute values the ResulSet is:
+			// [[null,null]]
+			Object value;
+<span class="nc" id="L232">			String[][] mrefIdsAndOrder = (String[][]) arrayValue.getArray();</span>
+<span class="nc bnc" id="L233" title="All 4 branches missed.">			if (mrefIdsAndOrder.length &gt; 0 &amp;&amp; mrefIdsAndOrder[0][0] != null)</span>
+			{
+<span class="nc" id="L235">				Arrays.sort(mrefIdsAndOrder, comparing(o -&gt; Integer.valueOf(o[0])));</span>
+
+<span class="nc" id="L237">				Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="nc" id="L238">				Object[] mrefIds = new Object[mrefIdsAndOrder.length];</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">				for (int i = 0; i &lt; mrefIdsAndOrder.length; ++i)</span>
+				{
+<span class="nc" id="L241">					String[] mrefIdAndOrder = mrefIdsAndOrder[i];</span>
+<span class="nc" id="L242">					String mrefIdStr = mrefIdAndOrder[1];</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">					Object mrefId = mrefIdStr != null ? convertMrefIdValue(mrefIdStr, idAttr) : null;</span>
+<span class="nc" id="L244">					mrefIds[i] = mrefId;</span>
+				}
+
+				// convert ids to (lazy) entities
+<span class="nc" id="L248">				value = entityManager.getReferences(entityType, asList(mrefIds));</span>
+<span class="nc" id="L249">			}</span>
+			else
+			{
+<span class="nc" id="L252">				value = null;</span>
+			}
+<span class="nc" id="L254">			return value;</span>
+		}
+
+		/**
+		 * Converts a mref id value string to an entity value.
+		 *
+		 * @param idValueStr id value string
+		 * @param idAttr     id attribute
+		 * @return entity value
+		 */
+		private static Object convertMrefIdValue(String idValueStr, Attribute idAttr)
+		{
+			// use iteration instead of tail recursion
+			while (true)
+			{
+<span class="fc" id="L269">				AttributeType attrType = idAttr.getDataType();</span>
+<span class="pc bpc" id="L270" title="8 of 10 branches missed.">				switch (attrType)</span>
+				{
+					case BOOL:
+<span class="nc" id="L273">						return Boolean.valueOf(idValueStr);</span>
+					case CATEGORICAL:
+					case FILE:
+					case XREF:
+<span class="nc" id="L277">						idAttr = idAttr.getRefEntity().getIdAttribute();</span>
+<span class="nc" id="L278">						continue;</span>
+					case DATE:
+<span class="nc" id="L280">						return parseLocalDate(idValueStr);</span>
+					case DATE_TIME:
+<span class="nc" id="L282">						return parseInstant(idValueStr).atOffset(UTC);</span>
+					case DECIMAL:
+<span class="nc" id="L284">						return Double.valueOf(idValueStr);</span>
+					case EMAIL:
+					case ENUM:
+					case HTML:
+					case HYPERLINK:
+					case SCRIPT:
+					case STRING:
+					case TEXT:
+<span class="fc" id="L292">						return idValueStr;</span>
+					case INT:
+<span class="fc" id="L294">						return Integer.valueOf(idValueStr);</span>
+					case LONG:
+<span class="nc" id="L296">						return Long.valueOf(idValueStr);</span>
+					case CATEGORICAL_MREF:
+					case COMPOUND:
+					case MREF:
+					case ONE_TO_MANY:
+<span class="nc" id="L301">						throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+					default:
+<span class="nc" id="L303">						throw new UnexpectedEnumException(attrType);</span>
+				}
+			}
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

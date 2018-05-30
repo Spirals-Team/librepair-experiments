@@ -1,0 +1,520 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PostgreSqlExceptionTranslator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.postgresql</a> &gt; <span class="el_source">PostgreSqlExceptionTranslator.java</span></div><h1>PostgreSqlExceptionTranslator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.postgresql;
+
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.postgresql.identifier.AttributeDescription;
+import org.molgenis.data.postgresql.identifier.EntityTypeDescription;
+import org.molgenis.data.postgresql.identifier.EntityTypeRegistry;
+import org.molgenis.data.transaction.TransactionExceptionTranslator;
+import org.molgenis.data.validation.ConstraintViolation;
+import org.molgenis.data.validation.MolgenisValidationException;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.support.SQLErrorCodeSQLExceptionTranslator;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.TransactionException;
+
+import javax.sql.DataSource;
+import java.sql.BatchUpdateException;
+import java.sql.SQLException;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static java.lang.String.format;
+import static java.util.Collections.singleton;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toCollection;
+import static org.molgenis.data.meta.AttributeType.*;
+
+/**
+ * Translates PostgreSQL exceptions to MOLGENIS data exceptions
+ */
+@Component
+class PostgreSqlExceptionTranslator extends SQLErrorCodeSQLExceptionTranslator implements TransactionExceptionTranslator
+{
+	static final String VALUE_TOO_LONG_MSG = &quot;One of the values being added is too long.&quot;;
+
+<span class="fc" id="L44">	private static final Logger LOG = LoggerFactory.getLogger(PostgreSqlExceptionTranslator.class);</span>
+	private final EntityTypeRegistry entityTypeRegistry;
+
+	PostgreSqlExceptionTranslator(DataSource dataSource, EntityTypeRegistry entityTypeRegistry)
+	{
+<span class="fc" id="L49">		super(requireNonNull(dataSource));</span>
+<span class="fc" id="L50">		this.entityTypeRegistry = requireNonNull(entityTypeRegistry);</span>
+<span class="fc" id="L51">	}</span>
+
+	@Override
+	protected DataAccessException doTranslate(String task, String sql, SQLException ex)
+	{
+<span class="nc" id="L56">		DataAccessException dataAccessException = super.doTranslate(task, sql, ex);</span>
+<span class="nc bnc" id="L57" title="All 2 branches missed.">		if (dataAccessException == null)</span>
+		{
+<span class="nc" id="L59">			return doTranslate(ex);</span>
+		}
+<span class="nc" id="L61">		return doTranslate(dataAccessException);</span>
+	}
+
+	private MolgenisDataException doTranslate(DataAccessException dataAccessException)
+	{
+<span class="nc" id="L66">		Throwable cause = dataAccessException.getCause();</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">		if (!(cause instanceof PSQLException))</span>
+		{
+<span class="nc" id="L69">			throw new RuntimeException(format(&quot;Unexpected exception class [%s]&quot;, cause.getClass().getSimpleName()));</span>
+		}
+
+<span class="nc" id="L72">		PSQLException pSqlException = (PSQLException) cause;</span>
+<span class="nc" id="L73">		MolgenisDataException molgenisDataException = doTranslate(pSqlException);</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">		if (molgenisDataException == null)</span>
+		{
+<span class="nc" id="L76">			molgenisDataException = new MolgenisDataException(dataAccessException);</span>
+		}
+<span class="nc" id="L78">		return molgenisDataException;</span>
+	}
+
+	private MolgenisDataException doTranslate(SQLException sqlException)
+	{
+<span class="nc bnc" id="L83" title="All 2 branches missed.">		if (sqlException instanceof BatchUpdateException)</span>
+		{
+<span class="nc" id="L85">			sqlException = sqlException.getNextException();</span>
+		}
+<span class="nc bnc" id="L87" title="All 2 branches missed.">		if (!(sqlException instanceof PSQLException))</span>
+		{
+<span class="nc" id="L89">			throw new RuntimeException(</span>
+<span class="nc" id="L90">					format(&quot;Unexpected exception class [%s]&quot;, sqlException.getClass().getSimpleName()));</span>
+		}
+
+<span class="nc" id="L93">		PSQLException pSqlException = (PSQLException) sqlException;</span>
+<span class="nc" id="L94">		MolgenisDataException molgenisDataException = doTranslate(pSqlException);</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">		if (molgenisDataException == null)</span>
+		{
+<span class="nc" id="L97">			molgenisDataException = new MolgenisDataException(sqlException);</span>
+		}
+<span class="nc" id="L99">		return molgenisDataException;</span>
+	}
+
+	private MolgenisDataException doTranslate(PSQLException pSqlException)
+	{
+<span class="nc bnc" id="L104" title="All 10 branches missed.">		switch (pSqlException.getSQLState())</span>
+		{
+			case &quot;22001&quot;:
+<span class="nc" id="L107">				return translateValueTooLongViolation();</span>
+			case &quot;22007&quot;: // invalid_datetime_format
+			case &quot;22P02&quot;: // not an integer exception
+<span class="nc" id="L110">				return translateInvalidIntegerException(pSqlException);</span>
+			case &quot;23502&quot;: // not_null_violation
+<span class="nc" id="L112">				return translateNotNullViolation(pSqlException);</span>
+			case &quot;23503&quot;: // foreign_key_violation
+<span class="nc" id="L114">				return translateForeignKeyViolation(pSqlException);</span>
+			case &quot;23505&quot;: // unique_violation
+<span class="nc" id="L116">				return translateUniqueKeyViolation(pSqlException);</span>
+			case &quot;23514&quot;: // check_violation
+<span class="nc" id="L118">				return translateCheckConstraintViolation(pSqlException);</span>
+			case &quot;2BP01&quot;:
+<span class="nc" id="L120">				return translateDependentObjectsStillExist(pSqlException);</span>
+			case &quot;42703&quot;:
+<span class="nc" id="L122">				return translateUndefinedColumnException(pSqlException);</span>
+			case PostgreSqlQueryGenerator.ERR_CODE_READONLY_VIOLATION:
+<span class="nc" id="L124">				return translateReadonlyViolation(pSqlException);</span>
+			default:
+<span class="nc" id="L126">				return null;</span>
+		}
+	}
+
+	/**
+	 * Package private for testability
+	 *
+	 * @return translated validation exception
+	 */
+	MolgenisValidationException translateValueTooLongViolation()
+	{
+<span class="fc" id="L137">		ConstraintViolation constraintViolation = new ConstraintViolation(VALUE_TOO_LONG_MSG);</span>
+<span class="fc" id="L138">		return new MolgenisValidationException(singleton(constraintViolation));</span>
+	}
+
+	/**
+	 * Package private for testability
+	 *
+	 * @param pSqlException PostgreSQL exception
+	 * @return translated validation exception
+	 */
+	MolgenisValidationException translateReadonlyViolation(PSQLException pSqlException)
+	{
+<span class="fc" id="L149">		Matcher matcher = Pattern.compile(</span>
+				&quot;Updating read-only column \&quot;?(.*?)\&quot;? of table \&quot;?(.*?)\&quot;? with id \\[(.*?)] is not allowed&quot;)
+<span class="fc" id="L151">								 .matcher(pSqlException.getServerErrorMessage().getMessage());</span>
+<span class="fc" id="L152">		boolean matches = matcher.matches();</span>
+<span class="pc bpc" id="L153" title="1 of 2 branches missed.">		if (!matches)</span>
+		{
+<span class="nc" id="L155">			LOG.error(&quot;Error translating postgres exception: &quot;, pSqlException);</span>
+<span class="nc" id="L156">			throw new RuntimeException(&quot;Error translating exception&quot;, pSqlException);</span>
+		}
+<span class="fc" id="L158">		String colName = matcher.group(1);</span>
+<span class="fc" id="L159">		String tableName = matcher.group(2);</span>
+<span class="fc" id="L160">		String id = matcher.group(3);</span>
+<span class="fc" id="L161">		ConstraintViolation constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L162">				format(&quot;Updating read-only attribute '%s' of entity '%s' with id '%s' is not allowed.&quot;,</span>
+<span class="fc" id="L163">						getAttributeName(tableName, colName), getEntityTypeName(tableName), id));</span>
+<span class="fc" id="L164">		return new MolgenisValidationException(singleton(constraintViolation));</span>
+	}
+
+	/**
+	 * Package private for testability
+	 *
+	 * @param pSqlException PostgreSQL exception
+	 * @return translated validation exception
+	 */
+	MolgenisValidationException translateDependentObjectsStillExist(PSQLException pSqlException)
+	{
+<span class="fc" id="L175">		ServerErrorMessage serverErrorMessage = pSqlException.getServerErrorMessage();</span>
+<span class="fc" id="L176">		String detail = serverErrorMessage.getDetail();</span>
+<span class="fc" id="L177">		Matcher matcher = Pattern.compile(&quot;constraint (.+) on table \&quot;?([^\&quot;]+)\&quot;? depends on table \&quot;?([^\&quot;]+)\&quot;?\n?&quot;)</span>
+<span class="fc" id="L178">								 .matcher(detail);</span>
+
+<span class="fc" id="L180">		Map&lt;String, Set&lt;String&gt;&gt; entityTypeDependencyMap = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">		while (matcher.find())</span>
+		{
+<span class="fc" id="L183">			String tableName = matcher.group(2);</span>
+<span class="fc" id="L184">			String dependentTableName = matcher.group(3);</span>
+
+<span class="fc" id="L186">			String entityTypeName = getEntityTypeName(tableName);</span>
+<span class="fc" id="L187">			String dependentEntityTypeName = getEntityTypeName(dependentTableName);</span>
+<span class="fc" id="L188">			Set&lt;String&gt; dependentTableNames = entityTypeDependencyMap.computeIfAbsent(dependentEntityTypeName,</span>
+<span class="fc" id="L189">					k -&gt; new LinkedHashSet&lt;&gt;());</span>
+<span class="fc" id="L190">			dependentTableNames.add(entityTypeName);</span>
+<span class="fc" id="L191">		}</span>
+
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">		if (entityTypeDependencyMap.isEmpty()) // no matches</span>
+		{
+<span class="nc" id="L195">			LOG.error(&quot;Error translating postgres exception: &quot;, pSqlException);</span>
+<span class="nc" id="L196">			throw new RuntimeException(&quot;Error translating exception&quot;, pSqlException);</span>
+		}
+
+<span class="fc" id="L199">		Set&lt;ConstraintViolation&gt; constraintViolations = entityTypeDependencyMap.entrySet().stream().map(entry -&gt;</span>
+		{
+			String message;
+<span class="pc bpc" id="L202" title="1 of 2 branches missed.">			if (entry.getValue().size() == 1)</span>
+			{
+<span class="fc" id="L204">				message = format(&quot;Cannot delete entity '%s' because entity '%s' depends on it.&quot;, entry.getKey(),</span>
+<span class="fc" id="L205">						entry.getValue().iterator().next());</span>
+			}
+			else
+			{
+<span class="nc" id="L209">				message = format(&quot;Cannot delete entity '%s' because entities '%s' depend on it.&quot;, entry.getKey(),</span>
+<span class="nc" id="L210">						entry.getValue().stream().collect(joining(&quot;, &quot;)));</span>
+			}
+<span class="fc" id="L212">			return new ConstraintViolation(message, null);</span>
+<span class="fc" id="L213">		}).collect(toCollection(LinkedHashSet::new));</span>
+
+<span class="fc" id="L215">		return new MolgenisValidationException(constraintViolations);</span>
+	}
+
+	/**
+	 * Package private for testability
+	 *
+	 * @param pSqlException PostgreSQL exception
+	 * @return translated validation exception
+	 */
+	static MolgenisValidationException translateInvalidIntegerException(PSQLException pSqlException)
+	{
+<span class="fc" id="L226">		ServerErrorMessage serverErrorMessage = pSqlException.getServerErrorMessage();</span>
+<span class="fc" id="L227">		String message = serverErrorMessage.getMessage();</span>
+<span class="fc" id="L228">		Matcher matcher = Pattern.compile(&quot;invalid input syntax for \\b(?:type )?\\b(.+?): \&quot;(.*?)\&quot;&quot;).matcher(message);</span>
+<span class="fc" id="L229">		boolean matches = matcher.matches();</span>
+<span class="pc bpc" id="L230" title="1 of 2 branches missed.">		if (!matches)</span>
+		{
+<span class="nc" id="L232">			throw new RuntimeException(&quot;Error translating exception&quot;, pSqlException);</span>
+		}
+<span class="fc" id="L234">		String postgreSqlType = matcher.group(1);</span>
+
+		// convert PostgreSQL data type to attribute type:
+		String type;
+<span class="pc bpc" id="L238" title="1 of 6 branches missed.">		switch (postgreSqlType)</span>
+		{
+			case &quot;boolean&quot;:
+<span class="fc" id="L241">				type = BOOL.toString();</span>
+<span class="fc" id="L242">				break;</span>
+			case &quot;date&quot;:
+<span class="fc" id="L244">				type = DATE.toString();</span>
+<span class="fc" id="L245">				break;</span>
+			case &quot;timestamp with time zone&quot;:
+<span class="fc" id="L247">				type = DATE_TIME.toString();</span>
+<span class="fc" id="L248">				break;</span>
+			case &quot;double precision&quot;:
+<span class="fc" id="L250">				type = DECIMAL.toString();</span>
+<span class="fc" id="L251">				break;</span>
+			case &quot;integer&quot;:
+<span class="fc" id="L253">				type = INT.toString() + &quot; or &quot; + LONG.toString();</span>
+<span class="fc" id="L254">				break;</span>
+			default:
+<span class="nc" id="L256">				type = postgreSqlType;</span>
+				break;
+		}
+<span class="fc" id="L259">		String value = matcher.group(2);</span>
+
+<span class="fc" id="L261">		ConstraintViolation constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L262">				format(&quot;Value [%s] of this entity attribute is not of type [%s].&quot;, value, type), null);</span>
+<span class="fc" id="L263">		return new MolgenisValidationException(singleton(constraintViolation));</span>
+	}
+
+	/**
+	 * Package private for testability
+	 *
+	 * @param pSqlException PostgreSQL exception
+	 * @return translated validation exception
+	 */
+	MolgenisValidationException translateNotNullViolation(PSQLException pSqlException)
+	{
+<span class="fc" id="L274">		ServerErrorMessage serverErrorMessage = pSqlException.getServerErrorMessage();</span>
+<span class="fc" id="L275">		String tableName = serverErrorMessage.getTable();</span>
+<span class="fc" id="L276">		String message = serverErrorMessage.getMessage();</span>
+<span class="fc" id="L277">		Matcher matcher = Pattern.compile(&quot;null value in column \&quot;?(.*?)\&quot;? violates not-null constraint&quot;)</span>
+<span class="fc" id="L278">								 .matcher(message);</span>
+<span class="fc" id="L279">		boolean matches = matcher.matches();</span>
+<span class="fc bfc" id="L280" title="All 2 branches covered.">		if (matches)</span>
+		{
+			// exception message when adding data that does not match constraint
+<span class="fc" id="L283">			String columnName = matcher.group(1);</span>
+
+<span class="fc" id="L285">			EntityTypeDescription entityTypeDescription = entityTypeRegistry.getEntityTypeDescription(tableName);</span>
+<span class="fc" id="L286">			entityTypeDescription.getAttributeDescriptionMap().get(columnName);</span>
+
+<span class="fc" id="L288">			ConstraintViolation constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L289">					format(&quot;The attribute '%s' of entity '%s' can not be null.&quot;,</span>
+<span class="fc" id="L290">							getAttributeName(tableName, columnName), getEntityTypeName(tableName)), null);</span>
+<span class="fc" id="L291">			return new MolgenisValidationException(singleton(constraintViolation));</span>
+		}
+		else
+		{
+			// exception message when applying constraint on existing data
+<span class="fc" id="L296">			matcher = Pattern.compile(&quot;column \&quot;(.*?)\&quot; contains null values&quot;).matcher(message);</span>
+<span class="fc" id="L297">			matches = matcher.matches();</span>
+<span class="pc bpc" id="L298" title="1 of 2 branches missed.">			if (!matches)</span>
+			{
+<span class="fc" id="L300">				throw new RuntimeException(&quot;Error translating exception&quot;, pSqlException);</span>
+			}
+<span class="nc" id="L302">			String columnName = matcher.group(1);</span>
+
+<span class="nc" id="L304">			ConstraintViolation constraintViolation = new ConstraintViolation(</span>
+<span class="nc" id="L305">					format(&quot;The attribute '%s' of entity '%s' contains null values.&quot;,</span>
+<span class="nc" id="L306">							getAttributeName(tableName, columnName), getEntityTypeName(tableName)), null);</span>
+<span class="nc" id="L307">			return new MolgenisValidationException(singleton(constraintViolation));</span>
+		}
+	}
+
+	/**
+	 * Package private for testability
+	 *
+	 * @param pSqlException PostgreSQL exception
+	 * @return translated validation exception
+	 */
+	MolgenisValidationException translateForeignKeyViolation(PSQLException pSqlException)
+	{
+<span class="fc" id="L319">		ServerErrorMessage serverErrorMessage = pSqlException.getServerErrorMessage();</span>
+<span class="fc" id="L320">		String tableName = serverErrorMessage.getTable();</span>
+<span class="fc" id="L321">		String detailMessage = serverErrorMessage.getDetail();</span>
+<span class="fc" id="L322">		Matcher m = Pattern.compile(&quot;\\((.*?)\\)&quot;).matcher(detailMessage);</span>
+<span class="fc bfc" id="L323" title="All 2 branches covered.">		if (!m.find())</span>
+		{
+<span class="fc" id="L325">			LOG.error(&quot;Error translating postgres exception: &quot;, pSqlException);</span>
+<span class="fc" id="L326">			throw new RuntimeException(&quot;Error translating exception&quot;, pSqlException);</span>
+		}
+<span class="fc" id="L328">		String colName = m.group(1);</span>
+<span class="pc bpc" id="L329" title="1 of 2 branches missed.">		if (!m.find())</span>
+		{
+<span class="nc" id="L331">			LOG.error(&quot;Error translating postgres exception: &quot;, pSqlException);</span>
+<span class="nc" id="L332">			throw new RuntimeException(&quot;Error translating exception&quot;, pSqlException);</span>
+		}
+<span class="fc" id="L334">		String value = m.group(1);</span>
+
+		String constraintViolationMessageTemplate;
+		String attrName;
+<span class="fc bfc" id="L338" title="All 2 branches covered.">		if (detailMessage.contains(&quot;still referenced from&quot;))</span>
+		{
+			// ERROR: update or delete on table &quot;x&quot; violates foreign key constraint &quot;y&quot; on table &quot;z&quot;
+			// Detail: Key (k)=(v) is still referenced from table &quot;x&quot;.
+<span class="fc" id="L342">			constraintViolationMessageTemplate = &quot;Value '%s' for attribute '%s' is referenced by entity '%s'.&quot;;</span>
+<span class="fc" id="L343">			String refTableName = getRefTableFromForeignKeyPsqlException(pSqlException);</span>
+<span class="fc" id="L344">			attrName = getAttributeName(refTableName, colName);</span>
+<span class="fc" id="L345">		}</span>
+		else
+		{
+			// ERROR: insert or update on table &quot;x&quot; violates foreign key constraint &quot;y&quot;
+			// Detail: Key (k)=(v) is not present in table &quot;z&quot;.
+<span class="fc" id="L350">			constraintViolationMessageTemplate = &quot;Unknown xref value '%s' for attribute '%s' of entity '%s'.&quot;;</span>
+<span class="fc" id="L351">			attrName = getAttributeName(tableName, colName);</span>
+		}
+<span class="fc" id="L353">		ConstraintViolation constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L354">				format(constraintViolationMessageTemplate, value, attrName, getEntityTypeName(tableName)), null);</span>
+<span class="fc" id="L355">		return new MolgenisValidationException(singleton(constraintViolation));</span>
+	}
+
+	private String getRefTableFromForeignKeyPsqlException(PSQLException pSqlException)
+	{
+<span class="fc" id="L360">		ServerErrorMessage serverErrorMessage = pSqlException.getServerErrorMessage();</span>
+<span class="fc" id="L361">		Matcher messageMatcher = Pattern.compile(</span>
+				&quot;update or delete on table \&quot;(.*)\&quot; violates foreign key constraint \&quot;(.*)\&quot; on table \&quot;(.*)\&quot;&quot;)
+<span class="fc" id="L363">										.matcher(serverErrorMessage.getMessage());</span>
+<span class="pc bpc" id="L364" title="1 of 2 branches missed.">		if (!messageMatcher.matches())</span>
+		{
+<span class="nc" id="L366">			LOG.error(&quot;Error translating postgres exception: &quot;, pSqlException);</span>
+<span class="nc" id="L367">			throw new RuntimeException(&quot;Error translating exception&quot;, pSqlException);</span>
+		}
+<span class="fc" id="L369">		return messageMatcher.group(1);</span>
+	}
+
+	/**
+	 * Package private for testability
+	 *
+	 * @param pSqlException PostgreSQL exception
+	 * @return translated validation exception
+	 */
+	MolgenisValidationException translateUniqueKeyViolation(PSQLException pSqlException)
+	{
+<span class="fc" id="L380">		ServerErrorMessage serverErrorMessage = pSqlException.getServerErrorMessage();</span>
+<span class="fc" id="L381">		String tableName = serverErrorMessage.getTable();</span>
+<span class="fc" id="L382">		String detailMessage = serverErrorMessage.getDetail();</span>
+<span class="fc" id="L383">		Matcher matcher = Pattern.compile(&quot;Key \\(\&quot;?(.*?)\&quot;?\\)=\\((.*?)\\) already exists.&quot;).matcher(detailMessage);</span>
+<span class="fc" id="L384">		boolean matches = matcher.matches();</span>
+<span class="fc bfc" id="L385" title="All 2 branches covered.">		if (matches)</span>
+		{
+			ConstraintViolation constraintViolation;
+
+			// exception message when adding data that does not match constraint
+<span class="fc" id="L390">			String[] columnNames = matcher.group(1).split(&quot;, &quot;);</span>
+<span class="fc bfc" id="L391" title="All 2 branches covered.">			if (columnNames.length == 1)</span>
+			{
+<span class="fc" id="L393">				String columnName = columnNames[0];</span>
+<span class="fc" id="L394">				String value = matcher.group(2);</span>
+
+<span class="fc" id="L396">				constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L397">						format(&quot;Duplicate value '%s' for unique attribute '%s' from entity '%s'.&quot;, value,</span>
+<span class="fc" id="L398">								getAttributeName(tableName, columnName), getEntityTypeName(tableName)), null);</span>
+<span class="fc" id="L399">			}</span>
+			else
+			{
+<span class="fc" id="L402">				String columnName = columnNames[columnNames.length - 1];</span>
+<span class="fc" id="L403">				String[] values = matcher.group(2).split(&quot;, &quot;);</span>
+<span class="fc" id="L404">				String idValue = values[0];</span>
+<span class="fc" id="L405">				String value = values[1];</span>
+
+<span class="fc" id="L407">				constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L408">						format(&quot;Duplicate list value '%s' for attribute '%s' from entity '%s' with id '%s'.&quot;, value,</span>
+<span class="fc" id="L409">								getAttributeName(tableName, columnName), getEntityTypeName(tableName), idValue), null);</span>
+			}
+<span class="fc" id="L411">			return new MolgenisValidationException(singleton(constraintViolation));</span>
+		}
+		else
+		{
+			// exception message when applying constraint on existing data
+<span class="fc" id="L416">			matcher = Pattern.compile(&quot;Key \\(\&quot;?(.*?)\&quot;?\\)=\\((.*?)\\) is duplicated.&quot;).matcher(detailMessage);</span>
+<span class="fc" id="L417">			matches = matcher.matches();</span>
+<span class="fc bfc" id="L418" title="All 2 branches covered.">			if (matches)</span>
+			{
+<span class="fc" id="L420">				String columnName = matcher.group(1);</span>
+<span class="fc" id="L421">				String value = matcher.group(2);</span>
+
+<span class="fc" id="L423">				ConstraintViolation constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L424">						format(&quot;The attribute '%s' of entity '%s' contains duplicate value '%s'.&quot;,</span>
+<span class="fc" id="L425">								getAttributeName(tableName, columnName), getEntityTypeName(tableName), value), null);</span>
+<span class="fc" id="L426">				return new MolgenisValidationException(singleton(constraintViolation));</span>
+			}
+			else
+			{
+<span class="fc" id="L430">				LOG.error(&quot;Error translating postgres exception: &quot;, pSqlException);</span>
+<span class="fc" id="L431">				throw new RuntimeException(&quot;Error translating exception&quot;, pSqlException);</span>
+			}
+		}
+	}
+
+	/**
+	 * Package private for testability
+	 *
+	 * @param pSqlException PostgreSQL exception
+	 * @return translated validation exception
+	 */
+	MolgenisValidationException translateCheckConstraintViolation(PSQLException pSqlException)
+	{
+<span class="fc" id="L444">		ServerErrorMessage serverErrorMessage = pSqlException.getServerErrorMessage();</span>
+<span class="fc" id="L445">		String tableName = serverErrorMessage.getTable();</span>
+<span class="fc" id="L446">		String constraintName = serverErrorMessage.getConstraint();</span>
+		// constraint name: &lt;tableName&gt;_&lt;columnName&gt;_chk
+<span class="fc" id="L448">		String columnName = constraintName.substring(tableName.length() + 1, constraintName.length() - 4);</span>
+<span class="fc" id="L449">		ConstraintViolation constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L450">				format(&quot;Unknown enum value for attribute '%s' of entity '%s'.&quot;, getAttributeName(tableName, columnName),</span>
+<span class="fc" id="L451">						getEntityTypeName(tableName)), null);</span>
+<span class="fc" id="L452">		return new MolgenisValidationException(singleton(constraintViolation));</span>
+	}
+
+	/**
+	 * Package private for testability
+	 *
+	 * @param pSqlException PostgreSQL exception
+	 * @return translated validation exception
+	 */
+	static MolgenisValidationException translateUndefinedColumnException(PSQLException pSqlException)
+	{
+<span class="fc" id="L463">		ServerErrorMessage serverErrorMessage = pSqlException.getServerErrorMessage();</span>
+<span class="fc" id="L464">		String message = serverErrorMessage.getMessage(); // FIXME exposes internal message</span>
+<span class="fc" id="L465">		ConstraintViolation constraintViolation = new ConstraintViolation(message);</span>
+<span class="fc" id="L466">		return new MolgenisValidationException(singleton(constraintViolation));</span>
+	}
+
+	@Override
+	public MolgenisDataException doTranslate(TransactionException transactionException)
+	{
+<span class="nc" id="L472">		Throwable cause = transactionException.getCause();</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">		if (!(cause instanceof PSQLException))</span>
+		{
+<span class="nc" id="L475">			return null;</span>
+		}
+
+<span class="nc" id="L478">		PSQLException pSqlException = (PSQLException) cause;</span>
+<span class="nc" id="L479">		return doTranslate(pSqlException);</span>
+	}
+
+	/**
+	 * Returns the entity type fully qualified name for this table name
+	 *
+	 * @param tableName table name
+	 * @return entity type fully qualified name
+	 */
+	private String getEntityTypeName(String tableName)
+	{
+<span class="fc" id="L490">		EntityTypeDescription entityTypeDescription = entityTypeRegistry.getEntityTypeDescription(tableName);</span>
+<span class="pc bpc" id="L491" title="1 of 2 branches missed.">		if (entityTypeDescription == null)</span>
+		{
+<span class="nc" id="L493">			throw new RuntimeException(format(&quot;Unknown entity for table name [%s]&quot;, tableName));</span>
+		}
+<span class="fc" id="L495">		return entityTypeDescription.getId();</span>
+	}
+
+	/**
+	 * Returns the attribute name for this table name
+	 *
+	 * @param tableName table name
+	 * @param colName   column name
+	 * @return attribute name
+	 */
+	private String getAttributeName(String tableName, String colName)
+	{
+<span class="fc" id="L507">		EntityTypeDescription entityTypeDescription = entityTypeRegistry.getEntityTypeDescription(tableName);</span>
+<span class="pc bpc" id="L508" title="1 of 2 branches missed.">		if (entityTypeDescription == null)</span>
+		{
+<span class="nc" id="L510">			throw new RuntimeException(format(&quot;Unknown entity for table name [%s]&quot;, tableName));</span>
+		}
+<span class="fc" id="L512">		AttributeDescription attrDescription = entityTypeDescription.getAttributeDescriptionMap().get(colName);</span>
+<span class="pc bpc" id="L513" title="1 of 2 branches missed.">		if (attrDescription == null)</span>
+		{
+<span class="nc" id="L515">			throw new RuntimeException(format(&quot;Unknown attribute for column name [%s]&quot;, colName));</span>
+		}
+<span class="fc" id="L517">		return attrDescription.getName();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

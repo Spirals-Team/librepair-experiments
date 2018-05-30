@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JobBootstrapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jobs</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.jobs</a> &gt; <span class="el_source">JobBootstrapper.java</span></div><h1>JobBootstrapper.java</h1><pre class="source lang-java linenums">package org.molgenis.jobs;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.meta.SystemEntityType;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.system.SystemEntityTypeRegistry;
+import org.molgenis.jobs.model.ScheduledJobType;
+import org.molgenis.jobs.schedule.JobScheduler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+import static java.util.Objects.requireNonNull;
+import static org.apache.commons.lang3.StringUtils.abbreviateMiddle;
+import static org.molgenis.jobs.model.JobExecution.MAX_LOG_LENGTH;
+import static org.molgenis.jobs.model.JobExecution.Status.FAILED;
+import static org.molgenis.jobs.model.JobExecution.Status.RUNNING;
+import static org.molgenis.jobs.model.JobExecution.TRUNCATION_BANNER;
+import static org.molgenis.jobs.model.JobExecutionMetaData.*;
+import static org.molgenis.jobs.model.ScheduledJobTypeMetadata.SCHEDULED_JOB_TYPE;
+import static org.springframework.util.StringUtils.isEmpty;
+
+/**
+ * Bootstraps the scheduling framework
+ */
+@Component
+public class JobBootstrapper
+{
+	private final SystemEntityTypeRegistry systemEntityTypeRegistry;
+	private final DataService dataService;
+	private final JobScheduler jobScheduler;
+	private final List&lt;ScheduledJobType&gt; scheduledJobTypes;
+
+<span class="fc" id="L38">	private static final Logger LOGGER = LoggerFactory.getLogger(JobBootstrapper.class);</span>
+
+	@Lazy
+	public JobBootstrapper(SystemEntityTypeRegistry systemEntityTypeRegistry, DataService dataService,
+			JobScheduler jobScheduler, List&lt;ScheduledJobType&gt; scheduledJobTypes)
+<span class="fc" id="L43">	{</span>
+<span class="fc" id="L44">		this.systemEntityTypeRegistry = requireNonNull(systemEntityTypeRegistry);</span>
+<span class="fc" id="L45">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L46">		this.jobScheduler = requireNonNull(jobScheduler);</span>
+<span class="fc" id="L47">		this.scheduledJobTypes = requireNonNull(scheduledJobTypes);</span>
+<span class="fc" id="L48">	}</span>
+
+	public void bootstrap()
+	{
+<span class="fc" id="L52">		LOGGER.trace(&quot;Failing JobExecutions that were left running...&quot;);</span>
+<span class="fc" id="L53">		systemEntityTypeRegistry.getSystemEntityTypes().filter(this::isJobExecution).forEach(this::bootstrap);</span>
+<span class="fc" id="L54">		LOGGER.debug(&quot;Failed JobExecutions that were left running.&quot;);</span>
+
+<span class="fc" id="L56">		LOGGER.trace(&quot;Scheduling ScheduledJobs...&quot;);</span>
+<span class="fc" id="L57">		jobScheduler.scheduleJobs();</span>
+<span class="fc" id="L58">		LOGGER.debug(&quot;Scheduled ScheduledJobs.&quot;);</span>
+
+<span class="fc" id="L60">		LOGGER.trace(&quot;Upserting ScheduledJobTypes...&quot;);</span>
+<span class="fc" id="L61">		upsertScheduledJobTypes();</span>
+<span class="fc" id="L62">		LOGGER.debug(&quot;Upserted ScheduledJobTypes.&quot;);</span>
+<span class="fc" id="L63">	}</span>
+
+	private void upsertScheduledJobTypes()
+	{
+<span class="fc" id="L67">		dataService.getRepository(SCHEDULED_JOB_TYPE, ScheduledJobType.class).upsertBatch(scheduledJobTypes);</span>
+<span class="fc" id="L68">	}</span>
+
+	private void bootstrap(SystemEntityType systemEntityType)
+	{
+<span class="fc" id="L72">		dataService.query(systemEntityType.getId())</span>
+<span class="fc" id="L73">				   .eq(STATUS, RUNNING)</span>
+<span class="fc" id="L74">				   .or()</span>
+<span class="fc" id="L75">				   .eq(STATUS, PENDING)</span>
+<span class="fc" id="L76">				   .findAll()</span>
+<span class="fc" id="L77">				   .forEach(this::setFailed);</span>
+<span class="fc" id="L78">	}</span>
+
+	private void setFailed(Entity jobExecutionEntity)
+	{
+<span class="fc" id="L82">		jobExecutionEntity.set(STATUS, FAILED.toString());</span>
+<span class="fc" id="L83">		jobExecutionEntity.set(PROGRESS_MESSAGE, &quot;Application terminated unexpectedly&quot;);</span>
+<span class="fc" id="L84">		StringBuilder log = new StringBuilder();</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">		if (!isEmpty(jobExecutionEntity.get(LOG)))</span>
+		{
+<span class="fc" id="L87">			log.append(jobExecutionEntity.get(LOG));</span>
+<span class="fc" id="L88">			log.append('\n');</span>
+		}
+<span class="fc" id="L90">		log.append(&quot;FAILED - Application terminated unexpectedly&quot;);</span>
+<span class="fc" id="L91">		String abbreviatedLog = abbreviateMiddle(log.toString(), &quot;...\n&quot; + TRUNCATION_BANNER + &quot;\n...&quot;, MAX_LOG_LENGTH);</span>
+<span class="fc" id="L92">		jobExecutionEntity.set(LOG, abbreviatedLog);</span>
+<span class="fc" id="L93">		dataService.update(jobExecutionEntity.getEntityType().getId(), jobExecutionEntity);</span>
+<span class="fc" id="L94">	}</span>
+
+	private boolean isJobExecution(EntityType entityType)
+	{
+<span class="pc bpc" id="L98" title="2 of 4 branches missed.">		return entityType.getExtends() != null &amp;&amp; entityType.getExtends().getId().equals(JOB_EXECUTION);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

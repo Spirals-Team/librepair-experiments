@@ -1,0 +1,924 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PostgreSqlRepositoryCollection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.postgresql</a> &gt; <span class="el_source">PostgreSqlRepositoryCollection.java</span></div><h1>PostgreSqlRepositoryCollection.java</h1><pre class="source lang-java linenums">package org.molgenis.data.postgresql;
+
+import com.google.common.collect.Iterables;
+import org.molgenis.data.*;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.AbstractRepositoryCollection;
+import org.molgenis.data.support.AttributeUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Sets.immutableEnumSet;
+import static java.lang.String.format;
+import static java.util.EnumSet.of;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
+import static org.molgenis.data.RepositoryCollectionCapability.*;
+import static org.molgenis.data.meta.AttributeType.*;
+import static org.molgenis.data.meta.MetaUtils.getEntityTypeFetch;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.*;
+import static org.molgenis.data.postgresql.PostgreSqlQueryGenerator.*;
+import static org.molgenis.data.postgresql.PostgreSqlQueryUtils.*;
+import static org.molgenis.data.postgresql.PostgreSqlRepository.BATCH_SIZE;
+import static org.molgenis.data.postgresql.PostgreSqlRepository.createJunctionTableRowData;
+import static org.molgenis.data.support.EntityTypeUtils.*;
+import static org.springframework.jdbc.support.JdbcUtils.closeConnection;
+
+public class PostgreSqlRepositoryCollection extends AbstractRepositoryCollection
+{
+<span class="fc" id="L41">	private static final Logger LOG = LoggerFactory.getLogger(PostgreSqlRepositoryCollection.class);</span>
+
+	public static final String POSTGRESQL = &quot;PostgreSQL&quot;;
+
+	private final PostgreSqlEntityFactory postgreSqlEntityFactory;
+	private final DataSource dataSource;
+	private final JdbcTemplate jdbcTemplate;
+	private final DataService dataService;
+
+	PostgreSqlRepositoryCollection(PostgreSqlEntityFactory postgreSqlEntityFactory, DataSource dataSource,
+			JdbcTemplate jdbcTemplate, DataService dataService)
+<span class="fc" id="L52">	{</span>
+<span class="fc" id="L53">		this.postgreSqlEntityFactory = requireNonNull(postgreSqlEntityFactory);</span>
+<span class="fc" id="L54">		this.dataSource = requireNonNull(dataSource);</span>
+<span class="fc" id="L55">		this.jdbcTemplate = requireNonNull(jdbcTemplate);</span>
+<span class="fc" id="L56">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L57">	}</span>
+
+	@Override
+	public String getName()
+	{
+<span class="nc" id="L62">		return POSTGRESQL;</span>
+	}
+
+	@Override
+	public Set&lt;RepositoryCollectionCapability&gt; getCapabilities()
+	{
+<span class="nc" id="L68">		return immutableEnumSet(of(WRITABLE, UPDATABLE, META_DATA_PERSISTABLE));</span>
+	}
+
+	@Override
+	public boolean hasRepository(String name)
+	{
+<span class="nc" id="L74">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public Repository&lt;Entity&gt; createRepository(EntityType entityType)
+	{
+<span class="nc" id="L80">		PostgreSqlRepository repository = createPostgreSqlRepository(entityType);</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">		if (!isTableExists(entityType))</span>
+		{
+<span class="nc" id="L83">			createTable(entityType);</span>
+		}
+<span class="nc" id="L85">		return repository;</span>
+	}
+
+	@Override
+	public boolean hasRepository(EntityType entityType)
+	{
+<span class="nc" id="L91">		return isTableExists(entityType);</span>
+	}
+
+	@Override
+	public Iterable&lt;String&gt; getEntityTypeIds()
+	{
+<span class="nc" id="L97">		return dataService.query(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="nc" id="L98">						  .eq(BACKEND, POSTGRESQL)</span>
+<span class="nc" id="L99">						  .fetch(getEntityTypeFetch())</span>
+<span class="nc" id="L100">						  .findAll()</span>
+<span class="nc" id="L101">						  .map(EntityType::getId)::iterator;</span>
+	}
+
+	@Override
+	public Repository&lt;Entity&gt; getRepository(String id)
+	{
+<span class="nc" id="L107">		EntityType entityType = dataService.query(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="nc" id="L108">										   .eq(BACKEND, POSTGRESQL)</span>
+<span class="nc" id="L109">										   .and()</span>
+<span class="nc" id="L110">										   .eq(ID, id)</span>
+<span class="nc" id="L111">										   .and()</span>
+<span class="nc" id="L112">										   .eq(IS_ABSTRACT, false)</span>
+<span class="nc" id="L113">										   .fetch(getEntityTypeFetch())</span>
+<span class="nc" id="L114">										   .findOne();</span>
+<span class="nc" id="L115">		return getRepository(entityType);</span>
+	}
+
+	@Override
+	public Repository&lt;Entity&gt; getRepository(EntityType entityType)
+	{
+<span class="nc" id="L121">		return createPostgreSqlRepository(entityType);</span>
+	}
+
+	@Override
+	public Iterator&lt;Repository&lt;Entity&gt;&gt; iterator()
+	{
+<span class="nc" id="L127">		return dataService.query(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="nc" id="L128">						  .eq(BACKEND, POSTGRESQL)</span>
+<span class="nc" id="L129">						  .and()</span>
+<span class="nc" id="L130">						  .eq(IS_ABSTRACT, false)</span>
+<span class="nc" id="L131">						  .fetch(getEntityTypeFetch())</span>
+<span class="nc" id="L132">						  .findAll()</span>
+<span class="nc" id="L133">						  .map(this::getRepository)</span>
+<span class="nc" id="L134">						  .iterator();</span>
+	}
+
+	@Override
+	public void deleteRepository(EntityType entityType)
+	{
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">		if (entityType.isAbstract())</span>
+		{
+<span class="nc" id="L142">			throw new UnknownRepositoryException(entityType.getId());</span>
+		}
+<span class="fc" id="L144">		dropTables(entityType);</span>
+<span class="fc" id="L145">	}</span>
+
+	@Override
+	public void updateRepository(EntityType entityType, EntityType updatedEntityType)
+	{
+		//  no actions needed
+<span class="nc" id="L151">	}</span>
+
+	private void dropTables(EntityType entityType)
+	{
+<span class="pc" id="L155">		getJunctionTableAttributes(entityType).forEach(mrefAttr -&gt; dropJunctionTable(entityType, mrefAttr));</span>
+
+<span class="fc" id="L157">		String sqlDropTable = getSqlDropTable(entityType);</span>
+<span class="pc bpc" id="L158" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L160">			LOG.debug(&quot;Dropping table for entity [{}]&quot;, entityType.getId());</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L163">				LOG.trace(&quot;SQL: {}&quot;, sqlDropTable);</span>
+			}
+		}
+<span class="fc" id="L166">		jdbcTemplate.execute(sqlDropTable);</span>
+
+<span class="fc bfc" id="L168" title="All 2 branches covered.">		if (getTableAttributesReadonly(entityType).findAny().isPresent())</span>
+		{
+<span class="fc" id="L170">			String sqlDropFunctionValidateUpdate = getSqlDropFunctionValidateUpdate(entityType);</span>
+<span class="pc bpc" id="L171" title="1 of 2 branches missed.">			if (LOG.isDebugEnabled())</span>
+			{
+<span class="nc" id="L173">				LOG.debug(&quot;Dropping trigger function for entity [{}]&quot;, entityType.getId());</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">				if (LOG.isTraceEnabled())</span>
+				{
+<span class="nc" id="L176">					LOG.trace(&quot;SQL: {}&quot;, sqlDropFunctionValidateUpdate);</span>
+				}
+			}
+<span class="fc" id="L179">			jdbcTemplate.execute(sqlDropFunctionValidateUpdate);</span>
+		}
+<span class="fc" id="L181">	}</span>
+
+	@Override
+	public void addAttribute(EntityType entityType, Attribute attr)
+	{
+<span class="fc bfc" id="L186" title="All 2 branches covered.">		if (entityType.isAbstract())</span>
+		{
+<span class="fc" id="L188">			throw new MolgenisDataException(</span>
+<span class="fc" id="L189">					format(&quot;Cannot add attribute [%s] to abstract entity type [%s].&quot;, attr.getName(),</span>
+<span class="fc" id="L190">							entityType.getId()));</span>
+		}
+<span class="fc bfc" id="L192" title="All 2 branches covered.">		if (entityType.getAttribute(attr.getName()) != null)</span>
+		{
+<span class="fc" id="L194">			throw new MolgenisDataException(</span>
+<span class="fc" id="L195">					format(&quot;Adding attribute operation failed. Attribute already exists [%s]&quot;, attr.getName()));</span>
+		}
+<span class="fc" id="L197">		addAttributeInternal(entityType, attr);</span>
+<span class="fc" id="L198">	}</span>
+
+	@Override
+	public void updateAttribute(EntityType entityType, Attribute attr, Attribute updatedAttr)
+	{
+<span class="fc bfc" id="L203" title="All 2 branches covered.">		if (entityType.isAbstract())</span>
+		{
+<span class="fc" id="L205">			throw new MolgenisDataException(</span>
+<span class="fc" id="L206">					format(&quot;Cannot update attribute [%s] for abstract entity type [%s].&quot;, attr.getName(),</span>
+<span class="fc" id="L207">							entityType.getId()));</span>
+		}
+<span class="fc bfc" id="L209" title="All 4 branches covered.">		if (!isPersisted(attr) &amp;&amp; !isPersisted(updatedAttr))</span>
+		{
+<span class="fc" id="L211">			return;</span>
+		}
+
+<span class="fc bfc" id="L214" title="All 4 branches covered.">		if (isPersisted(attr) &amp;&amp; !isPersisted(updatedAttr))</span>
+		{
+<span class="fc" id="L216">			deleteAttribute(entityType, attr);</span>
+		}
+<span class="pc bpc" id="L218" title="1 of 4 branches missed.">		else if (!isPersisted(attr) &amp;&amp; isPersisted(updatedAttr))</span>
+		{
+<span class="fc" id="L220">			addAttributeInternal(entityType, updatedAttr);</span>
+		}
+		else
+		{
+<span class="fc" id="L224">			updateColumn(entityType, attr, updatedAttr);</span>
+		}
+<span class="fc" id="L226">	}</span>
+
+	@Override
+	public void deleteAttribute(EntityType entityType, Attribute attr)
+	{
+<span class="fc bfc" id="L231" title="All 2 branches covered.">		if (entityType.isAbstract())</span>
+		{
+<span class="fc" id="L233">			throw new MolgenisDataException(</span>
+<span class="fc" id="L234">					format(&quot;Cannot delete attribute [%s] from abstract entity type [%s].&quot;, attr.getName(),</span>
+<span class="fc" id="L235">							entityType.getId()));</span>
+		}
+<span class="fc bfc" id="L237" title="All 2 branches covered.">		if (entityType.getAttribute(attr.getName()) == null)</span>
+		{
+<span class="fc" id="L239">			throw new UnknownAttributeException(entityType, attr.getName());</span>
+		}
+<span class="fc bfc" id="L241" title="All 2 branches covered.">		if (!isPersisted(attr))</span>
+		{
+<span class="fc" id="L243">			return;</span>
+		}
+
+<span class="pc bpc" id="L246" title="1 of 4 branches missed.">		if (!(attr.getDataType() == ONE_TO_MANY &amp;&amp; attr.isMappedBy()))</span>
+		{
+<span class="fc bfc" id="L248" title="All 2 branches covered.">			if (isMultipleReferenceType(attr))</span>
+			{
+<span class="fc" id="L250">				dropJunctionTable(entityType, attr);</span>
+			}
+			else
+			{
+<span class="fc" id="L254">				dropColumn(entityType, attr);</span>
+			}
+		}
+<span class="fc" id="L257">	}</span>
+
+	/**
+	 * Add attribute to entityType.
+	 *
+	 * @param entityType the {@link EntityType} to add attribute to
+	 * @param attr       attribute to add
+	 */
+	private void addAttributeInternal(EntityType entityType, Attribute attr)
+	{
+<span class="fc bfc" id="L267" title="All 2 branches covered.">		if (!isPersisted(attr))</span>
+		{
+<span class="fc" id="L269">			return;</span>
+		}
+
+<span class="pc bpc" id="L272" title="1 of 4 branches missed.">		if (!(attr.getDataType() == ONE_TO_MANY &amp;&amp; attr.isMappedBy()))</span>
+		{
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">			if (isMultipleReferenceType(attr))</span>
+			{
+<span class="nc" id="L276">				createJunctionTable(entityType, attr);</span>
+
+<span class="nc bnc" id="L278" title="All 4 branches missed.">				if (attr.getDefaultValue() != null &amp;&amp; !attr.isNillable())</span>
+				{
+					@SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L281">					Iterable&lt;Entity&gt; defaultRefEntities = (Iterable&lt;Entity&gt;) AttributeUtils.getDefaultTypedValue(attr);</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">					if (!Iterables.isEmpty(defaultRefEntities))</span>
+					{
+<span class="nc" id="L284">						createJunctionTableRows(entityType, attr, defaultRefEntities);</span>
+					}
+<span class="nc" id="L286">				}</span>
+			}
+			else
+			{
+<span class="fc" id="L290">				createColumn(entityType, attr);</span>
+			}
+		}
+<span class="fc" id="L293">	}</span>
+
+	private void createJunctionTableRows(EntityType entityType, Attribute attr, Iterable&lt;Entity&gt; defaultRefEntities)
+	{
+<span class="nc" id="L297">		int nrRefEntities = Iterables.size(defaultRefEntities);</span>
+
+<span class="nc" id="L299">		PostgreSqlRepository postgreSqlRepository = createPostgreSqlRepository(entityType);</span>
+
+<span class="nc" id="L301">		Attribute idAttribute = entityType.getIdAttribute();</span>
+<span class="nc" id="L302">		String idAttributeName = idAttribute.getName();</span>
+<span class="nc" id="L303">		postgreSqlRepository.forEachBatched(new Fetch().field(idAttributeName), entities -&gt;</span>
+		{
+<span class="nc" id="L305">			List&lt;Map&lt;String, Object&gt;&gt; mrefs = new ArrayList&lt;&gt;(entities.size() * nrRefEntities);</span>
+<span class="nc" id="L306">			entities.forEach(entity -&gt;</span>
+			{
+<span class="nc" id="L308">				AtomicInteger seqNr = new AtomicInteger(0);</span>
+<span class="nc" id="L309">				defaultRefEntities.forEach(defaultRefEntity -&gt; mrefs.add(</span>
+<span class="nc" id="L310">						createJunctionTableRowData(seqNr.getAndIncrement(), idAttribute, defaultRefEntity, attr,</span>
+								entity)));
+<span class="nc" id="L312">			});</span>
+<span class="nc" id="L313">			postgreSqlRepository.addMrefs(mrefs, attr);</span>
+<span class="nc" id="L314">		}, BATCH_SIZE);</span>
+<span class="nc" id="L315">	}</span>
+
+	/**
+	 * Indicates if the attribute is persisted in the database.
+	 * Compound attributes and computed attributes with an expression are not persisted.
+	 *
+	 * @param attr the attribute to check
+	 * @return boolean indicating if the entity is persisted in the database.
+	 */
+	private static boolean isPersisted(Attribute attr)
+	{
+<span class="fc bfc" id="L326" title="All 4 branches covered.">		return !attr.hasExpression() &amp;&amp; attr.getDataType() != COMPOUND;</span>
+	}
+
+	/**
+	 * Updates database column based on attribute changes.
+	 *
+	 * @param entityType  entity meta data
+	 * @param attr        current attribute
+	 * @param updatedAttr updated attribute
+	 */
+	private void updateColumn(EntityType entityType, Attribute attr, Attribute updatedAttr)
+	{
+		// nullable changes
+<span class="fc bfc" id="L339" title="All 2 branches covered.">		if (!Objects.equals(attr.isNillable(), updatedAttr.isNillable()))</span>
+		{
+<span class="fc" id="L341">			updateNillable(entityType, attr, updatedAttr);</span>
+		}
+
+		// unique changes
+<span class="fc bfc" id="L345" title="All 2 branches covered.">		if (!Objects.equals(attr.isUnique(), updatedAttr.isUnique()))</span>
+		{
+<span class="fc" id="L347">			updateUnique(entityType, attr, updatedAttr);</span>
+		}
+
+		// readonly changes
+<span class="pc bpc" id="L351" title="1 of 2 branches missed.">		if (!Objects.equals(attr.isReadOnly(), updatedAttr.isReadOnly()))</span>
+		{
+<span class="nc" id="L353">			updateReadonly(entityType, attr, updatedAttr);</span>
+		}
+
+		// data type changes
+<span class="fc bfc" id="L357" title="All 2 branches covered.">		if (!Objects.equals(attr.getDataType(), updatedAttr.getDataType()))</span>
+		{
+<span class="fc" id="L359">			updateDataType(entityType, attr, updatedAttr);</span>
+		}
+
+		// ref entity changes
+<span class="pc bpc" id="L363" title="1 of 4 branches missed.">		if (attr.getRefEntity() != null &amp;&amp; updatedAttr.getRefEntity() != null &amp;&amp; !attr.getRefEntity()</span>
+<span class="fc" id="L364">																					  .getId()</span>
+<span class="pc bpc" id="L365" title="1 of 2 branches missed.">																					  .equals(updatedAttr.getRefEntity()</span>
+<span class="fc" id="L366">																										 .getId()))</span>
+		{
+<span class="fc" id="L368">			updateRefEntity(entityType, attr, updatedAttr);</span>
+		}
+
+		// enum option changes
+<span class="pc bpc" id="L372" title="1 of 2 branches missed.">		if (!Objects.equals(attr.getEnumOptions(), updatedAttr.getEnumOptions()))</span>
+		{
+<span class="nc" id="L374">			updateEnumOptions(entityType, attr, updatedAttr);</span>
+		}
+<span class="fc" id="L376">	}</span>
+
+	/**
+	 * Updates foreign keys based on referenced entity changes.
+	 *
+	 * @param entityType  entity meta data
+	 * @param attr        current attribute
+	 * @param updatedAttr updated attribute
+	 */
+	private void updateRefEntity(EntityType entityType, Attribute attr, Attribute updatedAttr)
+	{
+<span class="pc bpc" id="L387" title="1 of 4 branches missed.">		if (isSingleReferenceType(attr) &amp;&amp; isSingleReferenceType(updatedAttr))</span>
+		{
+<span class="fc" id="L389">			dropForeignKey(entityType, attr);</span>
+
+<span class="fc" id="L391">			if (attr.getRefEntity().getIdAttribute().getDataType() != updatedAttr.getRefEntity()</span>
+<span class="fc" id="L392">																				 .getIdAttribute()</span>
+<span class="fc bfc" id="L393" title="All 2 branches covered.">																				 .getDataType())</span>
+			{
+<span class="fc" id="L395">				updateColumnDataType(entityType, updatedAttr);</span>
+			}
+
+<span class="fc" id="L398">			createForeignKey(entityType, updatedAttr);</span>
+		}
+<span class="pc bpc" id="L400" title="2 of 4 branches missed.">		else if (isMultipleReferenceType(attr) &amp;&amp; isMultipleReferenceType(updatedAttr))</span>
+		{
+<span class="fc" id="L402">			throw new MolgenisDataException(</span>
+<span class="fc" id="L403">					format(&quot;Updating entity [%s] attribute [%s] referenced entity from [%s] to [%s] not allowed for type [%s]&quot;,</span>
+<span class="fc" id="L404">							entityType.getId(), attr.getName(), attr.getRefEntity().getId(),</span>
+<span class="fc" id="L405">							updatedAttr.getRefEntity().getId(), updatedAttr.getDataType().toString()));</span>
+		}
+<span class="fc" id="L407">	}</span>
+
+	/**
+	 * Updates check constraint based on enum value changes.
+	 *
+	 * @param entityType  entity meta data
+	 * @param attr        current attribute
+	 * @param updatedAttr updated attribute
+	 */
+	private void updateEnumOptions(EntityType entityType, Attribute attr, Attribute updatedAttr)
+	{
+<span class="nc bnc" id="L418" title="All 2 branches missed.">		if (attr.getDataType() == ENUM)</span>
+		{
+<span class="nc bnc" id="L420" title="All 2 branches missed.">			if (updatedAttr.getDataType() == ENUM)</span>
+			{
+				// update check constraint
+<span class="nc" id="L423">				dropCheckConstraint(entityType, attr);</span>
+<span class="nc" id="L424">				createCheckConstraint(entityType, updatedAttr);</span>
+			}
+			else
+			{
+				// drop check constraint
+<span class="nc" id="L429">				dropCheckConstraint(entityType, attr);</span>
+			}
+		}
+		else
+		{
+<span class="nc bnc" id="L434" title="All 2 branches missed.">			if (updatedAttr.getDataType() == ENUM)</span>
+			{
+<span class="nc" id="L436">				createCheckConstraint(entityType, updatedAttr);</span>
+			}
+		}
+<span class="nc" id="L439">	}</span>
+
+	private void dropColumnDefaultValue(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L443">		String dropColumnDefaultValueSql = getSqlDropColumnDefault(entityType, attr);</span>
+<span class="pc bpc" id="L444" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L446">			LOG.debug(&quot;Dropping column default constraint for entity [{}] attribute [{}]&quot;, entityType.getId(),</span>
+<span class="nc" id="L447">					attr.getName());</span>
+<span class="nc bnc" id="L448" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L450">				LOG.trace(&quot;SQL: {}&quot;, dropColumnDefaultValueSql);</span>
+			}
+		}
+<span class="fc" id="L453">		jdbcTemplate.execute(dropColumnDefaultValueSql);</span>
+<span class="fc" id="L454">	}</span>
+
+	/**
+	 * Updates column data type and foreign key constraints based on data type update.
+	 *
+	 * @param entityType  entity meta data
+	 * @param attr        current attribute
+	 * @param updatedAttr updated attribute
+	 */
+	private void updateDataType(EntityType entityType, Attribute attr, Attribute updatedAttr)
+	{
+<span class="fc" id="L465">		Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="pc bpc" id="L466" title="1 of 4 branches missed.">		if (idAttr != null &amp;&amp; idAttr.getName().equals(attr.getName()))</span>
+		{
+<span class="fc" id="L468">			throw new MolgenisDataException(</span>
+<span class="fc" id="L469">					format(&quot;Data type of entity [%s] attribute [%s] cannot be modified, because [%s] is an ID attribute.&quot;,</span>
+<span class="fc" id="L470">							entityType.getId(), attr.getName(), attr.getName()));</span>
+		}
+
+		// do nothing on representation changes XREF --&gt; CATEGORICAL
+<span class="fc bfc" id="L474" title="All 4 branches covered.">		if (isSingleReferenceType(attr) &amp;&amp; isSingleReferenceType(updatedAttr))</span>
+		{
+<span class="fc" id="L476">			return;</span>
+		}
+
+		// do nothing on representation changes MREF --&gt; CATEGORICAL_MREF
+<span class="pc bpc" id="L480" title="1 of 4 branches missed.">		if (isMultipleReferenceType(attr) &amp;&amp; isMultipleReferenceType(updatedAttr))</span>
+		{
+<span class="fc" id="L482">			return;</span>
+		}
+
+		// remove foreign key on data type updates such as XREF --&gt; STRING
+<span class="pc bpc" id="L486" title="1 of 4 branches missed.">		if (isSingleReferenceType(attr) &amp;&amp; !isReferenceType(updatedAttr))</span>
+		{
+<span class="fc" id="L488">			dropForeignKey(entityType, attr);</span>
+		}
+
+<span class="fc" id="L491">		updateColumnDataType(entityType, updatedAttr);</span>
+
+		// add foreign key on data type updates such as STRING --&gt; XREF
+<span class="fc bfc" id="L494" title="All 4 branches covered.">		if (!isReferenceType(attr) &amp;&amp; isSingleReferenceType(updatedAttr))</span>
+		{
+<span class="fc" id="L496">			createForeignKey(entityType, updatedAttr);</span>
+		}
+<span class="fc" id="L498">	}</span>
+
+	/**
+	 * Updates unique constraint based on attribute unique changes.
+	 *
+	 * @param entityType  entity meta data
+	 * @param attr        current attribute
+	 * @param updatedAttr updated attribute
+	 */
+	private void updateUnique(EntityType entityType, Attribute attr, Attribute updatedAttr)
+	{
+<span class="pc bpc" id="L509" title="1 of 4 branches missed.">		if (attr.isUnique() &amp;&amp; !updatedAttr.isUnique())</span>
+		{
+<span class="fc" id="L511">			Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="pc bpc" id="L512" title="1 of 4 branches missed.">			if (idAttr != null &amp;&amp; idAttr.getName().equals(attr.getName()))</span>
+			{
+<span class="fc" id="L514">				throw new MolgenisDataException(</span>
+<span class="fc" id="L515">						format(&quot;ID attribute [%s] of entity [%s] must be unique&quot;, attr.getName(), entityType.getId()));</span>
+			}
+
+<span class="fc" id="L518">			dropUniqueKey(entityType, updatedAttr);</span>
+<span class="fc" id="L519">		}</span>
+<span class="pc bpc" id="L520" title="2 of 4 branches missed.">		else if (!attr.isUnique() &amp;&amp; updatedAttr.isUnique())</span>
+		{
+<span class="fc" id="L522">			createUniqueKey(entityType, updatedAttr);</span>
+		}
+<span class="fc" id="L524">	}</span>
+
+	/**
+	 * Updates triggers and functions based on attribute readonly changes.
+	 *
+	 * @param entityType  entity meta data
+	 * @param attr        current attribute
+	 * @param updatedAttr updated attribute
+	 */
+	private void updateReadonly(EntityType entityType, Attribute attr, Attribute updatedAttr)
+	{
+<span class="nc" id="L535">		LinkedHashMap&lt;String, Attribute&gt; readonlyTableAttrs = getTableAttributesReadonly(entityType).collect(</span>
+<span class="nc" id="L536">				toMap(Attribute::getName, Function.identity(), (u, v) -&gt;</span>
+				{
+<span class="nc" id="L538">					throw new IllegalStateException(String.format(&quot;Duplicate key %s&quot;, u));</span>
+				}, LinkedHashMap::new));
+<span class="nc bnc" id="L540" title="All 2 branches missed.">		if (!readonlyTableAttrs.isEmpty())</span>
+		{
+<span class="nc" id="L542">			dropTableTriggers(entityType);</span>
+		}
+
+<span class="nc bnc" id="L545" title="All 4 branches missed.">		if (attr.isReadOnly() &amp;&amp; !updatedAttr.isReadOnly())</span>
+		{
+<span class="nc" id="L547">			readonlyTableAttrs.remove(attr.getName());</span>
+		}
+<span class="nc bnc" id="L549" title="All 4 branches missed.">		else if (!attr.isReadOnly() &amp;&amp; updatedAttr.isReadOnly())</span>
+		{
+<span class="nc" id="L551">			readonlyTableAttrs.put(updatedAttr.getName(), updatedAttr);</span>
+		}
+
+<span class="nc bnc" id="L554" title="All 2 branches missed.">		if (!readonlyTableAttrs.isEmpty())</span>
+		{
+<span class="nc" id="L556">			createTableTriggers(entityType, readonlyTableAttrs.values());</span>
+		}
+<span class="nc" id="L558">	}</span>
+
+	/**
+	 * Return a new PostgreSQL repository
+	 */
+	private PostgreSqlRepository createPostgreSqlRepository(EntityType entityType)
+	{
+<span class="nc" id="L565">		return new PostgreSqlRepository(postgreSqlEntityFactory, jdbcTemplate, dataSource, entityType);</span>
+	}
+
+	private boolean isTableExists(EntityType entityType)
+	{
+<span class="nc" id="L570">		return isTableExists(PostgreSqlNameGenerator.getTableName(entityType, false));</span>
+	}
+
+	private boolean isTableExists(String tableName)
+	{
+<span class="nc" id="L575">		Connection conn = null;</span>
+		try
+		{
+<span class="nc" id="L578">			conn = dataSource.getConnection();</span>
+<span class="nc" id="L579">			DatabaseMetaData dbm = conn.getMetaData();</span>
+			// DatabaseMetaData.getTables() requires table name without double quotes, only search TABLE table type to
+			// avoid matches with system tables
+<span class="nc" id="L582">			ResultSet tables = dbm.getTables(null, null, tableName, new String[] { &quot;TABLE&quot; });</span>
+<span class="nc" id="L583">			return tables.next();</span>
+		}
+<span class="nc" id="L585">		catch (Exception e)</span>
+		{
+<span class="nc" id="L587">			throw new RuntimeException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L591">			closeConnection(conn);</span>
+		}
+	}
+
+	private void updateNillable(EntityType entityType, Attribute attr, Attribute updatedAttr)
+	{
+<span class="pc bpc" id="L597" title="1 of 4 branches missed.">		if (attr.isNillable() &amp;&amp; !updatedAttr.isNillable())</span>
+		{
+<span class="fc" id="L599">			String sqlSetNotNull = getSqlSetNotNull(entityType, updatedAttr);</span>
+<span class="pc bpc" id="L600" title="1 of 2 branches missed.">			if (LOG.isDebugEnabled())</span>
+			{
+<span class="nc" id="L602">				LOG.debug(&quot;Creating not null constraint for entity [{}] attribute [{}]&quot;, entityType.getId(),</span>
+<span class="nc" id="L603">						attr.getName());</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">				if (LOG.isTraceEnabled())</span>
+				{
+<span class="nc" id="L606">					LOG.trace(&quot;SQL: {}&quot;, sqlSetNotNull);</span>
+				}
+			}
+<span class="fc" id="L609">			jdbcTemplate.execute(sqlSetNotNull);</span>
+<span class="fc" id="L610">		}</span>
+<span class="pc bpc" id="L611" title="2 of 4 branches missed.">		else if (!attr.isNillable() &amp;&amp; updatedAttr.isNillable())</span>
+		{
+<span class="fc" id="L613">			Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="pc bpc" id="L614" title="1 of 4 branches missed.">			if (idAttr != null &amp;&amp; idAttr.getName().equals(attr.getName()))</span>
+			{
+<span class="fc" id="L616">				throw new MolgenisDataException(</span>
+<span class="fc" id="L617">						format(&quot;ID attribute [%s] of entity [%s] cannot be nullable&quot;, attr.getName(),</span>
+<span class="fc" id="L618">								entityType.getId()));</span>
+			}
+
+<span class="fc" id="L621">			String sqlDropNotNull = getSqlDropNotNull(entityType, updatedAttr);</span>
+<span class="pc bpc" id="L622" title="1 of 2 branches missed.">			if (LOG.isDebugEnabled())</span>
+			{
+<span class="nc" id="L624">				LOG.debug(&quot;Removing not null constraint for entity [{}] attribute [{}]&quot;, entityType.getId(),</span>
+<span class="nc" id="L625">						attr.getName());</span>
+<span class="nc bnc" id="L626" title="All 2 branches missed.">				if (LOG.isTraceEnabled())</span>
+				{
+<span class="nc" id="L628">					LOG.trace(&quot;SQL: {}&quot;, sqlDropNotNull);</span>
+				}
+			}
+<span class="fc" id="L631">			jdbcTemplate.execute(sqlDropNotNull);</span>
+		}
+<span class="fc" id="L633">	}</span>
+
+	private void createTable(EntityType entityType)
+	{
+		// create table
+<span class="nc" id="L638">		String createTableSql = getSqlCreateTable(entityType);</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L641">			LOG.debug(&quot;Creating table for entity [{}]&quot;, entityType.getId());</span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L644">				LOG.trace(&quot;SQL: {}&quot;, createTableSql);</span>
+			}
+		}
+<span class="nc" id="L647">		jdbcTemplate.execute(createTableSql);</span>
+
+<span class="nc" id="L649">		createTableTriggers(entityType);</span>
+
+		// create junction tables for attributes referencing multiple entities
+<span class="nc" id="L652">		createJunctionTables(entityType);</span>
+<span class="nc" id="L653">	}</span>
+
+	private void createTableTriggers(EntityType entityType)
+	{
+<span class="nc" id="L657">		List&lt;Attribute&gt; readonlyTableAttrs = getTableAttributesReadonly(entityType).collect(toList());</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">		if (!readonlyTableAttrs.isEmpty())</span>
+		{
+<span class="nc" id="L660">			createTableTriggers(entityType, readonlyTableAttrs);</span>
+		}
+<span class="nc" id="L662">	}</span>
+
+	private void createTableTriggers(EntityType entityType, Collection&lt;Attribute&gt; readonlyTableAttrs)
+	{
+<span class="nc" id="L666">		String createFunctionSql = getSqlCreateFunctionValidateUpdate(entityType, readonlyTableAttrs);</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L669">			LOG.debug(&quot;Creating update trigger function for entity [{}]&quot;, entityType.getId());</span>
+<span class="nc bnc" id="L670" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L672">				LOG.trace(&quot;SQL: {}&quot;, createFunctionSql);</span>
+			}
+		}
+<span class="nc" id="L675">		jdbcTemplate.execute(createFunctionSql);</span>
+
+<span class="nc" id="L677">		String createUpdateTriggerSql = getSqlCreateUpdateTrigger(entityType, readonlyTableAttrs);</span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L680">			LOG.debug(&quot;Creating update trigger for entity [{}]&quot;, entityType.getId());</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L683">				LOG.trace(&quot;SQL: {}&quot;, createUpdateTriggerSql);</span>
+			}
+		}
+<span class="nc" id="L686">		jdbcTemplate.execute(createUpdateTriggerSql);</span>
+<span class="nc" id="L687">	}</span>
+
+	private void updateTableTriggers(EntityType entityType, Collection&lt;Attribute&gt; readonlyTableAttrs)
+	{
+<span class="nc" id="L691">		dropTableTriggers(entityType);</span>
+<span class="nc" id="L692">		createTableTriggers(entityType, readonlyTableAttrs);</span>
+<span class="nc" id="L693">	}</span>
+
+	private void dropTableTriggers(EntityType entityType)
+	{
+<span class="nc" id="L697">		String dropUpdateTriggerSql = getSqlDropUpdateTrigger(entityType);</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L700">			LOG.debug(&quot;Deleting update trigger for entity [{}]&quot;, entityType.getId());</span>
+<span class="nc bnc" id="L701" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L703">				LOG.trace(&quot;SQL: {}&quot;, dropUpdateTriggerSql);</span>
+			}
+		}
+<span class="nc" id="L706">		jdbcTemplate.execute(dropUpdateTriggerSql);</span>
+
+<span class="nc" id="L708">		String dropFunctionValidateUpdateSql = getSqlDropFunctionValidateUpdate(entityType);</span>
+<span class="nc bnc" id="L709" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L711">			LOG.debug(&quot;Deleting update trigger function for entity [{}]&quot;, entityType.getId());</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L714">				LOG.trace(&quot;SQL: {}&quot;, dropFunctionValidateUpdateSql);</span>
+			}
+		}
+<span class="nc" id="L717">		jdbcTemplate.execute(dropFunctionValidateUpdateSql);</span>
+<span class="nc" id="L718">	}</span>
+
+	private void createJunctionTables(EntityType entityType)
+	{
+<span class="nc" id="L722">		getJunctionTableAttributes(entityType).forEach(attr -&gt; createJunctionTable(entityType, attr));</span>
+<span class="nc" id="L723">	}</span>
+
+	private void createForeignKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L727">		String createForeignKeySql = getSqlCreateForeignKey(entityType, attr);</span>
+<span class="pc bpc" id="L728" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L730">			LOG.debug(&quot;Creating foreign key for entity [{}] attribute [{}]&quot;, entityType.getId(), attr.getName());</span>
+<span class="nc bnc" id="L731" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L733">				LOG.trace(&quot;SQL: {}&quot;, createForeignKeySql);</span>
+			}
+		}
+<span class="fc" id="L736">		jdbcTemplate.execute(createForeignKeySql);</span>
+<span class="fc" id="L737">	}</span>
+
+	private void dropForeignKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L741">		String dropForeignKeySql = getSqlDropForeignKey(entityType, attr);</span>
+<span class="pc bpc" id="L742" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L744">			LOG.debug(&quot;Dropping foreign key for entity [{}] attribute [{}]&quot;, entityType.getId(), attr.getName());</span>
+<span class="nc bnc" id="L745" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L747">				LOG.trace(&quot;SQL: {}&quot;, dropForeignKeySql);</span>
+			}
+		}
+<span class="fc" id="L750">		jdbcTemplate.execute(dropForeignKeySql);</span>
+<span class="fc" id="L751">	}</span>
+
+	private void createUniqueKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L755">		String createUniqueKeySql = getSqlCreateUniqueKey(entityType, attr);</span>
+<span class="pc bpc" id="L756" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L758">			LOG.debug(&quot;Creating unique key for entity [{}] attribute [{}]&quot;, entityType.getId(), attr.getName());</span>
+<span class="nc bnc" id="L759" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L761">				LOG.trace(&quot;SQL: {}&quot;, createUniqueKeySql);</span>
+			}
+		}
+<span class="fc" id="L764">		jdbcTemplate.execute(createUniqueKeySql);</span>
+<span class="fc" id="L765">	}</span>
+
+	private void dropUniqueKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L769">		String dropUniqueKeySql = getSqlDropUniqueKey(entityType, attr);</span>
+<span class="pc bpc" id="L770" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L772">			LOG.debug(&quot;Dropping unique key for entity [{}] attribute [{}]&quot;, entityType.getId(), attr.getName());</span>
+<span class="nc bnc" id="L773" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L775">				LOG.trace(&quot;SQL: {}&quot;, dropUniqueKeySql);</span>
+			}
+		}
+<span class="fc" id="L778">		jdbcTemplate.execute(dropUniqueKeySql);</span>
+<span class="fc" id="L779">	}</span>
+
+	private void createCheckConstraint(EntityType entityType, Attribute attr)
+	{
+<span class="nc" id="L783">		String sqlCreateCheckConstraint = getSqlCreateCheckConstraint(entityType, attr);</span>
+<span class="nc bnc" id="L784" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L786">			LOG.debug(&quot;Creating check constraint for entity [{}] attribute [{}]&quot;, entityType.getId(), attr.getName());</span>
+<span class="nc bnc" id="L787" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L789">				LOG.trace(&quot;SQL: {}&quot;, sqlCreateCheckConstraint);</span>
+			}
+		}
+<span class="nc" id="L792">		jdbcTemplate.execute(sqlCreateCheckConstraint);</span>
+<span class="nc" id="L793">	}</span>
+
+	private void dropCheckConstraint(EntityType entityType, Attribute attr)
+	{
+<span class="nc" id="L797">		String sqlDropCheckConstraint = getSqlDropCheckConstraint(entityType, attr);</span>
+<span class="nc bnc" id="L798" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L800">			LOG.debug(&quot;Dropping check constraint for entity [{}] attribute [{}]&quot;, entityType.getId(), attr.getName());</span>
+<span class="nc bnc" id="L801" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L803">				LOG.trace(&quot;SQL: {}&quot;, sqlDropCheckConstraint);</span>
+			}
+		}
+<span class="nc" id="L806">		jdbcTemplate.execute(sqlDropCheckConstraint);</span>
+<span class="nc" id="L807">	}</span>
+
+	private void createColumn(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L811">		String addColumnSql = getSqlAddColumn(entityType, attr, ColumnMode.INCLUDE_DEFAULT_CONSTRAINT);</span>
+<span class="pc bpc" id="L812" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L814">			LOG.debug(&quot;Creating column for entity [{}] attribute [{}]&quot;, entityType.getId(), attr.getName());</span>
+<span class="nc bnc" id="L815" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L817">				LOG.trace(&quot;SQL: {}&quot;, addColumnSql);</span>
+			}
+		}
+<span class="fc" id="L820">		jdbcTemplate.execute(addColumnSql);</span>
+
+<span class="fc bfc" id="L822" title="All 2 branches covered.">		if (generateSqlColumnDefaultConstraint(attr))</span>
+		{
+<span class="fc" id="L824">			dropColumnDefaultValue(entityType, attr);</span>
+		}
+
+<span class="pc bpc" id="L827" title="1 of 2 branches missed.">		if (attr.isReadOnly())</span>
+		{
+			Stream&lt;Attribute&gt; updatedTableAttrsReadonly;
+<span class="nc" id="L830">			Stream&lt;Attribute&gt; tableAttrsReadonly = getTableAttributesReadonly(entityType);</span>
+<span class="nc bnc" id="L831" title="All 2 branches missed.">			if (isTableAttribute(attr))</span>
+			{
+<span class="nc" id="L833">				updatedTableAttrsReadonly = Stream.concat(tableAttrsReadonly, Stream.of(attr));</span>
+			}
+			else
+			{
+<span class="nc" id="L837">				updatedTableAttrsReadonly = tableAttrsReadonly;</span>
+			}
+<span class="nc" id="L839">			updateTableTriggers(entityType, updatedTableAttrsReadonly.collect(toList()));</span>
+		}
+<span class="fc" id="L841">	}</span>
+
+	private void dropColumn(EntityType entityType, Attribute attr)
+	{
+<span class="pc bpc" id="L845" title="1 of 2 branches missed.">		if (attr.isReadOnly())</span>
+		{
+<span class="nc" id="L847">			LinkedHashMap&lt;String, Attribute&gt; updatedReadonlyTableAttrs = getTableAttributesReadonly(entityType).collect(</span>
+<span class="nc" id="L848">					toMap(Attribute::getName, Function.identity(), (u, v) -&gt;</span>
+					{
+<span class="nc" id="L850">						throw new IllegalStateException(String.format(&quot;Duplicate key %s&quot;, u));</span>
+					}, LinkedHashMap::new));
+<span class="nc" id="L852">			updatedReadonlyTableAttrs.remove(attr.getName());</span>
+
+<span class="nc" id="L854">			updateTableTriggers(entityType, updatedReadonlyTableAttrs.values());</span>
+		}
+
+<span class="fc" id="L857">		String dropColumnSql = getSqlDropColumn(entityType, attr);</span>
+<span class="pc bpc" id="L858" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L860">			LOG.debug(&quot;Dropping column for entity [{}] attribute [{}]&quot;, entityType.getId(), attr.getName());</span>
+<span class="nc bnc" id="L861" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L863">				LOG.trace(&quot;SQL: {}&quot;, dropColumnSql);</span>
+			}
+		}
+<span class="fc" id="L866">		jdbcTemplate.execute(dropColumnSql);</span>
+<span class="fc" id="L867">	}</span>
+
+	private void updateColumnDataType(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L871">		String sqlSetDataType = getSqlSetDataType(entityType, attr);</span>
+<span class="pc bpc" id="L872" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L874">			LOG.debug(&quot;Changing data type of entity [{}] attribute [{}] to [{}]&quot;, entityType.getId(), attr.getName(),</span>
+<span class="nc" id="L875">					attr.getDataType().toString());</span>
+<span class="nc bnc" id="L876" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L878">				LOG.trace(&quot;SQL: {}&quot;, sqlSetDataType);</span>
+			}
+		}
+<span class="fc" id="L881">		jdbcTemplate.execute(sqlSetDataType);</span>
+<span class="fc" id="L882">	}</span>
+
+	private void createJunctionTable(EntityType entityType, Attribute attr)
+	{
+<span class="nc" id="L886">		String createJunctionTableSql = getSqlCreateJunctionTable(entityType, attr);</span>
+<span class="nc bnc" id="L887" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L889">			LOG.debug(&quot;Creating junction table for entity [{}] attribute [{}]&quot;, entityType.getId(), attr.getName());</span>
+<span class="nc bnc" id="L890" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L892">				LOG.trace(&quot;SQL: {}&quot;, createJunctionTableSql);</span>
+			}
+		}
+<span class="nc" id="L895">		jdbcTemplate.execute(createJunctionTableSql);</span>
+
+<span class="nc" id="L897">		String createJunctionTableIndexSql = getSqlCreateJunctionTableIndex(entityType, attr);</span>
+<span class="nc bnc" id="L898" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L900">			LOG.debug(&quot;Creating junction table index for entity [{}] attribute [{}]&quot;, entityType.getId(),</span>
+<span class="nc" id="L901">					attr.getName());</span>
+<span class="nc bnc" id="L902" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L904">				LOG.trace(&quot;SQL: {}&quot;, createJunctionTableIndexSql);</span>
+			}
+		}
+<span class="nc" id="L907">		jdbcTemplate.execute(createJunctionTableIndexSql);</span>
+<span class="nc" id="L908">	}</span>
+
+	private void dropJunctionTable(EntityType entityType, Attribute mrefAttr)
+	{
+<span class="fc" id="L912">		String sqlDropJunctionTable = getSqlDropJunctionTable(entityType, mrefAttr);</span>
+<span class="pc bpc" id="L913" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L915">			LOG.debug(&quot;Dropping junction table for entity [{}] attribute [{}]&quot;, entityType.getId(), mrefAttr.getName());</span>
+<span class="nc bnc" id="L916" title="All 2 branches missed.">			if (LOG.isTraceEnabled())</span>
+			{
+<span class="nc" id="L918">				LOG.trace(&quot;SQL: {}&quot;, sqlDropJunctionTable);</span>
+			}
+		}
+<span class="fc" id="L921">		jdbcTemplate.execute(sqlDropJunctionTable);</span>
+<span class="fc" id="L922">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

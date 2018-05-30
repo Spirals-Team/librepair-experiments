@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JobScheduler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jobs</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.jobs.schedule</a> &gt; <span class="el_source">JobScheduler.java</span></div><h1>JobScheduler.java</h1><pre class="source lang-java linenums">package org.molgenis.jobs.schedule;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.UnknownEntityException;
+import org.molgenis.data.validation.ConstraintViolation;
+import org.molgenis.data.validation.MolgenisValidationException;
+import org.molgenis.jobs.model.ScheduledJob;
+import org.molgenis.jobs.model.ScheduledJobMetadata;
+import org.quartz.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import static java.text.MessageFormat.format;
+import static java.util.Collections.singleton;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.jobs.model.ScheduledJobMetadata.SCHEDULED_JOB;
+import static org.quartz.CronScheduleBuilder.cronSchedule;
+import static org.quartz.JobBuilder.newJob;
+import static org.quartz.TriggerBuilder.newTrigger;
+
+/**
+ * Schedules and unschedules {@link ScheduledJob}s with Quartz.
+ */
+@Service
+public class JobScheduler
+{
+	/**
+	 * the key under which the JobScheduler puts the ScheduledJob ID in the JobDataMap
+	 */
+	static final String SCHEDULED_JOB_ID = &quot;scheduledJobID&quot;;
+	static final String SCHEDULED_JOB_GROUP = Scheduler.DEFAULT_GROUP; // Group under which the jobs are scheduled in Quartz.
+<span class="fc" id="L34">	private static final Logger LOG = LoggerFactory.getLogger(JobScheduler.class);</span>
+
+	private final Scheduler quartzScheduler;
+	private final DataService dataService;
+
+	JobScheduler(Scheduler quartzScheduler, DataService dataService)
+<span class="fc" id="L40">	{</span>
+<span class="fc" id="L41">		this.quartzScheduler = requireNonNull(quartzScheduler);</span>
+<span class="fc" id="L42">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L43">	}</span>
+
+	/**
+	 * Executes a {@link ScheduledJob} immediately.
+	 *
+	 * @param scheduledJobId ID of the {@link ScheduledJob} to run
+	 */
+	public synchronized void runNow(String scheduledJobId)
+	{
+<span class="fc" id="L52">		ScheduledJob scheduledJob = getJob(scheduledJobId);</span>
+
+		try
+		{
+<span class="fc" id="L56">			JobKey jobKey = new JobKey(scheduledJobId, SCHEDULED_JOB_GROUP);</span>
+<span class="fc bfc" id="L57" title="All 2 branches covered.">			if (quartzScheduler.checkExists(jobKey))</span>
+			{
+				// Run job now
+<span class="fc" id="L60">				quartzScheduler.triggerJob(jobKey);</span>
+			}
+			else
+			{
+				// Schedule with 'now' trigger
+<span class="fc" id="L65">				Trigger trigger = newTrigger().withIdentity(scheduledJobId, SCHEDULED_JOB_GROUP).startNow().build();</span>
+<span class="fc" id="L66">				schedule(scheduledJob, trigger);</span>
+			}
+		}
+<span class="nc" id="L69">		catch (SchedulerException e)</span>
+		{
+<span class="nc" id="L71">			LOG.error(&quot;Error runNow ScheduledJob&quot;, e);</span>
+<span class="nc" id="L72">			throw new MolgenisDataException(&quot;Error job runNow&quot;, e);</span>
+<span class="fc" id="L73">		}</span>
+<span class="fc" id="L74">	}</span>
+
+	private ScheduledJob getJob(String scheduledJobId)
+	{
+<span class="fc" id="L78">		ScheduledJob scheduledJob = dataService.findOneById(SCHEDULED_JOB, scheduledJobId, ScheduledJob.class);</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">		if (scheduledJob == null)</span>
+		{
+<span class="fc" id="L81">			throw new UnknownEntityException(SCHEDULED_JOB, scheduledJobId);</span>
+		}
+<span class="fc" id="L83">		return scheduledJob;</span>
+	}
+
+	/**
+	 * Schedule a {@link ScheduledJob} with a cron expression defined in the entity.
+	 * &lt;p&gt;
+	 * Reschedules job if the job already exists.
+	 * &lt;p&gt;
+	 * If active is false, it unschedules the job
+	 *
+	 * @param scheduledJob the {@link ScheduledJob} to schedule
+	 */
+	public synchronized void schedule(ScheduledJob scheduledJob)
+	{
+<span class="fc" id="L97">		String id = scheduledJob.getId();</span>
+<span class="fc" id="L98">		String cronExpression = scheduledJob.getCronExpression();</span>
+<span class="fc" id="L99">		String name = scheduledJob.getName();</span>
+
+		// Validate cron expression
+<span class="fc bfc" id="L102" title="All 2 branches covered.">		if (!CronExpression.isValidExpression(cronExpression))</span>
+		{
+<span class="fc" id="L104">			throw new MolgenisValidationException(</span>
+<span class="fc" id="L105">					singleton(new ConstraintViolation(&quot;Invalid cronexpression '&quot; + cronExpression + &quot;'&quot;, null)));</span>
+		}
+
+		try
+		{
+			// If already scheduled, remove it from the quartzScheduler
+<span class="fc bfc" id="L111" title="All 2 branches covered.">			if (quartzScheduler.checkExists(new JobKey(id, SCHEDULED_JOB_GROUP)))</span>
+			{
+<span class="fc" id="L113">				unschedule(id);</span>
+			}
+
+			// If not active, do not schedule it
+<span class="fc bfc" id="L117" title="All 2 branches covered.">			if (!scheduledJob.getBoolean(ScheduledJobMetadata.ACTIVE))</span>
+			{
+<span class="fc" id="L119">				return;</span>
+			}
+
+			// Schedule with 'cron' trigger
+<span class="fc" id="L123">			Trigger trigger = newTrigger().withIdentity(id, SCHEDULED_JOB_GROUP)</span>
+<span class="fc" id="L124">										  .withSchedule(cronSchedule(cronExpression))</span>
+<span class="fc" id="L125">										  .build();</span>
+<span class="fc" id="L126">			schedule(scheduledJob, trigger);</span>
+
+<span class="fc" id="L128">			LOG.info(&quot;Scheduled Job '{}' with trigger '{}'&quot;, name, trigger);</span>
+		}
+<span class="nc" id="L130">		catch (SchedulerException e)</span>
+		{
+<span class="nc" id="L132">			LOG.error(&quot;Error schedule job&quot;, e);</span>
+<span class="nc" id="L133">			throw new ScheduledJobException(&quot;Error schedule job&quot;, e);</span>
+<span class="fc" id="L134">		}</span>
+<span class="fc" id="L135">	}</span>
+
+	/**
+	 * Remove a job from the quartzScheduler
+	 *
+	 * @param scheduledJobId ID of the ScheduledJob to unschedule
+	 */
+	synchronized void unschedule(String scheduledJobId)
+	{
+		try
+		{
+<span class="fc" id="L146">			quartzScheduler.deleteJob(new JobKey(scheduledJobId, SCHEDULED_JOB_GROUP));</span>
+		}
+<span class="nc" id="L148">		catch (SchedulerException e)</span>
+		{
+<span class="nc" id="L150">			String message = format(&quot;Error deleting ScheduledJob ''{0}''&quot;, scheduledJobId);</span>
+<span class="nc" id="L151">			LOG.error(message, e);</span>
+<span class="nc" id="L152">			throw new ScheduledJobException(message, e);</span>
+<span class="fc" id="L153">		}</span>
+<span class="fc" id="L154">	}</span>
+
+	private void schedule(ScheduledJob scheduledJob, Trigger trigger) throws SchedulerException
+	{
+<span class="fc" id="L158">		JobDataMap jobDataMap = new JobDataMap();</span>
+<span class="fc" id="L159">		jobDataMap.put(SCHEDULED_JOB_ID, scheduledJob.getIdValue());</span>
+<span class="fc" id="L160">		JobDetail job = newJob(MolgenisQuartzJob.class).withIdentity(scheduledJob.getId(), SCHEDULED_JOB_GROUP)</span>
+<span class="fc" id="L161">													   .usingJobData(jobDataMap)</span>
+<span class="fc" id="L162">													   .build();</span>
+<span class="fc" id="L163">		quartzScheduler.scheduleJob(job, trigger);</span>
+<span class="fc" id="L164">	}</span>
+
+	public void scheduleJobs()
+	{
+<span class="nc" id="L168">		dataService.findAll(SCHEDULED_JOB, ScheduledJob.class).forEach(this::schedule);</span>
+<span class="nc" id="L169">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

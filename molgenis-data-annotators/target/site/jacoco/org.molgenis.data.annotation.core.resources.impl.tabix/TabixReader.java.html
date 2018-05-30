@@ -1,0 +1,466 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TabixReader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.resources.impl.tabix</a> &gt; <span class="el_source">TabixReader.java</span></div><h1>TabixReader.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.resources.impl.tabix;
+
+/* The MIT License
+
+ Copyright (c) 2010 Broad Institute.
+
+ Permission is hereby granted, free of charge, to any person obtaining
+ a copy of this software and associated documentation files (the
+ &quot;Software&quot;), to deal in the Software without restriction, including
+ without limitation the rights to use, copy, modify, merge, publish,
+ distribute, sublicense, and/or sell copies of the Software, and to
+ permit persons to whom the Software is furnished to do so, subject to
+ the following conditions:
+
+ The above copyright notice and this permission notice shall be
+ included in all copies or substantial portions of the Software.
+
+ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
+ EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+ */
+
+/* Contact: Heng Li &lt;hengli@broadinstitute.org&gt; */
+
+import net.sf.samtools.util.BlockCompressedInputStream;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Arrays;
+import java.util.HashMap;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+
+public class TabixReader
+{
+	private String filename;
+	private BlockCompressedInputStream blockCompressedInputStream;
+
+	private int mPreset;
+	private int mSc;
+	private int mBc;
+	private int mEc;
+	private int mMeta;
+	private String[] mSeq;
+	private TIndex[] mIndex;
+
+	private HashMap&lt;String, Integer&gt; mChr2tid;
+
+<span class="fc" id="L57">	private static int MAX_BIN = 37450;</span>
+	@SuppressWarnings(&quot;unused&quot;)
+<span class="fc" id="L59">	private static int TAD_MIN_CHUNK_GAP = 32768;</span>
+<span class="fc" id="L60">	private static int TAD_LIDX_SHIFT = 14;</span>
+
+	private static boolean less64(final long u, final long v)
+	{ // unsigned 64-bit comparison
+<span class="pc bpc" id="L64" title="2 of 6 branches missed.">		return (u &lt; v) ^ (u &lt; 0) ^ (v &lt; 0);</span>
+	}
+
+	/**
+	 * The constructor
+	 *
+	 * @param filename File name of the data file
+	 */
+	public TabixReader(String filename) throws IOException
+<span class="fc" id="L73">	{</span>
+<span class="fc" id="L74">		this.filename = filename;</span>
+<span class="fc" id="L75">		this.blockCompressedInputStream = new BlockCompressedInputStream(new File(filename));</span>
+<span class="fc" id="L76">		readIndex(filename);</span>
+<span class="fc" id="L77">	}</span>
+
+	private class TPair64 implements Comparable&lt;TPair64&gt;
+	{
+		long u, v;
+
+		public TPair64(final long _u, final long _v)
+<span class="fc" id="L84">		{</span>
+<span class="fc" id="L85">			u = _u;</span>
+<span class="fc" id="L86">			v = _v;</span>
+<span class="fc" id="L87">		}</span>
+
+		public TPair64(final TPair64 p)
+<span class="fc" id="L90">		{</span>
+<span class="fc" id="L91">			u = p.u;</span>
+<span class="fc" id="L92">			v = p.v;</span>
+<span class="fc" id="L93">		}</span>
+
+		@Override
+		public int compareTo(final TPair64 p)
+		{
+<span class="nc bnc" id="L98" title="All 10 branches missed.">			return u == p.u ? 0 : ((u &lt; p.u) ^ (u &lt; 0) ^ (p.u &lt; 0)) ? -1 : 1; // unsigned 64-bit comparison</span>
+		}
+	}
+
+<span class="fc" id="L102">	private class TIndex</span>
+	{
+		HashMap&lt;Integer, TPair64[]&gt; b; // binning index
+		long[] l; // linear index
+	}
+
+<span class="fc" id="L108">	private class TIntv</span>
+	{
+		int internalChromosomeID, beginPosition, end;
+	}
+
+	private static int reg2bins(final int beginposition, final int endPosition, final int[] list)
+	{
+<span class="fc" id="L115">		int i = 0, k, end = endPosition;</span>
+<span class="pc bpc" id="L116" title="1 of 2 branches missed.">		if (beginposition &gt;= end) return 0;</span>
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">		if (end &gt;= 1 &lt;&lt; 29) end = 1 &lt;&lt; 29;</span>
+<span class="fc" id="L118">		--end;</span>
+<span class="fc" id="L119">		list[i++] = 0;</span>
+<span class="fc bfc" id="L120" title="All 2 branches covered.">		for (k = 1 + (beginposition &gt;&gt; 26); k &lt;= 1 + (end &gt;&gt; 26); ++k)</span>
+<span class="fc" id="L121">			list[i++] = k;</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">		for (k = 9 + (beginposition &gt;&gt; 23); k &lt;= 9 + (end &gt;&gt; 23); ++k)</span>
+<span class="fc" id="L123">			list[i++] = k;</span>
+<span class="fc bfc" id="L124" title="All 2 branches covered.">		for (k = 73 + (beginposition &gt;&gt; 20); k &lt;= 73 + (end &gt;&gt; 20); ++k)</span>
+<span class="fc" id="L125">			list[i++] = k;</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">		for (k = 585 + (beginposition &gt;&gt; 17); k &lt;= 585 + (end &gt;&gt; 17); ++k)</span>
+<span class="fc" id="L127">			list[i++] = k;</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">		for (k = 4681 + (beginposition &gt;&gt; 14); k &lt;= 4681 + (end &gt;&gt; 14); ++k)</span>
+<span class="fc" id="L129">			list[i++] = k;</span>
+<span class="fc" id="L130">		return i;</span>
+	}
+
+	public static int readInt(final InputStream is) throws IOException
+	{
+<span class="fc" id="L135">		byte[] buf = new byte[4];</span>
+<span class="fc" id="L136">		is.read(buf);</span>
+<span class="fc" id="L137">		return ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN).getInt();</span>
+	}
+
+	public static long readLong(final InputStream is) throws IOException
+	{
+<span class="fc" id="L142">		byte[] buf = new byte[8];</span>
+<span class="fc" id="L143">		is.read(buf);</span>
+<span class="fc" id="L144">		return ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN).getLong();</span>
+	}
+
+	public static String readLine(final InputStream is) throws IOException
+	{
+<span class="fc" id="L149">		StringBuilder buf = new StringBuilder();</span>
+		int c;
+<span class="fc bfc" id="L151" title="All 4 branches covered.">		while ((c = is.read()) &gt;= 0 &amp;&amp; c != '\n') buf.append((char) c);</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">		if (c &lt; 0) return null;</span>
+<span class="fc" id="L153">		return buf.toString();</span>
+	}
+
+	/**
+	 * Read the Tabix index from a file
+	 *
+	 * @param file File pointer
+	 */
+	public void readIndex(final File file) throws IOException
+	{
+<span class="pc bpc" id="L163" title="1 of 2 branches missed.">		if (file == null) return;</span>
+<span class="fc" id="L164">		BlockCompressedInputStream is = new BlockCompressedInputStream(file);</span>
+<span class="fc" id="L165">		byte[] buf = new byte[4];</span>
+
+<span class="fc" id="L167">		is.read(buf, 0, 4); // read &quot;TBI\1&quot;</span>
+<span class="fc" id="L168">		mSeq = new String[readInt(is)]; // # sequences</span>
+<span class="fc" id="L169">		mChr2tid = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L170">		mPreset = readInt(is);</span>
+<span class="fc" id="L171">		mSc = readInt(is);</span>
+<span class="fc" id="L172">		mBc = readInt(is);</span>
+<span class="fc" id="L173">		mEc = readInt(is);</span>
+<span class="fc" id="L174">		mMeta = readInt(is);</span>
+<span class="fc" id="L175">		int mSkip = readInt(is);</span>
+		// read sequence dictionary
+<span class="fc" id="L177">		int i, j, k, l = readInt(is);</span>
+<span class="fc" id="L178">		buf = new byte[l];</span>
+<span class="fc" id="L179">		is.read(buf);</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">		for (i = j = k = 0; i &lt; buf.length; ++i)</span>
+		{
+<span class="fc bfc" id="L182" title="All 2 branches covered.">			if (buf[i] == 0)</span>
+			{
+<span class="fc" id="L184">				byte[] b = new byte[i - j];</span>
+<span class="fc" id="L185">				System.arraycopy(buf, j, b, 0, b.length);</span>
+<span class="fc" id="L186">				String s = new String(b, UTF_8);</span>
+<span class="fc" id="L187">				mChr2tid.put(s, k);</span>
+<span class="fc" id="L188">				mSeq[k++] = s;</span>
+<span class="fc" id="L189">				j = i + 1;</span>
+			}
+		}
+		// read the index
+<span class="fc" id="L193">		mIndex = new TIndex[mSeq.length];</span>
+<span class="fc bfc" id="L194" title="All 2 branches covered.">		for (i = 0; i &lt; mSeq.length; ++i)</span>
+		{
+			// the binning index
+<span class="fc" id="L197">			int n_bin = readInt(is);</span>
+<span class="fc" id="L198">			mIndex[i] = new TIndex();</span>
+<span class="fc" id="L199">			mIndex[i].b = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L200" title="All 2 branches covered.">			for (j = 0; j &lt; n_bin; ++j)</span>
+			{
+<span class="fc" id="L202">				int bin = readInt(is);</span>
+<span class="fc" id="L203">				TPair64[] chunks = new TPair64[readInt(is)];</span>
+<span class="fc bfc" id="L204" title="All 2 branches covered.">				for (k = 0; k &lt; chunks.length; ++k)</span>
+				{
+<span class="fc" id="L206">					long u = readLong(is);</span>
+<span class="fc" id="L207">					long v = readLong(is);</span>
+<span class="fc" id="L208">					chunks[k] = new TPair64(u, v); // in C, this is inefficient</span>
+				}
+<span class="fc" id="L210">				mIndex[i].b.put(bin, chunks);</span>
+			}
+			// the linear index
+<span class="fc" id="L213">			mIndex[i].l = new long[readInt(is)];</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">			for (k = 0; k &lt; mIndex[i].l.length; ++k)</span>
+<span class="fc" id="L215">				mIndex[i].l[k] = readLong(is);</span>
+		}
+		// close
+<span class="fc" id="L218">		is.close();</span>
+<span class="fc" id="L219">	}</span>
+
+	/**
+	 * Read the Tabix index from the default file.
+	 */
+	public void readIndex(String fileName) throws IOException
+	{
+<span class="fc" id="L226">		readIndex(new File(filename + &quot;.tbi&quot;));</span>
+<span class="fc" id="L227">	}</span>
+
+	/**
+	 * Read one line from the data file.
+	 */
+	public String readLine() throws IOException
+	{
+<span class="fc" id="L234">		return readLine(blockCompressedInputStream);</span>
+	}
+
+	private int chr2tid(final String chr)
+	{
+<span class="fc" id="L239">		return mChr2tid.getOrDefault(chr, -1);</span>
+	}
+
+	/**
+	 * Parse a region in the format of &quot;chr1&quot;, &quot;chr1:100&quot; or &quot;chr1:100-1000&quot;
+	 *
+	 * @param queryString Region string
+	 * @return An array where the three elements are sequence_id, region_begin and region_end. On failure,
+	 * sequence_id==-1.
+	 */
+	private int[] parseReg(final String queryString)
+	{ // FIXME: NOT working when the sequence name contains : or -.
+		String chr;
+		int colon, hyphen;
+<span class="fc" id="L253">		int[] ret = new int[3];</span>
+<span class="fc" id="L254">		colon = queryString.indexOf(':');</span>
+<span class="fc" id="L255">		hyphen = queryString.indexOf('-');</span>
+<span class="pc bpc" id="L256" title="1 of 2 branches missed.">		chr = colon &gt;= 0 ? queryString.substring(0, colon) : queryString;</span>
+<span class="pc bpc" id="L257" title="2 of 4 branches missed.">		ret[1] = colon &gt;= 0 ?</span>
+<span class="pc" id="L258">				Integer.parseInt(queryString.substring(colon + 1, hyphen &gt;= 0 ? hyphen : queryString.length())) - 1 : 0;</span>
+<span class="pc bpc" id="L259" title="1 of 2 branches missed.">		ret[2] = hyphen &gt;= 0 ? Integer.parseInt(queryString.substring(hyphen + 1)) : 0x7fffffff;</span>
+<span class="fc" id="L260">		ret[0] = chr2tid(chr);</span>
+<span class="fc" id="L261">		return ret;</span>
+	}
+
+	private TIntv getIntv(final String s)
+	{
+<span class="fc" id="L266">		TIntv intv = new TIntv();</span>
+<span class="fc" id="L267">		int col = 0, end = 0, beg = 0;</span>
+<span class="pc bpc" id="L268" title="1 of 4 branches missed.">		while ((end = s.indexOf('\t', beg)) &gt;= 0 || end == -1)</span>
+		{
+<span class="fc" id="L270">			++col;</span>
+<span class="fc bfc" id="L271" title="All 2 branches covered.">			if (col == mSc)</span>
+			{
+<span class="fc" id="L273">				intv.internalChromosomeID = chr2tid(s.substring(beg, end));</span>
+			}
+<span class="fc bfc" id="L275" title="All 2 branches covered.">			else if (col == mBc)</span>
+			{
+<span class="pc bpc" id="L277" title="1 of 2 branches missed.">				intv.beginPosition = intv.end = Integer.parseInt(s.substring(beg, end == -1 ? s.length() : end));</span>
+<span class="pc bpc" id="L278" title="1 of 2 branches missed.">				if ((mPreset &amp; 0x10000) != 0) ++intv.end;</span>
+<span class="fc" id="L279">				else --intv.beginPosition;</span>
+<span class="pc bpc" id="L280" title="1 of 2 branches missed.">				if (intv.beginPosition &lt; 0) intv.beginPosition = 0;</span>
+<span class="pc bpc" id="L281" title="1 of 2 branches missed.">				if (intv.end &lt; 1) intv.end = 1;</span>
+			}
+			else
+			{ // FIXME: SAM supports are not tested yet
+<span class="fc bfc" id="L285" title="All 2 branches covered.">				if ((mPreset &amp; 0xffff) == 0)</span>
+				{ // generic
+<span class="pc bpc" id="L287" title="1 of 2 branches missed.">					if (col == mEc) intv.end = Integer.parseInt(s.substring(beg, end));</span>
+				}
+<span class="pc bpc" id="L289" title="1 of 2 branches missed.">				else if ((mPreset &amp; 0xffff) == 1)</span>
+				{ // SAM
+<span class="nc bnc" id="L291" title="All 2 branches missed.">					if (col == 6)</span>
+					{ // CIGAR
+<span class="nc" id="L293">						int l = 0, i, j;</span>
+<span class="nc" id="L294">						String cigar = s.substring(beg, end);</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">						for (i = j = 0; i &lt; cigar.length(); ++i)</span>
+						{
+<span class="nc bnc" id="L297" title="All 2 branches missed.">							if (cigar.charAt(i) &gt; '9')</span>
+							{
+<span class="nc" id="L299">								int op = cigar.charAt(i);</span>
+<span class="nc bnc" id="L300" title="All 6 branches missed.">								if (op == 'M' || op == 'D' || op == 'N') l += Integer.parseInt(cigar.substring(j, i));</span>
+							}
+						}
+<span class="nc" id="L303">						intv.end = intv.beginPosition + l;</span>
+<span class="nc" id="L304">					}</span>
+				}
+<span class="pc bpc" id="L306" title="1 of 2 branches missed.">				else if ((mPreset &amp; 0xffff) == 2)</span>
+				{ // VCF
+					String alt;
+<span class="fc bfc" id="L309" title="All 2 branches covered.">					alt = end &gt;= 0 ? s.substring(beg, end) : s.substring(beg);</span>
+<span class="fc bfc" id="L310" title="All 2 branches covered.">					if (col == 4)</span>
+					{ // REF
+<span class="pc bpc" id="L312" title="1 of 2 branches missed.">						if (alt.length() &gt; 0) intv.end = intv.beginPosition + alt.length();</span>
+					}
+<span class="fc bfc" id="L314" title="All 2 branches covered.">					else if (col == 8)</span>
+					{ // INFO
+<span class="fc" id="L316">						int e_off = -1, i = alt.indexOf(&quot;END=&quot;);</span>
+<span class="pc bpc" id="L317" title="1 of 2 branches missed.">						if (i == 0) e_off = 4;</span>
+<span class="pc bpc" id="L318" title="1 of 2 branches missed.">						else if (i &gt; 0)</span>
+						{
+<span class="nc" id="L320">							i = alt.indexOf(&quot;;END=&quot;);</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">							if (i &gt;= 0) e_off = i + 5;</span>
+						}
+<span class="pc bpc" id="L323" title="1 of 2 branches missed.">						if (e_off &gt; 0)</span>
+						{
+<span class="nc" id="L325">							i = alt.indexOf(&quot;;&quot;, e_off);</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">							intv.end = Integer.parseInt(i &gt; e_off ? alt.substring(e_off, i) : alt.substring(e_off));</span>
+						}
+					}
+				}
+			}
+<span class="fc bfc" id="L331" title="All 2 branches covered.">			if (end == -1) break;</span>
+<span class="fc" id="L332">			beg = end + 1;</span>
+		}
+<span class="fc" id="L334">		return intv;</span>
+	}
+
+<span class="pc bpc" id="L337" title="1 of 2 branches missed.">	public class Iterator</span>
+	{
+		private int i;
+		private final int internalChromosomeID, beginPosition, endPosition;
+		private final TPair64[] off;
+		private long curr_off;
+		private boolean isEndOfFile;
+
+		public Iterator(final int _tid, final int _beg, final int _end, final TPair64[] _off)
+<span class="fc" id="L346">		{</span>
+<span class="fc" id="L347">			i = -1;</span>
+<span class="fc" id="L348">			curr_off = 0;</span>
+<span class="fc" id="L349">			isEndOfFile = false;</span>
+<span class="fc" id="L350">			off = _off;</span>
+<span class="fc" id="L351">			internalChromosomeID = _tid;</span>
+<span class="fc" id="L352">			beginPosition = _beg;</span>
+<span class="fc" id="L353">			endPosition = _end;</span>
+<span class="fc" id="L354">		}</span>
+
+		public String next() throws IOException
+		{
+<span class="pc bpc" id="L358" title="1 of 2 branches missed.">			if (isEndOfFile) return null;</span>
+			for (; ; )
+			{
+<span class="fc" id="L361">				synchronized (blockCompressedInputStream)</span>
+				{
+<span class="fc bfc" id="L363" title="All 4 branches covered.">					if (curr_off == 0 || !less64(curr_off, off[i].v))</span>
+					{ // then jump to the next chunk
+<span class="fc bfc" id="L365" title="All 2 branches covered.">						if (i == off.length - 1) break; // no more chunks</span>
+<span class="pc bpc" id="L366" title="5 of 6 branches missed.">						if (i &gt;= 0) assert (curr_off == off[i].v); // otherwise bug</span>
+<span class="pc bpc" id="L367" title="3 of 4 branches missed.">						if (i &lt; 0 || off[i].v != off[i + 1].u)</span>
+						{ // not adjacent chunks; then seek
+<span class="fc" id="L369">							blockCompressedInputStream.seek(off[i + 1].u);</span>
+<span class="fc" id="L370">							curr_off = blockCompressedInputStream.getFilePointer();</span>
+						}
+<span class="fc" id="L372">						++i;</span>
+					}
+					else
+					{
+<span class="fc" id="L376">						blockCompressedInputStream.seek(curr_off);</span>
+					}
+					String s;
+<span class="fc bfc" id="L379" title="All 2 branches covered.">					if ((s = readLine(blockCompressedInputStream)) != null)</span>
+					{
+						TIntv intv;
+<span class="fc" id="L382">						char[] str = s.toCharArray();</span>
+<span class="fc" id="L383">						curr_off = blockCompressedInputStream.getFilePointer();</span>
+<span class="pc bpc" id="L384" title="2 of 4 branches missed.">						if (str.length == 0 || str[0] == mMeta) continue;</span>
+<span class="fc" id="L385">						intv = getIntv(s);</span>
+<span class="pc bpc" id="L386" title="1 of 4 branches missed.">						if (intv.internalChromosomeID != internalChromosomeID || intv.beginPosition &gt;= endPosition)</span>
+<span class="fc" id="L387">							break; // no</span>
+							// need
+							// to
+							// proceed
+<span class="pc bpc" id="L391" title="1 of 4 branches missed.">						else if (intv.end &gt; beginPosition &amp;&amp; intv.beginPosition &lt; endPosition) return s; // overlap;</span>
+						// return
+<span class="fc" id="L393">					}</span>
+<span class="fc" id="L394">					else break; // end of file</span>
+<span class="fc" id="L395">				}</span>
+			}
+<span class="fc" id="L397">			isEndOfFile = true;</span>
+<span class="fc" id="L398">			return null;</span>
+		}
+	}
+
+	public Iterator query(final int internalChromosomeID, final int beginPosition, final int endPosition)
+	{
+		TPair64[] off, chunks;
+		long min_off;
+<span class="fc" id="L406">		TIndex idx = mIndex[internalChromosomeID];</span>
+<span class="fc" id="L407">		int[] bins = new int[MAX_BIN];</span>
+<span class="fc" id="L408">		int i, l, n_off, n_bins = reg2bins(beginPosition, endPosition, bins);</span>
+<span class="pc bpc" id="L409" title="1 of 2 branches missed.">		if (idx.l.length &gt; 0)</span>
+<span class="pc bpc" id="L410" title="1 of 2 branches missed.">			min_off = (beginPosition &gt;&gt; TAD_LIDX_SHIFT &gt;= idx.l.length) ? idx.l[idx.l.length - 1] : idx.l[beginPosition</span>
+					&gt;&gt; TAD_LIDX_SHIFT];
+<span class="nc" id="L412">		else min_off = 0;</span>
+<span class="fc bfc" id="L413" title="All 2 branches covered.">		for (i = n_off = 0; i &lt; n_bins; ++i)</span>
+		{
+<span class="fc bfc" id="L415" title="All 2 branches covered.">			if ((chunks = idx.b.get(bins[i])) != null) n_off += chunks.length;</span>
+		}
+<span class="fc bfc" id="L417" title="All 2 branches covered.">		if (n_off == 0) return null;</span>
+<span class="fc" id="L418">		off = new TPair64[n_off];</span>
+<span class="fc bfc" id="L419" title="All 2 branches covered.">		for (i = n_off = 0; i &lt; n_bins; ++i)</span>
+<span class="fc bfc" id="L420" title="All 2 branches covered.">			if ((chunks = idx.b.get(bins[i])) != null)</span>
+<span class="pc bpc" id="L421" title="1 of 4 branches missed.">				for (TPair64 chunk : chunks) if (less64(min_off, chunk.v)) off[n_off++] = new TPair64(chunk);</span>
+<span class="pc bpc" id="L422" title="1 of 2 branches missed.">		if (n_off == 0) return null;</span>
+<span class="fc" id="L423">		Arrays.sort(off, 0, n_off);</span>
+		// resolve completely contained adjacent blocks
+<span class="pc bpc" id="L425" title="1 of 2 branches missed.">		for (i = 1, l = 0; i &lt; n_off; ++i)</span>
+		{
+<span class="nc bnc" id="L427" title="All 2 branches missed.">			if (less64(off[l].v, off[i].v))</span>
+			{
+<span class="nc" id="L429">				++l;</span>
+<span class="nc" id="L430">				off[l].u = off[i].u;</span>
+<span class="nc" id="L431">				off[l].v = off[i].v;</span>
+			}
+		}
+<span class="fc" id="L434">		n_off = l + 1;</span>
+		// resolve overlaps between adjacent blocks; this may happen due to the merge in indexing
+<span class="pc bpc" id="L436" title="1 of 2 branches missed.">		for (i = 1; i &lt; n_off; ++i)</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">			if (!less64(off[i - 1].v, off[i].u)) off[i - 1].v = off[i].u;</span>
+		// merge adjacent blocks
+<span class="pc bpc" id="L439" title="1 of 2 branches missed.">		for (i = 1, l = 0; i &lt; n_off; ++i)</span>
+		{
+<span class="nc bnc" id="L441" title="All 2 branches missed.">			if (off[l].v &gt;&gt; 16 == off[i].u &gt;&gt; 16) off[l].v = off[i].v;</span>
+			else
+			{
+<span class="nc" id="L444">				++l;</span>
+<span class="nc" id="L445">				off[l].u = off[i].u;</span>
+<span class="nc" id="L446">				off[l].v = off[i].v;</span>
+			}
+		}
+<span class="fc" id="L449">		n_off = l + 1;</span>
+		// return
+<span class="fc" id="L451">		TPair64[] ret = new TPair64[n_off];</span>
+<span class="fc bfc" id="L452" title="All 2 branches covered.">		for (i = 0; i &lt; n_off; ++i)</span>
+<span class="fc" id="L453">			ret[i] = new TPair64(off[i].u, off[i].v); // in C, this is inefficient</span>
+<span class="fc" id="L454">		return new TabixReader.Iterator(internalChromosomeID, beginPosition, endPosition, ret);</span>
+	}
+
+	public Iterator query(final String queryString)
+	{
+<span class="fc" id="L459">		int[] x = parseReg(queryString);</span>
+<span class="fc" id="L460">		int beginPosition = x[0];</span>
+<span class="fc" id="L461">		int endPosition = x[1];</span>
+<span class="fc" id="L462">		int internalChromosomeID = x[2];</span>
+<span class="fc" id="L463">		return query(beginPosition, endPosition, internalChromosomeID);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

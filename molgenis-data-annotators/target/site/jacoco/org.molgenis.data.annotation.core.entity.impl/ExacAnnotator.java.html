@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExacAnnotator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.entity.impl</a> &gt; <span class="el_source">ExacAnnotator.java</span></div><h1>ExacAnnotator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.entity.impl;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.annotation.core.entity.AnnotatorConfig;
+import org.molgenis.data.annotation.core.entity.AnnotatorInfo;
+import org.molgenis.data.annotation.core.entity.EntityAnnotator;
+import org.molgenis.data.annotation.core.entity.impl.framework.AbstractAnnotator;
+import org.molgenis.data.annotation.core.entity.impl.framework.RepositoryAnnotatorImpl;
+import org.molgenis.data.annotation.core.filter.MultiAllelicResultFilter;
+import org.molgenis.data.annotation.core.query.LocusQueryCreator;
+import org.molgenis.data.annotation.core.resources.Resource;
+import org.molgenis.data.annotation.core.resources.Resources;
+import org.molgenis.data.annotation.core.resources.impl.RepositoryFactory;
+import org.molgenis.data.annotation.core.resources.impl.ResourceImpl;
+import org.molgenis.data.annotation.core.resources.impl.SingleResourceConfig;
+import org.molgenis.data.annotation.core.resources.impl.tabix.TabixVcfRepositoryFactory;
+import org.molgenis.data.annotation.web.settings.SingleFileLocationCmdLineAnnotatorSettingsConfigurer;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.vcf.model.VcfAttributes;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static java.util.Arrays.asList;
+import static org.molgenis.data.annotation.core.entity.AnnotatorInfo.Status.READY;
+import static org.molgenis.data.annotation.core.entity.AnnotatorInfo.Type.POPULATION_REFERENCE;
+import static org.molgenis.data.annotation.web.settings.ExacAnnotatorSettings.Meta.EXAC_LOCATION;
+import static org.molgenis.data.meta.AttributeType.STRING;
+
+@Configuration
+<span class="fc" id="L39">public class ExacAnnotator implements AnnotatorConfig</span>
+{
+	public static final String NAME = &quot;exac&quot;;
+
+	public static final String EXAC_AF = &quot;EXAC_AF&quot;;
+	public static final String EXAC_AC_HOM = &quot;EXAC_AC_HOM&quot;;
+	public static final String EXAC_AC_HET = &quot;EXAC_AC_HET&quot;;
+	public static final String EXAC_AF_LABEL = &quot;ExAC allele frequency&quot;;
+	public static final String EXAC_AC_HOM_LABEL = &quot;ExAC homozygous alternative genotype count&quot;;
+	public static final String EXAC_AC_HET_LABEL = &quot;ExAC heterozygous genotype count&quot;;
+	public static final String EXAC_AF_ResourceAttributeName = &quot;AF&quot;;
+	public static final String EXAC_AC_HOM_ResourceAttributeName = &quot;AC_Hom&quot;;
+	public static final String EXAC_AC_HET_ResourceAttributeName = &quot;AC_Het&quot;;
+
+	public static final String EXAC_TABIX_RESOURCE = &quot;EXACTabixResource&quot;;
+
+	@Autowired
+	private Entity exacAnnotatorSettings;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private Resources resources;
+
+	@Autowired
+	private VcfAttributes vcfAttributes;
+
+	@Autowired
+	private EntityTypeFactory entityTypeFactory;
+
+	@Autowired
+	private AttributeFactory attributeFactory;
+	private RepositoryAnnotatorImpl annotator;
+
+	@Bean
+	public RepositoryAnnotator exac()
+	{
+<span class="fc" id="L77">		annotator = new RepositoryAnnotatorImpl(NAME);</span>
+<span class="fc" id="L78">		return annotator;</span>
+	}
+
+	@Override
+	public void init()
+	{
+<span class="fc" id="L84">		List&lt;Attribute&gt; attributes = createExacOutputAttributes();</span>
+
+<span class="fc" id="L86">		List&lt;Attribute&gt; resourceMetaData = new ArrayList&lt;&gt;(</span>
+<span class="fc" id="L87">				asList(attributeFactory.create().setName(EXAC_AF_ResourceAttributeName).setDataType(STRING),</span>
+<span class="fc" id="L88">						attributeFactory.create().setName(EXAC_AC_HOM_ResourceAttributeName).setDataType(STRING),</span>
+<span class="fc" id="L89">						attributeFactory.create().setName(EXAC_AC_HET_ResourceAttributeName).setDataType(STRING)));</span>
+
+<span class="fc" id="L91">		AnnotatorInfo exacInfo = AnnotatorInfo.create(READY, POPULATION_REFERENCE, &quot;exac&quot;,</span>
+				&quot; The Exome Aggregation Consortium (ExAC) is a coalition of investigators seeking to aggregate&quot;
+						+ &quot; and harmonize exome sequencing data from a wide variety of large-scale sequencing projects&quot;
+						+ &quot;, and to make summary data available for the wider scientific community.The data set provided&quot;
+						+ &quot; on this website spans 60,706 unrelated individuals sequenced as part of various &quot;
+						+ &quot;disease-specific and population genetic studies. &quot;, attributes);
+
+		// TODO: properly test multiAllelicFresultFilter
+<span class="fc" id="L99">		LocusQueryCreator locusQueryCreator = new LocusQueryCreator(vcfAttributes);</span>
+<span class="fc" id="L100">		MultiAllelicResultFilter multiAllelicResultFilter = new MultiAllelicResultFilter(resourceMetaData,</span>
+				vcfAttributes);
+<span class="fc" id="L102">		EntityAnnotator entityAnnotator = new AbstractAnnotator(EXAC_TABIX_RESOURCE, exacInfo, locusQueryCreator,</span>
+				multiAllelicResultFilter, dataService, resources,
+				new SingleFileLocationCmdLineAnnotatorSettingsConfigurer(EXAC_LOCATION, exacAnnotatorSettings))
+<span class="fc" id="L105">		{</span>
+			@Override
+			public List&lt;Attribute&gt; createAnnotatorAttributes(AttributeFactory attributeFactory)
+			{
+<span class="nc" id="L109">				return createExacOutputAttributes();</span>
+			}
+
+			@Override
+			protected Object getResourceAttributeValue(Attribute attr, Entity sourceEntity)
+			{
+<span class="fc bfc" id="L115" title="All 4 branches covered.">				String attrName = EXAC_AF.equals(attr.getName()) ? EXAC_AF_ResourceAttributeName : EXAC_AC_HOM.equals(</span>
+<span class="pc bpc" id="L116" title="1 of 2 branches missed.">						attr.getName()) ? EXAC_AC_HOM_ResourceAttributeName : EXAC_AC_HET.equals(</span>
+<span class="pc" id="L117">						attr.getName()) ? EXAC_AC_HET_ResourceAttributeName : attr.getName();</span>
+<span class="fc" id="L118">				return sourceEntity.get(attrName);</span>
+			}
+		};
+
+<span class="fc" id="L122">		annotator.init(entityAnnotator);</span>
+<span class="fc" id="L123">	}</span>
+
+	public List&lt;Attribute&gt; createExacOutputAttributes()
+	{
+<span class="fc" id="L127">		return newArrayList(getExacAFAttr(attributeFactory), getExacAcHomAttr(attributeFactory),</span>
+<span class="fc" id="L128">				getExacAcHetAttr(attributeFactory));</span>
+	}
+
+	public static Attribute getExacAcHetAttr(AttributeFactory attributeFactory)
+	{
+<span class="fc" id="L133">		return attributeFactory.create()</span>
+<span class="fc" id="L134">							   .setName(EXAC_AC_HET)</span>
+<span class="fc" id="L135">							   .setDataType(STRING)</span>
+<span class="fc" id="L136">							   .setDescription(&quot;The ExAC heterozygous genotype count&quot;)</span>
+<span class="fc" id="L137">							   .setLabel(EXAC_AC_HET_LABEL);</span>
+	}
+
+	public static Attribute getExacAcHomAttr(AttributeFactory attributeFactory)
+	{
+<span class="fc" id="L142">		return attributeFactory.create()</span>
+<span class="fc" id="L143">							   .setName(EXAC_AC_HOM)</span>
+<span class="fc" id="L144">							   .setDataType(STRING)</span>
+<span class="fc" id="L145">							   .setDescription(&quot;The ExAC homozygous alternative genotype count&quot;)</span>
+<span class="fc" id="L146">							   .setLabel(EXAC_AC_HOM_LABEL);</span>
+	}
+
+	public static Attribute getExacAFAttr(AttributeFactory attributeFactory)
+	{
+<span class="fc" id="L151">		return attributeFactory.create()</span>
+<span class="fc" id="L152">							   .setName(EXAC_AF)</span>
+<span class="fc" id="L153">							   .setDataType(STRING)</span>
+<span class="fc" id="L154">							   .setDescription(&quot;The ExAC allele frequency&quot;)</span>
+<span class="fc" id="L155">							   .setLabel(EXAC_AF_LABEL);</span>
+	}
+
+	@Bean
+	Resource exacResource()
+	{
+<span class="fc" id="L161">		Resource exacTabixResource = new ResourceImpl(EXAC_TABIX_RESOURCE,</span>
+				new SingleResourceConfig(EXAC_LOCATION, exacAnnotatorSettings))
+<span class="fc" id="L163">		{</span>
+			@Override
+			public RepositoryFactory getRepositoryFactory()
+			{
+<span class="fc" id="L167">				return new TabixVcfRepositoryFactory(EXAC_TABIX_RESOURCE, vcfAttributes, entityTypeFactory,</span>
+<span class="fc" id="L168">						attributeFactory);</span>
+			}
+		};
+
+<span class="fc" id="L172">		return exacTabixResource;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

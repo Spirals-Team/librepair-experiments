@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BeaconQueryServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">beacon</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.beacon.service.impl</a> &gt; <span class="el_source">BeaconQueryServiceImpl.java</span></div><h1>BeaconQueryServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.beacon.service.impl;
+
+import org.molgenis.beacon.config.Beacon;
+import org.molgenis.beacon.config.BeaconDataset;
+import org.molgenis.beacon.config.BeaconMetadata;
+import org.molgenis.beacon.controller.model.BeaconAlleleRequest;
+import org.molgenis.beacon.controller.model.BeaconAlleleResponse;
+import org.molgenis.beacon.controller.model.exceptions.NestedBeaconException;
+import org.molgenis.beacon.controller.model.exceptions.UnknownBeaconException;
+import org.molgenis.beacon.service.BeaconQueryService;
+import org.molgenis.data.DataService;
+import org.molgenis.data.support.QueryImpl;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import static java.util.Objects.requireNonNull;
+
+@Component
+public class BeaconQueryServiceImpl implements BeaconQueryService
+{
+<span class="fc" id="L22">	private static final Logger LOG = LoggerFactory.getLogger(BeaconQueryServiceImpl.class);</span>
+	private final DataService dataService;
+
+	public BeaconQueryServiceImpl(DataService dataService)
+<span class="fc" id="L26">	{</span>
+<span class="fc" id="L27">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L28">	}</span>
+
+	@Override
+	public BeaconAlleleResponse query(String beaconId, BeaconAlleleRequest request)
+	{
+<span class="fc" id="L33">		return query(request.getReferenceName(), request.getStart(), request.getReferenceBases(),</span>
+<span class="fc" id="L34">				request.getAlternateBases(), beaconId);</span>
+	}
+
+	@Override
+	public BeaconAlleleResponse query(String referenceName, Long start, String referenceBases, String alternateBases,
+			String beaconId)
+	{
+		try
+		{
+<span class="fc" id="L43">			boolean exists = searchBeaconForQueryString(referenceName, start, referenceBases, alternateBases, beaconId);</span>
+<span class="fc" id="L44">			return BeaconAlleleResponse.create(beaconId, exists, null,</span>
+<span class="fc" id="L45">					BeaconAlleleRequest.create(referenceName, start, referenceBases, alternateBases));</span>
+		}
+<span class="nc" id="L47">		catch (UnknownBeaconException e)</span>
+		{
+<span class="nc" id="L49">			throw e;</span>
+		}
+<span class="fc" id="L51">		catch (Exception e)</span>
+		{
+			// TODO create @ControllerAdvice BeaconExceptionHandler to handle beacon exceptions returning proper responses.
+			// Till then, let's log the exception here instead of quietly eating it up.
+<span class="fc" id="L55">			LOG.error(&quot;An exception occurred while querying for beacon&quot;, e);</span>
+<span class="fc" id="L56">			throw new NestedBeaconException(beaconId,</span>
+<span class="fc" id="L57">					BeaconAlleleRequest.create(referenceName, start, referenceBases, alternateBases));</span>
+		}
+	}
+
+	private boolean searchBeaconForQueryString(String referenceName, Long start, String referenceBases,
+			String alternateBases, String beaconId)
+	{
+<span class="fc" id="L64">		boolean exists = false;</span>
+<span class="fc" id="L65">		Beacon beacon = dataService.findOneById(BeaconMetadata.BEACON, beaconId, Beacon.class);</span>
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">		if (beacon != null)</span>
+		{
+<span class="fc bfc" id="L68" title="All 2 branches covered.">			for (BeaconDataset beaconDataset : beacon.getDataSets())</span>
+			{
+<span class="fc" id="L70">				exists = queryBeaconDataset(beaconDataset, referenceName, start, referenceBases, alternateBases);</span>
+<span class="fc" id="L71">			}</span>
+		}
+		else
+		{
+<span class="nc" id="L75">			throw new UnknownBeaconException(beaconId,</span>
+<span class="nc" id="L76">					BeaconAlleleRequest.create(referenceName, start, referenceBases, alternateBases));</span>
+		}
+<span class="fc" id="L78">		return exists;</span>
+	}
+
+	private boolean queryBeaconDataset(BeaconDataset beaconDataset, String referenceName, Long start,
+			String referenceBases, String alternateBases)
+	{
+		/* Use a count query to determine if a variation exists */
+
+<span class="fc" id="L86">		String alt = beaconDataset.getGenomeBrowserAttributes().getAlt();</span>
+<span class="fc" id="L87">		String ref = beaconDataset.getGenomeBrowserAttributes().getRef();</span>
+
+<span class="pc bpc" id="L89" title="2 of 4 branches missed.">		if (alt == null || alt.isEmpty())</span>
+		{
+<span class="nc" id="L91">			alt = &quot;ALT&quot;;</span>
+		}
+
+<span class="pc bpc" id="L94" title="2 of 4 branches missed.">		if (ref == null || ref.isEmpty())</span>
+		{
+<span class="nc" id="L96">			ref = &quot;REF&quot;;</span>
+		}
+
+<span class="fc bfc" id="L99" title="All 2 branches covered.">		return dataService.count(beaconDataset.getDatasetEntityType().getId(),</span>
+<span class="fc" id="L100">				new QueryImpl&lt;&gt;().eq(beaconDataset.getGenomeBrowserAttributes().getChrom(), referenceName)</span>
+<span class="fc" id="L101">								 .and()</span>
+<span class="fc" id="L102">								 .eq(beaconDataset.getGenomeBrowserAttributes().getPos(), start)</span>
+<span class="fc" id="L103">								 .and()</span>
+<span class="fc" id="L104">								 .eq(ref, referenceBases)</span>
+<span class="fc" id="L105">								 .and()</span>
+<span class="fc" id="L106">								 .eq(alt, alternateBases)) &gt; 0;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

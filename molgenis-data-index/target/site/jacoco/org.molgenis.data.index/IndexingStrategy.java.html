@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexingStrategy.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-index</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.index</a> &gt; <span class="el_source">IndexingStrategy.java</span></div><h1>IndexingStrategy.java</h1><pre class="source lang-java linenums">package org.molgenis.data.index;
+
+import com.google.common.base.Stopwatch;
+import com.google.common.collect.ImmutableSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static com.google.common.collect.Sets.union;
+import static java.util.stream.Collectors.partitioningBy;
+
+/**
+ * Determines the impact of changes.
+ */
+@Component
+<span class="fc" id="L21">public class IndexingStrategy</span>
+{
+<span class="fc" id="L23">	private static final Logger LOG = LoggerFactory.getLogger(IndexingStrategy.class);</span>
+
+	/**
+	 * Determines which {@link Impact}s follow from a set of changes.
+	 *
+	 * @param changes         The {@link Impact}s of which the impact needs to be determined
+	 * @param dependencyModel {@link IndexDependencyModel} to determine which entities depend on which entities
+	 * @return Set&lt;Impact&gt; containing the impact of the changes
+	 */
+	Set&lt;Impact&gt; determineImpact(Set&lt;Impact&gt; changes, IndexDependencyModel dependencyModel)
+	{
+<span class="fc" id="L34">		Stopwatch sw = Stopwatch.createStarted();</span>
+<span class="fc" id="L35">		Map&lt;Boolean, List&lt;Impact&gt;&gt; split = changes.stream().collect(partitioningBy(Impact::isWholeRepository));</span>
+<span class="fc" id="L36">		ImmutableSet&lt;String&gt; allEntityTypeIds = changes.stream().map(Impact::getEntityTypeId).collect(toImmutableSet());</span>
+<span class="fc" id="L37">		Set&lt;String&gt; dependentEntities = allEntityTypeIds.stream()</span>
+<span class="fc" id="L38">														.flatMap(dependencyModel::getEntityTypesDependentOn)</span>
+<span class="fc" id="L39">														.collect(toImmutableSet());</span>
+<span class="fc" id="L40">		Set&lt;Impact&gt; result = collectResult(split.get(false), split.get(true), dependentEntities);</span>
+<span class="pc bpc" id="L41" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L43">			LOG.debug(&quot;Determined {} necessary actions in {}&quot;, result.size(), sw);</span>
+		}
+<span class="fc" id="L45">		return result;</span>
+	}
+
+	/**
+	 * Combines the results.
+	 *
+	 * @param singleEntityChanges {@link Impact}s for changes made to specific Entity instances
+	 * @param wholeRepoActions    {@link Impact}s for changes made to entire repositories
+	 * @param dependentEntityIds  {@link Impact}s for entitytypes that are dependent on one or more of the changes
+	 * @return Set with the {@link Impact}s
+	 */
+	private Set&lt;Impact&gt; collectResult(List&lt;Impact&gt; singleEntityChanges, List&lt;Impact&gt; wholeRepoActions,
+			Set&lt;String&gt; dependentEntityIds)
+	{
+<span class="fc" id="L59">		Set&lt;String&gt; wholeRepoIds = union(</span>
+<span class="fc" id="L60">				wholeRepoActions.stream().map(Impact::getEntityTypeId).collect(toImmutableSet()), dependentEntityIds);</span>
+
+<span class="fc" id="L62">		ImmutableSet.Builder&lt;Impact&gt; result = ImmutableSet.builder();</span>
+<span class="fc" id="L63">		result.addAll(wholeRepoActions);</span>
+<span class="fc" id="L64">		dependentEntityIds.stream().map(Impact::createWholeRepositoryImpact).forEach(result::add);</span>
+<span class="fc" id="L65">		singleEntityChanges.stream()</span>
+<span class="fc bfc" id="L66" title="All 2 branches covered.">						   .filter(action -&gt; !wholeRepoIds.contains(action.getEntityTypeId()))</span>
+<span class="fc" id="L67">						   .forEach(result::add);</span>
+<span class="fc" id="L68">		return result.build();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

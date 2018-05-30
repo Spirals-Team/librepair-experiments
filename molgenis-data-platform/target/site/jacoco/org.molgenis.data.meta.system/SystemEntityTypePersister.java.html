@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SystemEntityTypePersister.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-platform</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.meta.system</a> &gt; <span class="el_source">SystemEntityTypePersister.java</span></div><h1>SystemEntityTypePersister.java</h1><pre class="source lang-java linenums">package org.molgenis.data.meta.system;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.RepositoryCollection;
+import org.molgenis.data.meta.EntityTypeDependencyResolver;
+import org.molgenis.data.meta.MetaDataService;
+import org.molgenis.data.meta.SystemEntityType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.security.EntityIdentityUtils;
+import org.molgenis.data.util.EntityUtils;
+import org.molgenis.security.acl.MutableAclClassService;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.data.meta.model.PackageMetadata.PACKAGE;
+
+/**
+ * Persists {@link SystemEntityType} in the meta data {@link org.molgenis.data.RepositoryCollection}.
+ */
+@Component
+public class SystemEntityTypePersister
+{
+	private final DataService dataService;
+	private final SystemEntityTypeRegistry systemEntityTypeRegistry;
+	private final SystemPackageRegistry systemPackageRegistry;
+	private final EntityTypeDependencyResolver entityTypeDependencyResolver;
+	private final MutableAclClassService mutableAclClassService;
+
+	SystemEntityTypePersister(DataService dataService, SystemEntityTypeRegistry systemEntityTypeRegistry,
+			EntityTypeDependencyResolver entityTypeDependencyResolver, SystemPackageRegistry systemPackageRegistry,
+			MutableAclClassService mutableAclClassService)
+<span class="fc" id="L43">	{</span>
+<span class="fc" id="L44">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L45">		this.systemEntityTypeRegistry = requireNonNull(systemEntityTypeRegistry);</span>
+<span class="fc" id="L46">		this.systemPackageRegistry = requireNonNull(systemPackageRegistry);</span>
+<span class="fc" id="L47">		this.entityTypeDependencyResolver = requireNonNull(entityTypeDependencyResolver);</span>
+<span class="fc" id="L48">		this.mutableAclClassService = requireNonNull(mutableAclClassService);</span>
+<span class="fc" id="L49">	}</span>
+
+	public void persist()
+	{
+		// persist entity metadata metadata
+<span class="fc" id="L54">		persistMetadataMetadata();</span>
+
+		// persist Package entities
+<span class="fc" id="L57">		List&lt;Package&gt; systemPackages = systemPackageRegistry.getSystemPackages().collect(toList());</span>
+<span class="fc" id="L58">		injectExistingPackageIdentifiers(systemPackages);</span>
+<span class="fc" id="L59">		dataService.getMeta().upsertPackages(systemPackages.stream());</span>
+
+		// persist EntityType entities
+<span class="fc" id="L62">		List&lt;EntityType&gt; metaEntityMetaSet = systemEntityTypeRegistry.getSystemEntityTypes().collect(toList());</span>
+<span class="fc" id="L63">		injectExistingEntityTypeAttributeIdentifiers(metaEntityMetaSet);</span>
+<span class="fc" id="L64">		metaEntityMetaSet.forEach(systemEntityType -&gt;</span>
+		{
+<span class="nc" id="L66">			String aclClass = EntityIdentityUtils.toType(systemEntityType);</span>
+			// TODO remove casting
+<span class="nc bnc" id="L68" title="All 4 branches missed.">			if (((SystemEntityType) systemEntityType).isRowLevelSecured() &amp;&amp; !mutableAclClassService.hasAclClass(</span>
+					aclClass))
+			{
+<span class="nc" id="L71">				mutableAclClassService.createAclClass(aclClass, EntityIdentityUtils.toIdType(systemEntityType));</span>
+			}
+<span class="nc bnc" id="L73" title="All 4 branches missed.">			else if (!((SystemEntityType) systemEntityType).isRowLevelSecured() &amp;&amp; mutableAclClassService.hasAclClass(</span>
+					aclClass))
+			{
+<span class="nc" id="L76">				mutableAclClassService.deleteAclClass(aclClass);</span>
+			}
+<span class="nc" id="L78">		});</span>
+<span class="fc" id="L79">		dataService.getMeta().upsertEntityTypes(metaEntityMetaSet);</span>
+
+		// remove non-existing metadata
+<span class="fc" id="L82">		removeNonExistingSystemEntityTypes();</span>
+<span class="fc" id="L83">		removeNonExistingSystemPackages();</span>
+<span class="fc" id="L84">	}</span>
+
+	private void persistMetadataMetadata()
+	{
+<span class="fc" id="L88">		RepositoryCollection metadataRepoCollection = dataService.getMeta().getDefaultBackend();</span>
+
+		// collect meta entity meta
+<span class="fc" id="L91">		List&lt;EntityType&gt; metaEntityTypeList = systemEntityTypeRegistry.getSystemEntityTypes()</span>
+<span class="fc" id="L92">																	  .filter(MetaDataService::isMetaEntityType)</span>
+<span class="fc" id="L93">																	  .collect(toList());</span>
+<span class="fc" id="L94">		List&lt;EntityType&gt; resolvedEntityTypeList = entityTypeDependencyResolver.resolve(metaEntityTypeList);</span>
+
+<span class="fc" id="L96">		resolvedEntityTypeList.forEach(metaEntityType -&gt;</span>
+		{
+<span class="nc bnc" id="L98" title="All 2 branches missed.">			if (!metadataRepoCollection.hasRepository(metaEntityType))</span>
+			{
+<span class="nc" id="L100">				metadataRepoCollection.createRepository(metaEntityType);</span>
+			}
+<span class="nc" id="L102">		});</span>
+<span class="fc" id="L103">	}</span>
+
+	/**
+	 * Package-private for testability
+	 */
+	void removeNonExistingSystemEntityTypes()
+	{
+		// get all system entities
+<span class="fc" id="L111">		List&lt;EntityType&gt; removedSystemEntityMetas = dataService.findAll(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="fc" id="L112">															   .filter(EntityUtils::isSystemEntity)</span>
+<span class="fc" id="L113">															   .filter(this::isNotExists)</span>
+<span class="fc" id="L114">															   .collect(toList());</span>
+
+<span class="fc" id="L116">		dataService.getMeta().deleteEntityType(removedSystemEntityMetas);</span>
+<span class="fc" id="L117">		removedSystemEntityMetas.forEach(</span>
+<span class="fc" id="L118">				entityType -&gt; mutableAclClassService.deleteAclClass(EntityIdentityUtils.toType(entityType)));</span>
+<span class="fc" id="L119">	}</span>
+
+	private void removeNonExistingSystemPackages()
+	{
+<span class="fc" id="L123">		Stream&lt;Package&gt; systemPackages = dataService.findAll(PACKAGE, Package.class)</span>
+<span class="fc" id="L124">													.filter(EntityUtils::isSystemPackage)</span>
+<span class="fc" id="L125">													.filter(this::isNotExists);</span>
+
+<span class="fc" id="L127">		dataService.delete(PACKAGE, systemPackages);</span>
+<span class="fc" id="L128">	}</span>
+
+	private boolean isNotExists(EntityType entityType)
+	{
+<span class="fc bfc" id="L132" title="All 2 branches covered.">		return !systemEntityTypeRegistry.hasSystemEntityType(entityType.getId());</span>
+	}
+
+	private boolean isNotExists(Package package_)
+	{
+<span class="nc bnc" id="L137" title="All 2 branches missed.">		return !systemPackageRegistry.containsPackage(package_);</span>
+	}
+
+	private void injectExistingPackageIdentifiers(List&lt;Package&gt; systemPackages)
+	{
+<span class="fc" id="L142">		Map&lt;String, Package&gt; existingPackageMap = dataService.findAll(PACKAGE, Package.class)</span>
+<span class="fc" id="L143">															 .collect(toMap(Package::getId, pack -&gt; pack));</span>
+
+<span class="fc" id="L145">		systemPackages.forEach(pack -&gt;</span>
+		{
+<span class="fc" id="L147">			Package existingPackage = existingPackageMap.get(pack.getId());</span>
+
+<span class="fc bfc" id="L149" title="All 2 branches covered.">			if (existingPackage != null)</span>
+			{
+<span class="fc" id="L151">				pack.setId(existingPackage.getId());</span>
+			}
+<span class="fc" id="L153">		});</span>
+<span class="fc" id="L154">	}</span>
+
+	/**
+	 * Inject existing attribute identifiers in system entity types
+	 *
+	 * @param entityTypes system entity types
+	 */
+	private void injectExistingEntityTypeAttributeIdentifiers(List&lt;EntityType&gt; entityTypes)
+	{
+<span class="fc" id="L163">		Map&lt;String, EntityType&gt; existingEntityTypeMap = dataService.findAll(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="fc" id="L164">																   .collect(toMap(EntityType::getId,</span>
+<span class="nc" id="L165">																		   entityType -&gt; entityType));</span>
+
+<span class="fc" id="L167">		entityTypes.forEach(entityType -&gt;</span>
+		{
+<span class="nc" id="L169">			EntityType existingEntityType = existingEntityTypeMap.get(entityType.getId());</span>
+
+<span class="nc bnc" id="L171" title="All 2 branches missed.">			if (existingEntityType != null)</span>
+			{
+<span class="nc" id="L173">				entityType.setId(existingEntityType.getId());</span>
+
+<span class="nc" id="L175">				Map&lt;String, Attribute&gt; existingAttrs = stream(existingEntityType.getOwnAllAttributes().spliterator(),</span>
+<span class="nc" id="L176">						false).collect(toMap(Attribute::getName, Function.identity()));</span>
+<span class="nc" id="L177">				entityType.getOwnAllAttributes().forEach(attr -&gt;</span>
+				{
+<span class="nc" id="L179">					Attribute existingAttr = existingAttrs.get(attr.getName());</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">					if (existingAttr != null)</span>
+					{
+						// inject existing attribute identifier
+<span class="nc" id="L183">						attr.setIdentifier(existingAttr.getIdentifier());</span>
+					}
+<span class="nc" id="L185">				});</span>
+			}
+<span class="nc" id="L187">		});</span>
+<span class="fc" id="L188">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

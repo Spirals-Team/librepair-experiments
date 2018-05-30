@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VcfImporterService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-vcf</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.vcf.importer</a> &gt; <span class="el_source">VcfImporterService.java</span></div><h1>VcfImporterService.java</h1><pre class="source lang-java linenums">package org.molgenis.data.vcf.importer;
+
+import com.google.common.collect.Lists;
+import org.molgenis.data.*;
+import org.molgenis.data.importer.EntitiesValidationReport;
+import org.molgenis.data.importer.EntitiesValidationReportImpl;
+import org.molgenis.data.importer.EntityImportReport;
+import org.molgenis.data.importer.ImportService;
+import org.molgenis.data.meta.MetaDataService;
+import org.molgenis.data.meta.UploadPackage;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.security.permission.PermissionSystemService;
+import org.molgenis.data.vcf.VcfFileExtensions;
+import org.molgenis.data.vcf.model.VcfAttributes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.StreamSupport;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.security.core.runas.RunAsSystemAspect.runAsSystem;
+
+@Service
+public class VcfImporterService implements ImportService
+{
+<span class="fc" id="L33">	private static final Logger LOG = LoggerFactory.getLogger(VcfImporterService.class);</span>
+	private static final int BATCH_SIZE = 10000;
+
+	private final DataService dataService;
+	private final PermissionSystemService permissionSystemService;
+	private final MetaDataService metaDataService;
+	private final UploadPackage uploadPackage;
+
+	public VcfImporterService(DataService dataService, PermissionSystemService permissionSystemService,
+			MetaDataService metaDataService, UploadPackage uploadPackage)
+
+<span class="fc" id="L44">	{</span>
+<span class="fc" id="L45">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L46">		this.metaDataService = requireNonNull(metaDataService);</span>
+<span class="fc" id="L47">		this.permissionSystemService = requireNonNull(permissionSystemService);</span>
+<span class="fc" id="L48">		this.uploadPackage = requireNonNull(uploadPackage);</span>
+<span class="fc" id="L49">	}</span>
+
+	@Transactional
+	@Override
+	public EntityImportReport doImport(RepositoryCollection source, DatabaseAction databaseAction, String packageId)
+	{
+<span class="fc bfc" id="L55" title="All 2 branches covered.">		if (databaseAction != DatabaseAction.ADD) throw new IllegalArgumentException(&quot;Only ADD is supported&quot;);</span>
+
+<span class="fc" id="L57">		List&lt;EntityType&gt; addedEntities = Lists.newArrayList();</span>
+		EntityImportReport report;
+
+<span class="fc" id="L60">		Iterator&lt;String&gt; it = source.getEntityTypeIds().iterator();</span>
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">		if (it.hasNext())</span>
+		{
+<span class="fc" id="L63">			try (Repository&lt;Entity&gt; repo = source.getRepository(it.next()))</span>
+			{
+<span class="fc" id="L65">				report = importVcf(repo, addedEntities);</span>
+			}
+<span class="nc" id="L67">			catch (IOException e)</span>
+			{
+<span class="nc" id="L69">				LOG.error(&quot;&quot;, e);</span>
+<span class="nc" id="L70">				throw new MolgenisDataException(e);</span>
+<span class="fc" id="L71">			}</span>
+		}
+		else
+		{
+<span class="nc" id="L75">			report = new EntityImportReport();</span>
+		}
+<span class="fc" id="L77">		return report;</span>
+	}
+
+	@Override
+	public EntitiesValidationReport validateImport(File file, RepositoryCollection source)
+	{
+<span class="fc" id="L83">		EntitiesValidationReport report = new EntitiesValidationReportImpl();</span>
+<span class="fc" id="L84">		Iterator&lt;String&gt; it = source.getEntityTypeIds().iterator();</span>
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">		if (it.hasNext())</span>
+		{
+<span class="fc" id="L87">			String entityTypeId = it.next();</span>
+<span class="fc" id="L88">			EntityType emd = source.getRepository(entityTypeId).getEntityType();</span>
+
+			// Vcf entity
+<span class="fc" id="L91">			boolean entityExists = runAsSystem(() -&gt; dataService.hasRepository(entityTypeId));</span>
+<span class="fc bfc" id="L92" title="All 2 branches covered.">			report.getSheetsImportable().put(entityTypeId, !entityExists);</span>
+
+			// Available Attributes
+<span class="fc" id="L95">			List&lt;String&gt; availableAttributeNames = Lists.newArrayList();</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">			for (Attribute attr : emd.getAtomicAttributes())</span>
+			{
+<span class="fc" id="L98">				availableAttributeNames.add(attr.getName());</span>
+<span class="fc" id="L99">			}</span>
+<span class="fc" id="L100">			report.getFieldsImportable().put(entityTypeId, availableAttributeNames);</span>
+
+			// Sample entity
+<span class="fc" id="L103">			Attribute sampleAttribute = emd.getAttribute(VcfAttributes.SAMPLES);</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">			if (sampleAttribute != null)</span>
+			{
+<span class="fc" id="L106">				String sampleEntityName = sampleAttribute.getRefEntity().getId();</span>
+<span class="fc" id="L107">				boolean sampleEntityExists = runAsSystem(() -&gt; dataService.hasRepository(sampleEntityName));</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">				report.getSheetsImportable().put(sampleEntityName, !sampleEntityExists);</span>
+
+<span class="fc" id="L110">				List&lt;String&gt; availableSampleAttributeNames = Lists.newArrayList();</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">				for (Attribute attr : sampleAttribute.getRefEntity().getAtomicAttributes())</span>
+				{
+<span class="fc" id="L113">					availableSampleAttributeNames.add(attr.getName());</span>
+<span class="fc" id="L114">				}</span>
+<span class="fc" id="L115">				report.getFieldsImportable().put(sampleEntityName, availableSampleAttributeNames);</span>
+			}
+
+		}
+
+<span class="fc" id="L120">		return report;</span>
+	}
+
+	@Override
+	public boolean canImport(File file, RepositoryCollection source)
+	{
+<span class="fc bfc" id="L126" title="All 2 branches covered.">		for (String extension : getSupportedFileExtensions())</span>
+		{
+<span class="fc bfc" id="L128" title="All 2 branches covered.">			if (file.getName().toLowerCase().endsWith(extension))</span>
+			{
+<span class="fc" id="L130">				return true;</span>
+			}
+<span class="fc" id="L132">		}</span>
+
+<span class="fc" id="L134">		return false;</span>
+	}
+
+	private EntityImportReport importVcf(Repository&lt;Entity&gt; inRepository, List&lt;EntityType&gt; addedEntities)
+			throws IOException
+	{
+
+<span class="fc" id="L141">		EntityImportReport report = new EntityImportReport();</span>
+
+<span class="fc" id="L143">		String entityTypeId = inRepository.getName();</span>
+
+<span class="fc bfc" id="L145" title="All 2 branches covered.">		if (runAsSystem(() -&gt; dataService.hasRepository(entityTypeId)))</span>
+		{
+<span class="fc" id="L147">			throw new MolgenisDataException(&quot;Can't overwrite existing &quot; + entityTypeId);</span>
+		}
+
+<span class="fc" id="L150">		EntityType entityType = inRepository.getEntityType();</span>
+<span class="fc" id="L151">		entityType.setBackend(metaDataService.getDefaultBackend().getName());</span>
+<span class="fc" id="L152">		entityType.setPackage(uploadPackage);</span>
+
+<span class="fc" id="L154">		Repository&lt;Entity&gt; sampleRepository = createSampleRepository(addedEntities, entityType);</span>
+
+<span class="fc" id="L156">		Iterator&lt;Entity&gt; inIterator = inRepository.iterator();</span>
+<span class="fc" id="L157">		try (Repository&lt;Entity&gt; outRepository = dataService.getMeta().createRepository(entityType))</span>
+		{
+<span class="fc" id="L159">			permissionSystemService.giveUserWriteMetaPermissions(entityType);</span>
+
+<span class="fc" id="L161">			addedEntities.add(entityType);</span>
+
+<span class="fc bfc" id="L163" title="All 2 branches covered.">			if (sampleRepository != null)</span>
+			{
+<span class="fc" id="L165">				int sampleEntityCount = addSampleEntities(sampleRepository, inIterator);</span>
+
+<span class="fc" id="L167">				report.addNewEntity(sampleRepository.getName());</span>
+<span class="pc bpc" id="L168" title="1 of 2 branches missed.">				if (sampleEntityCount &gt; 0)</span>
+				{
+<span class="fc" id="L170">					report.addEntityCount(sampleRepository.getName(), sampleEntityCount);</span>
+				}
+			}
+
+<span class="fc" id="L174">			AtomicInteger vcfEntityCount = new AtomicInteger();</span>
+<span class="fc" id="L175">			outRepository.add(StreamSupport.stream(inRepository.spliterator(), false).filter(entity -&gt;</span>
+			{
+<span class="fc" id="L177">				vcfEntityCount.incrementAndGet();</span>
+<span class="fc" id="L178">				return true;</span>
+			}));
+<span class="pc bpc" id="L180" title="1 of 2 branches missed.">			if (vcfEntityCount.get() &gt; 0)</span>
+			{
+<span class="fc" id="L182">				report.addEntityCount(entityTypeId, vcfEntityCount.get());</span>
+			}
+		}
+
+<span class="fc" id="L186">		report.addNewEntity(entityTypeId);</span>
+
+<span class="fc" id="L188">		return report;</span>
+	}
+
+	private int addSampleEntities(Repository&lt;Entity&gt; sampleRepository, Iterator&lt;Entity&gt; inIterator)
+	{
+<span class="fc" id="L193">		int sampleEntityCount = 0;</span>
+<span class="fc" id="L194">		List&lt;Entity&gt; batch = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L195" title="All 2 branches covered.">		while (inIterator.hasNext())</span>
+		{
+<span class="fc" id="L197">			Entity entity = inIterator.next();</span>
+
+<span class="fc" id="L199">			Iterable&lt;Entity&gt; samples = entity.getEntities(VcfAttributes.SAMPLES);</span>
+<span class="pc bpc" id="L200" title="1 of 2 branches missed.">			if (samples != null)</span>
+			{
+<span class="fc bfc" id="L202" title="All 2 branches covered.">				for (Entity sample : samples)</span>
+				{
+<span class="fc" id="L204">					batch.add(sample);</span>
+
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">					if (batch.size() == BATCH_SIZE)</span>
+					{
+<span class="nc" id="L208">						sampleRepository.add(batch.stream());</span>
+<span class="nc" id="L209">						sampleEntityCount += batch.size();</span>
+<span class="nc" id="L210">						batch.clear();</span>
+					}
+<span class="fc" id="L212">				}</span>
+			}
+
+<span class="fc" id="L215">		}</span>
+
+<span class="pc bpc" id="L217" title="1 of 2 branches missed.">		if (!batch.isEmpty())</span>
+		{
+<span class="fc" id="L219">			sampleRepository.add(batch.stream());</span>
+<span class="fc" id="L220">			sampleEntityCount += batch.size();</span>
+		}
+<span class="fc" id="L222">		return sampleEntityCount;</span>
+	}
+
+	private Repository&lt;Entity&gt; createSampleRepository(List&lt;EntityType&gt; addedEntities, EntityType entityType)
+	{
+		Repository&lt;Entity&gt; sampleRepository;
+<span class="fc" id="L228">		Attribute sampleAttribute = entityType.getAttribute(VcfAttributes.SAMPLES);</span>
+<span class="fc bfc" id="L229" title="All 2 branches covered.">		if (sampleAttribute != null)</span>
+		{
+<span class="fc" id="L231">			EntityType samplesEntityType = sampleAttribute.getRefEntity();</span>
+<span class="fc" id="L232">			samplesEntityType.setBackend(metaDataService.getDefaultBackend().getName());</span>
+<span class="fc" id="L233">			samplesEntityType.setPackage(uploadPackage);</span>
+<span class="fc" id="L234">			sampleRepository = dataService.getMeta().createRepository(samplesEntityType);</span>
+<span class="fc" id="L235">			permissionSystemService.giveUserWriteMetaPermissions(samplesEntityType);</span>
+<span class="fc" id="L236">			addedEntities.add(sampleAttribute.getRefEntity());</span>
+<span class="fc" id="L237">		}</span>
+		else
+		{
+<span class="fc" id="L240">			sampleRepository = null;</span>
+		}
+<span class="fc" id="L242">		return sampleRepository;</span>
+	}
+
+	@Override
+	public int getOrder()
+	{
+<span class="nc" id="L248">		return 10;</span>
+	}
+
+	@Override
+	public List&lt;DatabaseAction&gt; getSupportedDatabaseActions()
+	{
+<span class="nc" id="L254">		return Lists.newArrayList(DatabaseAction.ADD);</span>
+	}
+
+	@Override
+	public boolean getMustChangeEntityName()
+	{
+<span class="nc" id="L260">		return true;</span>
+	}
+
+	@Override
+	public Set&lt;String&gt; getSupportedFileExtensions()
+	{
+<span class="fc" id="L266">		return VcfFileExtensions.getVCF();</span>
+	}
+
+	@Override
+	public Map&lt;String, Boolean&gt; determineImportableEntities(MetaDataService metaDataService,
+			RepositoryCollection repositoryCollection, String defaultPackage)
+	{
+<span class="nc" id="L273">		return metaDataService.determineImportableEntities(repositoryCollection);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,412 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AttributeValidator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-validation</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.validation.meta</a> &gt; <span class="el_source">AttributeValidator.java</span></div><h1>AttributeValidator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.validation.meta;
+
+import com.google.common.collect.Iterables;
+import org.hibernate.validator.internal.constraintvalidators.bv.EmailValidator;
+import org.molgenis.data.*;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.util.EntityUtils;
+import org.molgenis.data.validation.ConstraintViolation;
+import org.molgenis.data.validation.MolgenisValidationException;
+import org.molgenis.util.UnexpectedEnumException;
+import org.springframework.stereotype.Component;
+
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.*;
+import java.util.stream.StreamSupport;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.meta.AttributeType.*;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.data.meta.model.PackageMetadata.PACKAGE;
+import static org.molgenis.data.support.AttributeUtils.getValidIdAttributeTypes;
+import static org.molgenis.data.support.EntityTypeUtils.isMultipleReferenceType;
+import static org.molgenis.data.support.EntityTypeUtils.isSingleReferenceType;
+import static org.molgenis.data.validation.meta.AttributeValidator.ValidationMode.ADD;
+import static org.molgenis.data.validation.meta.AttributeValidator.ValidationMode.UPDATE;
+
+/**
+ * Attribute metadata validator
+ */
+@Component
+public class AttributeValidator
+{
+<span class="fc" id="L39">	public enum ValidationMode</span>
+	{
+<span class="fc" id="L41">		ADD, ADD_SKIP_ENTITY_VALIDATION, UPDATE, UPDATE_SKIP_ENTITY_VALIDATION</span>
+	}
+
+	private final DataService dataService;
+	private final EntityManager entityManager;
+	private final EmailValidator emailValidator;
+
+	public AttributeValidator(DataService dataService, EntityManager entityManager)
+<span class="fc" id="L49">	{</span>
+<span class="fc" id="L50">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L51">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L52">		this.emailValidator = new EmailValidator();</span>
+<span class="fc" id="L53">	}</span>
+
+	public void validate(Attribute attr, ValidationMode validationMode)
+	{
+<span class="fc" id="L57">		validateName(attr);</span>
+<span class="pc bpc" id="L58" title="1 of 4 branches missed.">		validateDefaultValue(attr, validationMode == ADD || validationMode == UPDATE);</span>
+<span class="fc" id="L59">		validateParent(attr);</span>
+<span class="fc" id="L60">		validateChildren(attr);</span>
+
+<span class="pc bpc" id="L62" title="1 of 3 branches missed.">		switch (validationMode)</span>
+		{
+			case ADD:
+			case ADD_SKIP_ENTITY_VALIDATION:
+<span class="fc" id="L66">				validateAdd(attr);</span>
+<span class="fc" id="L67">				break;</span>
+			case UPDATE:
+			case UPDATE_SKIP_ENTITY_VALIDATION:
+<span class="fc" id="L70">				Attribute currentAttr = dataService.findOneById(ATTRIBUTE_META_DATA, attr.getIdentifier(),</span>
+						Attribute.class);
+<span class="nc" id="L72">				validateUpdate(attr, currentAttr);</span>
+<span class="nc" id="L73">				break;</span>
+			default:
+<span class="nc" id="L75">				throw new UnexpectedEnumException(validationMode);</span>
+		}
+<span class="fc" id="L77">	}</span>
+
+	private static void validateParent(Attribute attr)
+	{
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">		if (attr.getParent() != null)</span>
+		{
+<span class="nc bnc" id="L83" title="All 2 branches missed.">			if (attr.getParent().getDataType() != COMPOUND)</span>
+			{
+<span class="nc" id="L85">				throw new MolgenisDataException(</span>
+<span class="nc" id="L86">						format(&quot;Parent attribute [%s] of attribute [%s] is not of type compound&quot;,</span>
+<span class="nc" id="L87">								attr.getParent().getName(), attr.getName()));</span>
+			}
+		}
+<span class="fc" id="L90">	}</span>
+
+	private static void validateChildren(Attribute attr)
+	{
+<span class="pc bpc" id="L94" title="2 of 4 branches missed.">		boolean childrenIsNullOrEmpty = attr.getChildren() == null || Iterables.isEmpty(attr.getChildren());</span>
+
+<span class="pc bpc" id="L96" title="3 of 4 branches missed.">		if (!childrenIsNullOrEmpty &amp;&amp; attr.getDataType() != COMPOUND)</span>
+		{
+<span class="nc" id="L98">			throw new MolgenisDataException(</span>
+<span class="nc" id="L99">					format(&quot;Attribute [%s] is not of type COMPOUND and can therefor not have children&quot;,</span>
+<span class="nc" id="L100">							attr.getName()));</span>
+		}
+
+<span class="fc" id="L103">	}</span>
+
+	private static void validateAdd(Attribute newAttr)
+	{
+		// mappedBy
+<span class="fc" id="L108">		validateMappedBy(newAttr, newAttr.getMappedBy());</span>
+
+		// orderBy
+<span class="fc" id="L111">		validateOrderBy(newAttr, newAttr.getOrderBy());</span>
+<span class="fc" id="L112">	}</span>
+
+	private static void validateUpdate(Attribute newAttr, Attribute currentAttr)
+	{
+		// data type
+<span class="fc" id="L117">		AttributeType currentDataType = currentAttr.getDataType();</span>
+<span class="fc" id="L118">		AttributeType newDataType = newAttr.getDataType();</span>
+<span class="pc bpc" id="L119" title="1 of 2 branches missed.">		if (!Objects.equals(currentDataType, newDataType))</span>
+		{
+<span class="nc" id="L121">			validateUpdateDataType(currentDataType, newDataType);</span>
+
+<span class="nc bnc" id="L123" title="All 2 branches missed.">			if (newAttr.isInversedBy())</span>
+			{
+<span class="nc" id="L125">				throw new MolgenisDataException(</span>
+<span class="nc" id="L126">						format(&quot;Attribute data type change not allowed for bidirectional attribute [%s]&quot;,</span>
+<span class="nc" id="L127">								newAttr.getName()));</span>
+			}
+		}
+
+		// orderBy
+<span class="nc" id="L132">		Sort currentOrderBy = currentAttr.getOrderBy();</span>
+<span class="nc" id="L133">		Sort newOrderBy = newAttr.getOrderBy();</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">		if (!Objects.equals(currentOrderBy, newOrderBy))</span>
+		{
+<span class="nc" id="L136">			validateOrderBy(newAttr, newOrderBy);</span>
+		}
+
+		// note: mappedBy is a readOnly attribute, no need to verify for updates
+<span class="nc" id="L140">	}</span>
+
+	void validateDefaultValue(Attribute attr, boolean validateEntityReferences)
+	{
+<span class="fc" id="L144">		String value = attr.getDefaultValue();</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">		if (value != null)</span>
+		{
+<span class="pc bpc" id="L147" title="1 of 2 branches missed.">			if (attr.isUnique())</span>
+			{
+<span class="nc" id="L149">				throw new MolgenisDataException(&quot;Unique attribute &quot; + attr.getName() + &quot; cannot have default value&quot;);</span>
+			}
+
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">			if (attr.getExpression() != null)</span>
+			{
+<span class="nc" id="L154">				throw new MolgenisDataException(&quot;Computed attribute &quot; + attr.getName() + &quot; cannot have default value&quot;);</span>
+			}
+
+<span class="fc" id="L157">			AttributeType fieldType = attr.getDataType();</span>
+<span class="pc bpc" id="L158" title="1 of 4 branches missed.">			if (fieldType.getMaxLength() != null &amp;&amp; value.length() &gt; fieldType.getMaxLength())</span>
+			{
+<span class="nc" id="L160">				throw new MolgenisDataException(</span>
+<span class="nc" id="L161">						&quot;Default value for attribute [&quot; + attr.getName() + &quot;] exceeds the maximum length for datatype &quot;</span>
+<span class="nc" id="L162">								+ attr.getDataType().name());</span>
+			}
+
+<span class="pc bpc" id="L165" title="1 of 2 branches missed.">			if (fieldType == AttributeType.EMAIL)</span>
+			{
+<span class="nc" id="L167">				checkEmail(value);</span>
+			}
+
+<span class="fc bfc" id="L170" title="All 2 branches covered.">			if (fieldType == AttributeType.HYPERLINK)</span>
+			{
+<span class="fc" id="L172">				checkHyperlink(value);</span>
+			}
+
+<span class="fc bfc" id="L175" title="All 2 branches covered.">			if (fieldType == AttributeType.ENUM)</span>
+			{
+<span class="fc" id="L177">				checkEnum(attr, value);</span>
+			}
+
+			// Get typed value to check if the value is of the right type.
+			Object typedValue;
+			try
+			{
+<span class="fc" id="L184">				typedValue = EntityUtils.getTypedValue(value, attr, entityManager);</span>
+			}
+<span class="fc" id="L186">			catch (NumberFormatException e)</span>
+			{
+<span class="fc" id="L188">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L189">						format(&quot;Invalid default value [%s] for data type [%s]&quot;, value, attr.getDataType())));</span>
+<span class="fc" id="L190">			}</span>
+
+<span class="fc bfc" id="L192" title="All 2 branches covered.">			if (validateEntityReferences)</span>
+			{
+<span class="fc bfc" id="L194" title="All 2 branches covered.">				if (isSingleReferenceType(attr))</span>
+				{
+<span class="fc" id="L196">					Entity refEntity = (Entity) typedValue;</span>
+<span class="fc" id="L197">					EntityType refEntityType = attr.getRefEntity();</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">					if (dataService.query(refEntityType.getId())</span>
+<span class="fc" id="L199">								   .eq(refEntityType.getIdAttribute().getName(), refEntity.getIdValue())</span>
+<span class="fc" id="L200">								   .count() == 0)</span>
+					{
+<span class="fc" id="L202">						throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L203">								format(&quot;Default value [%s] refers to an unknown entity&quot;, value)));</span>
+					}
+<span class="fc" id="L205">				}</span>
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">				else if (isMultipleReferenceType(attr))</span>
+				{
+<span class="nc" id="L208">					Iterable&lt;Entity&gt; refEntitiesValue = (Iterable&lt;Entity&gt;) typedValue;</span>
+<span class="nc" id="L209">					EntityType refEntityType = attr.getRefEntity();</span>
+<span class="nc" id="L210">					if (dataService.query(refEntityType.getId())</span>
+<span class="nc" id="L211">								   .in(refEntityType.getIdAttribute().getName(),</span>
+<span class="nc" id="L212">										   StreamSupport.stream(refEntitiesValue.spliterator(), false)</span>
+<span class="nc" id="L213">														.map(Entity::getIdValue)</span>
+<span class="nc" id="L214">														.collect(toList()))</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">								   .count() &lt; Iterables.size(refEntitiesValue))</span>
+					{
+<span class="nc" id="L217">						throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="nc" id="L218">								format(&quot;Default value [%s] refers to one or more unknown entities&quot;, value)));</span>
+					}
+				}
+			}
+		}
+<span class="fc" id="L223">	}</span>
+
+	private void checkEmail(String value)
+	{
+<span class="nc bnc" id="L227" title="All 2 branches missed.">		if (!emailValidator.isValid(value, null))</span>
+		{
+<span class="nc" id="L229">			throw new MolgenisDataException(&quot;Default value [&quot; + value + &quot;] is not a valid email address&quot;);</span>
+		}
+<span class="nc" id="L231">	}</span>
+
+	private static void checkEnum(Attribute attr, String value)
+	{
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">		if (value != null)</span>
+		{
+<span class="fc" id="L237">			List&lt;String&gt; enumOptions = attr.getEnumOptions();</span>
+
+<span class="fc bfc" id="L239" title="All 2 branches covered.">			if (!enumOptions.contains(value))</span>
+			{
+<span class="fc" id="L241">				throw new MolgenisDataException(</span>
+<span class="fc" id="L242">						&quot;Invalid default value [&quot; + value + &quot;] for enum [&quot; + attr.getName() + &quot;] value must be one of &quot;</span>
+<span class="fc" id="L243">								+ enumOptions.toString());</span>
+			}
+		}
+<span class="fc" id="L246">	}</span>
+
+	private static void checkHyperlink(String value)
+	{
+		try
+		{
+<span class="fc" id="L252">			new URI(value);</span>
+		}
+<span class="fc" id="L254">		catch (URISyntaxException e)</span>
+		{
+<span class="fc" id="L256">			throw new MolgenisDataException(&quot;Default value [&quot; + value + &quot;] is not a valid hyperlink.&quot;);</span>
+<span class="fc" id="L257">		}</span>
+<span class="fc" id="L258">	}</span>
+
+	private static void validateName(Attribute attr)
+	{
+		// validate entity name (e.g. illegal characters, length)
+<span class="fc" id="L263">		String name = attr.getName();</span>
+<span class="pc bpc" id="L264" title="3 of 6 branches missed.">		if (!name.equals(ATTRIBUTE_META_DATA) &amp;&amp; !name.equals(ENTITY_TYPE_META_DATA) &amp;&amp; !name.equals(PACKAGE))</span>
+		{
+			try
+			{
+<span class="fc" id="L268">				NameValidator.validateAttributeName(attr.getName());</span>
+			}
+<span class="fc" id="L270">			catch (MolgenisDataException e)</span>
+			{
+<span class="fc" id="L272">				throw new MolgenisValidationException(new ConstraintViolation(e.getMessage()));</span>
+<span class="fc" id="L273">			}</span>
+		}
+<span class="fc" id="L275">	}</span>
+
+	/**
+	 * Validate whether the mappedBy attribute is part of the referenced entity.
+	 *
+	 * @param attr         attribute
+	 * @param mappedByAttr mappedBy attribute
+	 * @throws MolgenisDataException if mappedBy is an attribute that is not part of the referenced entity
+	 */
+	private static void validateMappedBy(Attribute attr, Attribute mappedByAttr)
+	{
+<span class="pc bpc" id="L286" title="1 of 2 branches missed.">		if (mappedByAttr != null)</span>
+		{
+<span class="fc bfc" id="L288" title="All 2 branches covered.">			if (!isSingleReferenceType(mappedByAttr))</span>
+			{
+<span class="fc" id="L290">				throw new MolgenisDataException(</span>
+<span class="fc" id="L291">						format(&quot;Invalid mappedBy attribute [%s] data type [%s].&quot;, mappedByAttr.getName(),</span>
+<span class="fc" id="L292">								mappedByAttr.getDataType()));</span>
+			}
+
+<span class="fc" id="L295">			Attribute refAttr = attr.getRefEntity().getAttribute(mappedByAttr.getName());</span>
+<span class="fc bfc" id="L296" title="All 2 branches covered.">			if (refAttr == null)</span>
+			{
+<span class="fc" id="L298">				throw new MolgenisDataException(</span>
+<span class="fc" id="L299">						format(&quot;mappedBy attribute [%s] is not part of entity [%s].&quot;, mappedByAttr.getName(),</span>
+<span class="fc" id="L300">								attr.getRefEntity().getId()));</span>
+			}
+		}
+<span class="fc" id="L303">	}</span>
+
+	/**
+	 * Validate whether the attribute names defined by the orderBy attribute point to existing attributes in the
+	 * referenced entity.
+	 *
+	 * @param attr    attribute
+	 * @param orderBy orderBy of attribute
+	 * @throws MolgenisDataException if orderBy contains attribute names that do not exist in the referenced entity.
+	 */
+	private static void validateOrderBy(Attribute attr, Sort orderBy)
+	{
+<span class="fc bfc" id="L315" title="All 2 branches covered.">		if (orderBy != null)</span>
+		{
+<span class="fc" id="L317">			EntityType refEntity = attr.getRefEntity();</span>
+<span class="pc bpc" id="L318" title="1 of 2 branches missed.">			if (refEntity != null)</span>
+			{
+<span class="fc bfc" id="L320" title="All 2 branches covered.">				for (Sort.Order orderClause : orderBy)</span>
+				{
+<span class="fc" id="L322">					String refAttrName = orderClause.getAttr();</span>
+<span class="fc bfc" id="L323" title="All 2 branches covered.">					if (refEntity.getAttribute(refAttrName) == null)</span>
+					{
+<span class="fc" id="L325">						throw new MolgenisDataException(</span>
+<span class="fc" id="L326">								format(&quot;Unknown entity [%s] attribute [%s] referred to by entity [%s] attribute [%s] sortBy [%s]&quot;,</span>
+<span class="fc" id="L327">										refEntity.getId(), refAttrName, attr.getEntityType().getId(), attr.getName(),</span>
+<span class="fc" id="L328">										orderBy.toSortString()));</span>
+					}
+<span class="fc" id="L330">				}</span>
+			}
+		}
+<span class="fc" id="L333">	}</span>
+
+	private static void validateUpdateDataType(AttributeType currentDataType, AttributeType newDataType)
+	{
+<span class="fc" id="L337">		EnumSet&lt;AttributeType&gt; allowedDatatypes = DATA_TYPE_ALLOWED_TRANSITIONS.get(currentDataType);</span>
+<span class="pc bpc" id="L338" title="1 of 2 branches missed.">		if (!allowedDatatypes.contains(newDataType))</span>
+		{
+<span class="fc" id="L340">			throw new MolgenisDataException(</span>
+<span class="fc" id="L341">					format(&quot;Attribute data type update from [%s] to [%s] not allowed, allowed types are %s&quot;,</span>
+<span class="fc" id="L342">							currentDataType.toString(), newDataType.toString(), allowedDatatypes.toString()));</span>
+		}
+<span class="nc" id="L344">	}</span>
+
+	private static EnumMap&lt;AttributeType, EnumSet&lt;AttributeType&gt;&gt; DATA_TYPE_ALLOWED_TRANSITIONS;
+
+	static
+	{
+		// transitions to EMAIL and HYPERLINK not allowed because existing values can not be validated
+		// transitions to CATEGORICAL_MREF and MREF not allowed because junction tables updated not implemented
+		// transitions to FILE not allowed because associated file in FileStore not created/removed, see github issue https://github.com/molgenis/molgenis/issues/3217
+<span class="fc" id="L353">		DATA_TYPE_ALLOWED_TRANSITIONS = new EnumMap&lt;&gt;(AttributeType.class);</span>
+<span class="fc" id="L354">		Set&lt;AttributeType&gt; allowedIdAttributeTypes = getValidIdAttributeTypes();</span>
+
+		// TRUE and FALSE can either be expressed in string or 0 and 1
+		// Postgres does not support boolean to bigint or double precision (LONG and DECIMAL)
+<span class="fc" id="L358">		DATA_TYPE_ALLOWED_TRANSITIONS.put(BOOL, EnumSet.of(STRING, TEXT, INT));</span>
+
+		// DATE and DATE_TIME can only be converted to STRING and TEXT types
+<span class="fc" id="L361">		DATA_TYPE_ALLOWED_TRANSITIONS.put(DATE, EnumSet.of(STRING, TEXT, DATE_TIME));</span>
+<span class="fc" id="L362">		DATA_TYPE_ALLOWED_TRANSITIONS.put(DATE_TIME, EnumSet.of(STRING, TEXT, DATE));</span>
+
+<span class="fc" id="L364">		DATA_TYPE_ALLOWED_TRANSITIONS.put(DECIMAL, EnumSet.of(STRING, TEXT, INT, LONG, ENUM));</span>
+<span class="fc" id="L365">		DATA_TYPE_ALLOWED_TRANSITIONS.put(INT, EnumSet.of(STRING, TEXT, DECIMAL, LONG, BOOL, ENUM));</span>
+<span class="fc" id="L366">		DATA_TYPE_ALLOWED_TRANSITIONS.put(LONG, EnumSet.of(STRING, TEXT, INT, DECIMAL, ENUM));</span>
+
+		// EMAIL and HYPERLINK can never be anything else then STRING or TEXT compatible
+<span class="fc" id="L369">		DATA_TYPE_ALLOWED_TRANSITIONS.put(EMAIL, EnumSet.of(STRING, TEXT));</span>
+<span class="fc" id="L370">		DATA_TYPE_ALLOWED_TRANSITIONS.put(HYPERLINK, EnumSet.of(STRING, TEXT));</span>
+
+		// If you have JS only in your HTML attribute, you can also change it to SCRIPT
+<span class="fc" id="L373">		DATA_TYPE_ALLOWED_TRANSITIONS.put(HTML, EnumSet.of(STRING, TEXT, SCRIPT));</span>
+
+		// CATEGORICAL and XREF can be converted to all the allowed ID attribute types, and to eachother
+		// EMAIL and HYPERLINK are excluded, we are unable to validate the format
+<span class="fc" id="L377">		DATA_TYPE_ALLOWED_TRANSITIONS.put(CATEGORICAL, EnumSet.of(STRING, INT, LONG, XREF));</span>
+<span class="fc" id="L378">		DATA_TYPE_ALLOWED_TRANSITIONS.put(XREF, EnumSet.of(STRING, INT, LONG, CATEGORICAL));</span>
+
+		// Allow transition between types that already have a junction table
+<span class="fc" id="L381">		DATA_TYPE_ALLOWED_TRANSITIONS.put(MREF, EnumSet.of(CATEGORICAL_MREF));</span>
+<span class="fc" id="L382">		DATA_TYPE_ALLOWED_TRANSITIONS.put(CATEGORICAL_MREF, EnumSet.of(MREF));</span>
+
+		// SCRIPT is an algorithm, which can not be anything else then STRING or TEXT
+<span class="fc" id="L385">		DATA_TYPE_ALLOWED_TRANSITIONS.put(SCRIPT, EnumSet.of(STRING, TEXT));</span>
+
+<span class="fc" id="L387">		DATA_TYPE_ALLOWED_TRANSITIONS.put(STRING,</span>
+<span class="fc" id="L388">				EnumSet.of(BOOL, DATE, DATE_TIME, DECIMAL, INT, LONG, HTML, SCRIPT, TEXT, ENUM, COMPOUND));</span>
+
+<span class="fc" id="L390">		DATA_TYPE_ALLOWED_TRANSITIONS.put(TEXT,</span>
+<span class="fc" id="L391">				EnumSet.of(BOOL, DATE, DATE_TIME, DECIMAL, INT, LONG, HTML, SCRIPT, STRING, ENUM, COMPOUND));</span>
+
+<span class="fc" id="L393">		DATA_TYPE_ALLOWED_TRANSITIONS.put(ENUM, EnumSet.of(STRING, INT, LONG, TEXT));</span>
+
+		// STRING only, because STRING can be converted to almost everything else
+<span class="fc" id="L396">		DATA_TYPE_ALLOWED_TRANSITIONS.put(COMPOUND, EnumSet.of(STRING));</span>
+
+		// ONE_TO_MANY and FILE can never be anything else
+<span class="fc" id="L399">		DATA_TYPE_ALLOWED_TRANSITIONS.put(ONE_TO_MANY, EnumSet.noneOf(AttributeType.class));</span>
+<span class="fc" id="L400">		DATA_TYPE_ALLOWED_TRANSITIONS.put(FILE, EnumSet.noneOf(AttributeType.class));</span>
+
+		// Excluded MREF and CATEGORICAL_MREF because transition to a type with a junction table is not possible at the moment
+<span class="fc" id="L403">		EnumSet&lt;AttributeType&gt; referenceTypes = EnumSet.of(XREF, CATEGORICAL);</span>
+
+		// Every type that is listed as a valid ID attribute type is allowed to be converted to an XREF and CATEGORICAL
+<span class="fc" id="L406">		DATA_TYPE_ALLOWED_TRANSITIONS.keySet()</span>
+<span class="fc" id="L407">									 .stream()</span>
+<span class="fc" id="L408">									 .filter(allowedIdAttributeTypes::contains)</span>
+<span class="fc" id="L409">									 .forEach(type -&gt; DATA_TYPE_ALLOWED_TRANSITIONS.get(type).addAll(referenceTypes));</span>
+<span class="fc" id="L410">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

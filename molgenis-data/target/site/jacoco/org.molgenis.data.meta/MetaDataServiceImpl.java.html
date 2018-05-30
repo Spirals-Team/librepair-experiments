@@ -1,0 +1,1100 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MetaDataServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.meta</a> &gt; <span class="el_source">MetaDataServiceImpl.java</span></div><h1>MetaDataServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.data.meta;
+
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
+import org.molgenis.data.*;
+import org.molgenis.data.meta.model.*;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.meta.persist.PackagePersister;
+import org.molgenis.data.meta.system.SystemEntityTypeRegistry;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.data.util.EntityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Maps.newLinkedHashMap;
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.*;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.meta.MetaUtils.getEntityTypeFetch;
+import static org.molgenis.data.meta.model.AttributeMetadata.*;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.*;
+import static org.molgenis.data.meta.model.PackageMetadata.PACKAGE;
+import static org.molgenis.data.meta.model.PackageMetadata.PARENT;
+import static org.molgenis.data.meta.model.TagMetadata.TAG;
+
+/**
+ * Meta data service for retrieving and editing meta data.
+ */
+@Component
+public class MetaDataServiceImpl implements MetaDataService
+{
+<span class="fc" id="L42">	private static final Logger LOG = LoggerFactory.getLogger(MetaDataServiceImpl.class);</span>
+
+	private final DataService dataService;
+	private final RepositoryCollectionRegistry repoCollectionRegistry;
+	private final SystemEntityTypeRegistry systemEntityTypeRegistry;
+	private final EntityTypeDependencyResolver entityTypeDependencyResolver;
+	private final PackagePersister packagePersister;
+
+	public MetaDataServiceImpl(DataService dataService, RepositoryCollectionRegistry repoCollectionRegistry,
+			SystemEntityTypeRegistry systemEntityTypeRegistry,
+			EntityTypeDependencyResolver entityTypeDependencyResolver, PackagePersister packagePersister)
+<span class="fc" id="L53">	{</span>
+<span class="fc" id="L54">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L55">		this.repoCollectionRegistry = requireNonNull(repoCollectionRegistry);</span>
+<span class="fc" id="L56">		this.systemEntityTypeRegistry = requireNonNull(systemEntityTypeRegistry);</span>
+<span class="fc" id="L57">		this.entityTypeDependencyResolver = requireNonNull(entityTypeDependencyResolver);</span>
+<span class="fc" id="L58">		this.packagePersister = requireNonNull(packagePersister);</span>
+<span class="fc" id="L59">	}</span>
+
+	@Override
+	public Repository&lt;Entity&gt; getRepository(String entityTypeId)
+	{
+<span class="fc" id="L64">		EntityType entityType = getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L65" title="All 2 branches covered.">		if (entityType == null)</span>
+		{
+<span class="fc" id="L67">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+<span class="fc bfc" id="L69" title="All 2 branches covered.">		return !entityType.isAbstract() ? getRepository(entityType) : null;</span>
+	}
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	@Override
+	public &lt;E extends Entity&gt; Repository&lt;E&gt; getRepository(String entityTypeId, Class&lt;E&gt; entityClass)
+	{
+<span class="fc" id="L76">		return (Repository&lt;E&gt;) getRepository(entityTypeId);</span>
+	}
+
+	@Override
+	public Repository&lt;Entity&gt; getRepository(EntityType entityType)
+	{
+<span class="fc bfc" id="L82" title="All 2 branches covered.">		if (!entityType.isAbstract())</span>
+		{
+<span class="fc" id="L84">			String backendName = entityType.getBackend();</span>
+<span class="fc" id="L85">			RepositoryCollection backend = getBackend(backendName);</span>
+<span class="fc" id="L86">			return backend.getRepository(entityType);</span>
+		}
+		else
+		{
+<span class="fc" id="L90">			return null;</span>
+		}
+	}
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	@Override
+	public &lt;E extends Entity&gt; Repository&lt;E&gt; getRepository(EntityType entityType, Class&lt;E&gt; entityClass)
+	{
+<span class="fc" id="L98">		return (Repository&lt;E&gt;) getRepository(entityType);</span>
+	}
+
+	@Override
+	public boolean hasRepository(String entityTypeId)
+	{
+<span class="fc" id="L104">		SystemEntityType systemEntityType = systemEntityTypeRegistry.getSystemEntityType(entityTypeId);</span>
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">		if (systemEntityType != null)</span>
+		{
+<span class="nc bnc" id="L107" title="All 2 branches missed.">			return !systemEntityType.isAbstract();</span>
+		}
+		else
+		{
+<span class="fc" id="L111">			return dataService.query(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="fc" id="L112">							  .eq(EntityTypeMetadata.ID, entityTypeId)</span>
+<span class="fc" id="L113">							  .and()</span>
+<span class="fc" id="L114">							  .eq(IS_ABSTRACT, false)</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">							  .findOne() != null;</span>
+		}
+	}
+
+	@Override
+	public Repository&lt;Entity&gt; createRepository(EntityType entityType)
+	{
+<span class="fc bfc" id="L122" title="All 2 branches covered.">		if (entityType.isAbstract())</span>
+		{
+<span class="fc" id="L124">			throw new MolgenisDataException(</span>
+<span class="fc" id="L125">					format(&quot;Can't create repository for abstract entity [%s]&quot;, entityType.getId()));</span>
+		}
+<span class="fc" id="L127">		addEntityType(entityType);</span>
+<span class="fc" id="L128">		return getRepository(entityType);</span>
+	}
+
+	@Override
+	public &lt;E extends Entity&gt; Repository&lt;E&gt; createRepository(EntityType entityType, Class&lt;E&gt; entityClass)
+	{
+<span class="fc bfc" id="L134" title="All 2 branches covered.">		if (entityType.isAbstract())</span>
+		{
+<span class="fc" id="L136">			throw new MolgenisDataException(</span>
+<span class="fc" id="L137">					format(&quot;Can't create repository for abstract entity [%s]&quot;, entityType.getId()));</span>
+		}
+<span class="fc" id="L139">		addEntityType(entityType);</span>
+<span class="fc" id="L140">		return getRepository(entityType, entityClass);</span>
+	}
+
+	@Override
+	public RepositoryCollection getDefaultBackend()
+	{
+<span class="fc" id="L146">		return repoCollectionRegistry.getDefaultRepoCollection();</span>
+	}
+
+	@Override
+	public RepositoryCollection getBackend(String backendName)
+	{
+<span class="fc" id="L152">		return repoCollectionRegistry.getRepositoryCollection(backendName);</span>
+	}
+
+	@Transactional
+	@Override
+	public void deleteEntityType(String entityTypeId)
+	{
+<span class="fc" id="L159">		dataService.deleteById(ENTITY_TYPE_META_DATA, entityTypeId);</span>
+
+<span class="fc" id="L161">		LOG.info(&quot;Removed entity [{}]&quot;, entityTypeId);</span>
+<span class="fc" id="L162">	}</span>
+
+	@Transactional
+	@Override
+	public void deleteEntityType(Collection&lt;EntityType&gt; entityTypes)
+	{
+<span class="fc bfc" id="L168" title="All 2 branches covered.">		if (entityTypes.isEmpty())</span>
+		{
+<span class="fc" id="L170">			return;</span>
+		}
+
+<span class="fc" id="L173">		dataService.delete(ENTITY_TYPE_META_DATA, entityTypes.stream());</span>
+
+<span class="fc" id="L175">		LOG.info(&quot;Removed entities [{}]&quot;, entityTypes.stream().map(EntityType::getId).collect(joining(&quot;,&quot;)));</span>
+<span class="fc" id="L176">	}</span>
+
+	@Transactional
+	@Override
+	public void deleteAttributeById(Object id)
+	{
+<span class="fc" id="L182">		Attribute attribute = dataService.findOneById(ATTRIBUTE_META_DATA, id, Attribute.class);</span>
+<span class="fc" id="L183">		EntityType entityType = attribute.getEntity();</span>
+
+		// Update repository state
+<span class="fc" id="L186">		entityType.removeAttribute(attribute);</span>
+
+		// Update repository state
+<span class="fc" id="L189">		dataService.update(ENTITY_TYPE_META_DATA, entityType);</span>
+
+		// Update administration
+<span class="fc" id="L192">		dataService.delete(ATTRIBUTE_META_DATA, attribute);</span>
+<span class="fc" id="L193">	}</span>
+
+	@Override
+	public RepositoryCollection getBackend(EntityType entityType)
+	{
+<span class="nc bnc" id="L198" title="All 2 branches missed.">		String backendName = entityType.getBackend() == null ? getDefaultBackend().getName() : entityType.getBackend();</span>
+<span class="nc" id="L199">		RepositoryCollection backend = repoCollectionRegistry.getRepositoryCollection(backendName);</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">		if (backend == null) throw new RuntimeException(format(&quot;Unknown backend [%s]&quot;, backendName));</span>
+
+<span class="nc" id="L202">		return backend;</span>
+	}
+
+	@Transactional
+	@Override
+	public void addEntityType(EntityType entityType)
+	{
+		// create entity
+<span class="fc" id="L210">		dataService.add(ENTITY_TYPE_META_DATA, entityType);</span>
+
+		// create attributes
+<span class="fc" id="L213">		Stream&lt;Attribute&gt; attrs = stream(entityType.getOwnAllAttributes().spliterator(), false);</span>
+<span class="fc" id="L214">		dataService.add(ATTRIBUTE_META_DATA, attrs);</span>
+<span class="fc" id="L215">	}</span>
+
+	@Transactional
+	@Override
+	public void updateEntityType(EntityType entityType)
+	{
+<span class="fc" id="L221">		EntityType existingEntityType = dataService.query(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="fc" id="L222">												   .eq(EntityTypeMetadata.ID, entityType.getId())</span>
+<span class="fc" id="L223">												   .fetch(getEntityTypeFetch())</span>
+<span class="fc" id="L224">												   .findOne();</span>
+<span class="fc bfc" id="L225" title="All 2 branches covered.">		if (existingEntityType == null)</span>
+		{
+<span class="fc" id="L227">			throw new UnknownEntityTypeException(entityType.getId());</span>
+		}
+
+<span class="fc" id="L230">		updateEntityType(entityType, existingEntityType);</span>
+<span class="fc" id="L231">	}</span>
+
+	/**
+	 * Returns true if entity meta contains mapped by attributes that do not exist in the existing entity meta.
+	 *
+	 * @param entityType         entity meta data
+	 * @param existingEntityType existing entity meta data
+	 * @return true if entity meta contains mapped by attributes that do not exist in the existing entity meta.
+	 */
+	private static boolean hasNewMappedByAttrs(EntityType entityType, EntityType existingEntityType)
+	{
+<span class="fc" id="L242">		Set&lt;String&gt; mappedByAttrs = entityType.getOwnMappedByAttributes().map(Attribute::getName).collect(toSet());</span>
+
+<span class="fc" id="L244">		Set&lt;String&gt; existingMappedByAttrs = existingEntityType.getOwnMappedByAttributes()</span>
+<span class="fc" id="L245">															  .map(Attribute::getName)</span>
+<span class="fc" id="L246">															  .collect(toSet());</span>
+<span class="fc bfc" id="L247" title="All 2 branches covered.">		return !mappedByAttrs.equals(existingMappedByAttrs);</span>
+	}
+
+	@Transactional
+	@Override
+	public void upsertEntityTypes(Collection&lt;EntityType&gt; entityTypes)
+	{
+<span class="fc bfc" id="L254" title="All 2 branches covered.">		if (entityTypes.isEmpty())</span>
+		{
+<span class="fc" id="L256">			return;</span>
+		}
+
+<span class="fc" id="L259">		List&lt;EntityType&gt; resolvedEntityTypes = entityTypeDependencyResolver.resolve(entityTypes);</span>
+
+<span class="fc" id="L261">		Map&lt;String, EntityType&gt; existingEntityTypeMap = getExistingEntityTypeMap(entityTypes);</span>
+<span class="fc" id="L262">		upsertEntityTypesSkipMappedByAttributes(resolvedEntityTypes, existingEntityTypeMap);</span>
+<span class="fc" id="L263">		addMappedByAttributes(resolvedEntityTypes, existingEntityTypeMap);</span>
+<span class="fc" id="L264">	}</span>
+
+	private Map&lt;String, EntityType&gt; getExistingEntityTypeMap(Collection&lt;EntityType&gt; entityTypes)
+	{
+<span class="fc" id="L268">		Map&lt;String, EntityType&gt; existingEntityTypeMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L269">		entityTypes.forEach(entityType -&gt;</span>
+		{
+<span class="fc" id="L271">			String entityId = entityType.getId();</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">			if (entityId != null)</span>
+			{
+<span class="fc" id="L274">				EntityType existingEntityType = dataService.findOneById(ENTITY_TYPE_META_DATA, entityId,</span>
+						EntityType.class);
+
+<span class="fc bfc" id="L277" title="All 2 branches covered.">				if (existingEntityType != null)</span>
+				{
+<span class="fc" id="L279">					existingEntityTypeMap.put(entityType.getId(), existingEntityType);</span>
+				}
+			}
+<span class="fc" id="L282">		});</span>
+<span class="fc" id="L283">		return existingEntityTypeMap;</span>
+	}
+
+	private void addMappedByAttributes(List&lt;EntityType&gt; resolvedEntityTypes,
+			Map&lt;String, EntityType&gt; existingEntityTypeMap)
+	{
+		// 2nd pass: create mappedBy attributes and update entity
+<span class="fc" id="L290">		resolvedEntityTypes.forEach(entityType -&gt;</span>
+		{
+<span class="fc" id="L292">			EntityType existingEntityType = existingEntityTypeMap.get(entityType.getId());</span>
+<span class="fc bfc" id="L293" title="All 2 branches covered.">			if (existingEntityType == null)</span>
+			{
+<span class="fc bfc" id="L295" title="All 2 branches covered.">				if (entityType.hasMappedByAttributes())</span>
+				{
+<span class="fc" id="L297">					updateEntityType(entityType, new EntityTypeWithoutMappedByAttributes(entityType));</span>
+				}
+			}
+			else
+			{
+<span class="fc bfc" id="L302" title="All 2 branches covered.">				if (hasNewMappedByAttrs(entityType, existingEntityType))</span>
+				{
+<span class="fc" id="L304">					updateEntityType(entityType, existingEntityType);</span>
+				}
+			}
+<span class="fc" id="L307">		});</span>
+<span class="fc" id="L308">	}</span>
+
+	private void upsertEntityTypesSkipMappedByAttributes(List&lt;EntityType&gt; resolvedEntityType,
+			Map&lt;String, EntityType&gt; existingEntityTypeMap)
+	{
+		// 1st pass: create entities and attributes except for mappedBy attributes
+<span class="fc" id="L314">		resolvedEntityType.forEach(entityType -&gt;</span>
+		{
+<span class="fc" id="L316">			EntityType existingEntityType = existingEntityTypeMap.get(entityType.getId());</span>
+<span class="fc bfc" id="L317" title="All 2 branches covered.">			if (existingEntityType == null)</span>
+			{
+<span class="fc bfc" id="L319" title="All 2 branches covered.">				if (entityType.hasMappedByAttributes())</span>
+				{
+<span class="fc" id="L321">					entityType = new EntityTypeWithoutMappedByAttributes(entityType);</span>
+				}
+
+<span class="fc" id="L324">				addEntityType(entityType);</span>
+			}
+			else
+			{
+<span class="fc bfc" id="L328" title="All 2 branches covered.">				if (hasNewMappedByAttrs(entityType, existingEntityType))</span>
+				{
+<span class="fc" id="L330">					entityType = new EntityTypeWithoutMappedByAttributes(entityType, existingEntityType);</span>
+				}
+
+<span class="fc" id="L333">				updateEntityType(entityType, existingEntityType);</span>
+			}
+<span class="fc" id="L335">		});</span>
+<span class="fc" id="L336">	}</span>
+
+	private void updateEntityType(EntityType entityType, EntityType existingEntityType)
+	{
+		// update entity
+<span class="pc bpc" id="L341" title="1 of 2 branches missed.">		if (!EntityUtils.equals(entityType, existingEntityType))</span>
+		{
+			// note: leave it up to the data service to decided what to do with attributes removed from entity meta data
+<span class="fc" id="L344">			dataService.update(ENTITY_TYPE_META_DATA, entityType);</span>
+		}
+		// add new attributes, update modified attributes
+<span class="fc" id="L347">		upsertAttributes(entityType, existingEntityType);</span>
+<span class="fc" id="L348">	}</span>
+
+	@Transactional
+	@Override
+	public void addAttribute(Attribute attr)
+	{
+<span class="fc" id="L354">		EntityType entityType = dataService.getEntityType(attr.getEntity().getId());</span>
+<span class="fc" id="L355">		entityType.addAttribute(attr);</span>
+
+		// Update repository state
+<span class="fc" id="L358">		dataService.update(ENTITY_TYPE_META_DATA, entityType);</span>
+
+		// Update administration
+<span class="fc" id="L361">		dataService.add(ATTRIBUTE_META_DATA, attr);</span>
+<span class="fc" id="L362">	}</span>
+
+	@Transactional
+	@Override
+	public void addAttributes(String entityTypeId, Stream&lt;Attribute&gt; attrs)
+	{
+<span class="nc" id="L368">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="nc" id="L369">		List&lt;Attribute&gt; attributes = attrs.collect(toList());</span>
+<span class="nc" id="L370">		entityType.addAttributes(attributes);</span>
+
+		// Update repository state
+<span class="nc" id="L373">		dataService.update(ENTITY_TYPE_META_DATA, entityType);</span>
+
+		// Update administration
+<span class="nc" id="L376">		dataService.add(ATTRIBUTE_META_DATA, attributes.stream());</span>
+<span class="nc" id="L377">	}</span>
+
+	@Override
+	public boolean hasEntityType(String entityTypeId)
+	{
+<span class="fc bfc" id="L382" title="All 2 branches covered.">		return systemEntityTypeRegistry.hasSystemEntityType(entityTypeId)</span>
+<span class="fc bfc" id="L383" title="All 2 branches covered.">				|| getEntityTypeBypassingRegistry(entityTypeId) != null;</span>
+	}
+
+	@Override
+	public EntityType getEntityType(String entityTypeId)
+	{
+<span class="fc" id="L389">		EntityType systemEntity = systemEntityTypeRegistry.getSystemEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L390" title="All 2 branches covered.">		if (systemEntity != null)</span>
+		{
+<span class="fc" id="L392">			return systemEntity;</span>
+		}
+		else
+		{
+<span class="fc" id="L396">			return getEntityTypeBypassingRegistry(entityTypeId);</span>
+		}
+	}
+
+	@Override
+	public EntityType getEntityTypeById(String entityTypeId)
+	{
+<span class="nc" id="L403">		EntityType systemEntity = systemEntityTypeRegistry.getSystemEntityType(entityTypeId);</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">		if (systemEntity != null)</span>
+		{
+<span class="nc" id="L406">			return systemEntity;</span>
+		}
+		else
+		{
+<span class="nc" id="L410">			return getEntityTypeBypassingRegistry(entityTypeId);</span>
+		}
+	}
+
+	@Transactional
+	@Override
+	public void addPackage(Package package_)
+	{
+<span class="fc" id="L418">		dataService.add(PACKAGE, package_);</span>
+<span class="fc" id="L419">	}</span>
+
+	@Transactional
+	@Override
+	public void upsertPackages(Stream&lt;Package&gt; packages)
+	{
+<span class="fc" id="L425">		packagePersister.upsertPackages(packages);</span>
+<span class="fc" id="L426">	}</span>
+
+	@Override
+	public Package getPackage(String fullyQualifiedPackageName)
+	{
+<span class="fc" id="L431">		return dataService.findOneById(PACKAGE, fullyQualifiedPackageName, Package.class);</span>
+	}
+
+	@Override
+	public List&lt;Package&gt; getPackages()
+	{
+<span class="fc" id="L437">		return dataService.findAll(PACKAGE, Package.class).collect(toList());</span>
+	}
+
+	@Override
+	public List&lt;Package&gt; getRootPackages()
+	{
+<span class="fc" id="L443">		return dataService.query(PACKAGE, Package.class).eq(PARENT, null).findAll().collect(toList());</span>
+	}
+
+	@Transactional
+	@Override
+	public void upsertTags(Collection&lt;Tag&gt; tags)
+	{
+		// TODO replace with dataService.upsert once available in Repository
+<span class="nc" id="L451">		tags.forEach(tag -&gt;</span>
+		{
+<span class="nc" id="L453">			Tag existingTag = dataService.findOneById(TAG, tag.getId(), Tag.class);</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">			if (existingTag == null)</span>
+			{
+<span class="nc" id="L456">				dataService.add(TAG, tag);</span>
+			}
+			else
+			{
+<span class="nc" id="L460">				dataService.update(TAG, tag);</span>
+			}
+<span class="nc" id="L462">		});</span>
+<span class="nc" id="L463">	}</span>
+
+	@Override
+	public Stream&lt;EntityType&gt; getEntityTypes()
+	{
+<span class="nc" id="L468">		List&lt;EntityType&gt; entityTypeList = newArrayList();</span>
+<span class="nc" id="L469">		Fetch entityTypeFetch = getEntityTypeFetch();</span>
+
+		// Fetch the entitytypes page by page so that the results can be cached
+<span class="nc" id="L472">		final int pageSize = 1000;</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">		for (int page = 0; entityTypeList.size() == page * pageSize; page++)</span>
+		{
+<span class="nc" id="L475">			QueryImpl&lt;EntityType&gt; query = new QueryImpl&lt;&gt;();</span>
+<span class="nc" id="L476">			query.setFetch(entityTypeFetch);</span>
+<span class="nc" id="L477">			query.setPageSize(pageSize);</span>
+<span class="nc" id="L478">			query.setOffset(page * pageSize);</span>
+<span class="nc" id="L479">			dataService.findAll(ENTITY_TYPE_META_DATA, query, EntityType.class).forEach(entityTypeList::add);</span>
+		}
+
+<span class="nc" id="L482">		return entityTypeList.stream();</span>
+	}
+
+	@Override
+	public Stream&lt;Repository&lt;Entity&gt;&gt; getRepositories()
+	{
+<span class="fc" id="L488">		return dataService.query(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="fc" id="L489">						  .eq(IS_ABSTRACT, false)</span>
+<span class="fc" id="L490">						  .fetch(getEntityTypeFetch())</span>
+<span class="fc" id="L491">						  .findAll()</span>
+<span class="fc" id="L492">						  .map(this::getRepository);</span>
+	}
+
+	/**
+	 * Add and update entity attributes
+	 *
+	 * @param entityType         entity meta data
+	 * @param existingEntityType existing entity meta data
+	 */
+	private void upsertAttributes(EntityType entityType, EntityType existingEntityType)
+	{
+		// analyze both compound and atomic attributes owned by the entity
+<span class="fc" id="L504">		Map&lt;String, Attribute&gt; attrsMap = stream(entityType.getOwnAllAttributes().spliterator(), false).collect(</span>
+<span class="fc" id="L505">				toMap(Attribute::getName, Function.identity()));</span>
+<span class="fc" id="L506">		Map&lt;String, Attribute&gt; existingAttrsMap = stream(existingEntityType.getOwnAllAttributes().spliterator(),</span>
+<span class="fc" id="L507">				false).collect(toMap(Attribute::getName, Function.identity()));</span>
+
+		// determine attributes to add, update and delete
+<span class="fc" id="L510">		Set&lt;String&gt; addedAttrNames = Sets.difference(attrsMap.keySet(), existingAttrsMap.keySet());</span>
+<span class="fc" id="L511">		Set&lt;String&gt; sharedAttrNames = Sets.intersection(attrsMap.keySet(), existingAttrsMap.keySet());</span>
+<span class="fc" id="L512">		Set&lt;String&gt; deletedAttrNames = Sets.difference(existingAttrsMap.keySet(), attrsMap.keySet());</span>
+
+		// add new attributes
+<span class="pc bpc" id="L515" title="1 of 2 branches missed.">		if (!addedAttrNames.isEmpty())</span>
+		{
+<span class="fc" id="L517">			dataService.add(ATTRIBUTE_META_DATA, addedAttrNames.stream().map(attrsMap::get));</span>
+		}
+
+		// update changed attributes
+<span class="fc" id="L521">		List&lt;String&gt; updatedAttrNames = sharedAttrNames.stream()</span>
+<span class="fc bfc" id="L522" title="All 2 branches covered.">													   .filter(attrName -&gt; !EntityUtils.equals(attrsMap.get(attrName),</span>
+<span class="fc" id="L523">															   existingAttrsMap.get(attrName)))</span>
+<span class="fc" id="L524">													   .collect(toList());</span>
+<span class="fc bfc" id="L525" title="All 2 branches covered.">		if (!updatedAttrNames.isEmpty())</span>
+		{
+<span class="fc" id="L527">			dataService.update(ATTRIBUTE_META_DATA, updatedAttrNames.stream().map(attrsMap::get));</span>
+		}
+
+		// delete removed attributes
+<span class="fc bfc" id="L531" title="All 2 branches covered.">		if (!deletedAttrNames.isEmpty())</span>
+		{
+<span class="fc" id="L533">			dataService.delete(ATTRIBUTE_META_DATA, deletedAttrNames.stream().map(existingAttrsMap::get));</span>
+		}
+<span class="fc" id="L535">	}</span>
+
+	@Override
+	public Iterator&lt;RepositoryCollection&gt; iterator()
+	{
+<span class="nc" id="L540">		return repoCollectionRegistry.getRepositoryCollections().iterator();</span>
+	}
+
+	@Override
+	public LinkedHashMap&lt;String, Boolean&gt; determineImportableEntities(RepositoryCollection repositoryCollection)
+	{
+<span class="nc" id="L546">		LinkedHashMap&lt;String, Boolean&gt; entitiesImportable = Maps.newLinkedHashMap();</span>
+<span class="nc" id="L547">		stream(repositoryCollection.getEntityTypeIds().spliterator(), false).forEach(id -&gt; entitiesImportable.put(id,</span>
+<span class="nc" id="L548">				this.isEntityTypeCompatible(repositoryCollection.getRepository(id).getEntityType())));</span>
+
+<span class="nc" id="L550">		return entitiesImportable;</span>
+	}
+
+	@Override
+	public boolean isEntityTypeCompatible(EntityType newEntityType)
+	{
+<span class="nc" id="L556">		String newEntityTypeId = newEntityType.getId();</span>
+<span class="nc bnc" id="L557" title="All 2 branches missed.">		if (dataService.hasRepository(newEntityTypeId))</span>
+		{
+<span class="nc" id="L559">			EntityType oldEntityType = dataService.getEntityType(newEntityTypeId);</span>
+<span class="nc" id="L560">			List&lt;Attribute&gt; oldAtomicAttributes = stream(oldEntityType.getAtomicAttributes().spliterator(),</span>
+<span class="nc" id="L561">					false).collect(toList());</span>
+
+<span class="nc" id="L563">			LinkedHashMap&lt;String, Attribute&gt; newAtomicAttributesMap = newLinkedHashMap();</span>
+<span class="nc" id="L564">			stream(newEntityType.getAtomicAttributes().spliterator(), false).forEach(</span>
+<span class="nc" id="L565">					attribute -&gt; newAtomicAttributesMap.put(attribute.getName(), attribute));</span>
+
+<span class="nc bnc" id="L567" title="All 2 branches missed.">			for (Attribute oldAttribute : oldAtomicAttributes)</span>
+			{
+<span class="nc bnc" id="L569" title="All 2 branches missed.">				if (!newAtomicAttributesMap.keySet().contains(oldAttribute.getName())) return false;</span>
+				// FIXME This implies that an attribute can never be different when doing an update import?
+<span class="nc bnc" id="L571" title="All 2 branches missed.">				if (!EntityUtils.equals(oldAttribute, newAtomicAttributesMap.get(oldAttribute.getName()), false))</span>
+<span class="nc" id="L572">					return false;</span>
+<span class="nc" id="L573">			}</span>
+		}
+<span class="nc" id="L575">		return true;</span>
+	}
+
+	@Override
+	public boolean hasBackend(String backendName)
+	{
+<span class="fc" id="L581">		return repoCollectionRegistry.hasRepositoryCollection(backendName);</span>
+	}
+
+	@Override
+	public Stream&lt;EntityType&gt; getConcreteChildren(EntityType entityType)
+	{
+<span class="nc bnc" id="L587" title="All 2 branches missed.">		if (!entityType.isAbstract())</span>
+		{
+<span class="nc" id="L589">			return Stream.of(entityType);</span>
+		}
+<span class="nc" id="L591">		return dataService.query(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="nc" id="L592">						  .eq(EXTENDS, entityType)</span>
+<span class="nc" id="L593">						  .findAll()</span>
+<span class="nc" id="L594">						  .flatMap(this::getConcreteChildren);</span>
+	}
+
+	@Override
+	public EntityType getEntityTypeBypassingRegistry(String entityTypeId)
+	{
+<span class="fc bfc" id="L600" title="All 2 branches covered.">		return entityTypeId != null ? dataService.findOneById(ENTITY_TYPE_META_DATA, entityTypeId, getEntityTypeFetch(),</span>
+				EntityType.class) : null;
+	}
+
+	@Override
+	public Stream&lt;Attribute&gt; getReferringAttributes(String entityTypeId)
+	{
+<span class="fc" id="L607">		return dataService.findAll(ATTRIBUTE_META_DATA, QueryImpl.EQ(REF_ENTITY_TYPE, entityTypeId), Attribute.class);</span>
+	}
+
+	/**
+	 * Entity meta data that wraps a entity meta data and hides the mappedBy attributes. In code both a new and an existing
+	 * entity meta data are provided only the new mappedBy attributes are hidden.
+	 */
+	public static class EntityTypeWithoutMappedByAttributes extends EntityType
+	{
+		private final EntityType entityType;
+		private final EntityType existingEntityType;
+
+		public EntityTypeWithoutMappedByAttributes(EntityType entityType)
+		{
+<span class="fc" id="L621">			this(entityType, null);</span>
+<span class="fc" id="L622">		}</span>
+
+		public EntityTypeWithoutMappedByAttributes(EntityType entityType, EntityType existingEntityType)
+<span class="fc" id="L625">		{</span>
+<span class="fc" id="L626">			this.entityType = requireNonNull(entityType);</span>
+<span class="fc" id="L627">			this.existingEntityType = existingEntityType;</span>
+<span class="fc" id="L628">		}</span>
+
+		@Override
+		public void init(Entity entity)
+		{
+<span class="nc" id="L633">			throw new UnsupportedOperationException();</span>
+		}
+
+		@Override
+		public Object get(String attributeName)
+		{
+<span class="nc" id="L639">			return entityType.get(attributeName);</span>
+		}
+
+		@Override
+		public Boolean getBoolean(String attributeName)
+		{
+<span class="nc" id="L645">			return entityType.getBoolean(attributeName);</span>
+		}
+
+		@Override
+		public Double getDouble(String attributeName)
+		{
+<span class="nc" id="L651">			return entityType.getDouble(attributeName);</span>
+		}
+
+		@Override
+		public Iterable&lt;Entity&gt; getEntities(String attributeName)
+		{
+<span class="nc" id="L657">			Iterable&lt;Entity&gt; entities = entityType.getEntities(attributeName);</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">			if (attributeName.equals(ATTRIBUTES))</span>
+			{
+<span class="nc" id="L660">				return () -&gt; stream(entities.spliterator(), false).filter(entity -&gt;</span>
+				{
+<span class="nc bnc" id="L662" title="All 2 branches missed.">					if (existingEntityType != null)</span>
+					{
+<span class="nc bnc" id="L664" title="All 2 branches missed.">						return entity.getEntity(MAPPED_BY) == null</span>
+<span class="nc bnc" id="L665" title="All 2 branches missed.">								|| existingEntityType.getAttribute(entity.getString(AttributeMetadata.NAME)) != null;</span>
+					}
+					else
+					{
+<span class="nc bnc" id="L669" title="All 2 branches missed.">						return entity.getEntity(MAPPED_BY) == null;</span>
+					}
+<span class="nc" id="L671">				}).iterator();</span>
+			}
+<span class="nc" id="L673">			return entities;</span>
+		}
+
+		@Override
+		public &lt;E extends Entity&gt; Iterable&lt;E&gt; getEntities(String attributeName, Class&lt;E&gt; clazz)
+		{
+<span class="nc" id="L679">			return entityType.getEntities(attributeName, clazz);</span>
+		}
+
+		@Override
+		public Entity getEntity(String attributeName)
+		{
+<span class="nc" id="L685">			return entityType.getEntity(attributeName);</span>
+		}
+
+		@Override
+		public &lt;E extends Entity&gt; E getEntity(String attributeName, Class&lt;E&gt; clazz)
+		{
+<span class="nc" id="L691">			return entityType.getEntity(attributeName, clazz);</span>
+		}
+
+		@Override
+		public EntityType getEntityType()
+		{
+<span class="nc" id="L697">			return entityType.getEntityType();</span>
+		}
+
+		@Override
+		public Object getIdValue()
+		{
+<span class="nc" id="L703">			return entityType.getIdValue();</span>
+		}
+
+		@Override
+		public Integer getInt(String attributeName)
+		{
+<span class="nc" id="L709">			return entityType.getInt(attributeName);</span>
+		}
+
+		@Override
+		public Object getLabelValue()
+		{
+<span class="nc" id="L715">			return entityType.getLabelValue();</span>
+		}
+
+		@Override
+		public Long getLong(String attributeName)
+		{
+<span class="nc" id="L721">			return entityType.getLong(attributeName);</span>
+		}
+
+		@Override
+		public String getString(String attributeName)
+		{
+<span class="nc" id="L727">			return entityType.getString(attributeName);</span>
+		}
+
+		@Override
+		public LocalDate getLocalDate(String attributeName)
+		{
+<span class="nc" id="L733">			return entityType.getLocalDate(attributeName);</span>
+		}
+
+		@Override
+		public Instant getInstant(String attributeName)
+		{
+<span class="nc" id="L739">			return entityType.getInstant(attributeName);</span>
+		}
+
+		@Override
+		public void set(Entity values)
+		{
+<span class="nc" id="L745">			entityType.set(values);</span>
+<span class="nc" id="L746">		}</span>
+
+		@Override
+		public void setIdValue(Object id)
+		{
+<span class="nc" id="L751">			entityType.setIdValue(id);</span>
+<span class="nc" id="L752">		}</span>
+
+		@Override
+		public Iterable&lt;String&gt; getAttributeNames()
+		{
+<span class="nc" id="L757">			return entityType.getAttributeNames();</span>
+		}
+
+		@Override
+		public String getId()
+		{
+<span class="fc" id="L763">			return entityType.getId();</span>
+		}
+
+		@Override
+		public EntityType setId(String id)
+		{
+<span class="nc" id="L769">			return entityType.setId(id);</span>
+		}
+
+		@Override
+		public String getLabel()
+		{
+<span class="fc" id="L775">			return entityType.getLabel();</span>
+		}
+
+		@Override
+		public String getLabel(String languageCode)
+		{
+<span class="nc" id="L781">			return entityType.getLabel(languageCode);</span>
+		}
+
+		@Override
+		public EntityType setLabel(String label)
+		{
+<span class="nc" id="L787">			return entityType.setLabel(label);</span>
+		}
+
+		@Override
+		public EntityType setLabel(String languageCode, String label)
+		{
+<span class="nc" id="L793">			return entityType.setLabel(languageCode, label);</span>
+		}
+
+		@Override
+		public String getDescription()
+		{
+<span class="fc" id="L799">			return entityType.getDescription();</span>
+		}
+
+		@Override
+		public String getDescription(String languageCode)
+		{
+<span class="nc" id="L805">			return entityType.getDescription(languageCode);</span>
+		}
+
+		@Override
+		public EntityType setDescription(String description)
+		{
+<span class="nc" id="L811">			return entityType.setDescription(description);</span>
+		}
+
+		@Override
+		public EntityType setDescription(String languageCode, String description)
+		{
+<span class="nc" id="L817">			return entityType.setDescription(languageCode, description);</span>
+		}
+
+		@Override
+		public String getBackend()
+		{
+<span class="fc" id="L823">			return entityType.getBackend();</span>
+		}
+
+		@Override
+		public EntityType setBackend(String backend)
+		{
+<span class="nc" id="L829">			return entityType.setBackend(backend);</span>
+		}
+
+		@Override
+		public Package getPackage()
+		{
+<span class="fc" id="L835">			return entityType.getPackage();</span>
+		}
+
+		@Override
+		public EntityType setPackage(Package package_)
+		{
+<span class="nc" id="L841">			return entityType.setPackage(package_);</span>
+		}
+
+		@Override
+		public Attribute getIdAttribute()
+		{
+<span class="nc" id="L847">			return entityType.getIdAttribute();</span>
+		}
+
+		@Override
+		public Attribute getOwnIdAttribute()
+		{
+<span class="fc" id="L853">			return entityType.getOwnIdAttribute();</span>
+		}
+
+		@Override
+		public Attribute getLabelAttribute()
+		{
+<span class="nc" id="L859">			return entityType.getLabelAttribute();</span>
+		}
+
+		@Override
+		public Attribute getLabelAttribute(String langCode)
+		{
+<span class="nc" id="L865">			return entityType.getLabelAttribute(langCode);</span>
+		}
+
+		@Override
+		public Attribute getOwnLabelAttribute()
+		{
+<span class="fc" id="L871">			return entityType.getOwnLabelAttribute();</span>
+		}
+
+		@Override
+		public Attribute getOwnLabelAttribute(String languageCode)
+		{
+<span class="nc" id="L877">			return entityType.getOwnLabelAttribute(languageCode);</span>
+		}
+
+		@Override
+		public Attribute getLookupAttribute(String lookupAttrName)
+		{
+<span class="nc" id="L883">			return entityType.getLookupAttribute(lookupAttrName);</span>
+		}
+
+		@Override
+		public Iterable&lt;Attribute&gt; getLookupAttributes()
+		{
+<span class="nc" id="L889">			return entityType.getLookupAttributes();</span>
+		}
+
+		@Override
+		public Iterable&lt;Attribute&gt; getOwnLookupAttributes()
+		{
+<span class="fc" id="L895">			return entityType.getOwnLookupAttributes();</span>
+		}
+
+		@Override
+		public boolean isAbstract()
+		{
+<span class="fc" id="L901">			return entityType.isAbstract();</span>
+		}
+
+		@Override
+		public EntityType setAbstract(boolean abstract_)
+		{
+<span class="nc" id="L907">			return entityType.setAbstract(abstract_);</span>
+		}
+
+		@Override
+		public EntityType getExtends()
+		{
+<span class="fc" id="L913">			return entityType.getExtends();</span>
+		}
+
+		@Override
+		public EntityType setExtends(EntityType extends_)
+		{
+<span class="nc" id="L919">			return entityType.setExtends(extends_);</span>
+		}
+
+		@Override
+		public Iterable&lt;Attribute&gt; getOwnAttributes()
+		{
+			// FIXME mappedBy attribute in compound not removed
+<span class="nc" id="L926">			return () -&gt; stream(entityType.getOwnAttributes().spliterator(), false).filter(attr -&gt;</span>
+			{
+<span class="nc bnc" id="L928" title="All 2 branches missed.">				if (existingEntityType != null)</span>
+				{
+<span class="nc bnc" id="L930" title="All 4 branches missed.">					return !attr.isMappedBy() || existingEntityType.getAttribute(attr.getName()) != null;</span>
+				}
+				else
+				{
+<span class="nc bnc" id="L934" title="All 2 branches missed.">					return !attr.isMappedBy();</span>
+				}
+<span class="nc" id="L936">			}).iterator();</span>
+		}
+
+		@Override
+		public EntityType setOwnAllAttributes(Iterable&lt;Attribute&gt; attrs)
+		{
+<span class="nc" id="L942">			return entityType.setOwnAllAttributes(attrs);</span>
+		}
+
+		@Override
+		public Iterable&lt;Attribute&gt; getAttributes()
+		{
+<span class="nc" id="L948">			return entityType.getAttributes();</span>
+		}
+
+		@Override
+		public Iterable&lt;Attribute&gt; getAtomicAttributes()
+		{
+<span class="nc" id="L954">			return entityType.getAtomicAttributes();</span>
+		}
+
+		@Override
+		public Iterable&lt;Attribute&gt; getAllAttributes()
+		{
+<span class="nc" id="L960">			return entityType.getAllAttributes();</span>
+		}
+
+		@Override
+		public Iterable&lt;Attribute&gt; getOwnAllAttributes()
+		{
+<span class="fc" id="L966">			return () -&gt; stream(entityType.getOwnAllAttributes().spliterator(), false).filter(attr -&gt;</span>
+			{
+<span class="fc bfc" id="L968" title="All 2 branches covered.">				if (existingEntityType != null)</span>
+				{
+<span class="pc bpc" id="L970" title="3 of 4 branches missed.">					return !attr.isMappedBy() || existingEntityType.getAttribute(attr.getName()) != null;</span>
+				}
+				else
+				{
+<span class="fc bfc" id="L974" title="All 2 branches covered.">					return !attr.isMappedBy();</span>
+				}
+<span class="fc" id="L976">			}).iterator();</span>
+		}
+
+		@Override
+		public Attribute getAttribute(String attrName)
+		{
+<span class="nc" id="L982">			return entityType.getAttribute(attrName);</span>
+		}
+
+		@Override
+		public EntityType addAttribute(Attribute attr, AttributeRole... attrTypes)
+		{
+<span class="nc" id="L988">			return entityType.addAttribute(attr, attrTypes);</span>
+		}
+
+		@Override
+		public void addAttributes(Iterable&lt;Attribute&gt; attrs)
+		{
+<span class="nc" id="L994">			entityType.addAttributes(attrs);</span>
+<span class="nc" id="L995">		}</span>
+
+		@Override
+		public void setAttributeRoles(Attribute attr, AttributeRole... attrTypes)
+		{
+<span class="nc" id="L1000">			throw new UnsupportedOperationException();</span>
+		}
+
+		@Override
+		public boolean hasAttributeWithExpression()
+		{
+<span class="nc" id="L1006">			return entityType.hasAttributeWithExpression();</span>
+		}
+
+		@Override
+		public void removeAttribute(Attribute attr)
+		{
+<span class="nc" id="L1012">			entityType.removeAttribute(attr);</span>
+<span class="nc" id="L1013">		}</span>
+
+		@Override
+		public Iterable&lt;Tag&gt; getTags()
+		{
+<span class="nc" id="L1018">			return entityType.getTags();</span>
+		}
+
+		@Override
+		public EntityType setTags(Iterable&lt;Tag&gt; tags)
+		{
+<span class="nc" id="L1024">			return entityType.setTags(tags);</span>
+		}
+
+		@Override
+		public void addTag(Tag tag)
+		{
+<span class="nc" id="L1030">			entityType.addTag(tag);</span>
+<span class="nc" id="L1031">		}</span>
+
+		@Override
+		public void removeTag(Tag tag)
+		{
+<span class="nc" id="L1036">			entityType.removeTag(tag);</span>
+<span class="nc" id="L1037">		}</span>
+
+		@Override
+		public Iterable&lt;Attribute&gt; getOwnAtomicAttributes()
+		{
+<span class="nc" id="L1042">			return entityType.getOwnAtomicAttributes();</span>
+		}
+
+		@Override
+		public boolean hasBidirectionalAttributes()
+		{
+<span class="nc" id="L1048">			return entityType.hasBidirectionalAttributes();</span>
+		}
+
+		@Override
+		public boolean hasMappedByAttributes()
+		{
+<span class="nc" id="L1054">			return entityType.hasMappedByAttributes();</span>
+		}
+
+		@Override
+		public Stream&lt;Attribute&gt; getOwnMappedByAttributes()
+		{
+<span class="nc" id="L1060">			return entityType.getOwnMappedByAttributes();</span>
+		}
+
+		@Override
+		public Stream&lt;Attribute&gt; getMappedByAttributes()
+		{
+<span class="nc" id="L1066">			return entityType.getMappedByAttributes();</span>
+		}
+
+		@Override
+		public boolean hasInversedByAttributes()
+		{
+<span class="nc" id="L1072">			return entityType.hasInversedByAttributes();</span>
+		}
+
+		@Override
+		public Stream&lt;Attribute&gt; getInversedByAttributes()
+		{
+<span class="nc" id="L1078">			return entityType.getInversedByAttributes();</span>
+		}
+
+		@Override
+		public void set(String attributeName, Object value)
+		{
+<span class="nc" id="L1084">			entityType.set(attributeName, value);</span>
+<span class="nc" id="L1085">		}</span>
+
+		@Override
+		public void setDefaultValues()
+		{
+<span class="nc" id="L1090">			throw new UnsupportedOperationException();</span>
+		}
+
+		@Override
+		public String toString()
+		{
+<span class="nc" id="L1096">			return entityType.toString();</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

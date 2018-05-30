@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VcfRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-vcf</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.vcf</a> &gt; <span class="el_source">VcfRepository.java</span></div><h1>VcfRepository.java</h1><pre class="source lang-java linenums">package org.molgenis.data.vcf;
+
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Iterators;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.RepositoryCapability;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.support.AbstractRepository;
+import org.molgenis.data.vcf.format.VcfToEntity;
+import org.molgenis.data.vcf.model.VcfAttributes;
+import org.molgenis.vcf.VcfReader;
+import org.molgenis.vcf.VcfRecord;
+import org.molgenis.vcf.meta.VcfMeta;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.Set;
+
+import static java.util.Objects.requireNonNull;
+
+/**
+ * Repository implementation for vcf files.
+ * &lt;p&gt;
+ * The filename without the extension is considered to be the entityname
+ */
+public class VcfRepository extends AbstractRepository
+{
+<span class="fc" id="L37">	private static final Logger LOG = LoggerFactory.getLogger(VcfRepository.class);</span>
+	public static final String DEFAULT_ATTRIBUTE_DESCRIPTION = &quot;Description not provided&quot;;
+
+	public static final String NAME = &quot;NAME&quot;;
+	public static final String ORIGINAL_NAME = &quot;ORIGINAL_NAME&quot;;
+	public static final String PREFIX = &quot;##&quot;;
+
+	private final VcfReaderFactory vcfReaderFactory;
+	private final String entityTypeId;
+	private final VcfAttributes vcfAttributes;
+	private final EntityTypeFactory entityTypeFactory;
+	private final AttributeFactory attrMetaFactory;
+	protected final Supplier&lt;VcfToEntity&gt; vcfToEntitySupplier;
+
+	public VcfRepository(File file, String entityTypeId, VcfAttributes vcfAttributes,
+			EntityTypeFactory entityTypeFactory, AttributeFactory attrMetaFactory)
+	{
+<span class="fc" id="L54">		this(new VcfReaderFactoryImpl(file), entityTypeId, vcfAttributes, entityTypeFactory, attrMetaFactory);</span>
+<span class="fc" id="L55">	}</span>
+
+	protected VcfRepository(VcfReaderFactory vcfReaderFactory, String entityTypeId, VcfAttributes vcfAttributes,
+			EntityTypeFactory entityTypeFactory, AttributeFactory attrMetaFactory)
+<span class="fc" id="L59">	{</span>
+<span class="fc" id="L60">		this.vcfReaderFactory = requireNonNull(vcfReaderFactory);</span>
+<span class="fc" id="L61">		this.entityTypeId = requireNonNull(entityTypeId);</span>
+<span class="fc" id="L62">		this.vcfAttributes = requireNonNull(vcfAttributes);</span>
+<span class="fc" id="L63">		this.entityTypeFactory = requireNonNull(entityTypeFactory);</span>
+<span class="fc" id="L64">		this.attrMetaFactory = requireNonNull(attrMetaFactory);</span>
+<span class="fc" id="L65">		this.vcfToEntitySupplier = Suppliers.memoize(this::parseVcfMeta);</span>
+<span class="fc" id="L66">	}</span>
+
+	private VcfToEntity parseVcfMeta()
+	{
+<span class="fc" id="L70">		VcfReader reader = vcfReaderFactory.get();</span>
+		try
+		{
+<span class="fc" id="L73">			VcfMeta vcfMeta = reader.getVcfMeta();</span>
+<span class="fc" id="L74">			return new VcfToEntity(entityTypeId, vcfMeta, vcfAttributes, entityTypeFactory, attrMetaFactory);</span>
+		}
+<span class="fc" id="L76">		catch (IOException | RuntimeException e)</span>
+		{
+<span class="fc" id="L78">			throw new MolgenisDataException(&quot;Failed to read VCF Metadata from file&quot;, e);</span>
+		}
+		finally
+		{
+			try
+			{
+<span class="fc" id="L84">				reader.close();</span>
+			}
+<span class="nc" id="L86">			catch (IOException e)</span>
+			{
+<span class="nc" id="L88">				LOG.info(&quot;Failed to close VcfReader&quot;, e);</span>
+<span class="fc" id="L89">			}</span>
+		}
+	}
+
+	/**
+	 * Returns an iterator for this repository.
+	 * &lt;p&gt;
+	 * Use with caution! Multiple iterators will all point to the same line in the VCF file, leading to unpredictable
+	 * behaviour. If you want to get the EntityType of this repository and you can't access getEntityType(),
+	 * convert the iterator to a PeekingIterator and peek the first Entity.
+	 */
+	@Override
+	public Iterator&lt;Entity&gt; iterator()
+	{
+<span class="fc" id="L103">		Iterator&lt;VcfRecord&gt; vcfRecordIterator = Iterators.unmodifiableIterator(vcfReaderFactory.get().iterator());</span>
+<span class="fc" id="L104">		VcfToEntity vcfToEntity = vcfToEntitySupplier.get();</span>
+<span class="fc" id="L105">		return Iterators.transform(vcfRecordIterator, vcfToEntity::toEntity);</span>
+	}
+
+	public EntityType getEntityType()
+	{
+<span class="fc" id="L110">		return vcfToEntitySupplier.get().getEntityType();</span>
+	}
+
+	@Override
+	public void close() throws IOException
+	{
+<span class="fc" id="L116">		vcfReaderFactory.close();</span>
+<span class="fc" id="L117">	}</span>
+
+	@Override
+	public Set&lt;RepositoryCapability&gt; getCapabilities()
+	{
+<span class="nc" id="L122">		return Collections.emptySet();</span>
+	}
+
+	@Override
+	public long count()
+	{
+<span class="nc" id="L128">		return Iterables.size(this);</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

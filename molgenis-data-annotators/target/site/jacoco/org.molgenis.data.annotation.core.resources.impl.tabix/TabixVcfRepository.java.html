@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TabixVcfRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.resources.impl.tabix</a> &gt; <span class="el_source">TabixVcfRepository.java</span></div><h1>TabixVcfRepository.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.resources.impl.tabix;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableList.Builder;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Query;
+import org.molgenis.data.QueryRule;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.RepositoryCapability;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.vcf.VcfReaderFactory;
+import org.molgenis.data.vcf.VcfRepository;
+import org.molgenis.data.vcf.model.VcfAttributes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static com.google.common.base.Preconditions.checkNotNull;
+
+/**
+ * An indexed VCF Repository
+ */
+public class TabixVcfRepository extends VcfRepository
+{
+<span class="fc" id="L31">	private static final Logger LOG = LoggerFactory.getLogger(TabixVcfRepository.class);</span>
+	private final TabixReader tabixReader;
+
+	public TabixVcfRepository(File file, String entityTypeId, VcfAttributes vcfAttributes,
+			EntityTypeFactory entityTypeFactory, AttributeFactory attrMetaFactory) throws IOException
+	{
+<span class="fc" id="L37">		super(file, entityTypeId, vcfAttributes, entityTypeFactory, attrMetaFactory);</span>
+<span class="fc" id="L38">		tabixReader = new TabixReader(file.getCanonicalPath());</span>
+<span class="fc" id="L39">	}</span>
+
+	TabixVcfRepository(VcfReaderFactory readerFactory, TabixReader tabixReader, String entityTypeId,
+			VcfAttributes vcfAttributes, EntityTypeFactory entityTypeFactory, AttributeFactory attrMetaFactory)
+	{
+<span class="nc" id="L44">		super(readerFactory, entityTypeId, vcfAttributes, entityTypeFactory, attrMetaFactory);</span>
+<span class="nc" id="L45">		this.tabixReader = tabixReader;</span>
+<span class="nc" id="L46">	}</span>
+
+	@Override
+	public Set&lt;RepositoryCapability&gt; getCapabilities()
+	{
+<span class="nc" id="L51">		return Collections.emptySet();</span>
+	}
+
+	/**
+	 * Examines a {@link Query} and finds the first {@link QueryRule} with operator {@link Operator#EQUALS} whose field
+	 * matches an attributeName. It returns the value of that first matching {@link QueryRule}.
+	 *
+	 * @param attributeName the query field name to match
+	 * @param q             the query to search in
+	 * @return the value from the first matching query rule
+	 */
+	private static Object getFirstEqualsValueFor(String attributeName, Query&lt;Entity&gt; q)
+	{
+<span class="fc" id="L64">		return q.getRules()</span>
+<span class="fc" id="L65">				.stream()</span>
+<span class="pc bpc" id="L66" title="1 of 4 branches missed.">				.filter(rule -&gt; attributeName.equals(rule.getField()) &amp;&amp; rule.getOperator() == Operator.EQUALS)</span>
+<span class="fc" id="L67">				.findFirst()</span>
+<span class="fc" id="L68">				.get()</span>
+<span class="fc" id="L69">				.getValue();</span>
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; findAll(Query&lt;Entity&gt; q)
+	{
+<span class="fc" id="L75">		Object posValue = getFirstEqualsValueFor(VcfAttributes.POS, q);</span>
+<span class="fc" id="L76">		Object chromValue = getFirstEqualsValueFor(VcfAttributes.CHROM, q);</span>
+<span class="fc" id="L77">		List&lt;Entity&gt; result = new ArrayList&lt;&gt;();</span>
+
+		// if one of both required attributes is null, skip the query and return an empty list
+<span class="pc bpc" id="L80" title="2 of 4 branches missed.">		if (posValue != null &amp;&amp; chromValue != null)</span>
+		{
+<span class="fc" id="L82">			int posIntValue = Integer.parseInt(posValue.toString());</span>
+<span class="fc" id="L83">			String chromStringValue = chromValue.toString();</span>
+<span class="fc" id="L84">			result = query(chromStringValue, posIntValue, posIntValue);</span>
+		}
+<span class="fc" id="L86">		return result.stream();</span>
+	}
+
+	/**
+	 * Queries the tabix reader.
+	 *
+	 * @param chrom   Name of chromosome
+	 * @param posFrom position lower bound (inclusive)
+	 * @param posTo   position upper bound (inclusive)
+	 * @return {@link ImmutableList} of entities found
+	 */
+	public synchronized List&lt;Entity&gt; query(String chrom, int posFrom, int posTo)
+	{
+<span class="fc" id="L99">		String queryString = String.format(&quot;%s:%s-%s&quot;, checkNotNull(chrom), checkNotNull(posFrom), checkNotNull(posTo));</span>
+		try
+		{
+<span class="fc" id="L102">			Collection&lt;String&gt; lines = getLines(tabixReader.query(queryString));</span>
+<span class="fc" id="L103">			return lines.stream()</span>
+<span class="fc" id="L104">						.map(line -&gt; line.split(&quot;\t&quot;))</span>
+<span class="fc" id="L105">						.map(vcfToEntitySupplier.get()::toEntity)</span>
+<span class="fc" id="L106">						.filter(entity -&gt; positionMatches(entity, posFrom, posTo))</span>
+<span class="fc" id="L107">						.collect(Collectors.toList());</span>
+		}
+<span class="nc" id="L109">		catch (NullPointerException e)</span>
+		{
+			//FIXME: group the occurances of this exception and log once per annotation run
+<span class="nc" id="L112">			LOG.trace(&quot;Unable to read from tabix resource for query: &quot; + queryString</span>
+					+ &quot; (Position not present in resource file?)&quot;);
+<span class="nc" id="L114">			LOG.debug(&quot;&quot;, e);</span>
+		}
+<span class="nc" id="L116">		catch (ArrayIndexOutOfBoundsException e)</span>
+		{
+			//FIXME: group the occurances of this exception and log once per annotation run
+<span class="nc" id="L119">			LOG.trace(&quot;Unable to read from tabix resource for query: &quot; + queryString</span>
+					+ &quot; (Chromosome not present in resource file?)&quot;);
+<span class="nc" id="L121">			LOG.debug(&quot;&quot;, e);</span>
+<span class="nc" id="L122">		}</span>
+
+<span class="nc" id="L124">		return Collections.emptyList();</span>
+	}
+
+	/**
+	 * Tabix is not always so precise. For example, the cmdline query
+	 * &lt;p&gt;
+	 * &lt;pre&gt;
+	 * tabix ExAC.r0.3.sites.vep.vcf.gz 1:1115548-1115548
+	 * &lt;/pre&gt;
+	 * &lt;p&gt;
+	 * returns 2 variants:
+	 * &lt;ul&gt;
+	 * &lt;li&gt;&quot;1 1115547 . CG C,TG&quot;&lt;/li&gt;
+	 * &lt;li&gt;&quot;1 1115548 rs114390380 G A&quot;&lt;/li&gt;
+	 * &lt;/ul&gt;
+	 * It is therefore needed to verify the position of the elements returned.
+	 */
+	private boolean positionMatches(Entity entity, int posFrom, int posTo)
+	{
+<span class="fc" id="L143">		int entityPos = entity.getInt(VcfAttributes.POS);</span>
+<span class="pc bpc" id="L144" title="2 of 4 branches missed.">		return entityPos &gt;= posFrom &amp;&amp; entityPos &lt;= posTo;</span>
+	}
+
+	/**
+	 * Collect the lines returned in a {@link TabixReader.Iterator}.
+	 *
+	 * @param iterator the iterator from which the lines are collected, may be null.
+	 * @return {@link Collection} of lines, is empty if the iterator was null.
+	 */
+	protected Collection&lt;String&gt; getLines(
+			org.molgenis.data.annotation.core.resources.impl.tabix.TabixReader.Iterator iterator)
+	{
+<span class="fc" id="L156">		Builder&lt;String&gt; builder = ImmutableList.builder();</span>
+<span class="fc bfc" id="L157" title="All 2 branches covered.">		if (iterator != null)</span>
+		{
+			try
+			{
+<span class="fc" id="L161">				String line = iterator.next();</span>
+<span class="fc bfc" id="L162" title="All 2 branches covered.">				while (line != null)</span>
+				{
+<span class="fc" id="L164">					builder.add(line);</span>
+<span class="fc" id="L165">					line = iterator.next();</span>
+				}
+			}
+<span class="nc" id="L168">			catch (IOException e)</span>
+			{
+<span class="nc" id="L170">				LOG.error(&quot;Error reading from tabix reader.&quot;, e);</span>
+<span class="fc" id="L171">			}</span>
+		}
+<span class="fc" id="L173">		return builder.build();</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

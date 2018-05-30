@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HPORepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.entity.impl.hpo</a> &gt; <span class="el_source">HPORepository.java</span></div><h1>HPORepository.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.entity.impl.hpo;
+
+import au.com.bytecode.opencsv.CSVParser;
+import au.com.bytecode.opencsv.CSVReader;
+import com.google.common.collect.Iterables;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.Query;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.RepositoryCapability;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.support.AbstractRepository;
+import org.molgenis.data.support.DynamicEntity;
+
+import java.io.*;
+import java.util.*;
+import java.util.stream.Stream;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.molgenis.data.meta.model.EntityType.AttributeRole.ROLE_ID;
+
+public class HPORepository extends AbstractRepository
+{
+	public static final String HPO_DISEASE_ID_COL_NAME = &quot;diseaseId&quot;;
+	public static final String HPO_GENE_SYMBOL_COL_NAME = &quot;gene-symbol&quot;;
+	public static final String HPO_ID_COL_NAME = &quot;HPO-ID&quot;;
+	public static final String HPO_TERM_COL_NAME = &quot;HPO-term-name&quot;;
+	private final EntityTypeFactory entityTypeFactory;
+	private final AttributeFactory attributeFactory;
+	private Map&lt;String, List&lt;Entity&gt;&gt; entitiesByGeneSymbol;
+	private final File file;
+
+	public HPORepository(File file, EntityTypeFactory entityTypeFactory, AttributeFactory attributeFactory)
+<span class="fc" id="L36">	{</span>
+<span class="fc" id="L37">		this.file = file;</span>
+<span class="fc" id="L38">		this.entityTypeFactory = entityTypeFactory;</span>
+<span class="fc" id="L39">		this.attributeFactory = attributeFactory;</span>
+<span class="fc" id="L40">	}</span>
+
+	@Override
+	public Set&lt;RepositoryCapability&gt; getCapabilities()
+	{
+<span class="nc" id="L45">		return Collections.emptySet();</span>
+	}
+
+	@Override
+	public EntityType getEntityType()
+	{
+<span class="fc" id="L51">		EntityType entityType = entityTypeFactory.create(&quot;HPO&quot;);</span>
+<span class="fc" id="L52">		entityType.addAttribute(attributeFactory.create().setName(HPO_DISEASE_ID_COL_NAME));</span>
+<span class="fc" id="L53">		entityType.addAttribute(attributeFactory.create().setName(HPO_GENE_SYMBOL_COL_NAME));</span>
+<span class="fc" id="L54">		entityType.addAttribute(attributeFactory.create().setName(HPO_ID_COL_NAME), ROLE_ID);</span>
+<span class="fc" id="L55">		entityType.addAttribute(attributeFactory.create().setName(HPO_TERM_COL_NAME));</span>
+<span class="fc" id="L56">		return entityType;</span>
+	}
+
+	@Override
+	public Iterator&lt;Entity&gt; iterator()
+	{
+<span class="fc" id="L62">		return getEntities().iterator();</span>
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; findAll(Query&lt;Entity&gt; q)
+	{
+<span class="nc bnc" id="L68" title="All 2 branches missed.">		if (q.getRules().isEmpty()) return getEntities().stream();</span>
+<span class="nc bnc" id="L69" title="All 4 branches missed.">		if ((q.getRules().size() != 1) || (q.getRules().get(0).getOperator() != Operator.EQUALS))</span>
+		{
+<span class="nc" id="L71">			throw new MolgenisDataException(&quot;The only query allowed on this Repository is gene EQUALS&quot;);</span>
+		}
+
+<span class="nc" id="L74">		String geneSymbol = (String) q.getRules().get(0).getValue();</span>
+<span class="nc" id="L75">		List&lt;Entity&gt; entities = getEntitiesByGeneSymbol().get(geneSymbol);</span>
+
+<span class="nc bnc" id="L77" title="All 2 branches missed.">		return entities != null ? entities.stream() : Stream.empty();</span>
+	}
+
+	@Override
+	public long count()
+	{
+<span class="fc" id="L83">		return Iterables.size(this);</span>
+	}
+
+	private List&lt;Entity&gt; getEntities()
+	{
+<span class="fc" id="L88">		List&lt;Entity&gt; entities = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L89">		getEntitiesByGeneSymbol().forEach((geneSymbol, geneSymbolEntities) -&gt; entities.addAll(geneSymbolEntities));</span>
+<span class="fc" id="L90">		return entities;</span>
+	}
+
+	private Map&lt;String, List&lt;Entity&gt;&gt; getEntitiesByGeneSymbol()
+	{
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">		if (entitiesByGeneSymbol == null)</span>
+		{
+<span class="fc" id="L97">			entitiesByGeneSymbol = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="fc" id="L99">			try (CSVReader csvReader = new CSVReader(new InputStreamReader(new FileInputStream(file), UTF_8), '\t',</span>
+					CSVParser.DEFAULT_QUOTE_CHARACTER, 1))
+			{
+<span class="fc" id="L102">				String[] values = csvReader.readNext();</span>
+<span class="fc bfc" id="L103" title="All 2 branches covered.">				while (values != null)</span>
+				{
+<span class="fc" id="L105">					String geneSymbol = values[1];</span>
+
+<span class="fc" id="L107">					Entity entity = new DynamicEntity(getEntityType());</span>
+<span class="fc" id="L108">					entity.set(HPO_DISEASE_ID_COL_NAME, values[0]);</span>
+<span class="fc" id="L109">					entity.set(HPO_GENE_SYMBOL_COL_NAME, geneSymbol);</span>
+<span class="fc" id="L110">					entity.set(HPO_ID_COL_NAME, values[3]);</span>
+<span class="fc" id="L111">					entity.set(HPO_TERM_COL_NAME, values[4]);</span>
+
+<span class="fc" id="L113">					List&lt;Entity&gt; entities = entitiesByGeneSymbol.computeIfAbsent(geneSymbol, k -&gt; new ArrayList&lt;&gt;());</span>
+<span class="fc" id="L114">					entities.add(entity);</span>
+
+<span class="fc" id="L116">					values = csvReader.readNext();</span>
+<span class="fc" id="L117">				}</span>
+
+			}
+<span class="nc" id="L120">			catch (IOException e)</span>
+			{
+<span class="nc" id="L122">				throw new UncheckedIOException(e);</span>
+<span class="fc" id="L123">			}</span>
+
+		}
+
+<span class="fc" id="L127">		return entitiesByGeneSymbol;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

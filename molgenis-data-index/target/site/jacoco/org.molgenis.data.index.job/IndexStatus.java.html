@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexStatus.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-index</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.index.job</a> &gt; <span class="el_source">IndexStatus.java</span></div><h1>IndexStatus.java</h1><pre class="source lang-java linenums">package org.molgenis.data.index.job;
+
+import com.google.common.util.concurrent.AtomicLongMap;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
+import static java.util.stream.Collectors.toSet;
+import static java.util.stream.StreamSupport.stream;
+
+/**
+ * Keeps track of outstanding index actions.
+ */
+<span class="fc" id="L22">public class IndexStatus</span>
+{
+<span class="fc" id="L24">	private final Lock lock = new ReentrantLock();</span>
+<span class="fc" id="L25">	private final Condition allEntitiesStable = lock.newCondition();</span>
+<span class="fc" id="L26">	private final Condition singleEntityStable = lock.newCondition();</span>
+
+	/**
+	 * Counts how many actions are pending for each entity.
+	 */
+<span class="fc" id="L31">	private AtomicLongMap&lt;String&gt; actionCountsPerEntity = AtomicLongMap.create();</span>
+
+<span class="fc" id="L33">	private static final Logger LOG = LoggerFactory.getLogger(IndexStatus.class);</span>
+
+	void addActionCounts(Map&lt;String, Long&gt; actionsRegistered)
+	{
+<span class="nc" id="L37">		LOG.debug(&quot;addActionCounts {}&quot;, actionsRegistered);</span>
+<span class="nc" id="L38">		lock.lock();</span>
+		try
+		{
+<span class="nc bnc" id="L41" title="All 2 branches missed.">			for (Map.Entry&lt;String, Long&gt; addedForEntity : actionsRegistered.entrySet())</span>
+			{
+<span class="nc" id="L43">				final String entityTypeId = addedForEntity.getKey();</span>
+<span class="nc" id="L44">				final Long numberOfActions = addedForEntity.getValue();</span>
+<span class="nc" id="L45">				actionCountsPerEntity.addAndGet(entityTypeId, numberOfActions);</span>
+<span class="nc" id="L46">			}</span>
+		}
+		finally
+		{
+<span class="nc" id="L50">			lock.unlock();</span>
+		}
+<span class="nc" id="L52">	}</span>
+
+	void removeActionCounts(Map&lt;String, Long&gt; actionsPerformed)
+	{
+<span class="nc" id="L56">		LOG.debug(&quot;removeActionCount {}&quot;, actionsPerformed);</span>
+<span class="nc" id="L57">		lock.lock();</span>
+		try
+		{
+<span class="nc bnc" id="L60" title="All 2 branches missed.">			for (Map.Entry&lt;String, Long&gt; actionsPerEntity : actionsPerformed.entrySet())</span>
+			{
+<span class="nc" id="L62">				final String entityTypeId = actionsPerEntity.getKey();</span>
+<span class="nc" id="L63">				Long numberOfActions = actionsPerEntity.getValue();</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">				if (actionCountsPerEntity.addAndGet(entityTypeId, -numberOfActions) == 0)</span>
+				{
+<span class="nc" id="L66">					actionCountsPerEntity.removeAllZeros();</span>
+<span class="nc" id="L67">					LOG.debug(&quot;Entity {} is stable.&quot;, entityTypeId);</span>
+<span class="nc" id="L68">					singleEntityStable.signalAll();</span>
+				}
+<span class="nc" id="L70">			}</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">			if (isAllIndicesStable())</span>
+			{
+<span class="nc" id="L73">				LOG.debug(&quot;All entities stable.&quot;);</span>
+<span class="nc" id="L74">				allEntitiesStable.signalAll();</span>
+			}
+		}
+		finally
+		{
+<span class="nc" id="L79">			lock.unlock();</span>
+		}
+<span class="nc" id="L81">	}</span>
+
+	void waitForAllEntitiesToBeStable() throws InterruptedException
+	{
+<span class="nc" id="L85">		lock.lock();</span>
+		try
+		{
+<span class="nc bnc" id="L88" title="All 2 branches missed.">			while (!isAllIndicesStable())</span>
+			{
+<span class="nc" id="L90">				allEntitiesStable.await();</span>
+			}
+		}
+		finally
+		{
+<span class="nc" id="L95">			lock.unlock();</span>
+		}
+<span class="nc" id="L97">	}</span>
+
+	private boolean isIndexStableIncludingReferences(EntityType emd)
+	{
+<span class="nc bnc" id="L101" title="All 2 branches missed.">		if (isAllIndicesStable())</span>
+		{
+<span class="nc" id="L103">			return true;</span>
+		}
+<span class="nc" id="L105">		Set&lt;String&gt; referencedEntityIds = stream(emd.getAtomicAttributes().spliterator(), false).map(</span>
+<span class="nc" id="L106">				Attribute::getRefEntity).filter(Objects::nonNull).map(EntityType::getId).collect(toSet());</span>
+<span class="nc" id="L107">		referencedEntityIds.add(emd.getId());</span>
+<span class="nc" id="L108">		return referencedEntityIds.stream().noneMatch(actionCountsPerEntity::containsKey);</span>
+	}
+
+	void waitForIndexToBeStableIncludingReferences(EntityType emd) throws InterruptedException
+	{
+<span class="nc" id="L113">		lock.lock();</span>
+		try
+		{
+<span class="nc bnc" id="L116" title="All 2 branches missed.">			while (!isIndexStableIncludingReferences(emd))</span>
+			{
+<span class="nc" id="L118">				singleEntityStable.await();</span>
+			}
+		}
+		finally
+		{
+<span class="nc" id="L123">			lock.unlock();</span>
+		}
+<span class="nc" id="L125">	}</span>
+
+	private boolean isAllIndicesStable()
+	{
+<span class="nc" id="L129">		return actionCountsPerEntity.isEmpty();</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

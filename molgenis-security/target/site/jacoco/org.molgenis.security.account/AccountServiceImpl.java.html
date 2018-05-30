@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AccountServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security.account</a> &gt; <span class="el_source">AccountServiceImpl.java</span></div><h1>AccountServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.security.account;
+
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.DataService;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.data.security.user.UserService;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.security.settings.AuthenticationSettings;
+import org.molgenis.security.user.MolgenisUserException;
+import org.molgenis.settings.AppSettings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.mail.MailException;
+import org.springframework.mail.MailSender;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.net.URI;
+import java.util.List;
+
+import static java.lang.String.format;
+import static java.util.Collections.singletonList;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.populate.IdGenerator.Strategy.SECURE_RANDOM;
+import static org.molgenis.data.populate.IdGenerator.Strategy.SHORT_SECURE_RANDOM;
+import static org.molgenis.data.security.auth.UserMetaData.*;
+
+@Service
+public class AccountServiceImpl implements AccountService
+{
+<span class="fc" id="L34">	private static final Logger LOG = LoggerFactory.getLogger(AccountServiceImpl.class);</span>
+
+	private final DataService dataService;
+	private final MailSender mailSender;
+	private final UserService userService;
+	private final AppSettings appSettings;
+	private final AuthenticationSettings authenticationSettings;
+	private final IdGenerator idGenerator;
+
+	AccountServiceImpl(DataService dataService, MailSender mailSender, UserService userService, AppSettings appSettings,
+			AuthenticationSettings authenticationSettings, IdGenerator idGenerator)
+<span class="fc" id="L45">	{</span>
+<span class="fc" id="L46">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L47">		this.mailSender = requireNonNull(mailSender);</span>
+<span class="fc" id="L48">		this.userService = requireNonNull(userService);</span>
+<span class="fc" id="L49">		this.appSettings = requireNonNull(appSettings);</span>
+<span class="fc" id="L50">		this.authenticationSettings = requireNonNull(authenticationSettings);</span>
+<span class="fc" id="L51">		this.idGenerator = requireNonNull(idGenerator);</span>
+<span class="fc" id="L52">	}</span>
+
+	@Override
+	@RunAsSystem
+	@Transactional
+	public void createUser(User user, String baseActivationUri)
+			throws UsernameAlreadyExistsException, EmailAlreadyExistsException
+	{
+		// Check if username already exists
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">		if (userService.getUser(user.getUsername()) != null)</span>
+		{
+<span class="nc" id="L63">			throw new UsernameAlreadyExistsException(&quot;Username '&quot; + user.getUsername() + &quot;' already exists.&quot;);</span>
+		}
+
+		// Check if email already exists
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">		if (userService.getUserByEmail(user.getEmail()) != null)</span>
+		{
+<span class="nc" id="L69">			throw new EmailAlreadyExistsException(&quot;Email '&quot; + user.getEmail() + &quot;' is already registered.&quot;);</span>
+		}
+
+		// collect activation info
+<span class="fc" id="L73">		String activationCode = idGenerator.generateId(SECURE_RANDOM);</span>
+		List&lt;String&gt; activationEmailAddresses;
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">		if (authenticationSettings.getSignUpModeration())</span>
+		{
+<span class="nc" id="L77">			activationEmailAddresses = userService.getSuEmailAddresses();</span>
+<span class="nc bnc" id="L78" title="All 4 branches missed.">			if (activationEmailAddresses == null || activationEmailAddresses.isEmpty())</span>
+<span class="nc" id="L79">				throw new MolgenisDataException(&quot;Administrator account is missing required email address&quot;);</span>
+		}
+		else
+		{
+<span class="fc" id="L83">			String activationEmailAddress = user.getEmail();</span>
+<span class="pc bpc" id="L84" title="2 of 4 branches missed.">			if (activationEmailAddress == null || activationEmailAddress.isEmpty())</span>
+<span class="nc" id="L85">				throw new MolgenisDataException(&quot;User '&quot; + user.getUsername() + &quot;' is missing required email address&quot;);</span>
+<span class="fc" id="L86">			activationEmailAddresses = singletonList(activationEmailAddress);</span>
+		}
+
+		// create user
+<span class="fc" id="L90">		user.setActivationCode(activationCode);</span>
+<span class="fc" id="L91">		user.setActive(false);</span>
+<span class="fc" id="L92">		dataService.add(USER, user);</span>
+<span class="fc" id="L93">		LOG.debug(&quot;created user {}&quot;, user.getUsername());</span>
+
+		// send activation email
+<span class="fc" id="L96">		URI activationUri = URI.create(baseActivationUri + '/' + activationCode);</span>
+
+		try
+		{
+<span class="fc" id="L100">			SimpleMailMessage mailMessage = new SimpleMailMessage();</span>
+<span class="fc" id="L101">			mailMessage.setTo(activationEmailAddresses.toArray(new String[] {}));</span>
+<span class="fc" id="L102">			mailMessage.setSubject(&quot;User registration for &quot; + appSettings.getTitle());</span>
+<span class="fc" id="L103">			mailMessage.setText(createActivationEmailText(user, activationUri));</span>
+<span class="fc" id="L104">			mailSender.send(mailMessage);</span>
+		}
+<span class="nc" id="L106">		catch (MailException mce)</span>
+		{
+<span class="nc" id="L108">			LOG.error(&quot;Could not send signup mail&quot;, mce);</span>
+
+<span class="nc" id="L110">			dataService.delete(USER, user);</span>
+
+<span class="nc" id="L112">			throw new MolgenisUserException(</span>
+					&quot;An error occurred. Please contact the administrator. You are not signed up!&quot;);
+<span class="fc" id="L114">		}</span>
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L117">			LOG.debug(&quot;send activation email for user {} to {}&quot;, user.getUsername(),</span>
+<span class="nc" id="L118">					StringUtils.join(activationEmailAddresses, ','));</span>
+		}
+
+<span class="fc" id="L121">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void activateUser(String activationCode)
+	{
+<span class="fc" id="L127">		User user = dataService.query(USER, User.class)</span>
+<span class="fc" id="L128">							   .eq(ACTIVE, false)</span>
+<span class="fc" id="L129">							   .and()</span>
+<span class="fc" id="L130">							   .eq(ACTIVATIONCODE, activationCode)</span>
+<span class="fc" id="L131">							   .findOne();</span>
+
+<span class="fc bfc" id="L133" title="All 2 branches covered.">		if (user != null)</span>
+		{
+<span class="fc" id="L135">			user.setActive(true);</span>
+<span class="fc" id="L136">			dataService.update(USER, user);</span>
+
+			// send activated email to user
+<span class="fc" id="L139">			SimpleMailMessage mailMessage = new SimpleMailMessage();</span>
+<span class="fc" id="L140">			mailMessage.setTo(user.getEmail());</span>
+<span class="fc" id="L141">			mailMessage.setSubject(&quot;Your registration request for &quot; + appSettings.getTitle());</span>
+<span class="fc" id="L142">			mailMessage.setText(createActivatedEmailText(user, appSettings.getTitle()));</span>
+<span class="fc" id="L143">			mailSender.send(mailMessage);</span>
+<span class="fc" id="L144">		}</span>
+		else
+		{
+<span class="fc" id="L147">			throw new MolgenisUserException(&quot;Invalid activation code or account already activated.&quot;);</span>
+		}
+<span class="fc" id="L149">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void changePassword(String username, String newPassword)
+	{
+<span class="fc" id="L155">		User user = dataService.query(USER, User.class).eq(USERNAME, username).findOne();</span>
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">		if (user == null)</span>
+		{
+<span class="nc" id="L158">			throw new MolgenisUserException(format(&quot;Unknown user [%s]&quot;, username));</span>
+		}
+
+<span class="fc" id="L161">		user.setPassword(newPassword);</span>
+<span class="fc" id="L162">		user.setChangePassword(false);</span>
+<span class="fc" id="L163">		dataService.update(USER, user);</span>
+
+<span class="fc" id="L165">		LOG.info(&quot;Changed password of user [{}]&quot;, username);</span>
+<span class="fc" id="L166">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void resetPassword(String userEmail)
+	{
+<span class="fc" id="L172">		User user = dataService.query(USER, User.class).eq(EMAIL, userEmail).findOne();</span>
+
+<span class="fc bfc" id="L174" title="All 2 branches covered.">		if (user != null)</span>
+		{
+<span class="fc" id="L176">			String newPassword = idGenerator.generateId(SHORT_SECURE_RANDOM);</span>
+<span class="fc" id="L177">			user.setPassword(newPassword);</span>
+<span class="fc" id="L178">			user.setChangePassword(true);</span>
+<span class="fc" id="L179">			dataService.update(USER, user);</span>
+
+			// send password reseted email to user
+<span class="fc" id="L182">			SimpleMailMessage mailMessage = new SimpleMailMessage();</span>
+<span class="fc" id="L183">			mailMessage.setTo(user.getEmail());</span>
+<span class="fc" id="L184">			mailMessage.setSubject(&quot;Your new password request&quot;);</span>
+<span class="fc" id="L185">			mailMessage.setText(createPasswordResettedEmailText(newPassword));</span>
+<span class="fc" id="L186">			mailSender.send(mailMessage);</span>
+<span class="fc" id="L187">		}</span>
+		else
+		{
+<span class="fc" id="L190">			throw new MolgenisUserException(&quot;Invalid email address.&quot;);</span>
+		}
+<span class="fc" id="L192">	}</span>
+
+	private String createActivationEmailText(User user, URI activationUri)
+	{
+<span class="fc" id="L196">		String strBuilder =</span>
+<span class="fc" id="L197">				&quot;User registration for &quot; + appSettings.getTitle() + '\n' + &quot;User name: &quot; + user.getUsername()</span>
+<span class="fc" id="L198">						+ &quot; Full name: &quot; + user.getFirstName() + ' ' + user.getLastName() + '\n'</span>
+						+ &quot;In order to activate the user visit the following URL:&quot; + '\n' + activationUri + '\n' + '\n';
+<span class="fc" id="L200">		return strBuilder;</span>
+	}
+
+	private String createActivatedEmailText(User user, String appName)
+	{
+<span class="fc" id="L205">		String strBuilder =</span>
+<span class="fc" id="L206">				&quot;Dear &quot; + user.getFirstName() + &quot; &quot; + user.getLastName() + &quot;,\n\n&quot; + &quot;your registration request for &quot;</span>
+						+ appName + &quot; was approved.\n&quot; + &quot;Your account is now active.\n&quot;;
+<span class="fc" id="L208">		return strBuilder;</span>
+	}
+
+	private String createPasswordResettedEmailText(String newPassword)
+	{
+<span class="fc" id="L213">		String strBuilder = &quot;Somebody, probably you, requested a new password for &quot; + appSettings.getTitle() + &quot;.\n&quot;</span>
+				+ &quot;The new password is: &quot; + newPassword + '\n'
+				+ &quot;Note: we strongly recommend you reset your password after log-in!&quot;;
+<span class="fc" id="L216">		return strBuilder;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

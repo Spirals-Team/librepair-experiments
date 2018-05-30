@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PluginInterceptor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">web</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.web</a> &gt; <span class="el_source">PluginInterceptor.java</span></div><h1>PluginInterceptor.java</h1><pre class="source lang-java linenums">package org.molgenis.web;
+
+import org.molgenis.data.Entity;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.EntityTypePermission;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.security.core.utils.SecurityUtils;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.ModelAndView;
+import org.springframework.web.servlet.handler.HandlerInterceptorAdapter;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import static java.util.Objects.requireNonNull;
+
+/**
+ * Interceptor that adds default model objects to all plugin requests that return a view.
+ */
+public class PluginInterceptor extends HandlerInterceptorAdapter
+{
+	private final Ui molgenisUi;
+	private final UserPermissionEvaluator permissionService;
+
+	public PluginInterceptor(Ui molgenisUi, UserPermissionEvaluator permissionService)
+<span class="fc" id="L26">	{</span>
+<span class="fc" id="L27">		this.molgenisUi = requireNonNull(molgenisUi);</span>
+<span class="fc" id="L28">		this.permissionService = requireNonNull(permissionService);</span>
+<span class="fc" id="L29">	}</span>
+
+	@Override
+	public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception
+	{
+<span class="fc" id="L34">		PluginController molgenisPlugin = validateHandler(handler);</span>
+
+		// determine context url for this plugin if no context exists
+<span class="fc" id="L37">		String contextUrl = (String) request.getAttribute(PluginAttributes.KEY_CONTEXT_URL);</span>
+<span class="fc bfc" id="L38" title="All 2 branches covered.">		if (contextUrl == null)</span>
+		{
+<span class="fc" id="L40">			request.setAttribute(PluginAttributes.KEY_CONTEXT_URL, molgenisPlugin.getUri());</span>
+		}
+
+<span class="fc" id="L43">		return true;</span>
+	}
+
+	@Override
+	public void postHandle(HttpServletRequest request, HttpServletResponse response, Object handler,
+			ModelAndView modelAndView) throws Exception
+	{
+<span class="pc bpc" id="L50" title="1 of 2 branches missed.">		if (modelAndView != null)</span>
+		{
+<span class="fc" id="L52">			PluginController molgenisPlugin = validateHandler(handler);</span>
+<span class="fc" id="L53">			String pluginId = molgenisPlugin.getId();</span>
+
+			// allow controllers that handle multiple plugins to set their plugin id
+<span class="fc bfc" id="L56" title="All 2 branches covered.">			if (!modelAndView.getModel().containsKey(PluginAttributes.KEY_PLUGIN_ID))</span>
+			{
+<span class="fc" id="L58">				modelAndView.addObject(PluginAttributes.KEY_PLUGIN_ID, pluginId);</span>
+			}
+
+<span class="fc" id="L61">			Entity pluginSettings = molgenisPlugin.getPluginSettings();</span>
+			boolean pluginSettingsCanWrite;
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">			if (pluginSettings != null)</span>
+			{
+<span class="nc" id="L65">				String pluginSettingsEntityName = pluginSettings.getEntityType().getId();</span>
+<span class="nc" id="L66">				pluginSettingsCanWrite = permissionService.hasPermission(</span>
+						new EntityTypeIdentity(pluginSettingsEntityName), EntityTypePermission.UPDATE_DATA);
+<span class="nc" id="L68">				modelAndView.addObject(PluginAttributes.KEY_PLUGIN_SETTINGS, pluginSettings);</span>
+<span class="nc" id="L69">			}</span>
+			else
+			{
+<span class="fc" id="L72">				pluginSettingsCanWrite = false;</span>
+			}
+
+<span class="fc" id="L75">			modelAndView.addObject(PluginAttributes.KEY_PLUGIN_SHOW_SETTINGS_COG, pluginSettingsCanWrite);</span>
+<span class="fc" id="L76">			modelAndView.addObject(PluginAttributes.KEY_MOLGENIS_UI, molgenisUi);</span>
+<span class="fc" id="L77">			modelAndView.addObject(PluginAttributes.KEY_AUTHENTICATED, SecurityUtils.currentUserIsAuthenticated());</span>
+<span class="fc" id="L78">			modelAndView.addObject(PluginAttributes.KEY_PLUGIN_ID_WITH_QUERY_STRING,</span>
+<span class="fc" id="L79">					getPluginIdWithQueryString(request, pluginId));</span>
+		}
+<span class="fc" id="L81">	}</span>
+
+	public PluginController validateHandler(Object handler)
+	{
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">		if (!(handler instanceof HandlerMethod))</span>
+		{
+<span class="nc" id="L87">			throw new RuntimeException(&quot;handler is not of type &quot; + HandlerMethod.class.getSimpleName());</span>
+		}
+<span class="fc" id="L89">		Object bean = ((HandlerMethod) handler).getBean();</span>
+<span class="pc bpc" id="L90" title="1 of 2 branches missed.">		if (!(bean instanceof PluginController))</span>
+		{
+<span class="nc" id="L92">			throw new RuntimeException(&quot;controller does not implement &quot; + PluginController.class.getSimpleName());</span>
+		}
+<span class="fc" id="L94">		return (PluginController) bean;</span>
+	}
+
+	private String getPluginIdWithQueryString(HttpServletRequest request, String pluginId)
+	{
+<span class="fc bfc" id="L99" title="All 2 branches covered.">		if (null != request)</span>
+		{
+<span class="fc" id="L101">			String queryString = request.getQueryString();</span>
+<span class="fc" id="L102">			StringBuilder pluginIdAndQueryStringUrlPart = new StringBuilder();</span>
+<span class="fc" id="L103">			pluginIdAndQueryStringUrlPart.append(pluginId);</span>
+<span class="pc bpc" id="L104" title="2 of 4 branches missed.">			if (queryString != null &amp;&amp; !queryString.isEmpty())</span>
+<span class="fc" id="L105">				pluginIdAndQueryStringUrlPart.append('?').append(queryString);</span>
+<span class="fc" id="L106">			return pluginIdAndQueryStringUrlPart.toString();</span>
+		}
+		else
+		{
+<span class="fc" id="L110">			return &quot;&quot;;</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

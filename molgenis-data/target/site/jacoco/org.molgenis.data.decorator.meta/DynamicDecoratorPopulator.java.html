@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DynamicDecoratorPopulator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.decorator.meta</a> &gt; <span class="el_source">DynamicDecoratorPopulator.java</span></div><h1>DynamicDecoratorPopulator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.decorator.meta;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.decorator.DynamicRepositoryDecoratorFactory;
+import org.molgenis.data.decorator.DynamicRepositoryDecoratorRegistry;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
+import static org.molgenis.data.decorator.meta.DecoratorConfigurationMetadata.DECORATOR_CONFIGURATION;
+import static org.molgenis.data.decorator.meta.DecoratorConfigurationMetadata.DYNAMIC_DECORATORS;
+import static org.molgenis.data.decorator.meta.DynamicDecoratorMetadata.DYNAMIC_DECORATOR;
+
+@Component
+public class DynamicDecoratorPopulator
+{
+	private final DataService dataService;
+	private final DynamicRepositoryDecoratorRegistry registry;
+	private final DynamicDecoratorFactory dynamicDecoratorFactory;
+
+	public DynamicDecoratorPopulator(DataService dataService,
+			DynamicRepositoryDecoratorRegistry dynamicRepositoryDecoratorRegistry,
+			DynamicDecoratorFactory dynamicDecoratorFactory)
+<span class="fc" id="L30">	{</span>
+<span class="fc" id="L31">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L32">		this.registry = requireNonNull(dynamicRepositoryDecoratorRegistry);</span>
+<span class="fc" id="L33">		this.dynamicDecoratorFactory = requireNonNull(dynamicDecoratorFactory);</span>
+<span class="fc" id="L34">	}</span>
+
+	public void populate()
+	{
+<span class="fc" id="L38">		addNewDecorators();</span>
+<span class="fc" id="L39">		removeNonExistingDecorators();</span>
+<span class="fc" id="L40">	}</span>
+
+	private void addNewDecorators()
+	{
+<span class="fc" id="L44">		dataService.add(DYNAMIC_DECORATOR,</span>
+<span class="fc" id="L45">				registry.getFactoryIds().filter(this::notPersisted).map(this::createDecorator));</span>
+<span class="fc" id="L46">	}</span>
+
+	private void removeNonExistingDecorators()
+	{
+<span class="fc" id="L50">		Set&lt;String&gt; nonExistingDecorators = getNonExistingDecorators();</span>
+<span class="fc" id="L51">		updateDecoratorConfigurations(nonExistingDecorators);</span>
+<span class="fc" id="L52">		dataService.deleteAll(DYNAMIC_DECORATOR, (Stream&lt;Object&gt;) (Stream&lt;?&gt;) nonExistingDecorators.stream());</span>
+<span class="fc" id="L53">	}</span>
+
+	private Set&lt;String&gt; getNonExistingDecorators()
+	{
+<span class="fc" id="L57">		Set&lt;String&gt; decorators = dataService.findAll(DYNAMIC_DECORATOR, DynamicDecorator.class)</span>
+<span class="fc" id="L58">											.map(DynamicDecorator::getId)</span>
+<span class="fc" id="L59">											.collect(toSet());</span>
+
+<span class="fc" id="L61">		decorators.removeAll(registry.getFactoryIds().collect(toSet()));</span>
+<span class="fc" id="L62">		return decorators;</span>
+	}
+
+	private void updateDecoratorConfigurations(Set&lt;String&gt; nonExistingDecorators)
+	{
+<span class="fc" id="L67">		Stream&lt;DecoratorConfiguration&gt; updatedEntities = dataService.findAll(DECORATOR_CONFIGURATION,</span>
+<span class="pc" id="L68">				DecoratorConfiguration.class).map(config -&gt; removeReferences(nonExistingDecorators, config));</span>
+<span class="fc" id="L69">		dataService.update(DECORATOR_CONFIGURATION, updatedEntities);</span>
+<span class="fc" id="L70">	}</span>
+
+	private DecoratorConfiguration removeReferences(Set&lt;String&gt; nonExistingDecorators,
+			DecoratorConfiguration configuration)
+	{
+<span class="nc" id="L75">		List&lt;DynamicDecorator&gt; decorators = StreamSupport.stream(</span>
+<span class="nc" id="L76">				configuration.getEntities(DYNAMIC_DECORATORS, DynamicDecorator.class).spliterator(), false)</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">														 .filter(e -&gt; !nonExistingDecorators.contains(e.getId()))</span>
+<span class="nc" id="L78">														 .collect(toList());</span>
+
+<span class="nc" id="L80">		configuration.set(DYNAMIC_DECORATORS, decorators);</span>
+<span class="nc" id="L81">		return configuration;</span>
+	}
+
+	private boolean notPersisted(String id)
+	{
+<span class="fc bfc" id="L86" title="All 2 branches covered.">		return dataService.findOneById(DYNAMIC_DECORATOR, id, DynamicDecorator.class) == null;</span>
+	}
+
+	private DynamicDecorator createDecorator(String id)
+	{
+<span class="fc" id="L91">		DynamicRepositoryDecoratorFactory factory = registry.getFactory(id);</span>
+<span class="fc" id="L92">		DynamicDecorator dynamicDecorator = dynamicDecoratorFactory.create(id)</span>
+<span class="fc" id="L93">																   .setLabel(factory.getLabel())</span>
+<span class="fc" id="L94">																   .setDescription(factory.getDescription());</span>
+<span class="fc" id="L95">		return dynamicDecorator;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

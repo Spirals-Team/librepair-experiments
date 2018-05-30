@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityTypeRegistryImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.postgresql.identifier</a> &gt; <span class="el_source">EntityTypeRegistryImpl.java</span></div><h1>EntityTypeRegistryImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.data.postgresql.identifier;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.postgresql.PostgreSqlNameGenerator;
+import org.molgenis.data.transaction.DefaultMolgenisTransactionListener;
+import org.molgenis.data.transaction.TransactionManager;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Sets.newHashSet;
+import static com.google.common.collect.Streams.stream;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.Collectors.toSet;
+import static org.molgenis.data.postgresql.PostgreSqlNameGenerator.getJunctionTableName;
+import static org.molgenis.data.support.EntityTypeUtils.isMultipleReferenceType;
+import static org.molgenis.data.transaction.TransactionManager.TRANSACTION_ID_RESOURCE_NAME;
+
+/**
+ * Tracks PostgreSQL table names.
+ */
+@Component
+public class EntityTypeRegistryImpl extends DefaultMolgenisTransactionListener implements EntityTypeRegistry
+{
+	/**
+	 * Maps table name to {@link EntityTypeDescription} for the table name.
+	 * Junction table names are mapped to the EntityTypeDescription of the entity type with the reference attribute.
+	 */
+	private final ConcurrentMap&lt;String, EntityTypeDescription&gt; entityTypeDescriptionMap;
+	private final ConcurrentMap&lt;String, Map&lt;String, EntityTypeDescription&gt;&gt; transactionsEntityTypeDescriptionMap;
+
+	EntityTypeRegistryImpl(TransactionManager transactionManager)
+<span class="fc" id="L42">	{</span>
+<span class="fc" id="L43">		entityTypeDescriptionMap = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="fc" id="L44">		transactionsEntityTypeDescriptionMap = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="fc" id="L45">		transactionManager.addTransactionListener(this);</span>
+<span class="fc" id="L46">	}</span>
+
+	@Override
+	public void registerEntityType(EntityType entityType)
+	{
+<span class="fc" id="L51">		Iterable&lt;Attribute&gt; attributes = entityType.getAtomicAttributes();</span>
+<span class="fc" id="L52">		EntityTypeDescription entityTypeDescription = createEntityTypeDescription(entityType, attributes);</span>
+<span class="fc" id="L53">		registerTableNames(getTableNames(entityType, stream(attributes)), entityTypeDescription);</span>
+<span class="fc" id="L54">	}</span>
+
+	@Override
+	public void unregisterEntityType(EntityType entityType)
+	{
+<span class="fc" id="L59">		Iterable&lt;Attribute&gt; attributes = entityType.getAtomicAttributes();</span>
+<span class="fc" id="L60">		registerTableNames(getTableNames(entityType, stream(attributes)), null);</span>
+<span class="fc" id="L61">	}</span>
+
+	@Override
+	public void addAttribute(EntityType entityType, Attribute attribute)
+	{
+<span class="fc" id="L66">		Iterable&lt;Attribute&gt; attributes = Iterables.concat(entityType.getAtomicAttributes(),</span>
+<span class="fc" id="L67">				ImmutableList.of(attribute));</span>
+<span class="fc" id="L68">		EntityTypeDescription entityTypeDescription = createEntityTypeDescription(entityType, attributes);</span>
+<span class="fc" id="L69">		registerTableNames(getTableNames(entityType, stream(attributes)), entityTypeDescription);</span>
+<span class="fc" id="L70">	}</span>
+
+	@Override
+	public void updateAttribute(EntityType entityType, Attribute attr, Attribute updatedAttr)
+	{
+<span class="fc" id="L75">		registerTableNames(getJunctionTableNames(entityType, Stream.of(attr)), null);</span>
+<span class="fc" id="L76">		List&lt;Attribute&gt; attributes = stream(entityType.getAtomicAttributes()).filter(</span>
+<span class="fc bfc" id="L77" title="All 2 branches covered.">				existing -&gt; !existing.getName().equals(attr.getName())).collect(Collectors.toList());</span>
+<span class="fc" id="L78">		attributes.add(updatedAttr);</span>
+<span class="fc" id="L79">		EntityTypeDescription entityTypeDescription = createEntityTypeDescription(entityType, attributes);</span>
+<span class="fc" id="L80">		registerTableNames(getTableNames(entityType, attributes.stream()), entityTypeDescription);</span>
+<span class="fc" id="L81">	}</span>
+
+	@Override
+	public void deleteAttribute(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L86">		registerTableNames(getJunctionTableNames(entityType, Stream.of(attr)), null);</span>
+<span class="fc" id="L87">		List&lt;Attribute&gt; attributes = stream(entityType.getAtomicAttributes()).filter(</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">				existing -&gt; !existing.getName().equals(attr.getName())).collect(Collectors.toList());</span>
+<span class="fc" id="L89">		EntityTypeDescription entityTypeDescription = createEntityTypeDescription(entityType, attributes);</span>
+<span class="fc" id="L90">		registerTableNames(getTableNames(entityType, attributes.stream()), entityTypeDescription);</span>
+<span class="fc" id="L91">	}</span>
+
+	private Set&lt;String&gt; getTableNames(EntityType entityType, Stream&lt;Attribute&gt; attributes)
+	{
+<span class="fc" id="L95">		Set&lt;String&gt; tableNames = newHashSet(getTableName(entityType));</span>
+<span class="fc" id="L96">		tableNames.addAll(getJunctionTableNames(entityType, attributes));</span>
+<span class="fc" id="L97">		return tableNames;</span>
+	}
+
+	private Set&lt;String&gt; getJunctionTableNames(EntityType entityType, Stream&lt;Attribute&gt; attributes)
+	{
+<span class="fc" id="L102">		return attributes.filter(EntityTypeRegistryImpl::hasJunctionTable)</span>
+<span class="fc" id="L103">						 .map(attribute -&gt; getJunctionTableName(entityType, attribute, false))</span>
+<span class="fc" id="L104">						 .collect(toSet());</span>
+	}
+
+	private EntityTypeDescription createEntityTypeDescription(EntityType entityType, Iterable&lt;Attribute&gt; attributes)
+	{
+<span class="fc" id="L109">		Map&lt;String, AttributeDescription&gt; attributeDescriptions = stream(attributes).filter(</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">				attribute -&gt; !hasJunctionTable(attribute))</span>
+<span class="fc" id="L111">																					.collect(toMap(this::getColumnName,</span>
+<span class="fc" id="L112">																							attribute -&gt; AttributeDescription</span>
+<span class="fc" id="L113">																									.create(attribute.getName())));</span>
+<span class="fc" id="L114">		return EntityTypeDescription.create(entityType.getId(), attributeDescriptions);</span>
+	}
+
+	private void registerTableNames(Set&lt;String&gt; tableNames, EntityTypeDescription entityTypeDescription)
+	{
+<span class="fc" id="L119">		tableNames.forEach(tableName -&gt; registerTableName(entityTypeDescription, tableName));</span>
+<span class="fc" id="L120">	}</span>
+
+	private void registerTableName(EntityTypeDescription entityTypeDescription, String tableName)
+	{
+<span class="fc bfc" id="L124" title="All 4 branches covered.">		if (entityTypeDescription == null &amp;&amp; getTransactionId() == null)</span>
+		{
+<span class="fc" id="L126">			entityTypeDescriptionMap.remove(tableName);</span>
+		}
+		else
+		{
+<span class="fc" id="L130">			getEntityTypeDescriptionMap().put(tableName, entityTypeDescription);</span>
+		}
+<span class="fc" id="L132">	}</span>
+
+	private static boolean hasJunctionTable(Attribute attribute)
+	{
+<span class="pc bpc" id="L136" title="1 of 4 branches missed.">		return isMultipleReferenceType(attribute) &amp;&amp; attribute.getDataType() != AttributeType.ONE_TO_MANY;</span>
+	}
+
+	@Override
+	public EntityTypeDescription getEntityTypeDescription(String tableName)
+	{
+<span class="fc" id="L142">		return Optional.ofNullable(getTransactionId())</span>
+<span class="fc" id="L143">					   .filter(transactionsEntityTypeDescriptionMap::containsKey)</span>
+<span class="fc" id="L144">					   .map(transactionsEntityTypeDescriptionMap::get)</span>
+<span class="fc" id="L145">					   .filter(transactionMap -&gt; transactionMap.containsKey(tableName))</span>
+<span class="fc" id="L146">					   .orElse(entityTypeDescriptionMap)</span>
+<span class="fc" id="L147">					   .get(tableName);</span>
+	}
+
+	@Override
+	public void afterCommitTransaction(String transactionId)
+	{
+<span class="fc" id="L153">		Map&lt;String, EntityTypeDescription&gt; transactionEntityTypeDescriptionMap = transactionsEntityTypeDescriptionMap.remove(</span>
+				transactionId);
+<span class="fc bfc" id="L155" title="All 2 branches covered.">		if (transactionEntityTypeDescriptionMap != null)</span>
+		{
+<span class="fc" id="L157">			transactionEntityTypeDescriptionMap.forEach((tableName, entityTypeDescription) -&gt;</span>
+			{
+<span class="fc bfc" id="L159" title="All 2 branches covered.">				if (entityTypeDescription != null)</span>
+				{
+<span class="fc" id="L161">					entityTypeDescriptionMap.put(tableName, entityTypeDescription);</span>
+				}
+				else
+				{
+<span class="fc" id="L165">					entityTypeDescriptionMap.remove(tableName);</span>
+				}
+<span class="fc" id="L167">			});</span>
+		}
+<span class="fc" id="L169">	}</span>
+
+	@Override
+	public void rollbackTransaction(String transactionId)
+	{
+<span class="fc" id="L174">		transactionsEntityTypeDescriptionMap.remove(transactionId);</span>
+<span class="fc" id="L175">	}</span>
+
+	private String getTransactionId()
+	{
+<span class="fc" id="L179">		return (String) TransactionSynchronizationManager.getResource(TRANSACTION_ID_RESOURCE_NAME);</span>
+	}
+
+	private String getTableName(EntityType entityType)
+	{
+<span class="fc" id="L184">		return PostgreSqlNameGenerator.getTableName(entityType, false);</span>
+	}
+
+	private String getColumnName(Attribute attr)
+	{
+<span class="fc" id="L189">		return PostgreSqlNameGenerator.getColumnName(attr, false);</span>
+	}
+
+	private Map&lt;String, EntityTypeDescription&gt; getEntityTypeDescriptionMap()
+	{
+<span class="fc" id="L194">		String transactionId = getTransactionId();</span>
+<span class="fc bfc" id="L195" title="All 2 branches covered.">		if (transactionId == null)</span>
+		{
+<span class="fc" id="L197">			return entityTypeDescriptionMap;</span>
+		}
+<span class="fc" id="L199">		return transactionsEntityTypeDescriptionMap.computeIfAbsent(transactionId, k -&gt; new HashMap&lt;&gt;());</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

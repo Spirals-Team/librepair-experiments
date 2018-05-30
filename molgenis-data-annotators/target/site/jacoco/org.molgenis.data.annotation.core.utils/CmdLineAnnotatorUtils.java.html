@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CmdLineAnnotatorUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.utils</a> &gt; <span class="el_source">CmdLineAnnotatorUtils.java</span></div><h1>CmdLineAnnotatorUtils.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.utils;
+
+import net.sf.samtools.util.BlockCompressedOutputStream;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisInvalidFormatException;
+import org.molgenis.data.annotation.core.EffectBasedAnnotator;
+import org.molgenis.data.annotation.core.EffectCreatingAnnotator;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.vcf.VcfRepository;
+import org.molgenis.data.vcf.model.VcfAttributes;
+import org.molgenis.data.vcf.utils.VcfUtils;
+import org.molgenis.data.vcf.utils.VcfWriterUtils;
+
+import java.io.*;
+import java.util.Iterator;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.molgenis.data.meta.AttributeType.MREF;
+
+<span class="nc" id="L28">public class CmdLineAnnotatorUtils</span>
+{
+	private static final String EFFECT = &quot;EFFECT&quot;;
+
+	/**
+	 * Adds a new compound attribute to an existing CrudRepository
+	 *
+	 * @param annotator                the annotator to be runned
+	 * @param vcfAttributes            utility class for vcf metadata
+	 * @param entityTypeFactory        factory for molgenis entityType
+	 * @param attributeFactory         factory for molgenis entityType
+	 * @param effectStructureConverter utility class for converting a vcfRepo from and to the molgenis entity structure for &quot;effects&quot; annotations
+	 * @param inputVcfFile             the vcf file to be annotated
+	 * @param outputVCFFile            the resulting, annotated vcf file
+	 * @param attributesToInclude      the attributes of the annotator that should be written to the result
+	 * @param update                   boolean indicating if values already present for the annotator attributes should be updated(true) or overwritten (false)
+	 * @return the path of the result vcf file
+	 */
+	public static String annotate(RepositoryAnnotator annotator, VcfAttributes vcfAttributes,
+			EntityTypeFactory entityTypeFactory, AttributeFactory attributeFactory,
+			EffectStructureConverter effectStructureConverter, File inputVcfFile, File outputVCFFile,
+			List&lt;String&gt; attributesToInclude, boolean update) throws IOException, MolgenisInvalidFormatException
+	{
+
+<span class="nc" id="L52">		try (BufferedWriter outputVCFWriter = createBufferedWriter(outputVCFFile);</span>
+<span class="nc" id="L53">				VcfRepository vcfRepo = new VcfRepository(inputVcfFile, inputVcfFile.getName(), vcfAttributes,</span>
+						entityTypeFactory, attributeFactory))
+		{
+
+<span class="nc" id="L57">			List&lt;Attribute&gt; outputMetaData = getOutputAttributeMetadatasForAnnotator(annotator, entityTypeFactory,</span>
+					attributeFactory, attributesToInclude, vcfRepo);
+
+<span class="nc" id="L60">			VcfWriterUtils.writeVcfHeader(inputVcfFile, outputVCFWriter,</span>
+<span class="nc" id="L61">					VcfUtils.getAtomicAttributesFromList(outputMetaData), attributesToInclude);</span>
+
+<span class="nc" id="L63">			Iterable&lt;Entity&gt; entitiesToAnnotate = addAnnotatorMetaDataToRepository(annotator, attributeFactory,</span>
+					effectStructureConverter, vcfRepo);
+
+<span class="nc" id="L66">			Iterator&lt;Entity&gt; annotatedRecords = annotateRepo(annotator, effectStructureConverter, update,</span>
+					entitiesToAnnotate);
+
+<span class="nc" id="L69">			writeAnnotationResultToVcfFile(attributesToInclude, outputVCFWriter, outputMetaData, annotatedRecords);</span>
+		}
+<span class="nc" id="L71">		return outputVCFFile.getAbsolutePath();</span>
+	}
+
+	private static BufferedWriter createBufferedWriter(File outputVCFFile) throws IOException
+	{
+		OutputStream outputStream;
+<span class="nc bnc" id="L77" title="All 2 branches missed.">		if (outputVCFFile.getName().endsWith(&quot;.gz&quot;))</span>
+		{
+<span class="nc" id="L79">			outputStream = new BlockCompressedOutputStream(outputVCFFile);</span>
+		}
+		else
+		{
+<span class="nc" id="L83">			outputStream = new FileOutputStream(outputVCFFile);</span>
+		}
+<span class="nc" id="L85">		return new BufferedWriter(new OutputStreamWriter(outputStream, UTF_8));</span>
+	}
+
+	private static Iterator&lt;Entity&gt; annotateRepo(RepositoryAnnotator annotator,
+			EffectStructureConverter effectStructureConverter, boolean update, Iterable&lt;Entity&gt; entitiesToAnnotate)
+	{
+<span class="nc" id="L91">		Iterator&lt;Entity&gt; annotatedRecords = annotator.annotate(entitiesToAnnotate, update);</span>
+<span class="nc bnc" id="L92" title="All 4 branches missed.">		if (annotator instanceof EffectCreatingAnnotator || annotator instanceof EffectBasedAnnotator)</span>
+		{
+<span class="nc" id="L94">			annotatedRecords = effectStructureConverter.createVcfEntityStructure(annotatedRecords);</span>
+		}
+<span class="nc" id="L96">		return annotatedRecords;</span>
+	}
+
+	private static Iterable&lt;Entity&gt; addAnnotatorMetaDataToRepository(RepositoryAnnotator annotator,
+			AttributeFactory attributeFactory, EffectStructureConverter effectStructureConverter, VcfRepository vcfRepo)
+	{
+<span class="nc" id="L102">		addAnnotatorAttributesToInfoAttribute(annotator, vcfRepo);</span>
+		Stream&lt;Entity&gt; entitiesToAnnotate;
+
+		// Check if annotator is annotator that annotates effects (for example Gavin)
+<span class="nc bnc" id="L106" title="All 2 branches missed.">		if (annotator instanceof EffectBasedAnnotator)</span>
+		{
+<span class="nc" id="L108">			entitiesToAnnotate = effectStructureConverter.createVariantEffectStructure(EFFECT,</span>
+<span class="nc" id="L109">					annotator.getOutputAttributes(), vcfRepo);</span>
+		}
+		else
+		{
+<span class="nc" id="L113">			AnnotatorUtils.addAnnotatorMetaDataToRepositories(vcfRepo.getEntityType(), attributeFactory, annotator);</span>
+<span class="nc" id="L114">			return vcfRepo;</span>
+		}
+
+<span class="nc" id="L117">		return entitiesToAnnotate::iterator;</span>
+	}
+
+	private static void writeAnnotationResultToVcfFile(List&lt;String&gt; attributesToInclude, BufferedWriter outputVCFWriter,
+			List&lt;Attribute&gt; outputMetaData, Iterator&lt;Entity&gt; annotatedRecords) throws IOException
+	{
+<span class="nc bnc" id="L123" title="All 2 branches missed.">		while (annotatedRecords.hasNext())</span>
+		{
+			// annotation starts here
+<span class="nc" id="L126">			Entity annotatedRecord = annotatedRecords.next();</span>
+<span class="nc" id="L127">			VcfWriterUtils.writeToVcf(annotatedRecord, VcfUtils.getAtomicAttributesFromList(outputMetaData),</span>
+					attributesToInclude, outputVCFWriter);
+<span class="nc" id="L129">			outputVCFWriter.newLine();</span>
+<span class="nc" id="L130">		}</span>
+<span class="nc" id="L131">	}</span>
+
+	private static void addAnnotatorAttributesToInfoAttribute(RepositoryAnnotator annotator, VcfRepository vcfRepo)
+	{
+<span class="nc" id="L135">		EntityType entityType = vcfRepo.getEntityType();</span>
+<span class="nc" id="L136">		Attribute infoAttribute = entityType.getAttribute(VcfAttributes.INFO);</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">		for (Attribute attribute : annotator.getOutputAttributes())</span>
+		{
+<span class="nc bnc" id="L139" title="All 2 branches missed.">			for (Attribute atomicAttribute : attribute.getChildren())</span>
+			{
+<span class="nc" id="L141">				atomicAttribute.setParent(infoAttribute);</span>
+<span class="nc" id="L142">				entityType.addAttribute(atomicAttribute);</span>
+<span class="nc" id="L143">			}</span>
+<span class="nc" id="L144">		}</span>
+<span class="nc" id="L145">	}</span>
+
+	private static List&lt;Attribute&gt; getOutputAttributeMetadatasForAnnotator(RepositoryAnnotator annotator,
+			EntityTypeFactory entityTypeFactory, AttributeFactory attributeFactory, List&lt;String&gt; attributesToInclude,
+			VcfRepository vcfRepo)
+	{
+<span class="nc bnc" id="L151" title="All 2 branches missed.">		if (!attributesToInclude.isEmpty())</span>
+		{
+<span class="nc" id="L153">			checkSelectedOutputAttributeNames(annotator, attributesToInclude, vcfRepo);</span>
+		}
+		// If the annotator e.g. SnpEff creates an external repository, collect the output metadata into an mref
+		// entity
+		// This allows for the header to be written as 'EFFECT annotations: &lt;ouput_attributes&gt; | &lt;ouput_attributes&gt;'
+<span class="nc" id="L158">		List&lt;Attribute&gt; outputMetaData = newArrayList();</span>
+<span class="nc bnc" id="L159" title="All 4 branches missed.">		if (annotator instanceof EffectCreatingAnnotator || annotator instanceof EffectBasedAnnotator)</span>
+		{
+<span class="nc" id="L161">			EntityType effectRefEntity = entityTypeFactory.create(annotator.getSimpleName() + &quot;_EFFECTS&quot;);</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">			for (Attribute outputAttribute : annotator.getOutputAttributes())</span>
+			{
+<span class="nc" id="L164">				effectRefEntity.addAttribute(outputAttribute);</span>
+<span class="nc" id="L165">			}</span>
+<span class="nc" id="L166">			Attribute effect = attributeFactory.create().setName(EFFECT);</span>
+<span class="nc" id="L167">			effect.setDataType(MREF).setRefEntity(effectRefEntity);</span>
+<span class="nc" id="L168">			outputMetaData.add(effect);</span>
+<span class="nc" id="L169">		}</span>
+		else
+		{
+<span class="nc" id="L172">			outputMetaData = annotator.getOutputAttributes();</span>
+		}
+<span class="nc" id="L174">		return outputMetaData;</span>
+	}
+
+	private static void checkSelectedOutputAttributeNames(RepositoryAnnotator annotator,
+			List&lt;String&gt; attributesToInclude, VcfRepository vcfRepo)
+	{
+		// Check attribute names
+<span class="nc" id="L181">		List&lt;String&gt; outputAttributeNames = VcfUtils.getAtomicAttributesFromList(annotator.getOutputAttributes())</span>
+<span class="nc" id="L182">													.stream()</span>
+<span class="nc" id="L183">													.map(Attribute::getName)</span>
+<span class="nc" id="L184">													.collect(Collectors.toList());</span>
+
+<span class="nc" id="L186">		List&lt;String&gt; inputAttributeNames = VcfUtils.getAtomicAttributesFromList(</span>
+<span class="nc" id="L187">				vcfRepo.getEntityType().getAtomicAttributes())</span>
+<span class="nc" id="L188">												   .stream()</span>
+<span class="nc" id="L189">												   .map(Attribute::getName)</span>
+<span class="nc" id="L190">												   .collect(Collectors.toList());</span>
+
+<span class="nc bnc" id="L192" title="All 2 branches missed.">		for (String attrName : attributesToInclude)</span>
+		{
+<span class="nc bnc" id="L194" title="All 2 branches missed.">			if (!outputAttributeNames.contains(attrName))</span>
+			{
+<span class="nc" id="L196">				throw new RuntimeException(&quot;Unknown output attribute '&quot; + attrName + &quot;'&quot;);</span>
+			}
+<span class="nc bnc" id="L198" title="All 2 branches missed.">			else if (inputAttributeNames.contains(attrName))</span>
+			{
+<span class="nc" id="L200">				throw new RuntimeException(&quot;The output attribute '&quot; + attrName</span>
+						+ &quot;' is present in the inputfile, but is deselected in the current run, this is not supported&quot;);
+			}
+<span class="nc" id="L203">		}</span>
+<span class="nc" id="L204">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

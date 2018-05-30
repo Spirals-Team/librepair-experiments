@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityTypeValidator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-validation</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.validation.meta</a> &gt; <span class="el_source">EntityTypeValidator.java</span></div><h1>EntityTypeValidator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.validation.meta;
+
+import com.google.common.collect.Multimap;
+import org.molgenis.data.DataService;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.meta.MetaUtils;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.meta.system.SystemEntityTypeRegistry;
+import org.molgenis.data.support.AttributeUtils;
+import org.molgenis.data.validation.ConstraintViolation;
+import org.molgenis.data.validation.MolgenisValidationException;
+import org.molgenis.util.stream.MultimapCollectors;
+import org.springframework.stereotype.Component;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.Function;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.data.meta.model.PackageMetadata.PACKAGE;
+import static org.molgenis.data.util.EntityUtils.asStream;
+
+/**
+ * Entity metadata validator
+ */
+@Component
+public class EntityTypeValidator
+{
+	private final DataService dataService;
+	private final SystemEntityTypeRegistry systemEntityTypeRegistry;
+
+	public EntityTypeValidator(DataService dataService, SystemEntityTypeRegistry systemEntityTypeRegistry)
+<span class="fc" id="L41">	{</span>
+<span class="fc" id="L42">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L43">		this.systemEntityTypeRegistry = requireNonNull(systemEntityTypeRegistry);</span>
+<span class="fc" id="L44">	}</span>
+
+	/**
+	 * Validates entity meta data
+	 *
+	 * @param entityType entity meta data
+	 * @throws MolgenisValidationException if entity meta data is not valid
+	 */
+	public void validate(EntityType entityType)
+	{
+<span class="fc" id="L54">		validateEntityId(entityType);</span>
+<span class="fc" id="L55">		validateEntityLabel(entityType);</span>
+<span class="fc" id="L56">		validatePackage(entityType);</span>
+<span class="fc" id="L57">		validateExtends(entityType);</span>
+<span class="fc" id="L58">		validateOwnAttributes(entityType);</span>
+
+<span class="fc" id="L60">		Map&lt;String, Attribute&gt; ownAllAttrMap = stream(entityType.getOwnAllAttributes().spliterator(), false).collect(</span>
+<span class="fc" id="L61">				toMap(Attribute::getIdentifier, Function.identity(), (u, v) -&gt;</span>
+				{
+<span class="nc" id="L63">					throw new IllegalStateException(String.format(&quot;Duplicate key %s&quot;, u));</span>
+				}, LinkedHashMap::new));
+
+<span class="fc" id="L66">		validateOwnIdAttribute(entityType, ownAllAttrMap);</span>
+<span class="fc" id="L67">		validateOwnLabelAttribute(entityType, ownAllAttrMap);</span>
+<span class="fc" id="L68">		validateOwnLookupAttributes(entityType, ownAllAttrMap);</span>
+<span class="fc" id="L69">		validateLabelAttribute(entityType);</span>
+<span class="fc" id="L70">		validateBackend(entityType);</span>
+<span class="fc" id="L71">	}</span>
+
+	static void validateLabelAttribute(EntityType entityType)
+	{
+<span class="pc bpc" id="L75" title="1 of 4 branches missed.">		if (!entityType.isAbstract() &amp;&amp; !entityType.getIdAttribute().isVisible()</span>
+<span class="pc bpc" id="L76" title="1 of 2 branches missed.">				&amp;&amp; entityType.getLabelAttribute() == null)</span>
+		{
+<span class="fc" id="L78">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L79">					format(&quot;EntityType [%s] must define a label attribute because the identifier is hidden&quot;,</span>
+<span class="fc" id="L80">							entityType.getId())));</span>
+		}
+<span class="fc" id="L82">	}</span>
+
+	/**
+	 * Validate that the entity meta data backend exists
+	 *
+	 * @param entityType entity meta data
+	 * @throws MolgenisValidationException if the entity meta data backend does not exist
+	 */
+	void validateBackend(EntityType entityType)
+	{
+		// Validate backend exists
+<span class="fc" id="L93">		String backendName = entityType.getBackend();</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">		if (!dataService.getMeta().hasBackend(backendName))</span>
+		{
+<span class="fc" id="L96">			throw new MolgenisValidationException(new ConstraintViolation(format(&quot;Unknown backend [%s]&quot;, backendName)));</span>
+		}
+<span class="fc" id="L98">	}</span>
+
+	/**
+	 * Validate that the lookup attributes owned by this entity are part of the owned attributes.
+	 *
+	 * @param entityType    entity meta data
+	 * @param ownAllAttrMap attribute identifier to attribute map
+	 * @throws MolgenisValidationException if one or more lookup attributes are not entity attributes
+	 */
+	static void validateOwnLookupAttributes(EntityType entityType, Map&lt;String, Attribute&gt; ownAllAttrMap)
+	{
+		// Validate lookup attributes
+<span class="fc" id="L110">		entityType.getOwnLookupAttributes().forEach(ownLookupAttr -&gt;</span>
+		{
+			// Validate that lookup attribute is in the attributes list
+<span class="fc" id="L113">			Attribute ownAttr = ownAllAttrMap.get(ownLookupAttr.getIdentifier());</span>
+<span class="fc bfc" id="L114" title="All 2 branches covered.">			if (ownAttr == null)</span>
+			{
+<span class="fc" id="L116">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L117">						format(&quot;Lookup attribute [%s] is not one of the attributes of entity [%s]&quot;,</span>
+<span class="fc" id="L118">								ownLookupAttr.getName(), entityType.getId())));</span>
+			}
+
+			// Validate that the lookup attribute is visible
+<span class="fc bfc" id="L122" title="All 2 branches covered.">			if (!ownLookupAttr.isVisible())</span>
+			{
+<span class="fc" id="L124">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L125">						format(&quot;Lookup attribute [%s] of entity type [%s] must be visible&quot;, ownLookupAttr.getName(),</span>
+<span class="fc" id="L126">								entityType.getId())));</span>
+			}
+<span class="fc" id="L128">		});</span>
+<span class="fc" id="L129">	}</span>
+
+	/**
+	 * Validate that the label attribute owned by this entity is part of the owned attributes.
+	 *
+	 * @param entityType    entity meta data
+	 * @param ownAllAttrMap attribute identifier to attribute map
+	 * @throws MolgenisValidationException if the label attribute is not an entity attribute
+	 */
+	static void validateOwnLabelAttribute(EntityType entityType, Map&lt;String, Attribute&gt; ownAllAttrMap)
+	{
+		// Validate label attribute
+<span class="fc" id="L141">		Attribute ownLabelAttr = entityType.getOwnLabelAttribute();</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">		if (ownLabelAttr != null)</span>
+		{
+			// Validate that label attribute is in the attributes list
+<span class="fc" id="L145">			Attribute ownAttr = ownAllAttrMap.get(ownLabelAttr.getIdentifier());</span>
+<span class="fc bfc" id="L146" title="All 2 branches covered.">			if (ownAttr == null)</span>
+			{
+<span class="fc" id="L148">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L149">						format(&quot;Label attribute [%s] is not is not one of the attributes of entity [%s]&quot;,</span>
+<span class="fc" id="L150">								ownLabelAttr.getName(), entityType.getId())));</span>
+			}
+		}
+<span class="fc" id="L153">	}</span>
+
+	/**
+	 * Validate that the ID attribute owned by this entity is part of the owned attributes.
+	 *
+	 * @param entityType    entity meta data
+	 * @param ownAllAttrMap attribute identifier to attribute map
+	 * @throws MolgenisValidationException if the ID attribute is not an entity attribute
+	 */
+	static void validateOwnIdAttribute(EntityType entityType, Map&lt;String, Attribute&gt; ownAllAttrMap)
+	{
+		// Validate ID attribute
+<span class="fc" id="L165">		Attribute ownIdAttr = entityType.getOwnIdAttribute();</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">		if (ownIdAttr != null)</span>
+		{
+			// Validate that ID attribute is in the attributes list
+<span class="fc" id="L169">			Attribute ownAttr = ownAllAttrMap.get(ownIdAttr.getIdentifier());</span>
+<span class="fc bfc" id="L170" title="All 2 branches covered.">			if (ownAttr == null)</span>
+			{
+<span class="fc" id="L172">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L173">						format(&quot;EntityType [%s] ID attribute [%s] is not part of the entity attributes&quot;,</span>
+<span class="fc" id="L174">								entityType.getId(), ownIdAttr.getName())));</span>
+			}
+
+			// Validate that ID attribute data type is allowed
+<span class="fc bfc" id="L178" title="All 2 branches covered.">			if (!AttributeUtils.isIdAttributeTypeAllowed(ownIdAttr))</span>
+			{
+<span class="fc" id="L180">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L181">						format(&quot;EntityType [%s] ID attribute [%s] type [%s] is not allowed&quot;, entityType.getId(),</span>
+<span class="fc" id="L182">								ownIdAttr.getName(), ownIdAttr.getDataType().toString())));</span>
+			}
+
+			// Validate that ID attribute is unique
+<span class="fc bfc" id="L186" title="All 2 branches covered.">			if (!ownIdAttr.isUnique())</span>
+			{
+<span class="fc" id="L188">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L189">						format(&quot;EntityType [%s] ID attribute [%s] is not a unique attribute&quot;, entityType.getId(),</span>
+<span class="fc" id="L190">								ownIdAttr.getName())));</span>
+			}
+
+			// Validate that ID attribute is not nillable
+<span class="fc bfc" id="L194" title="All 2 branches covered.">			if (ownIdAttr.isNillable())</span>
+			{
+<span class="fc" id="L196">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L197">						format(&quot;EntityType [%s] ID attribute [%s] is not a non-nillable attribute&quot;, entityType.getId(),</span>
+<span class="fc" id="L198">								ownIdAttr.getName())));</span>
+			}
+<span class="fc" id="L200">		}</span>
+		else
+		{
+<span class="fc bfc" id="L203" title="All 4 branches covered.">			if (!entityType.isAbstract() &amp;&amp; entityType.getIdAttribute() == null)</span>
+			{
+<span class="fc" id="L205">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L206">						format(&quot;EntityType [%s] is missing required ID attribute&quot;, entityType.getId())));</span>
+			}
+		}
+<span class="fc" id="L209">	}</span>
+
+	/**
+	 * Validates the attributes owned by this entity:
+	 * 1) validates that the parent entity doesn't have attributes with the same name
+	 * 2) validates that this entity doesn't have attributes with the same name
+	 * 3) validates that this entity has attributes defined at all
+	 *
+	 * @param entityType entity meta data
+	 * @throws MolgenisValidationException if an attribute is owned by another entity or a parent attribute has the same name
+	 */
+	static void validateOwnAttributes(EntityType entityType)
+	{
+		// Validate that entity has attributes
+<span class="fc bfc" id="L223" title="All 2 branches covered.">		if (asStream(entityType.getAllAttributes()).collect(toList()).isEmpty())</span>
+		{
+<span class="fc" id="L225">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L226">					format(&quot;EntityType [%s] does not contain any attributes. Did you use the correct package+entity name combination in both the entities as well as the attributes sheet?&quot;,</span>
+<span class="fc" id="L227">							entityType.getId())));</span>
+		}
+
+		// Validate that entity does not contain multiple attributes with the same name
+<span class="fc" id="L231">		Multimap&lt;String, Attribute&gt; attrMultiMap = asStream(entityType.getAllAttributes()).collect(</span>
+<span class="fc" id="L232">				MultimapCollectors.toArrayListMultimap(Attribute::getName, Function.identity()));</span>
+<span class="fc" id="L233">		attrMultiMap.keySet().forEach(attrName -&gt;</span>
+		{
+<span class="fc bfc" id="L235" title="All 2 branches covered.">			if (attrMultiMap.get(attrName).size() &gt; 1)</span>
+			{
+<span class="fc" id="L237">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L238">						format(&quot;EntityType [%s] contains multiple attributes with name [%s]&quot;, entityType.getId(),</span>
+								attrName)));
+			}
+<span class="fc" id="L241">		});</span>
+<span class="fc" id="L242">	}</span>
+
+	/**
+	 * Validates if this entityType extends another entityType. If so, checks whether that parent entityType is abstract.
+	 *
+	 * @param entityType entity meta data
+	 * @throws MolgenisValidationException if the entity extends from a non-abstract entity
+	 */
+	static void validateExtends(EntityType entityType)
+	{
+<span class="fc bfc" id="L252" title="All 2 branches covered.">		if (entityType.getExtends() != null)</span>
+		{
+<span class="fc" id="L254">			EntityType extendedEntityType = entityType.getExtends();</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">			if (!extendedEntityType.isAbstract())</span>
+			{
+<span class="fc" id="L257">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L258">						format(&quot;EntityType [%s] is not abstract; EntityType [%s] can't extend it&quot;,</span>
+<span class="fc" id="L259">								entityType.getExtends().getId(), entityType.getId())));</span>
+			}
+		}
+<span class="fc" id="L262">	}</span>
+
+	/**
+	 * Validates the entity ID:
+	 * - Validates that the entity ID does not contain illegal characters and validates the name length
+	 *
+	 * @param entityType entity meta data
+	 * @throws MolgenisValidationException if the entity simple name content is invalid or the fully qualified name, simple name and package name are not consistent
+	 */
+	static void validateEntityId(EntityType entityType)
+	{
+		// validate entity name (e.g. illegal characters, length)
+<span class="fc" id="L274">		String id = entityType.getId();</span>
+<span class="pc bpc" id="L275" title="3 of 6 branches missed.">		if (!id.equals(ATTRIBUTE_META_DATA) &amp;&amp; !id.equals(ENTITY_TYPE_META_DATA) &amp;&amp; !id.equals(PACKAGE))</span>
+		{
+			try
+			{
+<span class="fc" id="L279">				NameValidator.validateEntityName(entityType.getId());</span>
+			}
+<span class="fc" id="L281">			catch (MolgenisDataException e)</span>
+			{
+<span class="fc" id="L283">				throw new MolgenisValidationException(new ConstraintViolation(e.getMessage()));</span>
+<span class="fc" id="L284">			}</span>
+		}
+<span class="fc" id="L286">	}</span>
+
+	/**
+	 * Validates the entity label:
+	 * - Validates that the label is not an empty string
+	 * - Validates that the label does not only consist of white space
+	 *
+	 * @param entityType entity meta data
+	 * @throws MolgenisValidationException if the entity label is invalid
+	 */
+	static void validateEntityLabel(EntityType entityType)
+	{
+<span class="fc" id="L298">		String label = entityType.getLabel();</span>
+<span class="pc bpc" id="L299" title="1 of 2 branches missed.">		if (label != null)</span>
+		{
+<span class="fc bfc" id="L301" title="All 2 branches covered.">			if (label.isEmpty())</span>
+			{
+<span class="fc" id="L303">				throw new MolgenisValidationException(</span>
+<span class="fc" id="L304">						new ConstraintViolation(format(&quot;Label of EntityType [%s] is empty&quot;, entityType.getId())));</span>
+			}
+<span class="fc bfc" id="L306" title="All 2 branches covered.">			else if (label.trim().equals(&quot;&quot;))</span>
+			{
+<span class="fc" id="L308">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L309">						format(&quot;Label of EntityType [%s] contains only white space&quot;, entityType.getId())));</span>
+			}
+		}
+<span class="fc" id="L312">	}</span>
+
+	/**
+	 * Validate that non-system entities are not assigned to a system package
+	 *
+	 * @param entityType entity type
+	 */
+	void validatePackage(EntityType entityType)
+	{
+<span class="fc" id="L321">		Package package_ = entityType.getPackage();</span>
+<span class="fc bfc" id="L322" title="All 2 branches covered.">		if (package_ != null)</span>
+		{
+<span class="fc bfc" id="L324" title="All 4 branches covered.">			if (MetaUtils.isSystemPackage(package_) &amp;&amp; !systemEntityTypeRegistry.hasSystemEntityType(</span>
+<span class="fc" id="L325">					entityType.getId()))</span>
+			{
+<span class="fc" id="L327">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L328">						format(&quot;Adding entity [%s] to system package [%s] is not allowed&quot;, entityType.getId(),</span>
+<span class="fc" id="L329">								entityType.getPackage().getId())));</span>
+			}
+		}
+<span class="fc" id="L332">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

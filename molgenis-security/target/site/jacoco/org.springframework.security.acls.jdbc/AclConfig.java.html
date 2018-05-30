@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AclConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.springframework.security.acls.jdbc</a> &gt; <span class="el_source">AclConfig.java</span></div><h1>AclConfig.java</h1><pre class="source lang-java linenums">package org.springframework.security.acls.jdbc;
+
+import com.github.benmanes.caffeine.cache.Caffeine;
+import org.molgenis.data.config.DataSourceConfig;
+import org.molgenis.data.transaction.TransactionManager;
+import org.molgenis.security.NoOpAuditLogger;
+import org.molgenis.security.acl.*;
+import org.molgenis.security.core.utils.SecurityUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.Cache;
+import org.springframework.cache.caffeine.CaffeineCache;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.convert.support.DefaultConversionService;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.acls.AclPermissionEvaluator;
+import org.springframework.security.acls.domain.AclAuthorizationStrategy;
+import org.springframework.security.acls.domain.AclAuthorizationStrategyImpl;
+import org.springframework.security.acls.domain.AuditLogger;
+import org.springframework.security.acls.domain.SpringCacheBasedAclCache;
+import org.springframework.security.acls.model.AclCache;
+import org.springframework.security.acls.model.MutableAclService;
+import org.springframework.security.acls.model.PermissionGrantingStrategy;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+
+import javax.sql.DataSource;
+
+import static java.util.Objects.requireNonNull;
+
+/**
+ * TODO move to org.molgenis sub-package once we upgraded to a spring-security-acl release with https://github.com/spring-projects/spring-security/issues/4814.
+ */
+@Configuration
+@Import(DataSourceConfig.class)
+public class AclConfig
+{
+	private final DataSource dataSource;
+	private final TransactionManager transactionManager;
+	@Autowired
+	JdbcTemplate jdbcTemplate;
+
+	public AclConfig(DataSource dataSource, TransactionManager transactionManager)
+<span class="nc" id="L45">	{</span>
+<span class="nc" id="L46">		this.dataSource = requireNonNull(dataSource);</span>
+<span class="nc" id="L47">		this.transactionManager = requireNonNull(transactionManager);</span>
+<span class="nc" id="L48">	}</span>
+
+	@Bean
+	public AuditLogger auditLogger()
+	{
+<span class="nc" id="L53">		return new NoOpAuditLogger();</span>
+	}
+
+	@Bean
+	public PermissionGrantingStrategy permissionGrantingStrategy()
+	{
+<span class="nc" id="L59">		return new BitMaskPermissionGrantingStrategy(auditLogger());</span>
+	}
+
+	@Bean
+	public AclAuthorizationStrategy aclAuthorizationStrategy()
+	{
+<span class="nc" id="L65">		GrantedAuthority gaTakeOwnership = new SimpleGrantedAuthority(SecurityUtils.ROLE_ACL_TAKE_OWNERSHIP);</span>
+<span class="nc" id="L66">		GrantedAuthority gaModifyAuditing = new SimpleGrantedAuthority(SecurityUtils.ROLE_ACL_MODIFY_AUDITING);</span>
+<span class="nc" id="L67">		GrantedAuthority gaGeneralChanges = new SimpleGrantedAuthority(SecurityUtils.ROLE_ACL_GENERAL_CHANGES);</span>
+<span class="nc" id="L68">		return new AclAuthorizationStrategyImpl(gaTakeOwnership, gaModifyAuditing, gaGeneralChanges);</span>
+	}
+
+	@Bean
+	public AclCache aclCache()
+	{
+<span class="nc" id="L74">		Cache cache = new CaffeineCache(&quot;aclCache&quot;, Caffeine.newBuilder().maximumSize(10000).build());</span>
+<span class="nc" id="L75">		return new SpringCacheBasedAclCache(cache, permissionGrantingStrategy(), aclAuthorizationStrategy());</span>
+	}
+
+	@Bean
+	public AclCacheTransactionListener aclCacheTransactionListener()
+	{
+<span class="nc" id="L81">		AclCacheTransactionListener aclCacheTransactionListener = new AclCacheTransactionListener(aclCache(),</span>
+<span class="nc" id="L82">				mutableAclClassService());</span>
+<span class="nc" id="L83">		transactionManager.addTransactionListener(aclCacheTransactionListener);</span>
+<span class="nc" id="L84">		return aclCacheTransactionListener;</span>
+	}
+
+	@Bean
+	public MutableAclClassService mutableAclClassService()
+	{
+<span class="nc" id="L90">		return new MutableAclClassServiceImpl(jdbcTemplate, aclCache());</span>
+	}
+
+	@Bean
+	public AclClassIdUtils aclClassIdUtils()
+	{
+<span class="nc" id="L96">		AclClassIdUtils aclClassIdUtils = new AclClassIdUtils();</span>
+<span class="nc" id="L97">		aclClassIdUtils.setConversionService(new DefaultConversionService());</span>
+<span class="nc" id="L98">		return aclClassIdUtils;</span>
+	}
+
+	@Bean
+	public LookupStrategy lookupStrategy()
+	{
+<span class="nc" id="L104">		BasicLookupStrategy basicLookupStrategy = new BasicLookupStrategy(dataSource, aclCache(),</span>
+<span class="nc" id="L105">				aclAuthorizationStrategy(), permissionGrantingStrategy());</span>
+<span class="nc" id="L106">		basicLookupStrategy.setAclClassIdSupported(true);</span>
+<span class="nc" id="L107">		basicLookupStrategy.setAclClassIdUtils(aclClassIdUtils());</span>
+<span class="nc" id="L108">		return basicLookupStrategy;</span>
+	}
+
+	@Bean
+	public MutableAclService aclService()
+	{
+<span class="nc" id="L114">		JdbcMutableAclService aclService = new TransactionalJdbcMutableAclService(dataSource, lookupStrategy(),</span>
+<span class="nc" id="L115">				aclCache());</span>
+<span class="nc" id="L116">		aclService.setAclClassIdSupported(true);</span>
+<span class="nc" id="L117">		aclService.setAclClassIdUtils(aclClassIdUtils());</span>
+<span class="nc" id="L118">		aclService.setClassIdentityQuery(&quot;select currval(pg_get_serial_sequence('acl_class', 'id'))&quot;);</span>
+<span class="nc" id="L119">		aclService.setSidIdentityQuery(&quot;select currval(pg_get_serial_sequence('acl_sid', 'id'))&quot;);</span>
+<span class="nc" id="L120">		aclService.setObjectIdentityPrimaryKeyQuery(</span>
+				&quot;select acl_object_identity.id from acl_object_identity, acl_class where acl_object_identity.object_id_class = acl_class.id and acl_class.class=? and acl_object_identity.object_id_identity = ?::varchar&quot;);
+<span class="nc" id="L122">		aclService.setFindChildrenQuery(</span>
+				&quot;select obj.object_id_identity as obj_id, class.class as class, class.class_id_type as class_id_type &quot;
+						+ &quot;from acl_object_identity obj, acl_object_identity parent, acl_class class &quot;
+						+ &quot;where obj.parent_object = parent.id and obj.object_id_class = class.id &quot;
+						+ &quot;and parent.object_id_identity = ?::varchar and parent.object_id_class = (&quot;
+						+ &quot;select id FROM acl_class where acl_class.class = ?)&quot;);
+<span class="nc" id="L128">		return aclService;</span>
+	}
+
+	@Bean
+	public AclPermissionEvaluator aclPermissionEvaluator()
+	{
+<span class="nc" id="L134">		return new AclPermissionEvaluator(aclService());</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VcfUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-vcf</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.vcf.utils</a> &gt; <span class="el_source">VcfUtils.java</span></div><h1>VcfUtils.java</h1><pre class="source lang-java linenums">package org.molgenis.data.vcf.utils;
+
+import com.google.common.io.BaseEncoding;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.vcf.VcfRepository;
+import org.molgenis.data.vcf.datastructures.Sample;
+import org.molgenis.data.vcf.datastructures.Trio;
+import org.molgenis.util.UnexpectedEnumException;
+import org.molgenis.vcf.meta.VcfMetaInfo;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.*;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.molgenis.data.meta.AttributeType.COMPOUND;
+import static org.molgenis.data.vcf.model.VcfAttributes.*;
+
+@Component
+<span class="fc" id="L28">public class VcfUtils</span>
+{
+	@Autowired
+	private EntityTypeFactory entityTypeFactory;
+
+	@Autowired
+	private AttributeFactory attributeFactory;
+
+	/**
+	 * Creates a internal molgenis id from a vcf entity
+	 *
+	 * @return the id
+	 */
+	public static String createId(Entity vcfEntity)
+	{
+<span class="fc" id="L43">		String idStr = StringUtils.strip(vcfEntity.get(CHROM).toString()) + &quot;_&quot; + StringUtils.strip(</span>
+<span class="fc" id="L44">				vcfEntity.get(POS).toString()) + &quot;_&quot; + StringUtils.strip(vcfEntity.get(REF).toString()) + &quot;_&quot;</span>
+<span class="fc" id="L45">				+ StringUtils.strip(vcfEntity.get(ALT).toString()) + &quot;_&quot; + StringUtils.strip(</span>
+<span class="fc" id="L46">				vcfEntity.get(ID).toString()) + &quot;_&quot; + StringUtils.strip(</span>
+<span class="fc bfc" id="L47" title="All 2 branches covered.">				vcfEntity.get(QUAL) != null ? vcfEntity.get(QUAL).toString() : &quot;&quot;) + &quot;_&quot; + StringUtils.strip(</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">				vcfEntity.get(FILTER) != null ? vcfEntity.get(FILTER).toString() : &quot;&quot;);</span>
+
+		// use MD5 hash to prevent ids that are too long
+		MessageDigest messageDigest;
+		try
+		{
+<span class="fc" id="L54">			messageDigest = MessageDigest.getInstance(&quot;MD5&quot;);</span>
+		}
+<span class="nc" id="L56">		catch (NoSuchAlgorithmException e)</span>
+		{
+<span class="nc" id="L58">			throw new RuntimeException(e);</span>
+<span class="fc" id="L59">		}</span>
+<span class="fc" id="L60">		byte[] md5Hash = messageDigest.digest(idStr.getBytes(UTF_8));</span>
+
+		// convert MD5 hash to string ids that can be safely used in URLs
+
+<span class="fc" id="L64">		return BaseEncoding.base64Url().omitPadding().encode(md5Hash);</span>
+	}
+
+	public static String getIdFromInfoField(String line)
+	{
+<span class="nc" id="L69">		int idStartIndex = line.indexOf(&quot;ID=&quot;) + 3;</span>
+<span class="nc" id="L70">		int idEndIndex = line.indexOf(',');</span>
+<span class="nc" id="L71">		return line.substring(idStartIndex, idEndIndex);</span>
+	}
+
+	public static List&lt;Attribute&gt; getAtomicAttributesFromList(Iterable&lt;Attribute&gt; outputAttrs)
+	{
+<span class="nc" id="L76">		List&lt;Attribute&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">		for (Attribute attribute : outputAttrs)</span>
+		{
+<span class="nc bnc" id="L79" title="All 2 branches missed.">			if (attribute.getDataType() == COMPOUND)</span>
+			{
+<span class="nc" id="L81">				result.addAll(getAtomicAttributesFromList(attribute.getChildren()));</span>
+			}
+			else
+			{
+<span class="nc" id="L85">				result.add(attribute);</span>
+			}
+<span class="nc" id="L87">		}</span>
+<span class="nc" id="L88">		return result;</span>
+	}
+
+	public static Map&lt;String, Attribute&gt; getAttributesMapFromList(Iterable&lt;Attribute&gt; outputAttrs)
+	{
+<span class="nc" id="L93">		Map&lt;String, Attribute&gt; attributeMap = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L94">		List&lt;Attribute&gt; attributes = getAtomicAttributesFromList(outputAttrs);</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">		for (Attribute attribute : attributes)</span>
+		{
+<span class="nc" id="L97">			attributeMap.put(attribute.getName(), attribute);</span>
+<span class="nc" id="L98">		}</span>
+<span class="nc" id="L99">		return attributeMap;</span>
+	}
+
+	protected static String toVcfDataType(AttributeType dataType)
+	{
+<span class="nc bnc" id="L104" title="All 6 branches missed.">		switch (dataType)</span>
+		{
+			case BOOL:
+<span class="nc" id="L107">				return VcfMetaInfo.Type.FLAG.toString();</span>
+			case LONG:
+			case DECIMAL:
+<span class="nc" id="L110">				return VcfMetaInfo.Type.FLOAT.toString();</span>
+			case INT:
+<span class="nc" id="L112">				return VcfMetaInfo.Type.INTEGER.toString();</span>
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case STRING:
+			case TEXT:
+			case DATE:
+			case DATE_TIME:
+			case CATEGORICAL:
+			case XREF:
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="nc" id="L126">				return VcfMetaInfo.Type.STRING.toString();</span>
+			case COMPOUND:
+			case FILE:
+<span class="nc" id="L129">				throw new RuntimeException(&quot;invalid vcf data type &quot; + dataType);</span>
+			default:
+<span class="nc" id="L131">				throw new UnexpectedEnumException(dataType);</span>
+		}
+	}
+
+	/**
+	 * Get pedigree data from VCF Now only support child, father, mother No fancy data structure either Output:
+	 * result.put(childID, Arrays.asList(new String[]{motherID, fatherID}));
+	 */
+	public static HashMap&lt;String, Trio&gt; getPedigree(Scanner inputVcfFileScanner)
+	{
+<span class="nc" id="L141">		HashMap&lt;String, Trio&gt; result = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L143" title="All 2 branches missed.">		while (inputVcfFileScanner.hasNextLine())</span>
+		{
+<span class="nc" id="L145">			String line = inputVcfFileScanner.nextLine();</span>
+
+			// quit when we don't see header lines anymore
+<span class="nc bnc" id="L148" title="All 2 branches missed.">			if (!line.startsWith(VcfRepository.PREFIX))</span>
+			{
+<span class="nc" id="L150">				break;</span>
+			}
+
+			// detect pedigree line
+			// expecting e.g. ##PEDIGREE=&lt;Child=100400,Mother=100402,Father=100401&gt;
+<span class="nc bnc" id="L155" title="All 2 branches missed.">			if (line.startsWith(&quot;##PEDIGREE&quot;))</span>
+			{
+<span class="nc" id="L157">				System.out.println(&quot;Pedigree data line: &quot; + line);</span>
+<span class="nc" id="L158">				String childID = null;</span>
+<span class="nc" id="L159">				String motherID = null;</span>
+<span class="nc" id="L160">				String fatherID = null;</span>
+
+<span class="nc" id="L162">				String lineStripped = line.replace(&quot;##PEDIGREE=&lt;&quot;, &quot;&quot;).replace(&quot;&gt;&quot;, &quot;&quot;);</span>
+<span class="nc" id="L163">				String[] lineSplit = lineStripped.split(&quot;,&quot;, -1);</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">				for (String element : lineSplit)</span>
+				{
+<span class="nc bnc" id="L166" title="All 2 branches missed.">					if (element.startsWith(&quot;Child&quot;))</span>
+					{
+<span class="nc" id="L168">						childID = element.replace(&quot;Child=&quot;, &quot;&quot;);</span>
+					}
+<span class="nc bnc" id="L170" title="All 2 branches missed.">					else if (element.startsWith(&quot;Mother&quot;))</span>
+					{
+<span class="nc" id="L172">						motherID = element.replace(&quot;Mother=&quot;, &quot;&quot;);</span>
+					}
+<span class="nc bnc" id="L174" title="All 2 branches missed.">					else if (element.startsWith(&quot;Father&quot;))</span>
+					{
+<span class="nc" id="L176">						fatherID = element.replace(&quot;Father=&quot;, &quot;&quot;);</span>
+					}
+					else
+					{
+<span class="nc" id="L180">						throw new MolgenisDataException(</span>
+								&quot;Expected Child, Mother or Father, but found: &quot; + element + &quot; in line &quot; + line);
+					}
+				}
+
+<span class="nc bnc" id="L185" title="All 6 branches missed.">				if (childID != null &amp;&amp; motherID != null &amp;&amp; fatherID != null)</span>
+				{
+					// good
+<span class="nc" id="L188">					result.put(childID, new Trio(new Sample(childID), new Sample(motherID), new Sample(fatherID)));</span>
+				}
+				else
+				{
+<span class="nc" id="L192">					throw new MolgenisDataException(&quot;Missing Child, Mother or Father ID in line &quot; + line);</span>
+				}
+			}
+<span class="nc" id="L195">		}</span>
+<span class="nc" id="L196">		return result;</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

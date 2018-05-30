@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AppRepositoryDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">apps</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.apps.model</a> &gt; <span class="el_source">AppRepositoryDecorator.java</span></div><h1>AppRepositoryDecorator.java</h1><pre class="source lang-java linenums">package org.molgenis.apps.model;
+
+import net.lingala.zip4j.core.ZipFile;
+import net.lingala.zip4j.exception.ZipException;
+import net.lingala.zip4j.model.FileHeader;
+import org.molgenis.data.AbstractRepositoryDecorator;
+import org.molgenis.data.Repository;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.data.file.model.FileMeta;
+import org.molgenis.data.validation.ConstraintViolation;
+import org.molgenis.data.validation.MolgenisValidationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.stream.Stream;
+
+import static java.io.File.separatorChar;
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.core.ui.FileStoreConstants.FILE_STORE_PLUGIN_APPS_PATH;
+
+public class AppRepositoryDecorator extends AbstractRepositoryDecorator&lt;App&gt;
+{
+<span class="fc" id="L26">	private static final Logger LOG = LoggerFactory.getLogger(AppRepositoryDecorator.class);</span>
+
+	private final FileStore fileStore;
+
+	public AppRepositoryDecorator(Repository&lt;App&gt; delegateRepository, FileStore fileStore)
+	{
+<span class="fc" id="L32">		super(delegateRepository);</span>
+<span class="fc" id="L33">		this.fileStore = requireNonNull(fileStore);</span>
+<span class="fc" id="L34">	}</span>
+
+	@Override
+	public void add(App app)
+	{
+<span class="fc" id="L39">		addApp(app);</span>
+<span class="fc" id="L40">		super.add(app);</span>
+<span class="fc" id="L41">	}</span>
+
+	@Override
+	public Integer add(Stream&lt;App&gt; appStream)
+	{
+<span class="fc" id="L46">		return super.add(appStream.filter(app -&gt;</span>
+		{
+<span class="fc" id="L48">			addApp(app);</span>
+<span class="fc" id="L49">			return true;</span>
+		}));
+	}
+
+	@Override
+	public void update(App app)
+	{
+<span class="fc" id="L56">		updateApp(app, findOneById(app.getId()));</span>
+<span class="fc" id="L57">		super.update(app);</span>
+<span class="fc" id="L58">	}</span>
+
+	@Override
+	public void update(Stream&lt;App&gt; appStream)
+	{
+<span class="fc" id="L63">		super.update(appStream.filter(app -&gt;</span>
+		{
+<span class="fc" id="L65">			updateApp(app, findOneById(app.getId()));</span>
+<span class="fc" id="L66">			return true;</span>
+		}));
+<span class="fc" id="L68">	}</span>
+
+	@Override
+	public void delete(App app)
+	{
+<span class="fc" id="L73">		deleteApp(app);</span>
+<span class="fc" id="L74">		super.delete(app);</span>
+<span class="fc" id="L75">	}</span>
+
+	@Override
+	public void deleteById(Object id)
+	{
+<span class="fc" id="L80">		deleteApp(findOneById(id));</span>
+<span class="fc" id="L81">		super.deleteById(id);</span>
+<span class="fc" id="L82">	}</span>
+
+	@Override
+	public void deleteAll()
+	{
+<span class="nc" id="L87">		query().findAll().forEach(this::deleteApp);</span>
+<span class="nc" id="L88">		super.deleteAll();</span>
+<span class="nc" id="L89">	}</span>
+
+	@Override
+	public void delete(Stream&lt;App&gt; appStream)
+	{
+<span class="fc" id="L94">		super.delete(appStream.filter(app -&gt;</span>
+		{
+<span class="fc" id="L96">			this.deleteApp(app);</span>
+<span class="fc" id="L97">			return true;</span>
+		}));
+<span class="fc" id="L99">	}</span>
+
+	@Override
+	public void deleteAll(Stream&lt;Object&gt; ids)
+	{
+<span class="nc" id="L104">		super.deleteAll(ids.filter(id -&gt;</span>
+		{
+<span class="nc" id="L106">			this.deleteApp(findOneById(id));</span>
+<span class="nc" id="L107">			return true;</span>
+		}));
+<span class="nc" id="L109">	}</span>
+
+	private void addApp(App app)
+	{
+<span class="fc" id="L113">		validateResourceZip(app);</span>
+<span class="fc bfc" id="L114" title="All 2 branches covered.">		if (app.isActive())</span>
+		{
+<span class="fc" id="L116">			activateApp(app);</span>
+		}
+<span class="fc" id="L118">	}</span>
+
+	private void updateApp(App app, App existingApp)
+	{
+<span class="fc" id="L122">		FileMeta appSourceFiles = app.getSourceFiles();</span>
+<span class="fc" id="L123">		FileMeta existingAppSourceFiles = existingApp.getSourceFiles();</span>
+
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">		if (appSourceFiles != null)</span>
+		{
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">			if (existingAppSourceFiles != null)</span>
+			{
+<span class="fc bfc" id="L129" title="All 2 branches covered.">				if (!appSourceFiles.getId().equals(existingAppSourceFiles.getId()))</span>
+				{
+<span class="fc" id="L131">					validateResourceZip(app);</span>
+<span class="pc bpc" id="L132" title="1 of 2 branches missed.">					if (existingApp.isActive())</span>
+					{
+<span class="fc" id="L134">						deactivateApp(existingApp);</span>
+					}
+<span class="pc bpc" id="L136" title="1 of 2 branches missed.">					if (app.isActive())</span>
+					{
+<span class="fc" id="L138">						activateApp(app);</span>
+					}
+				}
+				else
+				{
+<span class="pc bpc" id="L143" title="3 of 4 branches missed.">					if (app.isActive() &amp;&amp; !existingApp.isActive())</span>
+					{
+<span class="nc" id="L145">						activateApp(app);</span>
+					}
+<span class="pc bpc" id="L147" title="2 of 4 branches missed.">					else if (!app.isActive() &amp;&amp; existingApp.isActive())</span>
+					{
+<span class="nc" id="L149">						deactivateApp(app);</span>
+					}
+				}
+			}
+			else
+			{
+<span class="nc" id="L155">				validateResourceZip(app);</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">				if (app.isActive())</span>
+				{
+<span class="nc" id="L158">					activateApp(app);</span>
+				}
+			}
+		}
+		else
+		{
+			//noinspection VariableNotUsedInsideIf
+<span class="nc bnc" id="L165" title="All 2 branches missed.">			if (existingAppSourceFiles != null)</span>
+			{
+<span class="nc bnc" id="L167" title="All 2 branches missed.">				if (existingApp.isActive())</span>
+				{
+<span class="nc" id="L169">					deactivateApp(existingApp);</span>
+				}
+			}
+		}
+<span class="fc" id="L173">	}</span>
+
+	private void deleteApp(App app)
+	{
+<span class="fc bfc" id="L177" title="All 2 branches covered.">		if (app.isActive())</span>
+		{
+<span class="fc" id="L179">			deactivateApp(app);</span>
+		}
+<span class="fc" id="L181">	}</span>
+
+	private void activateApp(App app)
+	{
+<span class="fc" id="L185">		FileMeta appSourceArchive = app.getSourceFiles();</span>
+<span class="fc bfc" id="L186" title="All 2 branches covered.">		if (appSourceArchive != null)</span>
+		{
+<span class="fc" id="L188">			File fileStoreFile = fileStore.getFile(appSourceArchive.getId());</span>
+<span class="pc bpc" id="L189" title="1 of 2 branches missed.">			if (fileStoreFile == null)</span>
+			{
+<span class="nc" id="L191">				LOG.error(&quot;Source archive '{}' for app '{}' missing in file store&quot;, appSourceArchive.getId(),</span>
+<span class="nc" id="L192">						app.getName());</span>
+<span class="nc" id="L193">				throw new RuntimeException(&quot;An error occurred trying to activate app&quot;);</span>
+			}
+
+			try
+			{
+<span class="fc" id="L198">				ZipFile zipFile = new ZipFile(fileStoreFile);</span>
+<span class="pc bpc" id="L199" title="1 of 2 branches missed.">				if (!app.getUseFreemarkerTemplate())</span>
+				{
+<span class="nc" id="L201">					FileHeader fileHeader = zipFile.getFileHeader(&quot;index.html&quot;);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">					if (fileHeader == null)</span>
+					{
+<span class="nc" id="L204">						LOG.error(</span>
+								&quot;Missing index.html in {} while option Use freemarker template as index.html was set 'No'&quot;,
+<span class="nc" id="L206">								app.getName());</span>
+<span class="nc" id="L207">						throw new RuntimeException(</span>
+<span class="nc" id="L208">								format(&quot;Missing index.html in %s while option 'Use freemarker template as index.html' was set 'No'&quot;,</span>
+<span class="nc" id="L209">										app.getName()));</span>
+					}
+				}
+				//noinspection StringConcatenationMissingWhitespace
+<span class="fc" id="L213">				zipFile.extractAll(</span>
+<span class="fc" id="L214">						fileStore.getStorageDir() + separatorChar + FILE_STORE_PLUGIN_APPS_PATH + separatorChar</span>
+<span class="fc" id="L215">								+ app.getId() + separatorChar);</span>
+			}
+<span class="nc" id="L217">			catch (ZipException e)</span>
+			{
+<span class="nc" id="L219">				LOG.error(&quot;&quot;, e);</span>
+<span class="nc" id="L220">				throw new RuntimeException(format(&quot;An error occurred activating app '%s'&quot;, app.getName()));</span>
+<span class="fc" id="L221">			}</span>
+		}
+<span class="fc" id="L223">	}</span>
+
+	private void deactivateApp(App app)
+	{
+		try
+		{
+			//noinspection StringConcatenationMissingWhitespace
+<span class="fc" id="L230">			fileStore.deleteDirectory(FILE_STORE_PLUGIN_APPS_PATH + separatorChar + app.getId());</span>
+		}
+<span class="nc" id="L232">		catch (IOException e)</span>
+		{
+<span class="nc" id="L234">			LOG.error(&quot;&quot;, e);</span>
+<span class="nc" id="L235">			throw new RuntimeException(format(&quot;An error occurred deactivating app '%s'&quot;, app.getName()));</span>
+<span class="fc" id="L236">		}</span>
+<span class="fc" id="L237">	}</span>
+
+	private void validateResourceZip(App app)
+	{
+<span class="fc" id="L241">		FileMeta appZipMeta = app.getSourceFiles();</span>
+<span class="fc bfc" id="L242" title="All 2 branches covered.">		if (appZipMeta != null)</span>
+		{
+<span class="fc" id="L244">			File fileStoreFile = fileStore.getFile(appZipMeta.getId());</span>
+<span class="pc bpc" id="L245" title="1 of 2 branches missed.">			if (fileStoreFile == null)</span>
+			{
+<span class="nc" id="L247">				LOG.error(&quot;Resource zip '{}' for app '{}' missing in file store&quot;, appZipMeta.getId(), app.getName());</span>
+<span class="nc" id="L248">				throw new RuntimeException(&quot;An error occurred trying to create or update app&quot;);</span>
+			}
+
+			ZipFile zipFile;
+			try
+			{
+<span class="fc" id="L254">				zipFile = new ZipFile(fileStoreFile);</span>
+			}
+<span class="nc" id="L256">			catch (ZipException e)</span>
+			{
+<span class="nc" id="L258">				LOG.error(&quot;Error creating zip file object&quot;, e);</span>
+<span class="nc" id="L259">				throw new RuntimeException(&quot;An error occurred trying to create or update app&quot;);</span>
+<span class="fc" id="L260">			}</span>
+<span class="fc bfc" id="L261" title="All 2 branches covered.">			if (!zipFile.isValidZipFile())</span>
+			{
+<span class="fc" id="L263">				throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L264">						String.format(&quot;'%s' is not a valid zip file.&quot;, appZipMeta.getFilename())));</span>
+			}
+		}
+<span class="fc" id="L267">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

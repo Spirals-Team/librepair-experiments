@@ -1,0 +1,767 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.util</a> &gt; <span class="el_source">EntityUtils.java</span></div><h1>EntityUtils.java</h1><pre class="source lang-java linenums">package org.molgenis.data.util;
+
+import com.google.common.collect.Iterables;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.EntityManager;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.meta.model.Tag;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.util.ListEscapeUtils;
+import org.molgenis.util.Pair;
+import org.molgenis.util.UnexpectedEnumException;
+
+import java.time.format.DateTimeParseException;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Iterables.*;
+import static com.google.common.collect.Lists.newArrayList;
+import static java.lang.String.format;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.meta.AttributeType.COMPOUND;
+import static org.molgenis.data.system.model.RootSystemPackage.PACKAGE_SYSTEM;
+import static org.molgenis.data.util.MolgenisDateFormat.*;
+
+public class EntityUtils
+{
+	private EntityUtils()
+	{
+	}
+
+	/**
+	 * Convert a string value to a typed value based on a non-entity-referencing attribute data type.
+	 *
+	 * @param valueStr string value
+	 * @param attr     non-entity-referencing attribute
+	 * @return typed value
+	 * @throws MolgenisDataException if attribute references another entity
+	 */
+	public static Object getTypedValue(String valueStr, Attribute attr)
+	{
+		//Reference types cannot be processed because we lack an entityManager in this route.
+<span class="pc bpc" id="L50" title="1 of 2 branches missed.">		if (EntityTypeUtils.isReferenceType(attr))</span>
+		{
+<span class="nc" id="L52">			throw new MolgenisDataException(</span>
+					&quot;getTypedValue(String, AttributeMetadata) can't be used for attributes referencing entities&quot;);
+		}
+<span class="fc" id="L55">		return getTypedValue(valueStr, attr, null);</span>
+	}
+
+	/**
+	 * Convert a string value to a typed value based on the attribute data type.
+	 *
+	 * @param valueStr      string value
+	 * @param attr          attribute
+	 * @param entityManager entity manager used to convert referenced entity values
+	 * @return typed value
+	 */
+	public static Object getTypedValue(String valueStr, Attribute attr, EntityManager entityManager)
+	{
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">		if (valueStr == null) return null;</span>
+<span class="pc bpc" id="L69" title="7 of 11 branches missed.">		switch (attr.getDataType())</span>
+		{
+			case BOOL:
+<span class="nc" id="L72">				return Boolean.valueOf(valueStr);</span>
+			case CATEGORICAL:
+			case FILE:
+			case XREF:
+<span class="fc" id="L76">				EntityType xrefEntity = attr.getRefEntity();</span>
+<span class="fc" id="L77">				Object xrefIdValue = getTypedValue(valueStr, xrefEntity.getIdAttribute(), entityManager);</span>
+<span class="fc" id="L78">				return entityManager.getReference(xrefEntity, xrefIdValue);</span>
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="fc" id="L82">				EntityType mrefEntity = attr.getRefEntity();</span>
+<span class="fc" id="L83">				List&lt;String&gt; mrefIdStrValues = ListEscapeUtils.toList(valueStr);</span>
+<span class="fc" id="L84">				return mrefIdStrValues.stream()</span>
+<span class="fc" id="L85">									  .map(mrefIdStrValue -&gt; getTypedValue(mrefIdStrValue, mrefEntity.getIdAttribute(),</span>
+											  entityManager))
+<span class="fc" id="L87">									  .map(mrefIdValue -&gt; entityManager.getReference(mrefEntity, mrefIdValue))</span>
+<span class="fc" id="L88">									  .collect(toList());</span>
+			case COMPOUND:
+<span class="nc" id="L90">				throw new IllegalArgumentException(&quot;Compound attribute has no value&quot;);</span>
+			case DATE:
+				try
+				{
+<span class="nc" id="L94">					return parseLocalDate(valueStr);</span>
+				}
+<span class="nc" id="L96">				catch (DateTimeParseException e)</span>
+				{
+<span class="nc" id="L98">					throw new MolgenisDataException(</span>
+<span class="nc" id="L99">							format(FAILED_TO_PARSE_ATTRIBUTE_AS_DATE_MESSAGE, attr.getName(), valueStr), e);</span>
+				}
+			case DATE_TIME:
+				try
+				{
+<span class="nc" id="L104">					return parseInstant(valueStr);</span>
+				}
+<span class="nc" id="L106">				catch (DateTimeParseException e)</span>
+				{
+<span class="nc" id="L108">					throw new MolgenisDataException(</span>
+<span class="nc" id="L109">							format(FAILED_TO_PARSE_ATTRIBUTE_AS_DATETIME_MESSAGE, attr.getName(), valueStr), e);</span>
+				}
+			case DECIMAL:
+<span class="nc" id="L112">				return Double.valueOf(valueStr);</span>
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L120">				return valueStr;</span>
+			case INT:
+<span class="fc" id="L122">				return Integer.valueOf(valueStr);</span>
+			case LONG:
+<span class="nc" id="L124">				return Long.valueOf(valueStr);</span>
+			default:
+<span class="nc" id="L126">				throw new UnexpectedEnumException(attr.getDataType());</span>
+		}
+	}
+
+	/**
+	 * Checks if an entity contains data or not
+	 */
+	public static boolean isEmpty(Entity entity)
+	{
+<span class="fc bfc" id="L135" title="All 2 branches covered.">		for (String attr : entity.getAttributeNames())</span>
+		{
+<span class="fc bfc" id="L137" title="All 2 branches covered.">			if (entity.get(attr) != null) return false;</span>
+<span class="fc" id="L138">		}</span>
+<span class="fc" id="L139">		return true;</span>
+	}
+
+	public static List&lt;Pair&lt;EntityType, List&lt;Attribute&gt;&gt;&gt; getReferencingEntityType(EntityType entityType,
+			DataService dataService)
+	{
+<span class="nc" id="L145">		List&lt;Pair&lt;EntityType, List&lt;Attribute&gt;&gt;&gt; referencingEntityType = newArrayList();</span>
+
+		// get entity types that referencing the given entity (including self)
+<span class="nc" id="L148">		String entityTypeId = entityType.getId();</span>
+<span class="nc" id="L149">		dataService.getEntityTypeIds().forEach(otherEntityName -&gt;</span>
+		{
+<span class="nc" id="L151">			EntityType otherEntityType = dataService.getEntityType(otherEntityName);</span>
+
+			// get referencing attributes for other entity
+<span class="nc" id="L154">			List&lt;Attribute&gt; referencingAttributes = null;</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">			for (Attribute attribute : otherEntityType.getAtomicAttributes())</span>
+			{
+<span class="nc" id="L157">				EntityType refEntityType = attribute.getRefEntity();</span>
+<span class="nc bnc" id="L158" title="All 4 branches missed.">				if (refEntityType != null &amp;&amp; refEntityType.getId().equals(entityTypeId))</span>
+				{
+<span class="nc bnc" id="L160" title="All 2 branches missed.">					if (referencingAttributes == null) referencingAttributes = newArrayList();</span>
+<span class="nc" id="L161">					referencingAttributes.add(attribute);</span>
+				}
+<span class="nc" id="L163">			}</span>
+
+			// store references
+<span class="nc bnc" id="L166" title="All 2 branches missed.">			if (referencingAttributes != null)</span>
+			{
+<span class="nc" id="L168">				referencingEntityType.add(new Pair&lt;&gt;(otherEntityType, referencingAttributes));</span>
+			}
+<span class="nc" id="L170">		});</span>
+
+<span class="nc" id="L172">		return referencingEntityType;</span>
+	}
+
+	/**
+	 * Gets all attribute names of an EntityType (atomic + compound)
+	 */
+	public static Iterable&lt;String&gt; getAttributeNames(EntityType entityType)
+	{
+		// atomic
+<span class="nc" id="L181">		Iterable&lt;String&gt; atomicAttributes = transform(entityType.getAtomicAttributes(), Attribute::getName);</span>
+
+		// compound
+<span class="nc" id="L184">		Iterable&lt;String&gt; compoundAttributes = transform(</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">				filter(entityType.getAttributes(), attribute -&gt; attribute.getDataType() == COMPOUND),</span>
+				Attribute::getName);
+
+		// all = atomic + compound
+<span class="nc" id="L189">		return concat(atomicAttributes, compoundAttributes);</span>
+	}
+
+	/**
+	 * Checks if an entity has another entity as one of its parents
+	 */
+	public static boolean doesExtend(EntityType entityType, String entityTypeId)
+	{
+<span class="fc" id="L197">		EntityType parent = entityType.getExtends();</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">		while (parent != null)</span>
+		{
+<span class="fc bfc" id="L200" title="All 2 branches covered.">			if (parent.getId().equalsIgnoreCase(entityTypeId)) return true;</span>
+<span class="fc" id="L201">			parent = parent.getExtends();</span>
+		}
+<span class="fc" id="L203">		return false;</span>
+	}
+
+	/**
+	 * Get an Iterable of entities as a stream of entities
+	 *
+	 * @param entities entities iterable
+	 * @return entities stream
+	 */
+	public static &lt;E extends Entity&gt; Stream&lt;E&gt; asStream(Iterable&lt;E&gt; entities)
+	{
+<span class="fc" id="L214">		return stream(entities.spliterator(), false);</span>
+	}
+
+	/**
+	 * Returns true if entity metadata equals another entity metadata. TODO docs
+	 */
+	public static boolean equals(EntityType entityType, EntityType otherEntityType)
+	{
+<span class="pc bpc" id="L222" title="3 of 4 branches missed.">		if (entityType == null &amp;&amp; otherEntityType != null) return false;</span>
+<span class="pc bpc" id="L223" title="2 of 4 branches missed.">		if (entityType != null &amp;&amp; otherEntityType == null) return false;</span>
+<span class="pc bpc" id="L224" title="1 of 4 branches missed.">		if (!(entityType != null &amp;&amp; entityType.getId().equals(otherEntityType.getId()))) return false;</span>
+<span class="fc bfc" id="L225" title="All 2 branches covered.">		if (!Objects.equals(entityType.getLabel(), otherEntityType.getLabel())) return false;</span>
+<span class="fc bfc" id="L226" title="All 2 branches covered.">		if (!Objects.equals(entityType.getDescription(), otherEntityType.getDescription())) return false;</span>
+<span class="fc bfc" id="L227" title="All 2 branches covered.">		if (entityType.isAbstract() != otherEntityType.isAbstract()) return false;</span>
+
+		//NB This is at such a low level that we do not know the default backend
+		// so we don't check if the other one is the default if the backend is null.
+<span class="fc" id="L231">		String backend = entityType.getBackend();</span>
+<span class="fc" id="L232">		String otherBackend = otherEntityType.getBackend();</span>
+<span class="pc bpc" id="L233" title="2 of 10 branches missed.">		if ((backend == null &amp;&amp; otherBackend != null) || (backend != null &amp;&amp; otherBackend == null) || (backend != null</span>
+<span class="fc bfc" id="L234" title="All 2 branches covered.">				&amp;&amp; !backend.equals(otherBackend)))</span>
+		{
+<span class="fc" id="L236">			return false;</span>
+		}
+
+		// compare package identifiers
+<span class="fc" id="L240">		Package pack = entityType.getPackage();</span>
+<span class="fc" id="L241">		Package otherPackage = otherEntityType.getPackage();</span>
+<span class="pc bpc" id="L242" title="1 of 4 branches missed.">		if (pack == null &amp;&amp; otherPackage != null) return false;</span>
+<span class="pc bpc" id="L243" title="3 of 4 branches missed.">		if (pack != null &amp;&amp; otherPackage == null) return false;</span>
+<span class="pc bpc" id="L244" title="3 of 4 branches missed.">		if (pack != null &amp;&amp; !pack.getIdValue().equals(otherPackage.getIdValue()))</span>
+		{
+<span class="nc" id="L246">			return false;</span>
+		}
+
+		// compare id attribute identifier (identifier might be null if id attribute hasn't been persisted yet)
+<span class="fc" id="L250">		Attribute ownIdAttribute = entityType.getOwnIdAttribute();</span>
+<span class="fc" id="L251">		Attribute otherOwnIdAttribute = otherEntityType.getOwnIdAttribute();</span>
+<span class="pc bpc" id="L252" title="2 of 4 branches missed.">		if (ownIdAttribute == null &amp;&amp; otherOwnIdAttribute != null) return false;</span>
+<span class="pc bpc" id="L253" title="3 of 4 branches missed.">		if (ownIdAttribute != null &amp;&amp; otherOwnIdAttribute == null) return false;</span>
+<span class="pc bpc" id="L254" title="3 of 4 branches missed.">		if (ownIdAttribute != null &amp;&amp; !Objects.equals(ownIdAttribute.getIdentifier(),</span>
+<span class="nc" id="L255">				otherOwnIdAttribute.getIdentifier())) return false;</span>
+
+		// compare label attribute identifier (identifier might be null if id attribute hasn't been persisted yet)
+<span class="fc" id="L258">		Attribute ownLabelAttribute = entityType.getOwnLabelAttribute();</span>
+<span class="fc" id="L259">		Attribute otherOwnLabelAttribute = otherEntityType.getOwnLabelAttribute();</span>
+<span class="pc bpc" id="L260" title="2 of 4 branches missed.">		if (ownLabelAttribute == null &amp;&amp; otherOwnLabelAttribute != null) return false;</span>
+<span class="pc bpc" id="L261" title="3 of 4 branches missed.">		if (ownLabelAttribute != null &amp;&amp; otherOwnLabelAttribute == null) return false;</span>
+<span class="pc bpc" id="L262" title="3 of 4 branches missed.">		if (ownLabelAttribute != null &amp;&amp; !Objects.equals(ownLabelAttribute.getIdentifier(),</span>
+<span class="nc" id="L263">				otherOwnLabelAttribute.getIdentifier())) return false;</span>
+
+		// compare lookup attribute identifiers
+<span class="fc" id="L266">		List&lt;Attribute&gt; lookupAttrs = newArrayList(entityType.getOwnLookupAttributes());</span>
+<span class="fc" id="L267">		List&lt;Attribute&gt; otherLookupAttrs = newArrayList(otherEntityType.getOwnLookupAttributes());</span>
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">		if (lookupAttrs.size() != otherLookupAttrs.size()) return false;</span>
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">		for (int i = 0; i &lt; lookupAttrs.size(); ++i)</span>
+		{
+			// identifier might be null if id attribute hasn't been persisted yet
+<span class="nc bnc" id="L272" title="All 2 branches missed.">			if (!Objects.equals(lookupAttrs.get(i).getIdentifier(), otherLookupAttrs.get(i).getIdentifier()))</span>
+			{
+<span class="nc" id="L274">				return false;</span>
+			}
+		}
+
+		// compare extends entity identifier
+<span class="fc" id="L279">		EntityType extendsEntityType = entityType.getExtends();</span>
+<span class="fc" id="L280">		EntityType otherExtendsEntityType = otherEntityType.getExtends();</span>
+<span class="pc bpc" id="L281" title="1 of 4 branches missed.">		if (extendsEntityType == null &amp;&amp; otherExtendsEntityType != null) return false;</span>
+<span class="pc bpc" id="L282" title="3 of 4 branches missed.">		if (extendsEntityType != null &amp;&amp; otherExtendsEntityType == null) return false;</span>
+<span class="pc bpc" id="L283" title="3 of 4 branches missed.">		if (extendsEntityType != null &amp;&amp; !extendsEntityType.getId().equals(otherExtendsEntityType.getId()))</span>
+<span class="nc" id="L284">			return false;</span>
+
+		// compare attributes
+<span class="fc bfc" id="L287" title="All 2 branches covered.">		if (!equals(entityType.getOwnAllAttributes(), otherEntityType.getOwnAllAttributes())) return false;</span>
+
+		// compare tag identifiers
+<span class="fc" id="L290">		List&lt;Tag&gt; tags = newArrayList(entityType.getTags());</span>
+<span class="fc" id="L291">		List&lt;Tag&gt; otherTags = newArrayList(otherEntityType.getTags());</span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">		if (tags.size() != otherTags.size()) return false;</span>
+<span class="pc bpc" id="L293" title="1 of 2 branches missed.">		for (int i = 0; i &lt; tags.size(); ++i)</span>
+		{
+<span class="nc bnc" id="L295" title="All 2 branches missed.">			if (!tags.get(i).getId().equals(otherTags.get(i).getId())) return false;</span>
+		}
+
+<span class="pc bpc" id="L298" title="1 of 2 branches missed.">		return entityType.getIndexingDepth() == otherEntityType.getIndexingDepth();</span>
+	}
+
+	/**
+	 * Returns true if an Iterable equals another Iterable.
+	 */
+	public static boolean equals(Iterable&lt;Attribute&gt; attrsIt, Iterable&lt;Attribute&gt; otherAttrsIt)
+	{
+<span class="fc" id="L306">		List&lt;Attribute&gt; attrs = newArrayList(attrsIt);</span>
+<span class="fc" id="L307">		List&lt;Attribute&gt; otherAttrs = newArrayList(otherAttrsIt);</span>
+
+<span class="fc bfc" id="L309" title="All 2 branches covered.">		if (attrs.size() != otherAttrs.size()) return false;</span>
+<span class="pc bpc" id="L310" title="1 of 2 branches missed.">		for (int i = 0; i &lt; attrs.size(); ++i)</span>
+		{
+<span class="nc bnc" id="L312" title="All 2 branches missed.">			if (!equals(attrs.get(i), otherAttrs.get(i))) return false;</span>
+		}
+<span class="fc" id="L314">		return true;</span>
+	}
+
+	/**
+	 * Returns true if an Iterable equals another Iterable.
+	 */
+	public static boolean equalsEntities(Iterable&lt;Entity&gt; entityIterable, Iterable&lt;Entity&gt; otherEntityIterable)
+	{
+<span class="nc" id="L322">		List&lt;Entity&gt; attrs = newArrayList(entityIterable);</span>
+<span class="nc" id="L323">		List&lt;Entity&gt; otherAttrs = newArrayList(otherEntityIterable);</span>
+
+<span class="nc bnc" id="L325" title="All 2 branches missed.">		if (attrs.size() != otherAttrs.size()) return false;</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">		for (int i = 0; i &lt; attrs.size(); ++i)</span>
+		{
+<span class="nc bnc" id="L328" title="All 2 branches missed.">			if (!equals(attrs.get(i), otherAttrs.get(i))) return false;</span>
+		}
+<span class="nc" id="L330">		return true;</span>
+	}
+
+	/**
+	 * Returns true if a Tag equals another Tag.
+	 */
+	public static boolean equals(Tag tag, Tag otherTag)
+	{
+<span class="nc bnc" id="L338" title="All 2 branches missed.">		if (!Objects.equals(tag.getId(), otherTag.getId())) return false;</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">		if (!Objects.equals(tag.getObjectIri(), otherTag.getObjectIri())) return false;</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">		if (!Objects.equals(tag.getLabel(), otherTag.getLabel())) return false;</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">		if (!Objects.equals(tag.getRelationIri(), otherTag.getRelationIri())) return false;</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">		if (!Objects.equals(tag.getRelationLabel(), otherTag.getRelationLabel())) return false;</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">		if (!Objects.equals(tag.getCodeSystem(), otherTag.getCodeSystem())) return false;</span>
+
+<span class="nc" id="L345">		return true;</span>
+	}
+
+	/**
+	 * Returns true if an attribute equals another attribute.
+	 */
+	public static boolean equals(Attribute attr, Attribute otherAttr)
+	{
+<span class="fc" id="L353">		return equals(attr, otherAttr, true);</span>
+	}
+
+	/**
+	 * Returns true if an attribute equals another attribute.
+	 * Skips the identifier if checkIdentifier is set to false
+	 * &lt;p&gt;
+	 * Other attribute identifiers can be null when importing and this attribute
+	 * has not been persisted to the db yet
+	 * &lt;/p&gt;
+	 *
+	 * @param checkIdentifier skips checking attribute identifier, parent attribute identifier and attribute entity identifier
+	 */
+	public static boolean equals(Attribute attr, Attribute otherAttr, boolean checkIdentifier)
+	{
+<span class="fc bfc" id="L368" title="All 4 branches covered.">		if (attr == null || otherAttr == null)</span>
+		{
+<span class="pc bpc" id="L370" title="1 of 4 branches missed.">			if (attr == null &amp;&amp; otherAttr == null)</span>
+			{
+<span class="fc" id="L372">				return true;</span>
+			}
+<span class="fc" id="L374">			return false;</span>
+		}
+
+<span class="fc bfc" id="L377" title="All 4 branches covered.">		if (checkIdentifier) if (!Objects.equals(attr.getIdentifier(), otherAttr.getIdentifier()))</span>
+		{
+<span class="fc" id="L379">			return false;</span>
+		}
+<span class="fc bfc" id="L381" title="All 2 branches covered.">		if (!Objects.equals(attr.getName(), otherAttr.getName()))</span>
+		{
+<span class="fc" id="L383">			return false;</span>
+		}
+
+<span class="fc" id="L386">		EntityType entity = attr.getEntity();</span>
+<span class="fc" id="L387">		EntityType otherEntity = otherAttr.getEntity();</span>
+<span class="fc bfc" id="L388" title="All 2 branches covered.">		if (checkIdentifier)</span>
+		{
+<span class="pc bpc" id="L390" title="1 of 4 branches missed.">			if (entity == null &amp;&amp; otherEntity != null)</span>
+			{
+<span class="nc" id="L392">				return false;</span>
+			}
+<span class="pc bpc" id="L394" title="1 of 4 branches missed.">			if (entity != null &amp;&amp; otherEntity == null)</span>
+			{
+<span class="nc" id="L396">				return false;</span>
+			}
+<span class="fc bfc" id="L398" title="All 4 branches covered.">			if (entity != null &amp;&amp; !entity.getId().equals(otherEntity.getId()))</span>
+			{
+<span class="fc" id="L400">				return false;</span>
+			}
+		}
+<span class="fc bfc" id="L403" title="All 2 branches covered.">		if (!Objects.equals(attr.getSequenceNumber(), otherAttr.getSequenceNumber()))</span>
+		{
+<span class="fc" id="L405">			return false;</span>
+		}
+<span class="fc bfc" id="L407" title="All 2 branches covered.">		if (!Objects.equals(attr.getLabel(), otherAttr.getLabel()))</span>
+		{
+<span class="fc" id="L409">			return false;</span>
+		}
+<span class="fc bfc" id="L411" title="All 2 branches covered.">		if (!Objects.equals(attr.getDescription(), otherAttr.getDescription()))</span>
+		{
+<span class="fc" id="L413">			return false;</span>
+		}
+<span class="fc bfc" id="L415" title="All 2 branches covered.">		if (!Objects.equals(attr.getDataType(), otherAttr.getDataType()))</span>
+		{
+<span class="fc" id="L417">			return false;</span>
+		}
+<span class="fc bfc" id="L419" title="All 2 branches covered.">		if (!Objects.equals(attr.isIdAttribute(), otherAttr.isIdAttribute()))</span>
+		{
+<span class="fc" id="L421">			return false;</span>
+		}
+<span class="fc bfc" id="L423" title="All 2 branches covered.">		if (!Objects.equals(attr.isLabelAttribute(), otherAttr.isLabelAttribute()))</span>
+		{
+<span class="fc" id="L425">			return false;</span>
+		}
+<span class="fc bfc" id="L427" title="All 2 branches covered.">		if (!Objects.equals(attr.getLookupAttributeIndex(), otherAttr.getLookupAttributeIndex()))</span>
+		{
+<span class="fc" id="L429">			return false;</span>
+		}
+
+		// recursively compare attribute parent
+<span class="pc bpc" id="L433" title="1 of 2 branches missed.">		if (!EntityUtils.equals(attr.getParent(), otherAttr.getParent(), checkIdentifier))</span>
+		{
+<span class="nc" id="L435">			return false;</span>
+		}
+
+		// compare entity identifier
+<span class="fc" id="L439">		EntityType refEntity = attr.getRefEntity();</span>
+<span class="fc" id="L440">		EntityType otherRefEntity = otherAttr.getRefEntity();</span>
+<span class="pc bpc" id="L441" title="1 of 4 branches missed.">		if (refEntity == null &amp;&amp; otherRefEntity != null)</span>
+		{
+<span class="nc" id="L443">			return false;</span>
+		}
+<span class="fc bfc" id="L445" title="All 4 branches covered.">		if (refEntity != null &amp;&amp; otherRefEntity == null)</span>
+		{
+<span class="fc" id="L447">			return false;</span>
+		}
+<span class="fc bfc" id="L449" title="All 4 branches covered.">		if (refEntity != null &amp;&amp; !refEntity.getId().equals(otherRefEntity.getId()))</span>
+		{
+<span class="fc" id="L451">			return false;</span>
+		}
+<span class="fc bfc" id="L453" title="All 2 branches covered.">		if (!EntityUtils.equals(attr.getMappedBy(), otherAttr.getMappedBy(), checkIdentifier))</span>
+		{
+<span class="fc" id="L455">			return false;</span>
+		}
+<span class="fc bfc" id="L457" title="All 2 branches covered.">		if (!Objects.equals(attr.getOrderBy(), otherAttr.getOrderBy()))</span>
+		{
+<span class="fc" id="L459">			return false;</span>
+		}
+<span class="fc bfc" id="L461" title="All 2 branches covered.">		if (!Objects.equals(attr.getExpression(), otherAttr.getExpression()))</span>
+		{
+<span class="fc" id="L463">			return false;</span>
+		}
+<span class="fc bfc" id="L465" title="All 2 branches covered.">		if (!Objects.equals(attr.isNillable(), otherAttr.isNillable()))</span>
+		{
+<span class="fc" id="L467">			return false;</span>
+		}
+<span class="fc bfc" id="L469" title="All 2 branches covered.">		if (!Objects.equals(attr.isAuto(), otherAttr.isAuto()))</span>
+		{
+<span class="fc" id="L471">			return false;</span>
+		}
+<span class="fc bfc" id="L473" title="All 2 branches covered.">		if (!Objects.equals(attr.isVisible(), otherAttr.isVisible()))</span>
+		{
+<span class="fc" id="L475">			return false;</span>
+		}
+<span class="fc bfc" id="L477" title="All 2 branches covered.">		if (!Objects.equals(attr.isAggregatable(), otherAttr.isAggregatable()))</span>
+		{
+<span class="fc" id="L479">			return false;</span>
+		}
+<span class="fc bfc" id="L481" title="All 2 branches covered.">		if (!Objects.equals(attr.getEnumOptions(), otherAttr.getEnumOptions()))</span>
+		{
+<span class="fc" id="L483">			return false;</span>
+		}
+<span class="fc bfc" id="L485" title="All 2 branches covered.">		if (!Objects.equals(attr.getRangeMin(), otherAttr.getRangeMin()))</span>
+		{
+<span class="fc" id="L487">			return false;</span>
+		}
+<span class="fc bfc" id="L489" title="All 2 branches covered.">		if (!Objects.equals(attr.getRangeMax(), otherAttr.getRangeMax()))</span>
+		{
+<span class="fc" id="L491">			return false;</span>
+		}
+<span class="fc bfc" id="L493" title="All 2 branches covered.">		if (!Objects.equals(attr.isReadOnly(), otherAttr.isReadOnly()))</span>
+		{
+<span class="fc" id="L495">			return false;</span>
+		}
+<span class="fc bfc" id="L497" title="All 2 branches covered.">		if (!Objects.equals(attr.isUnique(), otherAttr.isUnique()))</span>
+		{
+<span class="fc" id="L499">			return false;</span>
+		}
+<span class="pc bpc" id="L501" title="1 of 2 branches missed.">		if (!Objects.equals(attr.getNullableExpression(), otherAttr.getNullableExpression()))</span>
+		{
+<span class="nc" id="L503">			return false;</span>
+		}
+<span class="fc bfc" id="L505" title="All 2 branches covered.">		if (!Objects.equals(attr.getVisibleExpression(), otherAttr.getVisibleExpression()))</span>
+		{
+<span class="fc" id="L507">			return false;</span>
+		}
+<span class="fc bfc" id="L509" title="All 2 branches covered.">		if (!Objects.equals(attr.getValidationExpression(), otherAttr.getValidationExpression()))</span>
+		{
+<span class="fc" id="L511">			return false;</span>
+		}
+<span class="pc bpc" id="L513" title="1 of 2 branches missed.">		if (!Objects.equals(attr.getDefaultValue(), otherAttr.getDefaultValue()))</span>
+		{
+<span class="nc" id="L515">			return false;</span>
+		}
+
+		// compare tag identifiers
+<span class="fc" id="L519">		List&lt;Tag&gt; tags = newArrayList(attr.getTags());</span>
+<span class="fc" id="L520">		List&lt;Tag&gt; otherTags = newArrayList(otherAttr.getTags());</span>
+<span class="fc bfc" id="L521" title="All 2 branches covered.">		if (tags.size() != otherTags.size())</span>
+		{
+<span class="fc" id="L523">			return false;</span>
+		}
+<span class="fc bfc" id="L525" title="All 2 branches covered.">		for (int i = 0; i &lt; tags.size(); ++i)</span>
+		{
+<span class="fc bfc" id="L527" title="All 2 branches covered.">			if (!Objects.equals(tags.get(i).getId(), otherTags.get(i).getId()))</span>
+			{
+<span class="fc" id="L529">				return false;</span>
+			}
+		}
+<span class="fc" id="L532">		return true;</span>
+	}
+
+	/**
+	 * Returns true if entity equals another entity. For referenced entities compares the referenced entity ids.
+	 *
+	 * @return true if entity equals another entity
+	 */
+	public static boolean equals(Entity entity, Entity otherEntity)
+	{
+<span class="pc bpc" id="L542" title="3 of 4 branches missed.">		if (entity == null &amp;&amp; otherEntity != null) return false;</span>
+<span class="pc bpc" id="L543" title="2 of 4 branches missed.">		if (entity != null &amp;&amp; otherEntity == null) return false;</span>
+<span class="pc bpc" id="L544" title="1 of 2 branches missed.">		if (entity == null) return true;</span>
+<span class="pc bpc" id="L545" title="1 of 2 branches missed.">		if (!entity.getEntityType().getId().equals(otherEntity.getEntityType().getId())) return false;</span>
+
+<span class="fc bfc" id="L547" title="All 2 branches covered.">		for (Attribute attr : entity.getEntityType().getAtomicAttributes())</span>
+		{
+<span class="fc" id="L549">			String attrName = attr.getName();</span>
+<span class="pc bpc" id="L550" title="10 of 11 branches missed.">			switch (attr.getDataType())</span>
+			{
+				case BOOL:
+<span class="nc bnc" id="L553" title="All 2 branches missed.">					if (!Objects.equals(entity.getBoolean(attrName), otherEntity.getBoolean(attrName))) return false;</span>
+					break;
+				case CATEGORICAL:
+				case FILE:
+				case XREF:
+<span class="nc" id="L558">					Entity xrefValue = entity.getEntity(attrName);</span>
+<span class="nc" id="L559">					Entity otherXrefValue = otherEntity.getEntity(attrName);</span>
+<span class="nc bnc" id="L560" title="All 4 branches missed.">					if (xrefValue == null &amp;&amp; otherXrefValue != null) return false;</span>
+<span class="nc bnc" id="L561" title="All 4 branches missed.">					if (xrefValue != null &amp;&amp; otherXrefValue == null) return false;</span>
+<span class="nc bnc" id="L562" title="All 4 branches missed.">					if (xrefValue != null &amp;&amp; otherXrefValue != null &amp;&amp; !xrefValue.getIdValue()</span>
+<span class="nc bnc" id="L563" title="All 2 branches missed.">																				 .equals(otherXrefValue.getIdValue()))</span>
+<span class="nc" id="L564">						return false;</span>
+					break;
+				case CATEGORICAL_MREF:
+				case ONE_TO_MANY:
+				case MREF:
+<span class="nc" id="L569">					List&lt;Entity&gt; entities = newArrayList(entity.getEntities(attrName));</span>
+<span class="nc" id="L570">					List&lt;Entity&gt; otherEntities = newArrayList(otherEntity.getEntities(attrName));</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">					if (entities.size() != otherEntities.size()) return false;</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">					for (int i = 0; i &lt; entities.size(); ++i)</span>
+					{
+<span class="nc" id="L574">						Entity mrefValue = entities.get(i);</span>
+<span class="nc" id="L575">						Entity otherMrefValue = otherEntities.get(i);</span>
+<span class="nc bnc" id="L576" title="All 4 branches missed.">						if (mrefValue == null &amp;&amp; otherMrefValue != null) return false;</span>
+<span class="nc bnc" id="L577" title="All 4 branches missed.">						if (mrefValue != null &amp;&amp; otherMrefValue == null) return false;</span>
+<span class="nc bnc" id="L578" title="All 4 branches missed.">						if (mrefValue != null &amp;&amp; otherMrefValue != null &amp;&amp; !mrefValue.getIdValue()</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">																					 .equals(otherMrefValue.getIdValue()))</span>
+<span class="nc" id="L580">							return false;</span>
+					}
+<span class="nc" id="L582">					break;</span>
+				case COMPOUND:
+<span class="nc" id="L584">					throw new RuntimeException(format(&quot;Invalid data type [%s]&quot;, attr.getDataType()));</span>
+				case DATE:
+<span class="nc bnc" id="L586" title="All 2 branches missed.">					if (!Objects.equals(entity.getLocalDate(attrName), otherEntity.getLocalDate(attrName)))</span>
+<span class="nc" id="L587">						return false;</span>
+					break;
+				case DATE_TIME:
+<span class="nc bnc" id="L590" title="All 2 branches missed.">					if (!Objects.equals(entity.getInstant(attrName), otherEntity.getInstant(attrName))) return false;</span>
+					break;
+				case DECIMAL:
+<span class="nc bnc" id="L593" title="All 2 branches missed.">					if (!Objects.equals(entity.getDouble(attrName), otherEntity.getDouble(attrName))) return false;</span>
+					break;
+				case EMAIL:
+				case ENUM:
+				case HTML:
+				case HYPERLINK:
+				case SCRIPT:
+				case STRING:
+				case TEXT:
+<span class="pc bpc" id="L602" title="1 of 2 branches missed.">					if (!Objects.equals(entity.getString(attrName), otherEntity.getString(attrName))) return false;</span>
+					break;
+				case INT:
+<span class="nc bnc" id="L605" title="All 2 branches missed.">					if (!Objects.equals(entity.getInt(attrName), otherEntity.getInt(attrName))) return false;</span>
+					break;
+				case LONG:
+<span class="nc bnc" id="L608" title="All 2 branches missed.">					if (!Objects.equals(entity.getLong(attrName), otherEntity.getLong(attrName))) return false;</span>
+					break;
+				default:
+<span class="nc" id="L611">					throw new UnexpectedEnumException(attr.getDataType());</span>
+			}
+<span class="fc" id="L613">		}</span>
+<span class="fc" id="L614">		return true;</span>
+	}
+
+	public static int hashCode(Entity entity)
+	{
+<span class="nc" id="L619">		int h = 0;</span>
+<span class="nc bnc" id="L620" title="All 2 branches missed.">		for (Attribute attr : entity.getEntityType().getAtomicAttributes())</span>
+		{
+<span class="nc" id="L622">			int hValue = 0;</span>
+<span class="nc" id="L623">			String attrName = attr.getName();</span>
+<span class="nc bnc" id="L624" title="All 11 branches missed.">			switch (attr.getDataType())</span>
+			{
+				case BOOL:
+<span class="nc" id="L627">					hValue = Objects.hashCode(entity.getBoolean(attrName));</span>
+<span class="nc" id="L628">					break;</span>
+				case CATEGORICAL:
+				case FILE:
+				case XREF:
+<span class="nc" id="L632">					Entity xrefValue = entity.getEntity(attrName);</span>
+<span class="nc bnc" id="L633" title="All 2 branches missed.">					Object xrefIdValue = xrefValue != null ? xrefValue.getIdValue() : null;</span>
+<span class="nc" id="L634">					hValue = Objects.hashCode(xrefIdValue);</span>
+<span class="nc" id="L635">					break;</span>
+				case CATEGORICAL_MREF:
+				case ONE_TO_MANY:
+				case MREF:
+<span class="nc bnc" id="L639" title="All 2 branches missed.">					for (Entity mrefValue : entity.getEntities(attrName))</span>
+					{
+<span class="nc bnc" id="L641" title="All 2 branches missed.">						Object mrefIdValue = mrefValue != null ? mrefValue.getIdValue() : null;</span>
+<span class="nc" id="L642">						hValue += Objects.hashCode(mrefIdValue);</span>
+<span class="nc" id="L643">					}</span>
+<span class="nc" id="L644">					break;</span>
+				case COMPOUND:
+<span class="nc" id="L646">					throw new RuntimeException(format(&quot;Invalid data type [%s]&quot;, attr.getDataType()));</span>
+				case DATE:
+<span class="nc" id="L648">					hValue = Objects.hashCode(entity.getLocalDate(attrName));</span>
+<span class="nc" id="L649">					break;</span>
+				case DATE_TIME:
+<span class="nc" id="L651">					hValue = Objects.hashCode(entity.getInstant(attrName));</span>
+<span class="nc" id="L652">					break;</span>
+				case DECIMAL:
+<span class="nc" id="L654">					hValue = Objects.hashCode(entity.getDouble(attrName));</span>
+<span class="nc" id="L655">					break;</span>
+				case EMAIL:
+				case ENUM:
+				case HTML:
+				case HYPERLINK:
+				case SCRIPT:
+				case STRING:
+				case TEXT:
+<span class="nc" id="L663">					hValue = Objects.hashCode(entity.getString(attrName));</span>
+<span class="nc" id="L664">					break;</span>
+				case INT:
+<span class="nc" id="L666">					hValue = Objects.hashCode(entity.getInt(attrName));</span>
+<span class="nc" id="L667">					break;</span>
+				case LONG:
+<span class="nc" id="L669">					hValue = Objects.hashCode(entity.getLong(attrName));</span>
+<span class="nc" id="L670">					break;</span>
+				default:
+<span class="nc" id="L672">					throw new UnexpectedEnumException(attr.getDataType());</span>
+			}
+<span class="nc" id="L674">			h += Objects.hashCode(attrName) ^ hValue;</span>
+<span class="nc" id="L675">		}</span>
+
+<span class="nc" id="L677">		int result = entity.getEntityType().getId().hashCode();</span>
+<span class="nc" id="L678">		return 31 * result + h;</span>
+	}
+
+	public static boolean entitiesEquals(Iterable&lt;Entity&gt; entities, Iterable&lt;Entity&gt; other)
+	{
+<span class="nc bnc" id="L683" title="All 2 branches missed.">		if (size(entities) != size(other)) return false;</span>
+<span class="nc" id="L684">		Iterator&lt;Entity&gt; otherIt = other.iterator();</span>
+<span class="nc bnc" id="L685" title="All 2 branches missed.">		for (Entity entity : entities)</span>
+		{
+<span class="nc bnc" id="L687" title="All 2 branches missed.">			if (!equals(entity, otherIt.next())) return false;</span>
+<span class="nc" id="L688">		}</span>
+<span class="nc" id="L689">		return true;</span>
+	}
+
+	public static boolean isSystemEntity(EntityType entityType)
+	{
+<span class="nc" id="L694">		return isSystemPackage(entityType.getPackage());</span>
+	}
+
+	public static boolean isSystemPackage(Package pack)
+	{
+<span class="nc bnc" id="L699" title="All 2 branches missed.">		if (pack == null)</span>
+		{
+<span class="nc" id="L701">			return false;</span>
+		}
+<span class="nc bnc" id="L703" title="All 2 branches missed.">		if (pack.getId().equals(PACKAGE_SYSTEM))</span>
+		{
+<span class="nc" id="L705">			return true;</span>
+		}
+<span class="nc" id="L707">		Package rootPackage = pack.getRootPackage();</span>
+<span class="nc bnc" id="L708" title="All 4 branches missed.">		return rootPackage != null &amp;&amp; rootPackage.getId().equals(PACKAGE_SYSTEM);</span>
+	}
+
+	/**
+	 * Returns whether an entity attribute value is &lt;tt&gt;null&lt;/tt&gt; or empty for attributes referencing multiple entities.
+	 */
+	public static boolean isNullValue(Entity entity, Attribute attribute)
+	{
+		boolean isNullValue;
+<span class="fc" id="L717">		String attributeName = attribute.getName();</span>
+<span class="fc" id="L718">		AttributeType attributeType = attribute.getDataType();</span>
+<span class="pc bpc" id="L719" title="1 of 11 branches missed.">		switch (attributeType)</span>
+		{
+			case BOOL:
+<span class="fc bfc" id="L722" title="All 2 branches covered.">				isNullValue = entity.getBoolean(attributeName) == null;</span>
+<span class="fc" id="L723">				break;</span>
+			case CATEGORICAL:
+			case FILE:
+			case XREF:
+<span class="fc bfc" id="L727" title="All 2 branches covered.">				isNullValue = entity.getEntity(attributeName) == null;</span>
+<span class="fc" id="L728">				break;</span>
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="fc" id="L732">				Iterable&lt;Entity&gt; refEntities = entity.getEntities(attributeName);</span>
+<span class="fc" id="L733">				isNullValue = Iterables.isEmpty(refEntities);</span>
+<span class="fc" id="L734">				break;</span>
+			case COMPOUND:
+<span class="fc" id="L736">				throw new RuntimeException(format(&quot;Invalid data type [%s]&quot;, attribute.getDataType()));</span>
+			case DATE:
+<span class="fc bfc" id="L738" title="All 2 branches covered.">				isNullValue = entity.getLocalDate(attributeName) == null;</span>
+<span class="fc" id="L739">				break;</span>
+			case DATE_TIME:
+<span class="fc bfc" id="L741" title="All 2 branches covered.">				isNullValue = entity.getInstant(attributeName) == null;</span>
+<span class="fc" id="L742">				break;</span>
+			case DECIMAL:
+<span class="fc bfc" id="L744" title="All 2 branches covered.">				isNullValue = entity.getDouble(attributeName) == null;</span>
+<span class="fc" id="L745">				break;</span>
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc bfc" id="L753" title="All 2 branches covered.">				isNullValue = entity.getString(attributeName) == null;</span>
+<span class="fc" id="L754">				break;</span>
+			case INT:
+<span class="fc bfc" id="L756" title="All 2 branches covered.">				isNullValue = entity.getInt(attributeName) == null;</span>
+<span class="fc" id="L757">				break;</span>
+			case LONG:
+<span class="fc bfc" id="L759" title="All 2 branches covered.">				isNullValue = entity.getLong(attributeName) == null;</span>
+<span class="fc" id="L760">				break;</span>
+			default:
+<span class="nc" id="L762">				throw new UnexpectedEnumException(attributeType);</span>
+		}
+<span class="fc" id="L764">		return isNullValue;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>
