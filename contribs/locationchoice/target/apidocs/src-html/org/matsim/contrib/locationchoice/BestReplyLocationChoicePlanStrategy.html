@@ -1,0 +1,176 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2013 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span><a name="line.19"></a>
+<span class="sourceLineNo">020</span>package org.matsim.contrib.locationchoice;<a name="line.20"></a>
+<span class="sourceLineNo">021</span><a name="line.21"></a>
+<span class="sourceLineNo">022</span>import org.matsim.api.core.v01.Scenario;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import org.matsim.api.core.v01.population.HasPlansAndId;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import org.matsim.api.core.v01.population.Person;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import org.matsim.api.core.v01.population.Plan;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import org.matsim.contrib.locationchoice.bestresponse.DestinationChoiceBestResponseContext;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.matsim.contrib.locationchoice.bestresponse.preprocess.MaxDCScoreWrapper;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.core.config.Config;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.core.replanning.PlanStrategy;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.core.replanning.PlanStrategyImpl;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.core.replanning.ReplanningContext;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.core.replanning.modules.ReRoute;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.core.replanning.modules.TripsToLegsModule;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.core.replanning.selectors.BestPlanSelector;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.core.replanning.selectors.ExpBetaPlanChanger;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.core.replanning.selectors.ExpBetaPlanSelector;<a name="line.36"></a>
+<span class="sourceLineNo">037</span>import org.matsim.core.replanning.selectors.RandomPlanSelector;<a name="line.37"></a>
+<span class="sourceLineNo">038</span>import org.matsim.core.router.TripRouter;<a name="line.38"></a>
+<span class="sourceLineNo">039</span>import org.matsim.core.router.costcalculators.TravelDisutilityFactory;<a name="line.39"></a>
+<span class="sourceLineNo">040</span>import org.matsim.core.router.util.TravelTime;<a name="line.40"></a>
+<span class="sourceLineNo">041</span>import org.matsim.core.scoring.ScoringFunctionFactory;<a name="line.41"></a>
+<span class="sourceLineNo">042</span><a name="line.42"></a>
+<span class="sourceLineNo">043</span>import javax.inject.Inject;<a name="line.43"></a>
+<span class="sourceLineNo">044</span>import javax.inject.Provider;<a name="line.44"></a>
+<span class="sourceLineNo">045</span>import java.util.Map;<a name="line.45"></a>
+<span class="sourceLineNo">046</span><a name="line.46"></a>
+<span class="sourceLineNo">047</span>public class BestReplyLocationChoicePlanStrategy implements PlanStrategy {<a name="line.47"></a>
+<span class="sourceLineNo">048</span><a name="line.48"></a>
+<span class="sourceLineNo">049</span>        private PlanStrategyImpl delegate;<a name="line.49"></a>
+<span class="sourceLineNo">050</span>        private Scenario scenario;<a name="line.50"></a>
+<span class="sourceLineNo">051</span>        private final Provider&lt;TripRouter&gt; tripRouterProvider;<a name="line.51"></a>
+<span class="sourceLineNo">052</span>        private ScoringFunctionFactory scoringFunctionFactory;<a name="line.52"></a>
+<span class="sourceLineNo">053</span>        private Map&lt;String, TravelTime&gt; travelTimes;<a name="line.53"></a>
+<span class="sourceLineNo">054</span>        private Map&lt;String, TravelDisutilityFactory&gt; travelDisutilities;<a name="line.54"></a>
+<span class="sourceLineNo">055</span><a name="line.55"></a>
+<span class="sourceLineNo">056</span>        @Inject<a name="line.56"></a>
+<span class="sourceLineNo">057</span>        BestReplyLocationChoicePlanStrategy(Scenario scenario, Provider&lt;TripRouter&gt; tripRouterProvider, ScoringFunctionFactory scoringFunctionFactory, Map&lt;String, TravelTime&gt; travelTimes, Map&lt;String, TravelDisutilityFactory&gt; travelDisutilities) {<a name="line.57"></a>
+<span class="sourceLineNo">058</span>                this.scenario = scenario;<a name="line.58"></a>
+<span class="sourceLineNo">059</span>                this.tripRouterProvider = tripRouterProvider;<a name="line.59"></a>
+<span class="sourceLineNo">060</span>                this.scoringFunctionFactory = scoringFunctionFactory;<a name="line.60"></a>
+<span class="sourceLineNo">061</span>                this.travelTimes = travelTimes;<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                this.travelDisutilities = travelDisutilities;<a name="line.62"></a>
+<span class="sourceLineNo">063</span>        }<a name="line.63"></a>
+<span class="sourceLineNo">064</span>                <a name="line.64"></a>
+<span class="sourceLineNo">065</span>        @Override<a name="line.65"></a>
+<span class="sourceLineNo">066</span>        public void run(HasPlansAndId&lt;Plan, Person&gt; person) {<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                delegate.run(person);<a name="line.67"></a>
+<span class="sourceLineNo">068</span>        }<a name="line.68"></a>
+<span class="sourceLineNo">069</span><a name="line.69"></a>
+<span class="sourceLineNo">070</span>        @Override<a name="line.70"></a>
+<span class="sourceLineNo">071</span>        public void init(ReplanningContext replanningContext) {<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                /*<a name="line.72"></a>
+<span class="sourceLineNo">073</span>                 * Somehow this is ugly. Should be initialized in the constructor. But I do not know, how to initialize the lc scenario elements<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                 * such that they are already available at the time of constructing this object. ah feb'13<a name="line.74"></a>
+<span class="sourceLineNo">075</span>                 */<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                DestinationChoiceBestResponseContext lcContext = (DestinationChoiceBestResponseContext) scenario.getScenarioElement(DestinationChoiceBestResponseContext.ELEMENT_NAME);<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                Config config = lcContext.getScenario().getConfig();<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                DestinationChoiceConfigGroup dccg = (DestinationChoiceConfigGroup) config.getModule(DestinationChoiceConfigGroup.GROUP_NAME);<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                MaxDCScoreWrapper maxDcScoreWrapper = (MaxDCScoreWrapper)scenario.getScenarioElement(MaxDCScoreWrapper.ELEMENT_NAME);<a name="line.79"></a>
+<span class="sourceLineNo">080</span>                if ( !DestinationChoiceConfigGroup.Algotype.bestResponse.equals(dccg.getAlgorithm())) {<a name="line.80"></a>
+<span class="sourceLineNo">081</span>                        throw new RuntimeException("wrong class for selected location choice algorithm type; aborting ...") ;<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                }               <a name="line.82"></a>
+<span class="sourceLineNo">083</span>                String planSelector = dccg.getPlanSelector();<a name="line.83"></a>
+<span class="sourceLineNo">084</span>                if (planSelector.equals("BestScore")) {<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                        delegate = new PlanStrategyImpl(new BestPlanSelector&lt;Plan, Person&gt;());<a name="line.85"></a>
+<span class="sourceLineNo">086</span>                } else if (planSelector.equals("ChangeExpBeta")) {<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                        delegate = new PlanStrategyImpl(new ExpBetaPlanChanger(config.planCalcScore().getBrainExpBeta()));<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                } else if (planSelector.equals("SelectRandom")) {<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                        delegate = new PlanStrategyImpl(new RandomPlanSelector());<a name="line.89"></a>
+<span class="sourceLineNo">090</span>                } else {<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                        delegate = new PlanStrategyImpl(new ExpBetaPlanSelector(config.planCalcScore()));<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                }<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                delegate.addStrategyModule(new TripsToLegsModule(tripRouterProvider, config.global()));<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                delegate.addStrategyModule(new BestReplyDestinationChoice(tripRouterProvider, lcContext, maxDcScoreWrapper.getPersonsMaxDCScoreUnscaled(), scoringFunctionFactory, travelTimes, travelDisutilities));<a name="line.94"></a>
+<span class="sourceLineNo">095</span>                delegate.addStrategyModule(new ReRoute(lcContext.getScenario(), tripRouterProvider));<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                <a name="line.96"></a>
+<span class="sourceLineNo">097</span>                delegate.init(replanningContext);<a name="line.97"></a>
+<span class="sourceLineNo">098</span>        }<a name="line.98"></a>
+<span class="sourceLineNo">099</span><a name="line.99"></a>
+<span class="sourceLineNo">100</span>        @Override<a name="line.100"></a>
+<span class="sourceLineNo">101</span>        public void finish() {<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                delegate.finish();<a name="line.102"></a>
+<span class="sourceLineNo">103</span>        }<a name="line.103"></a>
+<span class="sourceLineNo">104</span>}<a name="line.104"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

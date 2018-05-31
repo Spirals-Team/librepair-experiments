@@ -1,0 +1,269 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> * PreProcessDijkstra.java<a name="line.3"></a>
+<span class="sourceLineNo">004</span> *                                                                         *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> * *********************************************************************** *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> *                                                                         *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> * copyright       : (C) 2007 by the members listed in the COPYING,        *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> *                   LICENSE and WARRANTY file.                            *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> * email           : info at matsim dot org                                *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> *                                                                         *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> * *********************************************************************** *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *                                                                         *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   (at your option) any later version.                                   *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> *                                                                         *<a name="line.18"></a>
+<span class="sourceLineNo">019</span> * *********************************************************************** */<a name="line.19"></a>
+<span class="sourceLineNo">020</span><a name="line.20"></a>
+<span class="sourceLineNo">021</span>package org.matsim.core.router.util;<a name="line.21"></a>
+<span class="sourceLineNo">022</span><a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.util.ArrayList;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import java.util.Iterator;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import java.util.Map;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import java.util.TreeMap;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import java.util.concurrent.ConcurrentHashMap;<a name="line.27"></a>
+<span class="sourceLineNo">028</span><a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.apache.log4j.Logger;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.api.core.v01.Id;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.api.core.v01.network.Link;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.api.core.v01.network.Network;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.api.core.v01.network.Node;<a name="line.33"></a>
+<span class="sourceLineNo">034</span><a name="line.34"></a>
+<span class="sourceLineNo">035</span>/**<a name="line.35"></a>
+<span class="sourceLineNo">036</span> * Pre-processes a given network, gathering information which<a name="line.36"></a>
+<span class="sourceLineNo">037</span> * can be used by a Dijkstra when computing least-cost paths<a name="line.37"></a>
+<span class="sourceLineNo">038</span> * between a start and an end node. Specifically, marks the nodes<a name="line.38"></a>
+<span class="sourceLineNo">039</span> * that are in dead-end, i.e. that are connected to the rest of<a name="line.39"></a>
+<span class="sourceLineNo">040</span> * the network by a single 'entry' node only.<a name="line.40"></a>
+<span class="sourceLineNo">041</span> *<a name="line.41"></a>
+<span class="sourceLineNo">042</span> * @author lnicolas<a name="line.42"></a>
+<span class="sourceLineNo">043</span> */<a name="line.43"></a>
+<span class="sourceLineNo">044</span>public class PreProcessDijkstra {<a name="line.44"></a>
+<span class="sourceLineNo">045</span><a name="line.45"></a>
+<span class="sourceLineNo">046</span>        private static final Logger log = Logger.getLogger(PreProcessDijkstra.class);<a name="line.46"></a>
+<span class="sourceLineNo">047</span><a name="line.47"></a>
+<span class="sourceLineNo">048</span>        private boolean containsData = false;<a name="line.48"></a>
+<span class="sourceLineNo">049</span><a name="line.49"></a>
+<span class="sourceLineNo">050</span>        protected Map&lt;Node, DeadEndData&gt; nodeData = null;<a name="line.50"></a>
+<span class="sourceLineNo">051</span><a name="line.51"></a>
+<span class="sourceLineNo">052</span>        public void run(final Network network) {<a name="line.52"></a>
+<span class="sourceLineNo">053</span>                markDeadEnds(network);<a name="line.53"></a>
+<span class="sourceLineNo">054</span>                this.containsData = true;<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        }<a name="line.55"></a>
+<span class="sourceLineNo">056</span><a name="line.56"></a>
+<span class="sourceLineNo">057</span>        /**<a name="line.57"></a>
+<span class="sourceLineNo">058</span>         * Marks nodes that are in dead ends (i.e. nodes that are connected through a single node to the rest of the network), starting at all nodes with degree 2.<a name="line.58"></a>
+<span class="sourceLineNo">059</span>         * @param network The network on which to process.<a name="line.59"></a>
+<span class="sourceLineNo">060</span>         */<a name="line.60"></a>
+<span class="sourceLineNo">061</span>        private void markDeadEnds(final Network network) {<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                long now = System.currentTimeMillis();<a name="line.62"></a>
+<span class="sourceLineNo">063</span><a name="line.63"></a>
+<span class="sourceLineNo">064</span>                /*<a name="line.64"></a>
+<span class="sourceLineNo">065</span>                 * We use a concurrentHashMap because if FastRouters are used for the re-routing,<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                 * their parallel initialization in multiple threads may result in concurrent<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                 * calls to getNodeData(...).<a name="line.67"></a>
+<span class="sourceLineNo">068</span>                 */<a name="line.68"></a>
+<span class="sourceLineNo">069</span>                this.nodeData = new ConcurrentHashMap&lt;Node, DeadEndData&gt;(network.getNodes().size());<a name="line.69"></a>
+<span class="sourceLineNo">070</span><a name="line.70"></a>
+<span class="sourceLineNo">071</span>                DeadEndData deadEndData;<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                for (Node node : network.getNodes().values()) {<a name="line.72"></a>
+<span class="sourceLineNo">073</span>                        deadEndData = getNodeData(node);<a name="line.73"></a>
+<span class="sourceLineNo">074</span><a name="line.74"></a>
+<span class="sourceLineNo">075</span>                        Map&lt;Id&lt;Node&gt;, Node&gt; incidentNodes = getIncidentNodes(node);<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                        if (incidentNodes.size() == 1) {<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                                ArrayList&lt;Node&gt; deadEndNodes = new ArrayList&lt;Node&gt;();<a name="line.77"></a>
+<span class="sourceLineNo">078</span><a name="line.78"></a>
+<span class="sourceLineNo">079</span>                                while (deadEndData.getInDeadEndCount() == incidentNodes.size() - 1) {<a name="line.79"></a>
+<span class="sourceLineNo">080</span><a name="line.80"></a>
+<span class="sourceLineNo">081</span>                                        deadEndNodes.add(node);<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                                        deadEndNodes.addAll(deadEndData.getDeadEndNodes());<a name="line.82"></a>
+<span class="sourceLineNo">083</span>                                        deadEndData.getDeadEndNodes().clear();<a name="line.83"></a>
+<span class="sourceLineNo">084</span><a name="line.84"></a>
+<span class="sourceLineNo">085</span>                                        // Just set a dummy DeadEndEntryNode, such that is<a name="line.85"></a>
+<span class="sourceLineNo">086</span>                                        // isn't null. We use this as a flag to determine<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                                        // whether we already processed this node.<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                                        deadEndData.setDeadEndEntryNode(node);<a name="line.88"></a>
+<span class="sourceLineNo">089</span><a name="line.89"></a>
+<span class="sourceLineNo">090</span>                                        Iterator&lt;? extends Node&gt; it = incidentNodes.values().iterator();<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                                        while (deadEndData.getDeadEndEntryNode() != null &amp;&amp; it.hasNext()) {<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                                                node = it.next();<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                                                deadEndData = getNodeData(node);<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                                        }<a name="line.94"></a>
+<span class="sourceLineNo">095</span>                                        if (deadEndData.getDeadEndEntryNode() == null) {<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                                                deadEndData.incrementInDeadEndCount();<a name="line.96"></a>
+<span class="sourceLineNo">097</span>                                                incidentNodes = getIncidentNodes(node);<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                                        } else {<a name="line.98"></a>
+<span class="sourceLineNo">099</span>                                                log.error("All " + incidentNodes.size() + " incident nodes of node " + node.getId() + " are dead ends!");<a name="line.99"></a>
+<span class="sourceLineNo">100</span>                                                return;<a name="line.100"></a>
+<span class="sourceLineNo">101</span>                                        }<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                                }<a name="line.102"></a>
+<span class="sourceLineNo">103</span>                                deadEndData.getDeadEndNodes().addAll(deadEndNodes);<a name="line.103"></a>
+<span class="sourceLineNo">104</span>                        }<a name="line.104"></a>
+<span class="sourceLineNo">105</span>                }<a name="line.105"></a>
+<span class="sourceLineNo">106</span><a name="line.106"></a>
+<span class="sourceLineNo">107</span>                // Now set the proper deadEndEntryNode for each node<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                int deadEndNodeCount = 0;<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                for (Node node : network.getNodes().values()) {<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                        deadEndData = getNodeData(node);<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                        for (Node n : deadEndData.getDeadEndNodes()) {<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                                DeadEndData r = getNodeData(n);<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                                r.setDeadEndEntryNode(node);<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                                deadEndNodeCount++;<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                        }<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                        deadEndData.getDeadEndNodes().clear();<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                }<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                log.info("nodes in dead ends: " + deadEndNodeCount<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                                + " (total nodes: " + network.getNodes().size() + "). Done in "<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                                + (System.currentTimeMillis() - now) + " ms");<a name="line.120"></a>
+<span class="sourceLineNo">121</span>        }<a name="line.121"></a>
+<span class="sourceLineNo">122</span><a name="line.122"></a>
+<span class="sourceLineNo">123</span>        private static Map&lt;Id&lt;Node&gt;, Node&gt; getIncidentNodes(Node node) {<a name="line.123"></a>
+<span class="sourceLineNo">124</span>                Map&lt;Id&lt;Node&gt;, Node&gt; nodes = new TreeMap&lt;&gt;();<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                for (Link link : node.getInLinks().values()) {<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                        nodes.put(link.getFromNode().getId(), link.getFromNode());<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                }<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                for (Link link : node.getOutLinks().values()) {<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                        nodes.put(link.getToNode().getId(), link.getToNode());<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                }<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                return nodes;<a name="line.131"></a>
+<span class="sourceLineNo">132</span>        }<a name="line.132"></a>
+<span class="sourceLineNo">133</span><a name="line.133"></a>
+<span class="sourceLineNo">134</span>        /**<a name="line.134"></a>
+<span class="sourceLineNo">135</span>         * Returns the role for the given Node. Creates a new Role if none exists yet.<a name="line.135"></a>
+<span class="sourceLineNo">136</span>         * @param n The Node for which to create a role.<a name="line.136"></a>
+<span class="sourceLineNo">137</span>         * @return The role for the given Node<a name="line.137"></a>
+<span class="sourceLineNo">138</span>         */<a name="line.138"></a>
+<span class="sourceLineNo">139</span>        public DeadEndData getNodeData(final Node n) {<a name="line.139"></a>
+<span class="sourceLineNo">140</span>                DeadEndData r = this.nodeData.get(n);<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                if (null == r) {<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                        r = new DeadEndData();<a name="line.142"></a>
+<span class="sourceLineNo">143</span>                        this.nodeData.put(n, r);<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                }<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                return r;<a name="line.145"></a>
+<span class="sourceLineNo">146</span>        }<a name="line.146"></a>
+<span class="sourceLineNo">147</span><a name="line.147"></a>
+<span class="sourceLineNo">148</span>        /**<a name="line.148"></a>
+<span class="sourceLineNo">149</span>         * Contains information whether the associated node is in a dead end.<a name="line.149"></a>
+<span class="sourceLineNo">150</span>         * @author lnicolas<a name="line.150"></a>
+<span class="sourceLineNo">151</span>         */<a name="line.151"></a>
+<span class="sourceLineNo">152</span>        public static class DeadEndData {<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                private Node deadEndEntryNode = null;<a name="line.153"></a>
+<span class="sourceLineNo">154</span><a name="line.154"></a>
+<span class="sourceLineNo">155</span>                private int inDeadEndCount = 0;<a name="line.155"></a>
+<span class="sourceLineNo">156</span><a name="line.156"></a>
+<span class="sourceLineNo">157</span>                private ArrayList&lt;Node&gt; deadEndNodes = new ArrayList&lt;Node&gt;(2);<a name="line.157"></a>
+<span class="sourceLineNo">158</span><a name="line.158"></a>
+<span class="sourceLineNo">159</span>                ArrayList&lt;Node&gt; getDeadEndNodes() {<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                        return this.deadEndNodes;<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                }<a name="line.161"></a>
+<span class="sourceLineNo">162</span><a name="line.162"></a>
+<span class="sourceLineNo">163</span>                /**<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                 * @return the inDeadEndCount<a name="line.164"></a>
+<span class="sourceLineNo">165</span>                 */<a name="line.165"></a>
+<span class="sourceLineNo">166</span>                /*package*/ int getInDeadEndCount() {<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                        return this.inDeadEndCount;<a name="line.167"></a>
+<span class="sourceLineNo">168</span>                }<a name="line.168"></a>
+<span class="sourceLineNo">169</span><a name="line.169"></a>
+<span class="sourceLineNo">170</span>                /**<a name="line.170"></a>
+<span class="sourceLineNo">171</span>                 * @param inDeadEndCount<a name="line.171"></a>
+<span class="sourceLineNo">172</span>                 *            the inDeadEndCount to set<a name="line.172"></a>
+<span class="sourceLineNo">173</span>                 */<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                /*package*/ void incrementInDeadEndCount() {<a name="line.174"></a>
+<span class="sourceLineNo">175</span>                        this.inDeadEndCount++;<a name="line.175"></a>
+<span class="sourceLineNo">176</span>                }<a name="line.176"></a>
+<span class="sourceLineNo">177</span><a name="line.177"></a>
+<span class="sourceLineNo">178</span><a name="line.178"></a>
+<span class="sourceLineNo">179</span>                /**<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                 * @return The node that connects the associated node to the rest<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                 * of the network (i.e. without the deadEndEntryNode, the associated<a name="line.181"></a>
+<span class="sourceLineNo">182</span>                 * node would not be connected to the network) and null otherwise<a name="line.182"></a>
+<span class="sourceLineNo">183</span>                 * (i.e. if the associated node is not in a dead end).<a name="line.183"></a>
+<span class="sourceLineNo">184</span>                 */<a name="line.184"></a>
+<span class="sourceLineNo">185</span>                public Node getDeadEndEntryNode() {<a name="line.185"></a>
+<span class="sourceLineNo">186</span>                        return this.deadEndEntryNode;<a name="line.186"></a>
+<span class="sourceLineNo">187</span>                }<a name="line.187"></a>
+<span class="sourceLineNo">188</span><a name="line.188"></a>
+<span class="sourceLineNo">189</span>                /*package*/ void setDeadEndEntryNode(final Node node) {<a name="line.189"></a>
+<span class="sourceLineNo">190</span>                        this.deadEndEntryNode = node;<a name="line.190"></a>
+<span class="sourceLineNo">191</span>                }<a name="line.191"></a>
+<span class="sourceLineNo">192</span>        }<a name="line.192"></a>
+<span class="sourceLineNo">193</span><a name="line.193"></a>
+<span class="sourceLineNo">194</span>        public boolean containsData() {<a name="line.194"></a>
+<span class="sourceLineNo">195</span>                return this.containsData;<a name="line.195"></a>
+<span class="sourceLineNo">196</span>        }<a name="line.196"></a>
+<span class="sourceLineNo">197</span>}<a name="line.197"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

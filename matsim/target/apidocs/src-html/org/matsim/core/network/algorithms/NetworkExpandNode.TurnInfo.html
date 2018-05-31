@@ -1,0 +1,490 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> * NetworkExpandNode.java<a name="line.3"></a>
+<span class="sourceLineNo">004</span> *                                                                         *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> * *********************************************************************** *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> *                                                                         *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> * copyright       : (C) 2008 by the members listed in the COPYING,        *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> *                   LICENSE and WARRANTY file.                            *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> * email           : info at matsim dot org                                *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> *                                                                         *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> * *********************************************************************** *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *                                                                         *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   (at your option) any later version.                                   *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> *                                                                         *<a name="line.18"></a>
+<span class="sourceLineNo">019</span> * *********************************************************************** */<a name="line.19"></a>
+<span class="sourceLineNo">020</span><a name="line.20"></a>
+<span class="sourceLineNo">021</span>package org.matsim.core.network.algorithms;<a name="line.21"></a>
+<span class="sourceLineNo">022</span><a name="line.22"></a>
+<span class="sourceLineNo">023</span>import org.matsim.api.core.v01.Coord;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import org.matsim.api.core.v01.Id;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import org.matsim.api.core.v01.network.Link;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import org.matsim.api.core.v01.network.Network;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.matsim.api.core.v01.network.Node;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.core.network.NetworkUtils;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.core.utils.collections.Tuple;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.core.utils.geometry.CoordUtils;<a name="line.30"></a>
+<span class="sourceLineNo">031</span><a name="line.31"></a>
+<span class="sourceLineNo">032</span>import java.util.*;<a name="line.32"></a>
+<span class="sourceLineNo">033</span><a name="line.33"></a>
+<span class="sourceLineNo">034</span>/**<a name="line.34"></a>
+<span class="sourceLineNo">035</span> * A Procedure to expand a node of the {@link Network network}.<a name="line.35"></a>
+<span class="sourceLineNo">036</span> *<a name="line.36"></a>
+<span class="sourceLineNo">037</span> * @author balmermi<a name="line.37"></a>
+<span class="sourceLineNo">038</span> * @author mrieser / senozon<a name="line.38"></a>
+<span class="sourceLineNo">039</span> */<a name="line.39"></a>
+<span class="sourceLineNo">040</span>public final class NetworkExpandNode {<a name="line.40"></a>
+<span class="sourceLineNo">041</span><a name="line.41"></a>
+<span class="sourceLineNo">042</span>        private final Network network;<a name="line.42"></a>
+<span class="sourceLineNo">043</span>        private double expRadius = 1.0;<a name="line.43"></a>
+<span class="sourceLineNo">044</span>        private double offset = 0.0;<a name="line.44"></a>
+<span class="sourceLineNo">045</span>        private double dist = 1.0; // cache a value that is often used in the method expandNode<a name="line.45"></a>
+<span class="sourceLineNo">046</span>        <a name="line.46"></a>
+<span class="sourceLineNo">047</span>        public NetworkExpandNode(final Network network, final double expRadius, final double offset) {<a name="line.47"></a>
+<span class="sourceLineNo">048</span>                if (network == null) {<a name="line.48"></a>
+<span class="sourceLineNo">049</span>                        throw new IllegalArgumentException("network must not be null.");<a name="line.49"></a>
+<span class="sourceLineNo">050</span>                }<a name="line.50"></a>
+<span class="sourceLineNo">051</span>                this.network = network;<a name="line.51"></a>
+<span class="sourceLineNo">052</span>                this.setExpRadius(expRadius);<a name="line.52"></a>
+<span class="sourceLineNo">053</span>                this.setOffset(offset);<a name="line.53"></a>
+<span class="sourceLineNo">054</span>        }<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        <a name="line.55"></a>
+<span class="sourceLineNo">056</span>        /**<a name="line.56"></a>
+<span class="sourceLineNo">057</span>         * @param expRadius the expansion radius. If zero, all new nodes have the same coordinate<a name="line.57"></a>
+<span class="sourceLineNo">058</span>         * and the new links with have length equals zero<a name="line.58"></a>
+<span class="sourceLineNo">059</span>         */<a name="line.59"></a>
+<span class="sourceLineNo">060</span>    void setExpRadius(final double expRadius) {<a name="line.60"></a>
+<span class="sourceLineNo">061</span>                if (Double.isNaN(expRadius)) {<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                        throw new IllegalArgumentException("expansion radius must not be NaN.");<a name="line.62"></a>
+<span class="sourceLineNo">063</span>                }<a name="line.63"></a>
+<span class="sourceLineNo">064</span>                this.expRadius = expRadius;<a name="line.64"></a>
+<span class="sourceLineNo">065</span>                this.dist = Math.sqrt(this.expRadius * this.expRadius - this.offset * this.offset);<a name="line.65"></a>
+<span class="sourceLineNo">066</span>        }<a name="line.66"></a>
+<span class="sourceLineNo">067</span><a name="line.67"></a>
+<span class="sourceLineNo">068</span>        /**<a name="line.68"></a>
+<span class="sourceLineNo">069</span>         * @param offset the offset between a link pair with the same incident nodes. If zero, the two new<a name="line.69"></a>
+<span class="sourceLineNo">070</span>         * nodes created for that link pair will have the same coordinates<a name="line.70"></a>
+<span class="sourceLineNo">071</span>         */<a name="line.71"></a>
+<span class="sourceLineNo">072</span>    void setOffset(final double offset) {<a name="line.72"></a>
+<span class="sourceLineNo">073</span>                if (Double.isNaN(offset)) {<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                        throw new IllegalArgumentException("expansion offset must not be NaN.");<a name="line.74"></a>
+<span class="sourceLineNo">075</span>                }<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                this.offset = offset;<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                this.dist = Math.sqrt(this.expRadius * this.expRadius - this.offset * this.offset);<a name="line.77"></a>
+<span class="sourceLineNo">078</span>        }<a name="line.78"></a>
+<span class="sourceLineNo">079</span><a name="line.79"></a>
+<span class="sourceLineNo">080</span>        /**<a name="line.80"></a>
+<span class="sourceLineNo">081</span>         * Expands the specified {@link Node node} that is part of the {@link Network network} and<a name="line.81"></a>
+<span class="sourceLineNo">082</span>         * adds turning restrictions/maneuvers to it. <a name="line.82"></a>
+<span class="sourceLineNo">083</span>         *<a name="line.83"></a>
+<span class="sourceLineNo">084</span>         * &lt;p&gt;It is done in the following way:<a name="line.84"></a>
+<span class="sourceLineNo">085</span>         * &lt;ol&gt;<a name="line.85"></a>
+<span class="sourceLineNo">086</span>         * &lt;li&gt;creates for each in- and out-link a new node with<a name="line.86"></a>
+<span class="sourceLineNo">087</span>         * &lt;ul&gt;<a name="line.87"></a>
+<span class="sourceLineNo">088</span>         * &lt;li&gt;&lt;code&gt;new_nodeId = nodeId+"-"+index; index=[0..#incidentLinks]&lt;/code&gt;&lt;/li&gt;<a name="line.88"></a>
+<span class="sourceLineNo">089</span>         * &lt;li&gt;&lt;code&gt;new_coord&lt;/code&gt; with distance &lt;code&gt;r&lt;/code&gt; to the given node<a name="line.89"></a>
+<span class="sourceLineNo">090</span>         * in direction of the corresponding incident Link of the given node with<a name="line.90"></a>
+<span class="sourceLineNo">091</span>         * offset &lt;code&gt;e&lt;/code&gt;.&lt;/li&gt;<a name="line.91"></a>
+<span class="sourceLineNo">092</span>         * &lt;/ul&gt;<a name="line.92"></a>
+<span class="sourceLineNo">093</span>         * &lt;pre&gt;<a name="line.93"></a>
+<span class="sourceLineNo">094</span>         * {@code<a name="line.94"></a>
+<span class="sourceLineNo">095</span>         * &lt;-----12------         &lt;----21-------<a name="line.95"></a>
+<span class="sourceLineNo">096</span>         *<a name="line.96"></a>
+<span class="sourceLineNo">097</span>         *            x-0 o     o 1-5<a name="line.97"></a>
+<span class="sourceLineNo">098</span>         *                   O nodeId = x<a name="line.98"></a>
+<span class="sourceLineNo">099</span>         *            x-1 o     o x-4<a name="line.99"></a>
+<span class="sourceLineNo">100</span>         *             x-2 o   o x-3<a name="line.100"></a>
+<span class="sourceLineNo">101</span>         * ------11-----&gt;         -----22------&gt;<a name="line.101"></a>
+<span class="sourceLineNo">102</span>         *               |       ^<a name="line.102"></a>
+<span class="sourceLineNo">103</span>         *               |       |<a name="line.103"></a>
+<span class="sourceLineNo">104</span>         *              32       31<a name="line.104"></a>
+<span class="sourceLineNo">105</span>         *               |       |<a name="line.105"></a>
+<span class="sourceLineNo">106</span>         *               |       |<a name="line.106"></a>
+<span class="sourceLineNo">107</span>         *               v       |<a name="line.107"></a>
+<span class="sourceLineNo">108</span>         * }<a name="line.108"></a>
+<span class="sourceLineNo">109</span>         * &lt;/pre&gt;<a name="line.109"></a>
+<span class="sourceLineNo">110</span>         * &lt;/li&gt;<a name="line.110"></a>
+<span class="sourceLineNo">111</span>         * &lt;li&gt;connects each incident link of the given node with the corresponding &lt;code&gt;new_node&lt;/code&gt;<a name="line.111"></a>
+<span class="sourceLineNo">112</span>         * &lt;pre&gt;<a name="line.112"></a>
+<span class="sourceLineNo">113</span>         * {@code<a name="line.113"></a>
+<span class="sourceLineNo">114</span>         * &lt;-----12------ o     o &lt;----21-------<a name="line.114"></a>
+<span class="sourceLineNo">115</span>         *                   O<a name="line.115"></a>
+<span class="sourceLineNo">116</span>         * ------11-----&gt; o     o -----22------&gt;<a name="line.116"></a>
+<span class="sourceLineNo">117</span>         *                 o   o<a name="line.117"></a>
+<span class="sourceLineNo">118</span>         *                 |   ^<a name="line.118"></a>
+<span class="sourceLineNo">119</span>         *                 |   |<a name="line.119"></a>
+<span class="sourceLineNo">120</span>         *                32   31<a name="line.120"></a>
+<span class="sourceLineNo">121</span>         *                 |   |<a name="line.121"></a>
+<span class="sourceLineNo">122</span>         *                 |   |<a name="line.122"></a>
+<span class="sourceLineNo">123</span>         *                 v   |<a name="line.123"></a>
+<span class="sourceLineNo">124</span>         * }<a name="line.124"></a>
+<span class="sourceLineNo">125</span>         * &lt;/pre&gt;<a name="line.125"></a>
+<span class="sourceLineNo">126</span>         * &lt;/li&gt;<a name="line.126"></a>
+<span class="sourceLineNo">127</span>         * &lt;li&gt;removes the given node from the network<a name="line.127"></a>
+<span class="sourceLineNo">128</span>         * &lt;pre&gt;<a name="line.128"></a>
+<span class="sourceLineNo">129</span>         * {@code<a name="line.129"></a>
+<span class="sourceLineNo">130</span>         * &lt;-----12------ o     o &lt;----21-------<a name="line.130"></a>
+<span class="sourceLineNo">131</span>         *<a name="line.131"></a>
+<span class="sourceLineNo">132</span>         * ------11-----&gt; o     o -----22------&gt;<a name="line.132"></a>
+<span class="sourceLineNo">133</span>         *                 o   o<a name="line.133"></a>
+<span class="sourceLineNo">134</span>         *                 |   ^<a name="line.134"></a>
+<span class="sourceLineNo">135</span>         *                 |   |<a name="line.135"></a>
+<span class="sourceLineNo">136</span>         *                32   31<a name="line.136"></a>
+<span class="sourceLineNo">137</span>         *                 |   |<a name="line.137"></a>
+<span class="sourceLineNo">138</span>         *                 |   |<a name="line.138"></a>
+<span class="sourceLineNo">139</span>         *                 v   |<a name="line.139"></a>
+<span class="sourceLineNo">140</span>         * }<a name="line.140"></a>
+<span class="sourceLineNo">141</span>         * &lt;/pre&gt;<a name="line.141"></a>
+<span class="sourceLineNo">142</span>         * &lt;/li&gt;<a name="line.142"></a>
+<span class="sourceLineNo">143</span>         * &lt;li&gt;inter-connects the &lt;code&gt;new_node&lt;/code&gt;s with new links as defined in the<a name="line.143"></a>
+<span class="sourceLineNo">144</span>         * &lt;code&gt;turns&lt;/code&gt; list, with:&lt;br&gt;<a name="line.144"></a>
+<span class="sourceLineNo">145</span>         * &lt;ul&gt;<a name="line.145"></a>
+<span class="sourceLineNo">146</span>         * &lt;li&gt;&lt;code&gt;new_linkId = fromLinkId+"-"+index; index=[0..#turn-tuples]&lt;/code&gt;&lt;/li&gt;<a name="line.146"></a>
+<span class="sourceLineNo">147</span>         * &lt;li&gt;length equals the Euclidean distance&lt;/li&gt;<a name="line.147"></a>
+<span class="sourceLineNo">148</span>         * &lt;li&gt;freespeed, capacity, permlanes, origId and type are equals to the attributes of the fromLink.&lt;/li&gt;<a name="line.148"></a>
+<span class="sourceLineNo">149</span>         * &lt;/ul&gt;<a name="line.149"></a>
+<span class="sourceLineNo">150</span>         * &lt;pre&gt;<a name="line.150"></a>
+<span class="sourceLineNo">151</span>         * {@code<a name="line.151"></a>
+<span class="sourceLineNo">152</span>         * &lt;-----12------ o &lt;--21-0-- o &lt;----21-------<a name="line.152"></a>
+<span class="sourceLineNo">153</span>         *<a name="line.153"></a>
+<span class="sourceLineNo">154</span>         * ------11-----&gt; o --11-1--&gt; o -----22------&gt;<a name="line.154"></a>
+<span class="sourceLineNo">155</span>         *                 \         ^<a name="line.155"></a>
+<span class="sourceLineNo">156</span>         *              11-2\       /31-3<a name="line.156"></a>
+<span class="sourceLineNo">157</span>         *                   \     /<a name="line.157"></a>
+<span class="sourceLineNo">158</span>         *                    v   /<a name="line.158"></a>
+<span class="sourceLineNo">159</span>         *                    o   o<a name="line.159"></a>
+<span class="sourceLineNo">160</span>         *                    |   ^<a name="line.160"></a>
+<span class="sourceLineNo">161</span>         *                    |   |<a name="line.161"></a>
+<span class="sourceLineNo">162</span>         *                   32   31<a name="line.162"></a>
+<span class="sourceLineNo">163</span>         *                    |   |<a name="line.163"></a>
+<span class="sourceLineNo">164</span>         *                    |   |<a name="line.164"></a>
+<span class="sourceLineNo">165</span>         *                    v   |<a name="line.165"></a>
+<span class="sourceLineNo">166</span>         * }<a name="line.166"></a>
+<span class="sourceLineNo">167</span>         * &lt;/pre&gt;<a name="line.167"></a>
+<span class="sourceLineNo">168</span>         * &lt;/li&gt;<a name="line.168"></a>
+<span class="sourceLineNo">169</span>         * &lt;/ol&gt;<a name="line.169"></a>
+<span class="sourceLineNo">170</span>         * &lt;/p&gt;<a name="line.170"></a>
+<span class="sourceLineNo">171</span>         *<a name="line.171"></a>
+<span class="sourceLineNo">172</span>         * @param nodeId the {@link Id} of the {@link Node} to expand<a name="line.172"></a>
+<span class="sourceLineNo">173</span>         * @param turns The {@link List} of allowed turns at the given {@link Node node}.<a name="line.173"></a>
+<span class="sourceLineNo">174</span>         * @return The {@link Tuple} of {@link List lists} containing the newly created<a name="line.174"></a>
+<span class="sourceLineNo">175</span>         * {@link Node nodes} and {@link Link links}.<a name="line.175"></a>
+<span class="sourceLineNo">176</span>         */<a name="line.176"></a>
+<span class="sourceLineNo">177</span>        public final Tuple&lt;List&lt;Node&gt;,List&lt;Link&gt;&gt; expandNode(final Id&lt;Node&gt; nodeId, final List&lt;TurnInfo&gt; turns) {<a name="line.177"></a>
+<span class="sourceLineNo">178</span>                double e = this.offset;<a name="line.178"></a>
+<span class="sourceLineNo">179</span>                Node node = network.getNodes().get(nodeId);<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                if (node == null) {<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                        throw new IllegalArgumentException("nodeid="+nodeId+": not found in the network.");<a name="line.181"></a>
+<span class="sourceLineNo">182</span>                }<a name="line.182"></a>
+<span class="sourceLineNo">183</span>                if (turns == null) {<a name="line.183"></a>
+<span class="sourceLineNo">184</span>                        throw new IllegalArgumentException("nodeid="+nodeId+": turn list not defined!");<a name="line.184"></a>
+<span class="sourceLineNo">185</span>                }<a name="line.185"></a>
+<span class="sourceLineNo">186</span><a name="line.186"></a>
+<span class="sourceLineNo">187</span>        for (TurnInfo turn1 : turns) {<a name="line.187"></a>
+<span class="sourceLineNo">188</span>            Id&lt;Link&gt; first = turn1.getFromLinkId();<a name="line.188"></a>
+<span class="sourceLineNo">189</span>            if (first == null) {<a name="line.189"></a>
+<span class="sourceLineNo">190</span>                throw new IllegalArgumentException("given list contains 'null' values.");<a name="line.190"></a>
+<span class="sourceLineNo">191</span>            }<a name="line.191"></a>
+<span class="sourceLineNo">192</span>            if (!node.getInLinks().containsKey(first)) {<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                throw new IllegalArgumentException("nodeid=" + nodeId + ", linkid=" + first + ": link not an inlink of given node.");<a name="line.193"></a>
+<span class="sourceLineNo">194</span>            }<a name="line.194"></a>
+<span class="sourceLineNo">195</span>            Id&lt;Link&gt; second = turn1.getToLinkId();<a name="line.195"></a>
+<span class="sourceLineNo">196</span>            if (second == null) {<a name="line.196"></a>
+<span class="sourceLineNo">197</span>                throw new IllegalArgumentException("given list contains 'null' values.");<a name="line.197"></a>
+<span class="sourceLineNo">198</span>            }<a name="line.198"></a>
+<span class="sourceLineNo">199</span>            if (!node.getOutLinks().containsKey(second)) {<a name="line.199"></a>
+<span class="sourceLineNo">200</span>                throw new IllegalArgumentException("nodeid=" + nodeId + ", linkid=" + second + ": link not an outlink of given node.");<a name="line.200"></a>
+<span class="sourceLineNo">201</span>            }<a name="line.201"></a>
+<span class="sourceLineNo">202</span>        }<a name="line.202"></a>
+<span class="sourceLineNo">203</span><a name="line.203"></a>
+<span class="sourceLineNo">204</span>                // remove the node<a name="line.204"></a>
+<span class="sourceLineNo">205</span>                Map&lt;Id&lt;Link&gt;,Link&gt; inlinks = new TreeMap&lt;&gt;(node.getInLinks());<a name="line.205"></a>
+<span class="sourceLineNo">206</span>                Map&lt;Id&lt;Link&gt;,Link&gt; outlinks = new TreeMap&lt;&gt;(node.getOutLinks());<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                if (network.removeNode(node.getId()) == null) { throw new RuntimeException("nodeid="+nodeId+": Failed to remove node from the network."); }<a name="line.207"></a>
+<span class="sourceLineNo">208</span><a name="line.208"></a>
+<span class="sourceLineNo">209</span>                ArrayList&lt;Node&gt; newNodes = new ArrayList&lt;&gt;(inlinks.size()+outlinks.size());<a name="line.209"></a>
+<span class="sourceLineNo">210</span>                ArrayList&lt;Link&gt; newLinks = new ArrayList&lt;&gt;(turns.size());<a name="line.210"></a>
+<span class="sourceLineNo">211</span>                // add new nodes and connect them with the in and out links<a name="line.211"></a>
+<span class="sourceLineNo">212</span>                int nodeIdCnt = 0;<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                double d = this.dist;<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                for (Link inlink : inlinks.values()) {<a name="line.214"></a>
+<span class="sourceLineNo">215</span>                        Coord c = node.getCoord();<a name="line.215"></a>
+<span class="sourceLineNo">216</span>                        Coord p = inlink.getFromNode().getCoord();<a name="line.216"></a>
+<span class="sourceLineNo">217</span>                        Coord cp = new Coord(p.getX() - c.getX(), p.getY() - c.getY());<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                        double lcp = Math.sqrt(cp.getX()*cp.getX()+cp.getY()*cp.getY());<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                        if (Math.abs(lcp) &lt; 1e-8) {<a name="line.219"></a>
+<span class="sourceLineNo">220</span>                                // c and p seem to lay on top of each other, leading to Double.NaN in some calculations<a name="line.220"></a>
+<span class="sourceLineNo">221</span>                                lcp = d;<a name="line.221"></a>
+<span class="sourceLineNo">222</span>                        }<a name="line.222"></a>
+<span class="sourceLineNo">223</span>                        double dx = cp.getX() / lcp;<a name="line.223"></a>
+<span class="sourceLineNo">224</span>                        double dy = cp.getY() / lcp;<a name="line.224"></a>
+<span class="sourceLineNo">225</span>                        double x = c.getX() + d * dx - e * dy;<a name="line.225"></a>
+<span class="sourceLineNo">226</span>                        double y = c.getY() + d * dy + e * dx;<a name="line.226"></a>
+<span class="sourceLineNo">227</span><a name="line.227"></a>
+<span class="sourceLineNo">228</span>                        Node n = network.getFactory().createNode(Id.create(node.getId()+"-"+nodeIdCnt, Node.class), new Coord(x, y));<a name="line.228"></a>
+<span class="sourceLineNo">229</span>                        network.addNode(n);<a name="line.229"></a>
+<span class="sourceLineNo">230</span>                        newNodes.add(n);<a name="line.230"></a>
+<span class="sourceLineNo">231</span>                        nodeIdCnt++;<a name="line.231"></a>
+<span class="sourceLineNo">232</span>                        Link l = network.getFactory().createLink(inlink.getId(), inlink.getFromNode(), n);<a name="line.232"></a>
+<span class="sourceLineNo">233</span>                        l.setLength(inlink.getLength());<a name="line.233"></a>
+<span class="sourceLineNo">234</span>                        l.setFreespeed(inlink.getFreespeed());<a name="line.234"></a>
+<span class="sourceLineNo">235</span>                        l.setCapacity(inlink.getCapacity());<a name="line.235"></a>
+<span class="sourceLineNo">236</span>                        l.setNumberOfLanes(inlink.getNumberOfLanes());<a name="line.236"></a>
+<span class="sourceLineNo">237</span>                        l.setAllowedModes(inlink.getAllowedModes());<a name="line.237"></a>
+<span class="sourceLineNo">238</span>                        NetworkUtils.setOrigId( ((Link) l), NetworkUtils.getOrigId( ((Link) inlink) ) ) ;<a name="line.238"></a>
+<span class="sourceLineNo">239</span>                        NetworkUtils.setType( ((Link) l), NetworkUtils.getType(((Link) inlink)));<a name="line.239"></a>
+<span class="sourceLineNo">240</span>                        network.addLink(l);<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                }<a name="line.241"></a>
+<span class="sourceLineNo">242</span>                for (Link outlink : outlinks.values()) {<a name="line.242"></a>
+<span class="sourceLineNo">243</span>                        Coord c = node.getCoord();<a name="line.243"></a>
+<span class="sourceLineNo">244</span>                        Coord p = outlink.getToNode().getCoord();<a name="line.244"></a>
+<span class="sourceLineNo">245</span>                        Coord cp = new Coord(p.getX() - c.getX(), p.getY() - c.getY());<a name="line.245"></a>
+<span class="sourceLineNo">246</span>                        double lcp = Math.sqrt(cp.getX()*cp.getX()+cp.getY()*cp.getY());<a name="line.246"></a>
+<span class="sourceLineNo">247</span>                        if (Math.abs(lcp) &lt; 1e-8) {<a name="line.247"></a>
+<span class="sourceLineNo">248</span>                                // c and p seem to lay on top of each other, leading to Double.NaN in some calculations<a name="line.248"></a>
+<span class="sourceLineNo">249</span>                                lcp = d;<a name="line.249"></a>
+<span class="sourceLineNo">250</span>                        }<a name="line.250"></a>
+<span class="sourceLineNo">251</span>                        double dx = cp.getX() / lcp;<a name="line.251"></a>
+<span class="sourceLineNo">252</span>                        double dy = cp.getY() / lcp;<a name="line.252"></a>
+<span class="sourceLineNo">253</span>                        double x = c.getX() + d * dx + e * dy;<a name="line.253"></a>
+<span class="sourceLineNo">254</span>                        double y = c.getY() + d * dy - e * dx;<a name="line.254"></a>
+<span class="sourceLineNo">255</span>                        Node n = network.getFactory().createNode(Id.create(node.getId()+"-"+nodeIdCnt, Node.class), new Coord(x, y));<a name="line.255"></a>
+<span class="sourceLineNo">256</span>                        network.addNode(n);<a name="line.256"></a>
+<span class="sourceLineNo">257</span>                        newNodes.add(n);<a name="line.257"></a>
+<span class="sourceLineNo">258</span>                        nodeIdCnt++;<a name="line.258"></a>
+<span class="sourceLineNo">259</span>                        Link l = network.getFactory().createLink(outlink.getId(), n, outlink.getToNode());<a name="line.259"></a>
+<span class="sourceLineNo">260</span>                        l.setLength(outlink.getLength());<a name="line.260"></a>
+<span class="sourceLineNo">261</span>                        l.setFreespeed(outlink.getFreespeed());<a name="line.261"></a>
+<span class="sourceLineNo">262</span>                        l.setCapacity(outlink.getCapacity());<a name="line.262"></a>
+<span class="sourceLineNo">263</span>                        l.setNumberOfLanes(outlink.getNumberOfLanes());<a name="line.263"></a>
+<span class="sourceLineNo">264</span>                        l.setAllowedModes(outlink.getAllowedModes());<a name="line.264"></a>
+<span class="sourceLineNo">265</span>                        if (outlink instanceof Link) {<a name="line.265"></a>
+<span class="sourceLineNo">266</span>                                NetworkUtils.setOrigId( ((Link) l), NetworkUtils.getOrigId( ((Link) outlink) ) ) ;<a name="line.266"></a>
+<span class="sourceLineNo">267</span>                                NetworkUtils.setType( ((Link) l), NetworkUtils.getType(((Link) outlink)));<a name="line.267"></a>
+<span class="sourceLineNo">268</span>                        }<a name="line.268"></a>
+<span class="sourceLineNo">269</span>                        network.addLink(l);<a name="line.269"></a>
+<span class="sourceLineNo">270</span>                }<a name="line.270"></a>
+<span class="sourceLineNo">271</span><a name="line.271"></a>
+<span class="sourceLineNo">272</span>                // add virtual links for the turn restrictions<a name="line.272"></a>
+<span class="sourceLineNo">273</span>                for (int i=0; i&lt;turns.size(); i++) {<a name="line.273"></a>
+<span class="sourceLineNo">274</span>                        TurnInfo turn = turns.get(i);<a name="line.274"></a>
+<span class="sourceLineNo">275</span>                        Link fromLink = network.getLinks().get(turn.getFromLinkId());<a name="line.275"></a>
+<span class="sourceLineNo">276</span>                        Link toLink = network.getLinks().get(turn.getToLinkId());<a name="line.276"></a>
+<span class="sourceLineNo">277</span>                        Link l = network.getFactory().createLink(Id.create(fromLink.getId()+"-"+i, Link.class), fromLink.getToNode(), toLink.getFromNode());<a name="line.277"></a>
+<span class="sourceLineNo">278</span>                        double dist = CoordUtils.calcEuclideanDistance(toLink.getFromNode().getCoord(), fromLink.getToNode().getCoord());<a name="line.278"></a>
+<span class="sourceLineNo">279</span>                        if (dist &lt; 0.1 * this.expRadius) {<a name="line.279"></a>
+<span class="sourceLineNo">280</span>                                // mostly the case when nodes are on top of each other<a name="line.280"></a>
+<span class="sourceLineNo">281</span>                                // use a small length, but not really hard-coded because of different coordinate systems ("1" is not always 1 meter)<a name="line.281"></a>
+<span class="sourceLineNo">282</span>                                dist = 0.1 * this.expRadius;<a name="line.282"></a>
+<span class="sourceLineNo">283</span>                        }<a name="line.283"></a>
+<span class="sourceLineNo">284</span>                        l.setLength(dist);<a name="line.284"></a>
+<span class="sourceLineNo">285</span>                        l.setFreespeed(fromLink.getFreespeed());<a name="line.285"></a>
+<span class="sourceLineNo">286</span>                        l.setCapacity(fromLink.getCapacity());<a name="line.286"></a>
+<span class="sourceLineNo">287</span>                        l.setNumberOfLanes(fromLink.getNumberOfLanes());<a name="line.287"></a>
+<span class="sourceLineNo">288</span>                        if (turn.getModes() == null) {<a name="line.288"></a>
+<span class="sourceLineNo">289</span>                                l.setAllowedModes(fromLink.getAllowedModes());<a name="line.289"></a>
+<span class="sourceLineNo">290</span>                        } else {<a name="line.290"></a>
+<span class="sourceLineNo">291</span>                                l.setAllowedModes(turn.getModes());<a name="line.291"></a>
+<span class="sourceLineNo">292</span>                        }<a name="line.292"></a>
+<span class="sourceLineNo">293</span>                        NetworkUtils.setOrigId( ((Link) l), NetworkUtils.getOrigId( ((Link) fromLink) ) ) ;<a name="line.293"></a>
+<span class="sourceLineNo">294</span>                        NetworkUtils.setType( ((Link) l), NetworkUtils.getType(((Link) fromLink)));<a name="line.294"></a>
+<span class="sourceLineNo">295</span>                        network.addLink(l);<a name="line.295"></a>
+<span class="sourceLineNo">296</span>                        newLinks.add(l);<a name="line.296"></a>
+<span class="sourceLineNo">297</span>                }<a name="line.297"></a>
+<span class="sourceLineNo">298</span>                return new Tuple&lt;List&lt;Node&gt;, List&lt;Link&gt;&gt;(newNodes,newLinks);<a name="line.298"></a>
+<span class="sourceLineNo">299</span>        }<a name="line.299"></a>
+<span class="sourceLineNo">300</span>        <a name="line.300"></a>
+<span class="sourceLineNo">301</span>        /**<a name="line.301"></a>
+<span class="sourceLineNo">302</span>         * Checks whether it makes sense to expand the node with turning links or not. For example, it might <a name="line.302"></a>
+<span class="sourceLineNo">303</span>         * not make sense to expand the node if no real restrictions are given, but just all possible options<a name="line.303"></a>
+<span class="sourceLineNo">304</span>         * are listed -- the exact same turning options could be available without expanding the node.<a name="line.304"></a>
+<span class="sourceLineNo">305</span>         * Thus, it usually only makes sense to expand a node if {@link #turnsAreSameAsSingleNode(Id, List, boolean)}<a name="line.305"></a>
+<span class="sourceLineNo">306</span>         * returns &lt;code&gt;false&lt;/code&gt;.<a name="line.306"></a>
+<span class="sourceLineNo">307</span>         * The algorithm can optionally ignore u-turns, that means that it is not checked if all u-turns are<a name="line.307"></a>
+<span class="sourceLineNo">308</span>         * allowed according to the given turning options. <a name="line.308"></a>
+<span class="sourceLineNo">309</span>         * <a name="line.309"></a>
+<span class="sourceLineNo">310</span>         * <a name="line.310"></a>
+<span class="sourceLineNo">311</span>         * @param nodeId<a name="line.311"></a>
+<span class="sourceLineNo">312</span>         * @param turns the allowed turning options<a name="line.312"></a>
+<span class="sourceLineNo">313</span>         * @param ignoreUTurns set this to &lt;code&gt;true&lt;/code&gt; if u-turns are excluded from the check<a name="line.313"></a>
+<span class="sourceLineNo">314</span>         * @return &lt;code&gt;true&lt;/code&gt; if the list of explicit turns given results in the same turning options available as when the node is not expanded, &lt;code&gt;false&lt;/code&gt; otherwise. <a name="line.314"></a>
+<span class="sourceLineNo">315</span>         */<a name="line.315"></a>
+<span class="sourceLineNo">316</span>        public boolean turnsAreSameAsSingleNode(final Id&lt;Node&gt; nodeId, final List&lt;TurnInfo&gt; turns, final boolean ignoreUTurns) {<a name="line.316"></a>
+<span class="sourceLineNo">317</span>                Node node = this.network.getNodes().get(nodeId);<a name="line.317"></a>
+<span class="sourceLineNo">318</span><a name="line.318"></a>
+<span class="sourceLineNo">319</span>                // first create list of all possible turning options<a name="line.319"></a>
+<span class="sourceLineNo">320</span>                Map&lt;Id&lt;Link&gt;, Map&lt;Id&lt;Link&gt;, Set&lt;String&gt;&gt;&gt; allTurns = new HashMap&lt;&gt;();<a name="line.320"></a>
+<span class="sourceLineNo">321</span>                <a name="line.321"></a>
+<span class="sourceLineNo">322</span>                for (Link inLink : node.getInLinks().values()) {<a name="line.322"></a>
+<span class="sourceLineNo">323</span>                        Map&lt;Id&lt;Link&gt;, Set&lt;String&gt;&gt; t2 = new HashMap&lt;&gt;();<a name="line.323"></a>
+<span class="sourceLineNo">324</span>                        for (Link outLink : node.getOutLinks().values()) {<a name="line.324"></a>
+<span class="sourceLineNo">325</span>                                if (inLink.getFromNode() != outLink.getToNode() || !ignoreUTurns) {<a name="line.325"></a>
+<span class="sourceLineNo">326</span>                                        HashSet&lt;String&gt; modes = new HashSet&lt;&gt;();<a name="line.326"></a>
+<span class="sourceLineNo">327</span>                                        modes.addAll(inLink.getAllowedModes());<a name="line.327"></a>
+<span class="sourceLineNo">328</span>                                        modes.retainAll(outLink.getAllowedModes()); // modes contains now all useful modes<a name="line.328"></a>
+<span class="sourceLineNo">329</span>                                        t2.put(outLink.getId(), modes);<a name="line.329"></a>
+<span class="sourceLineNo">330</span>                                }<a name="line.330"></a>
+<span class="sourceLineNo">331</span>                        }<a name="line.331"></a>
+<span class="sourceLineNo">332</span>                        allTurns.put(inLink.getId(), t2);<a name="line.332"></a>
+<span class="sourceLineNo">333</span>                }<a name="line.333"></a>
+<span class="sourceLineNo">334</span>                <a name="line.334"></a>
+<span class="sourceLineNo">335</span>                /* now compare the given turning options and remove them from all possible options.<a name="line.335"></a>
+<span class="sourceLineNo">336</span>                 * if there remain some options in the "all possibles", we know that the given turns<a name="line.336"></a>
+<span class="sourceLineNo">337</span>                 * act indeed as restrictions. */<a name="line.337"></a>
+<span class="sourceLineNo">338</span>                for (TurnInfo ti : turns) {<a name="line.338"></a>
+<span class="sourceLineNo">339</span>                        Id&lt;Link&gt; from = ti.fromLinkId;<a name="line.339"></a>
+<span class="sourceLineNo">340</span>                        Id&lt;Link&gt; to = ti.toLinkId;<a name="line.340"></a>
+<span class="sourceLineNo">341</span>                        Map&lt;Id&lt;Link&gt;, Set&lt;String&gt;&gt; t2 = allTurns.get(from);<a name="line.341"></a>
+<span class="sourceLineNo">342</span>                        if (t2 != null) {<a name="line.342"></a>
+<span class="sourceLineNo">343</span>                                Set&lt;String&gt; modes = t2.get(to);<a name="line.343"></a>
+<span class="sourceLineNo">344</span>                                if (modes != null) {<a name="line.344"></a>
+<span class="sourceLineNo">345</span>                                        if (ti.getModes() == null) {<a name="line.345"></a>
+<span class="sourceLineNo">346</span>                                                // no specific modes are set, so remove all modes from the inLink<a name="line.346"></a>
+<span class="sourceLineNo">347</span>                                                // because the modes are the intersection of modes from inLink and outLink, we can just clear it<a name="line.347"></a>
+<span class="sourceLineNo">348</span>                                                modes.clear();<a name="line.348"></a>
+<span class="sourceLineNo">349</span>                                        } else {<a name="line.349"></a>
+<span class="sourceLineNo">350</span>                                                modes.removeAll(ti.getModes());<a name="line.350"></a>
+<span class="sourceLineNo">351</span>                                        }<a name="line.351"></a>
+<span class="sourceLineNo">352</span>                                }<a name="line.352"></a>
+<span class="sourceLineNo">353</span>                        }<a name="line.353"></a>
+<span class="sourceLineNo">354</span>                }<a name="line.354"></a>
+<span class="sourceLineNo">355</span>                <a name="line.355"></a>
+<span class="sourceLineNo">356</span>                // now do the check<a name="line.356"></a>
+<span class="sourceLineNo">357</span>                for (Map&lt;Id&lt;Link&gt;, Set&lt;String&gt;&gt; m : allTurns.values()) {<a name="line.357"></a>
+<span class="sourceLineNo">358</span>                        for (Set&lt;String&gt; modes : m.values()) {<a name="line.358"></a>
+<span class="sourceLineNo">359</span>                                if (modes.size() &gt; 0) {<a name="line.359"></a>
+<span class="sourceLineNo">360</span>                                        return false;<a name="line.360"></a>
+<span class="sourceLineNo">361</span>                                }<a name="line.361"></a>
+<span class="sourceLineNo">362</span>                        }<a name="line.362"></a>
+<span class="sourceLineNo">363</span>                }<a name="line.363"></a>
+<span class="sourceLineNo">364</span>                <a name="line.364"></a>
+<span class="sourceLineNo">365</span>                return true;<a name="line.365"></a>
+<span class="sourceLineNo">366</span>        }<a name="line.366"></a>
+<span class="sourceLineNo">367</span>        <a name="line.367"></a>
+<span class="sourceLineNo">368</span>        public static class TurnInfo {<a name="line.368"></a>
+<span class="sourceLineNo">369</span>                <a name="line.369"></a>
+<span class="sourceLineNo">370</span>                private final Id&lt;Link&gt; fromLinkId;<a name="line.370"></a>
+<span class="sourceLineNo">371</span>                private final Id&lt;Link&gt; toLinkId;<a name="line.371"></a>
+<span class="sourceLineNo">372</span>                private final Set&lt;String&gt; modes;<a name="line.372"></a>
+<span class="sourceLineNo">373</span>                <a name="line.373"></a>
+<span class="sourceLineNo">374</span>                public TurnInfo(final Id&lt;Link&gt; fromLinkId, final Id&lt;Link&gt; toLinkId) {<a name="line.374"></a>
+<span class="sourceLineNo">375</span>                        this.fromLinkId = fromLinkId;<a name="line.375"></a>
+<span class="sourceLineNo">376</span>                        this.toLinkId = toLinkId;<a name="line.376"></a>
+<span class="sourceLineNo">377</span>                        this.modes = null;<a name="line.377"></a>
+<span class="sourceLineNo">378</span>                }<a name="line.378"></a>
+<span class="sourceLineNo">379</span>                <a name="line.379"></a>
+<span class="sourceLineNo">380</span>                public TurnInfo(final Id&lt;Link&gt; fromLinkId, final Id&lt;Link&gt; toLinkId, final Set&lt;String&gt; modes) {<a name="line.380"></a>
+<span class="sourceLineNo">381</span>                        this.fromLinkId = fromLinkId;<a name="line.381"></a>
+<span class="sourceLineNo">382</span>                        this.toLinkId = toLinkId;<a name="line.382"></a>
+<span class="sourceLineNo">383</span>                        this.modes = modes;<a name="line.383"></a>
+<span class="sourceLineNo">384</span>                }<a name="line.384"></a>
+<span class="sourceLineNo">385</span>                <a name="line.385"></a>
+<span class="sourceLineNo">386</span>                public Id&lt;Link&gt; getFromLinkId() {<a name="line.386"></a>
+<span class="sourceLineNo">387</span>                        return this.fromLinkId;<a name="line.387"></a>
+<span class="sourceLineNo">388</span>                }<a name="line.388"></a>
+<span class="sourceLineNo">389</span>                <a name="line.389"></a>
+<span class="sourceLineNo">390</span>                public Id&lt;Link&gt; getToLinkId() {<a name="line.390"></a>
+<span class="sourceLineNo">391</span>                        return this.toLinkId;<a name="line.391"></a>
+<span class="sourceLineNo">392</span>                }<a name="line.392"></a>
+<span class="sourceLineNo">393</span>                <a name="line.393"></a>
+<span class="sourceLineNo">394</span>                public Set&lt;String&gt; getModes() {<a name="line.394"></a>
+<span class="sourceLineNo">395</span>                        return this.modes;<a name="line.395"></a>
+<span class="sourceLineNo">396</span>                }<a name="line.396"></a>
+<span class="sourceLineNo">397</span><a name="line.397"></a>
+<span class="sourceLineNo">398</span>                @Override<a name="line.398"></a>
+<span class="sourceLineNo">399</span>                public boolean equals(Object obj) {<a name="line.399"></a>
+<span class="sourceLineNo">400</span>                        if (!(obj instanceof TurnInfo)) {<a name="line.400"></a>
+<span class="sourceLineNo">401</span>                                return false;<a name="line.401"></a>
+<span class="sourceLineNo">402</span>                        }<a name="line.402"></a>
+<span class="sourceLineNo">403</span>                        TurnInfo ti = (TurnInfo) obj;<a name="line.403"></a>
+<span class="sourceLineNo">404</span>                        return (ti.fromLinkId.equals(this.fromLinkId))<a name="line.404"></a>
+<span class="sourceLineNo">405</span>                                        &amp;&amp; (ti.toLinkId.equals(this.toLinkId))<a name="line.405"></a>
+<span class="sourceLineNo">406</span>                                        &amp;&amp; ((ti.modes == null &amp;&amp; this.modes == null)<a name="line.406"></a>
+<span class="sourceLineNo">407</span>                                                        || (ti.modes != null &amp;&amp; ti.modes.equals(this.modes))<a name="line.407"></a>
+<span class="sourceLineNo">408</span>                                                        );<a name="line.408"></a>
+<span class="sourceLineNo">409</span>                }<a name="line.409"></a>
+<span class="sourceLineNo">410</span>                <a name="line.410"></a>
+<span class="sourceLineNo">411</span>                @Override<a name="line.411"></a>
+<span class="sourceLineNo">412</span>                public int hashCode() {<a name="line.412"></a>
+<span class="sourceLineNo">413</span>                        return this.fromLinkId.hashCode() &amp; this.toLinkId.hashCode() &amp; this.modes.hashCode();<a name="line.413"></a>
+<span class="sourceLineNo">414</span>                }<a name="line.414"></a>
+<span class="sourceLineNo">415</span>                <a name="line.415"></a>
+<span class="sourceLineNo">416</span>        }<a name="line.416"></a>
+<span class="sourceLineNo">417</span>        <a name="line.417"></a>
+<span class="sourceLineNo">418</span>}<a name="line.418"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>
