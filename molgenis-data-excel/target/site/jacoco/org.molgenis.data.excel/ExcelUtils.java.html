@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExcelUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-excel</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.excel</a> &gt; <span class="el_source">ExcelUtils.java</span></div><h1>ExcelUtils.java</h1><pre class="source lang-java linenums">package org.molgenis.data.excel;
+
+import org.apache.commons.io.FilenameUtils;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.util.LocaleUtil;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.file.processor.AbstractCellProcessor;
+import org.molgenis.data.file.processor.CellProcessor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.time.LocalDateTime;
+import java.util.Date;
+import java.util.List;
+
+import static java.time.ZoneOffset.UTC;
+
+<span class="nc" id="L21">public class ExcelUtils</span>
+{
+<span class="fc" id="L23">	private static final Logger LOG = LoggerFactory.getLogger(ExcelEntity.class);</span>
+
+	static String toValue(Cell cell)
+	{
+<span class="fc" id="L27">		return toValue(cell, null);</span>
+	}
+
+	// Gets a cell value as String and process the value with the given cellProcessors
+	static String toValue(Cell cell, List&lt;CellProcessor&gt; cellProcessors)
+	{
+		String value;
+<span class="fc bfc" id="L34" title="All 6 branches covered.">		switch (cell.getCellTypeEnum())</span>
+		{
+			case BLANK:
+<span class="fc" id="L37">				value = null;</span>
+<span class="fc" id="L38">				break;</span>
+			case STRING:
+<span class="fc" id="L40">				value = cell.getStringCellValue();</span>
+<span class="fc" id="L41">				break;</span>
+			case NUMERIC:
+<span class="fc bfc" id="L43" title="All 2 branches covered.">				if (DateUtil.isCellDateFormatted(cell))</span>
+				{
+					try
+					{
+						// Excel dates are LocalDateTime, stored without timezone.
+						// Interpret them as UTC to prevent ambiguous DST overlaps which happen in other timezones.
+<span class="fc" id="L49">						LocaleUtil.setUserTimeZone(LocaleUtil.TIMEZONE_UTC);</span>
+<span class="fc" id="L50">						Date dateCellValue = cell.getDateCellValue();</span>
+<span class="fc" id="L51">						value = formatUTCDateAsLocalDateTime(dateCellValue);</span>
+					}
+					finally
+					{
+<span class="fc" id="L55">						LocaleUtil.resetUserTimeZone();</span>
+					}
+				}
+				else
+				{
+					// excel stores integer values as double values
+					// read an integer if the double value equals the
+					// integer value
+<span class="fc" id="L63">					double x = cell.getNumericCellValue();</span>
+<span class="pc bpc" id="L64" title="2 of 6 branches missed.">					if (x == Math.rint(x) &amp;&amp; !Double.isNaN(x) &amp;&amp; !Double.isInfinite(x))</span>
+<span class="fc" id="L65">						value = String.valueOf((long) x);</span>
+<span class="fc" id="L66">					else value = String.valueOf(x);</span>
+				}
+<span class="fc" id="L68">				break;</span>
+			case BOOLEAN:
+<span class="fc" id="L70">				value = String.valueOf(cell.getBooleanCellValue());</span>
+<span class="fc" id="L71">				break;</span>
+			case FORMULA:
+				// evaluate formula
+<span class="fc" id="L74">				FormulaEvaluator evaluator = cell.getSheet().getWorkbook().getCreationHelper().createFormulaEvaluator();</span>
+				CellValue cellValue;
+				try
+				{
+<span class="fc" id="L78">					cellValue = evaluator.evaluate(cell);</span>
+				}
+<span class="nc" id="L80">				catch (StackOverflowError e)</span>
+				{
+<span class="nc" id="L82">					LOG.error(&quot;StackOverflowError evaluating formula&quot;, e);</span>
+<span class="nc" id="L83">					throw new RuntimeException(&quot;Error evaluating formula, possibly due to deep formula nesting.&quot;);</span>
+<span class="fc" id="L84">				}</span>
+<span class="pc bpc" id="L85" title="4 of 5 branches missed.">				switch (cellValue.getCellTypeEnum())</span>
+				{
+					case BOOLEAN:
+<span class="nc" id="L88">						value = String.valueOf(cellValue.getBooleanValue());</span>
+<span class="nc" id="L89">						break;</span>
+					case NUMERIC:
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">						if (DateUtil.isCellDateFormatted(cell))</span>
+						{
+							try
+							{
+								// Excel dates are LocalDateTime, stored without timezone.
+								// Interpret them as UTC to prevent ambiguous DST overlaps which happen in other timezones.
+<span class="nc" id="L97">								LocaleUtil.setUserTimeZone(LocaleUtil.TIMEZONE_UTC);</span>
+<span class="nc" id="L98">								Date javaDate = DateUtil.getJavaDate(cellValue.getNumberValue(), false);</span>
+<span class="nc" id="L99">								value = formatUTCDateAsLocalDateTime(javaDate);</span>
+
+							}
+							finally
+							{
+<span class="nc" id="L104">								LocaleUtil.resetUserTimeZone();</span>
+							}
+						}
+						else
+						{
+							// excel stores integer values as double values
+							// read an integer if the double value equals the
+							// integer value
+<span class="fc" id="L112">							double x = cellValue.getNumberValue();</span>
+<span class="pc bpc" id="L113" title="2 of 6 branches missed.">							if (x == Math.rint(x) &amp;&amp; !Double.isNaN(x) &amp;&amp; !Double.isInfinite(x))</span>
+<span class="fc" id="L114">								value = String.valueOf((long) x);</span>
+<span class="fc" id="L115">							else value = String.valueOf(x);</span>
+						}
+<span class="fc" id="L117">						break;</span>
+					case STRING:
+<span class="nc" id="L119">						value = cellValue.getStringValue();</span>
+<span class="nc" id="L120">						break;</span>
+					case BLANK:
+<span class="nc" id="L122">						value = null;</span>
+<span class="nc" id="L123">						break;</span>
+					default:
+<span class="nc" id="L125">						throw new MolgenisDataException(&quot;unsupported cell type: &quot; + cellValue.getCellTypeEnum());</span>
+				}
+				break;
+			default:
+<span class="fc" id="L129">				throw new MolgenisDataException(&quot;unsupported cell type: &quot; + cell.getCellTypeEnum());</span>
+		}
+
+<span class="fc" id="L132">		return AbstractCellProcessor.processCell(value, false, cellProcessors);</span>
+	}
+
+	public static void renameSheet(String newSheetname, File file, int index)
+	{
+<span class="fc" id="L137">		try (FileInputStream fis = new FileInputStream(file); Workbook workbook = WorkbookFactory.create(fis))</span>
+		{
+<span class="fc" id="L139">			workbook.setSheetName(index, newSheetname);</span>
+<span class="fc" id="L140">			workbook.write(new FileOutputStream(file));</span>
+
+		}
+<span class="nc" id="L143">		catch (Exception e)</span>
+		{
+<span class="nc" id="L145">			throw new MolgenisDataException(e);</span>
+<span class="fc" id="L146">		}</span>
+
+<span class="fc" id="L148">	}</span>
+
+	public static int getNumberOfSheets(File file)
+	{
+<span class="fc bfc" id="L152" title="All 2 branches covered.">		if (!isExcelFile(file.getName())) return -1;</span>
+<span class="fc" id="L153">		try (FileInputStream fis = new FileInputStream(file); Workbook workbook = WorkbookFactory.create(fis))</span>
+		{
+<span class="fc" id="L155">			return workbook.getNumberOfSheets();</span>
+		}
+<span class="nc" id="L157">		catch (Exception e)</span>
+		{
+<span class="nc" id="L159">			throw new MolgenisDataException(e);</span>
+		}
+	}
+
+	public static boolean isExcelFile(String filename)
+	{
+<span class="fc" id="L165">		String extension = FilenameUtils.getExtension(filename);</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">		if (ExcelFileExtensions.getExcel().contains(extension))</span>
+		{
+<span class="fc" id="L168">			return true;</span>
+		}
+<span class="fc" id="L170">		return false;</span>
+	}
+
+	/**
+	 * Formats parsed Date as LocalDateTime string at zone UTC to express that we don't know the timezone.
+	 *
+	 * @param javaDate Parsed Date representing start of day in UTC
+	 * @return Formatted {@link LocalDateTime} string of the java.util.Date
+	 */
+	private static String formatUTCDateAsLocalDateTime(Date javaDate)
+	{
+		String value;// Now back from start of day in UTC to LocalDateTime to express that we don't know the timezone.
+<span class="fc" id="L182">		LocalDateTime localDateTime = javaDate.toInstant().atZone(UTC).toLocalDateTime();</span>
+		// And format to string
+<span class="fc" id="L184">		value = localDateTime.toString();</span>
+<span class="fc" id="L185">		return value;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

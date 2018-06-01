@@ -1,0 +1,658 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RepositoryValidationDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-validation</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.validation</a> &gt; <span class="el_source">RepositoryValidationDecorator.java</span></div><h1>RepositoryValidationDecorator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.validation;
+
+import org.molgenis.data.*;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.util.HugeMap;
+import org.molgenis.util.HugeSet;
+
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
+
+import static java.lang.String.format;
+import static java.util.Collections.*;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.RepositoryCapability.*;
+import static org.molgenis.data.support.EntityTypeUtils.*;
+
+public class RepositoryValidationDecorator extends AbstractRepositoryDecorator&lt;Entity&gt;
+{
+<span class="fc" id="L25">	private enum ValidationMode</span>
+	{
+<span class="fc" id="L27">		ADD, UPDATE</span>
+	}
+
+	private final DataService dataService;
+	private final EntityAttributesValidator entityAttributesValidator;
+	private final DefaultValueReferenceValidator defaultValueReferenceValidator;
+
+	public RepositoryValidationDecorator(DataService dataService, Repository&lt;Entity&gt; delegateRepository,
+			EntityAttributesValidator entityAttributesValidator,
+			DefaultValueReferenceValidator defaultValueReferenceValidator)
+	{
+<span class="fc" id="L38">		super(delegateRepository);</span>
+<span class="fc" id="L39">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L40">		this.entityAttributesValidator = requireNonNull(entityAttributesValidator);</span>
+<span class="fc" id="L41">		this.defaultValueReferenceValidator = defaultValueReferenceValidator;</span>
+<span class="fc" id="L42">	}</span>
+
+	@Override
+	public void update(Entity entity)
+	{
+<span class="fc" id="L47">		try (ValidationResource validationResource = new ValidationResource())</span>
+		{
+<span class="fc" id="L49">			validate(entity, validationResource, ValidationMode.UPDATE);</span>
+		}
+<span class="fc" id="L51">		delegate().update(entity);</span>
+<span class="fc" id="L52">	}</span>
+
+	@Override
+	public void update(Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L57">		try (ValidationResource validationResource = new ValidationResource())</span>
+		{
+<span class="fc" id="L59">			entities = validate(entities, validationResource, ValidationMode.UPDATE);</span>
+<span class="fc" id="L60">			delegate().update(entities);</span>
+		}
+<span class="fc" id="L62">	}</span>
+
+	@Override
+	public void add(Entity entity)
+	{
+<span class="fc" id="L67">		try (ValidationResource validationResource = new ValidationResource())</span>
+		{
+<span class="fc" id="L69">			validate(entity, validationResource, ValidationMode.ADD);</span>
+		}
+<span class="fc" id="L71">		delegate().add(entity);</span>
+<span class="fc" id="L72">	}</span>
+
+	@Override
+	public Integer add(Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L77">		try (ValidationResource validationResource = new ValidationResource())</span>
+		{
+<span class="fc" id="L79">			entities = validate(entities, validationResource, ValidationMode.ADD);</span>
+<span class="fc" id="L80">			return delegate().add(entities);</span>
+		}
+	}
+
+	@Override
+	public void delete(Entity entity)
+	{
+<span class="fc" id="L87">		defaultValueReferenceValidator.validateEntityNotReferenced(entity);</span>
+<span class="fc" id="L88">		delegate().delete(entity);</span>
+<span class="fc" id="L89">	}</span>
+
+	@Override
+	public void deleteById(Object id)
+	{
+<span class="fc" id="L94">		defaultValueReferenceValidator.validateEntityNotReferencedById(id, getEntityType());</span>
+<span class="fc" id="L95">		delegate().deleteById(id);</span>
+<span class="fc" id="L96">	}</span>
+
+	@Override
+	public void deleteAll()
+	{
+<span class="fc" id="L101">		defaultValueReferenceValidator.validateEntityTypeNotReferenced(getEntityType());</span>
+<span class="fc" id="L102">		delegate().deleteAll();</span>
+<span class="fc" id="L103">	}</span>
+
+	@Override
+	public void delete(Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L108">		delegate().delete(defaultValueReferenceValidator.validateEntitiesNotReferenced(entities, getEntityType()));</span>
+<span class="fc" id="L109">	}</span>
+
+	@Override
+	public void deleteAll(Stream&lt;Object&gt; ids)
+	{
+<span class="fc" id="L114">		delegate().deleteAll(defaultValueReferenceValidator.validateEntitiesNotReferencedById(ids, getEntityType()));</span>
+<span class="fc" id="L115">	}</span>
+
+	private Stream&lt;Entity&gt; validate(Stream&lt;Entity&gt; entities, ValidationResource validationResource,
+			ValidationMode validationMode)
+	{
+		// prepare validation
+<span class="fc" id="L121">		initValidation(validationResource, validationMode);</span>
+
+<span class="fc" id="L123">		ValidationProfile validationProfile = new ValidationProfile().invoke();</span>
+
+		// add validation operation to stream
+<span class="fc" id="L126">		return entities.filter(entity -&gt;</span>
+		{
+<span class="fc" id="L128">			validate(entity, validationResource, validationMode, validationProfile);</span>
+
+<span class="fc" id="L130">			return true;</span>
+		});
+	}
+
+	private void validate(Entity entity, ValidationResource validationResource, ValidationMode validationMode)
+	{
+<span class="fc" id="L136">		initValidation(validationResource, validationMode);</span>
+<span class="fc" id="L137">		validate(entity, validationResource, validationMode, new ValidationProfile().invoke());</span>
+<span class="fc" id="L138">	}</span>
+
+	private void validate(Entity entity, ValidationResource validationResource, ValidationMode validationMode,
+			ValidationProfile validationProfile)
+	{
+<span class="fc" id="L143">		validationResource.incrementRow();</span>
+
+<span class="fc" id="L145">		validateEntityValueTypes(entity, validationResource);</span>
+
+		// other validation steps might not be able to handle invalid data types, stop here
+<span class="fc bfc" id="L148" title="All 2 branches covered.">		if (validationResource.hasViolations())</span>
+		{
+<span class="fc" id="L150">			throw new MolgenisValidationException(validationResource.getViolations());</span>
+		}
+
+<span class="fc bfc" id="L153" title="All 2 branches covered.">		if (validationProfile.isValidateRequired())</span>
+		{
+<span class="fc" id="L155">			validateEntityValueRequired(entity, validationResource);</span>
+		}
+
+<span class="pc bpc" id="L158" title="1 of 2 branches missed.">		if (validationProfile.isValidateUniqueness())</span>
+		{
+<span class="fc" id="L160">			validateEntityValueUniqueness(entity, validationResource, validationMode);</span>
+		}
+
+<span class="fc" id="L163">		validateEntityValueReferences(entity, validationResource);</span>
+
+<span class="pc bpc" id="L165" title="1 of 4 branches missed.">		if (validationProfile.isValidateReadonly() &amp;&amp; validationMode == ValidationMode.UPDATE)</span>
+		{
+<span class="fc" id="L167">			validateEntityValueReadOnly(entity, validationResource);</span>
+		}
+
+<span class="fc bfc" id="L170" title="All 2 branches covered.">		if (validationResource.hasViolations())</span>
+		{
+<span class="fc" id="L172">			throw new MolgenisValidationException(validationResource.getViolations());</span>
+		}
+<span class="fc" id="L174">	}</span>
+
+	private void initValidation(ValidationResource validationResource, ValidationMode validationMode)
+	{
+<span class="fc" id="L178">		initRequiredValueValidation(validationResource);</span>
+<span class="fc" id="L179">		initReferenceValidation(validationResource);</span>
+<span class="fc" id="L180">		initUniqueValidation(validationResource);</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">		if (validationMode == ValidationMode.UPDATE)</span>
+		{
+<span class="fc" id="L183">			initReadonlyValidation(validationResource);</span>
+		}
+<span class="fc" id="L185">	}</span>
+
+	private void initRequiredValueValidation(ValidationResource validationResource)
+	{
+<span class="fc bfc" id="L189" title="All 2 branches covered.">		if (!getCapabilities().contains(VALIDATE_NOTNULL_CONSTRAINT))</span>
+		{
+<span class="fc" id="L191">			List&lt;Attribute&gt; requiredValueAttrs = stream(getEntityType().getAtomicAttributes().spliterator(),</span>
+<span class="fc bfc" id="L192" title="All 4 branches covered.">					false).filter(attr -&gt; !attr.isNillable() &amp;&amp; attr.getExpression() == null).collect(toList());</span>
+
+<span class="fc" id="L194">			validationResource.setRequiredValueAttrs(requiredValueAttrs);</span>
+		}
+<span class="fc" id="L196">	}</span>
+
+	private void initReferenceValidation(ValidationResource validationResource)
+	{
+		// get reference attrs
+		List&lt;Attribute&gt; refAttrs;
+<span class="fc bfc" id="L202" title="All 2 branches covered.">		if (!getCapabilities().contains(VALIDATE_REFERENCE_CONSTRAINT))</span>
+		{
+			// get reference attrs
+<span class="fc" id="L205">			refAttrs = stream(getEntityType().getAtomicAttributes().spliterator(), false).filter(</span>
+<span class="fc bfc" id="L206" title="All 4 branches covered.">					attr -&gt; isReferenceType(attr) &amp;&amp; attr.getExpression() == null).collect(toList());</span>
+		}
+		else
+		{
+			// validate cross-repository collection reference constraints. the decorated repository takes care of
+			// validating other reference constraints
+<span class="fc" id="L212">			String backend = dataService.getMeta().getBackend(getEntityType()).getName();</span>
+<span class="fc" id="L213">			refAttrs = stream(getEntityType().getAtomicAttributes().spliterator(), false).filter(</span>
+<span class="pc bpc" id="L214" title="2 of 6 branches missed.">					attr -&gt; isReferenceType(attr) &amp;&amp; attr.getExpression() == null &amp;&amp; isDifferentBackend(backend, attr))</span>
+<span class="fc" id="L215">																						 .collect(toList());</span>
+		}
+
+		// get referenced entity ids
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">		if (!refAttrs.isEmpty())</span>
+		{
+<span class="fc" id="L221">			Map&lt;String, HugeSet&lt;Object&gt;&gt; refEntitiesIds = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L222">			refAttrs.forEach(refAttr -&gt;</span>
+			{
+<span class="fc" id="L224">				EntityType refEntityType = refAttr.getRefEntity();</span>
+<span class="fc" id="L225">				String refEntityName = refEntityType.getId();</span>
+<span class="fc" id="L226">				HugeSet&lt;Object&gt; refEntityIds = refEntitiesIds.get(refEntityName);</span>
+<span class="fc bfc" id="L227" title="All 2 branches covered.">				if (refEntityIds == null)</span>
+				{
+<span class="fc" id="L229">					refEntityIds = new HugeSet&lt;&gt;();</span>
+<span class="fc" id="L230">					refEntitiesIds.put(refEntityName, refEntityIds);</span>
+
+<span class="fc" id="L232">					Query&lt;Entity&gt; q = new QueryImpl&lt;&gt;().fetch(</span>
+<span class="fc" id="L233">							new Fetch().field(refEntityType.getIdAttribute().getName()));</span>
+<span class="fc bfc" id="L234" title="All 2 branches covered.">					for (Iterator&lt;Entity&gt; it = dataService.findAll(refEntityName, q).iterator(); it.hasNext(); )</span>
+					{
+<span class="fc" id="L236">						refEntityIds.add(it.next().getIdValue());</span>
+					}
+				}
+<span class="fc" id="L239">			});</span>
+
+<span class="fc" id="L241">			validationResource.setRefEntitiesIds(refEntitiesIds);</span>
+		}
+
+<span class="fc" id="L244">		validationResource.setSelfReferencing(</span>
+<span class="fc" id="L245">				refAttrs.stream().anyMatch(refAttr -&gt; refAttr.getRefEntity().getId().equals(getEntityType().getId())));</span>
+<span class="fc" id="L246">		validationResource.setRefAttrs(refAttrs);</span>
+<span class="fc" id="L247">	}</span>
+
+	private boolean isDifferentBackend(String backend, Attribute attr)
+	{
+<span class="fc" id="L251">		EntityType refEntity = attr.getRefEntity();</span>
+<span class="fc" id="L252">		String refEntityBackend = dataService.getMeta().getBackend(refEntity).getName();</span>
+<span class="pc bpc" id="L253" title="1 of 2 branches missed.">		return !backend.equals(refEntityBackend);</span>
+	}
+
+	private void initUniqueValidation(ValidationResource validationResource)
+	{
+<span class="pc bpc" id="L258" title="1 of 2 branches missed.">		if (!getCapabilities().contains(VALIDATE_UNIQUE_CONSTRAINT))</span>
+		{
+			// get unique attributes
+<span class="fc" id="L261">			List&lt;Attribute&gt; uniqueAttrs = stream(getEntityType().getAtomicAttributes().spliterator(), false).filter(</span>
+<span class="fc bfc" id="L262" title="All 4 branches covered.">					attr -&gt; attr.isUnique() &amp;&amp; attr.getExpression() == null).collect(toList());</span>
+
+			// get existing values for each attributes
+<span class="pc bpc" id="L265" title="1 of 2 branches missed.">			if (!uniqueAttrs.isEmpty())</span>
+			{
+<span class="fc" id="L267">				Map&lt;String, HugeMap&lt;Object, Object&gt;&gt; uniqueAttrsValues = new HashMap&lt;&gt;();</span>
+
+<span class="fc" id="L269">				Fetch fetch = new Fetch();</span>
+<span class="fc" id="L270">				uniqueAttrs.forEach(uniqueAttr -&gt;</span>
+				{
+<span class="fc" id="L272">					uniqueAttrsValues.put(uniqueAttr.getName(), new HugeMap&lt;&gt;());</span>
+<span class="fc" id="L273">					fetch.field(uniqueAttr.getName());</span>
+<span class="fc" id="L274">				});</span>
+
+<span class="fc" id="L276">				Query&lt;Entity&gt; q = new QueryImpl&lt;&gt;().fetch(fetch);</span>
+<span class="fc" id="L277">				delegate().findAll(q).forEach(entity -&gt; uniqueAttrs.forEach(uniqueAttr -&gt;</span>
+				{
+<span class="fc" id="L279">					HugeMap&lt;Object, Object&gt; uniqueAttrValues = uniqueAttrsValues.get(uniqueAttr.getName());</span>
+<span class="fc" id="L280">					Object attrValue = entity.get(uniqueAttr.getName());</span>
+<span class="pc bpc" id="L281" title="1 of 2 branches missed.">					if (attrValue != null)</span>
+					{
+<span class="fc bfc" id="L283" title="All 2 branches covered.">						if (isSingleReferenceType(uniqueAttr))</span>
+						{
+<span class="fc" id="L285">							attrValue = ((Entity) attrValue).getIdValue();</span>
+						}
+<span class="fc" id="L287">						uniqueAttrValues.put(attrValue, entity.getIdValue());</span>
+					}
+<span class="fc" id="L289">				}));</span>
+
+<span class="fc" id="L291">				validationResource.setUniqueAttrsValues(uniqueAttrsValues);</span>
+			}
+
+<span class="fc" id="L294">			validationResource.setUniqueAttrs(uniqueAttrs);</span>
+		}
+<span class="fc" id="L296">	}</span>
+
+	private void initReadonlyValidation(ValidationResource validationResource)
+	{
+<span class="pc bpc" id="L300" title="1 of 2 branches missed.">		if (!getCapabilities().contains(VALIDATE_READONLY_CONSTRAINT))</span>
+		{
+<span class="fc" id="L302">			String idAttrName = getEntityType().getIdAttribute().getName();</span>
+<span class="fc" id="L303">			List&lt;Attribute&gt; readonlyAttrs = stream(getEntityType().getAtomicAttributes().spliterator(), false).filter(</span>
+<span class="pc bpc" id="L304" title="2 of 6 branches missed.">					attr -&gt; attr.isReadOnly() &amp;&amp; attr.getExpression() == null &amp;&amp; !attr.isMappedBy() &amp;&amp; !attr.getName()</span>
+<span class="pc bpc" id="L305" title="1 of 2 branches missed.">																											.equals(idAttrName))</span>
+<span class="fc" id="L306">																											  .collect(</span>
+<span class="fc" id="L307">																													  toList());</span>
+
+<span class="fc" id="L309">			validationResource.setReadonlyAttrs(readonlyAttrs);</span>
+		}
+<span class="fc" id="L311">	}</span>
+
+	private void validateEntityValueRequired(Entity entity, ValidationResource validationResource)
+	{
+<span class="fc" id="L315">		validationResource.getRequiredValueAttrs().forEach(nonNillableAttr -&gt;</span>
+		{
+<span class="fc" id="L317">			Object value = entity.get(nonNillableAttr.getName());</span>
+<span class="fc bfc" id="L318" title="All 4 branches covered.">			if (value == null || (isMultipleReferenceType(nonNillableAttr) &amp;&amp; !entity.getEntities(</span>
+<span class="fc bfc" id="L319" title="All 2 branches covered.">					nonNillableAttr.getName()).iterator().hasNext()))</span>
+			{
+<span class="fc" id="L321">				ConstraintViolation constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L322">						format(&quot;The attribute '%s' of entity '%s' can not be null.&quot;, nonNillableAttr.getName(),</span>
+<span class="fc" id="L323">								getName()), (long) validationResource.getRow());</span>
+<span class="fc" id="L324">				validationResource.addViolation(constraintViolation);</span>
+			}
+<span class="fc" id="L326">		});</span>
+<span class="fc" id="L327">	}</span>
+
+	private void validateEntityValueTypes(Entity entity, ValidationResource validationResource)
+	{
+		// entity attributes validation
+<span class="fc" id="L332">		Set&lt;ConstraintViolation&gt; attrViolations = entityAttributesValidator.validate(entity, getEntityType());</span>
+<span class="pc bpc" id="L333" title="1 of 4 branches missed.">		if (attrViolations != null &amp;&amp; !attrViolations.isEmpty())</span>
+		{
+<span class="fc" id="L335">			attrViolations.forEach(validationResource::addViolation);</span>
+		}
+<span class="fc" id="L337">	}</span>
+
+	private void validateEntityValueUniqueness(Entity entity, ValidationResource validationResource,
+			ValidationMode validationMode)
+	{
+<span class="fc" id="L342">		validationResource.getUniqueAttrs().forEach(uniqueAttr -&gt;</span>
+		{
+<span class="fc" id="L344">			Object attrValue = entity.get(uniqueAttr.getName());</span>
+<span class="pc bpc" id="L345" title="1 of 2 branches missed.">			if (attrValue != null)</span>
+			{
+<span class="fc bfc" id="L347" title="All 2 branches covered.">				if (isSingleReferenceType(uniqueAttr))</span>
+				{
+<span class="fc" id="L349">					attrValue = ((Entity) attrValue).getIdValue();</span>
+				}
+
+<span class="fc" id="L352">				HugeMap&lt;Object, Object&gt; uniqueAttrValues = validationResource.getUniqueAttrsValues()</span>
+<span class="fc" id="L353">																			 .get(uniqueAttr.getName());</span>
+<span class="fc" id="L354">				Object existingEntityId = uniqueAttrValues.get(attrValue);</span>
+<span class="fc bfc" id="L355" title="All 8 branches covered.">				if ((validationMode == ValidationMode.ADD &amp;&amp; existingEntityId != null) || (</span>
+<span class="pc bpc" id="L356" title="1 of 2 branches missed.">						validationMode == ValidationMode.UPDATE &amp;&amp; existingEntityId != null &amp;&amp; !existingEntityId.equals(</span>
+<span class="fc" id="L357">								entity.getIdValue())))</span>
+				{
+<span class="fc" id="L359">					ConstraintViolation constraintViolation = new ConstraintViolation(</span>
+<span class="fc" id="L360">							format(&quot;Duplicate value '%s' for unique attribute '%s' from entity '%s'&quot;, attrValue,</span>
+<span class="fc" id="L361">									uniqueAttr.getName(), getName()), (long) validationResource.getRow());</span>
+<span class="fc" id="L362">					validationResource.addViolation(constraintViolation);</span>
+<span class="fc" id="L363">				}</span>
+				else
+				{
+<span class="fc" id="L366">					uniqueAttrValues.put(attrValue, entity.getIdValue());</span>
+				}
+			}
+<span class="fc" id="L369">		});</span>
+<span class="fc" id="L370">	}</span>
+
+	private void validateEntityValueReferences(Entity entity, ValidationResource validationResource)
+	{
+<span class="fc" id="L374">		validationResource.getRefAttrs().forEach(refAttr -&gt;</span>
+		{
+<span class="fc" id="L376">			HugeSet&lt;Object&gt; refEntityIds = validationResource.getRefEntitiesIds().get(refAttr.getRefEntity().getId());</span>
+
+			Iterable&lt;Entity&gt; refEntities;
+<span class="fc bfc" id="L379" title="All 2 branches covered.">			if (isSingleReferenceType(refAttr))</span>
+			{
+<span class="fc" id="L381">				Entity refEntity = entity.getEntity(refAttr.getName());</span>
+<span class="fc bfc" id="L382" title="All 2 branches covered.">				if (refEntity != null)</span>
+				{
+<span class="fc" id="L384">					refEntities = singleton(refEntity);</span>
+				}
+				else
+				{
+<span class="fc" id="L388">					refEntities = emptyList();</span>
+				}
+<span class="fc" id="L390">			}</span>
+			else
+			{
+<span class="fc" id="L393">				refEntities = entity.getEntities(refAttr.getName());</span>
+			}
+
+<span class="fc bfc" id="L396" title="All 2 branches covered.">			for (Entity refEntity : refEntities)</span>
+			{
+<span class="fc bfc" id="L398" title="All 2 branches covered.">				if (!refEntityIds.contains(refEntity.getIdValue()))</span>
+				{
+<span class="fc" id="L400">					boolean selfReference = entity.getEntityType().getId().equals(refAttr.getRefEntity().getId());</span>
+<span class="pc bpc" id="L401" title="1 of 4 branches missed.">					if (!(selfReference &amp;&amp; entity.getIdValue().equals(refEntity.getIdValue())))</span>
+					{
+<span class="fc" id="L403">						String message = String.format(&quot;Unknown xref value '%s' for attribute '%s' of entity '%s'.&quot;,</span>
+<span class="fc" id="L404">								DataConverter.toString(refEntity.getIdValue()), refAttr.getName(), getName());</span>
+
+<span class="fc" id="L406">						ConstraintViolation constraintViolation = new ConstraintViolation(message,</span>
+<span class="fc" id="L407">								(long) validationResource.getRow());</span>
+<span class="fc" id="L408">						validationResource.addViolation(constraintViolation);</span>
+					}
+				}
+<span class="fc" id="L411">			}</span>
+
+			// only do if self reference
+<span class="fc bfc" id="L414" title="All 2 branches covered.">			if (validationResource.isSelfReferencing())</span>
+			{
+<span class="fc" id="L416">				validationResource.addRefEntityId(getName(), entity.getIdValue());</span>
+			}
+<span class="fc" id="L418">		});</span>
+<span class="fc" id="L419">	}</span>
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	private void validateEntityValueReadOnly(Entity entity, ValidationResource validationResource)
+	{
+<span class="fc bfc" id="L424" title="All 2 branches covered.">		if (validationResource.getReadonlyAttrs().isEmpty())</span>
+		{
+<span class="fc" id="L426">			return;</span>
+		}
+
+<span class="fc" id="L429">		Entity entityToUpdate = findOneById(entity.getIdValue());</span>
+<span class="fc" id="L430">		validationResource.getReadonlyAttrs().forEach(readonlyAttr -&gt;</span>
+		{
+<span class="fc" id="L432">			Object value = entity.get(readonlyAttr.getName());</span>
+
+<span class="fc" id="L434">			Object existingValue = entityToUpdate.get(readonlyAttr.getName());</span>
+
+<span class="fc bfc" id="L436" title="All 2 branches covered.">			if (isSingleReferenceType(readonlyAttr))</span>
+			{
+<span class="pc bpc" id="L438" title="1 of 2 branches missed.">				if (value != null)</span>
+				{
+<span class="fc" id="L440">					value = ((Entity) value).getIdValue();</span>
+				}
+<span class="pc bpc" id="L442" title="1 of 2 branches missed.">				if (existingValue != null)</span>
+				{
+<span class="fc" id="L444">					existingValue = ((Entity) existingValue).getIdValue();</span>
+				}
+			}
+<span class="fc bfc" id="L447" title="All 2 branches covered.">			else if (isMultipleReferenceType(readonlyAttr))</span>
+			{
+<span class="fc" id="L449">				value = stream(entity.getEntities(readonlyAttr.getName()).spliterator(), false).map(Entity::getIdValue)</span>
+<span class="fc" id="L450">																							   .collect(toList());</span>
+
+<span class="fc" id="L452">				existingValue = stream(entityToUpdate.getEntities(readonlyAttr.getName()).spliterator(), false).map(</span>
+<span class="fc" id="L453">						Entity::getIdValue).collect(toList());</span>
+			}
+
+<span class="pc bpc" id="L456" title="2 of 6 branches missed.">			if (value != null &amp;&amp; existingValue != null &amp;&amp; !value.equals(existingValue))</span>
+			{
+<span class="fc" id="L458">				validationResource.addViolation(new ConstraintViolation(</span>
+<span class="fc" id="L459">						format(&quot;The attribute '%s' of entity '%s' can not be changed it is readonly.&quot;,</span>
+<span class="fc" id="L460">								readonlyAttr.getName(), getName()), (long) validationResource.getRow()));</span>
+			}
+<span class="fc" id="L462">		});</span>
+<span class="fc" id="L463">	}</span>
+
+	/**
+	 * Container with validation data used during stream validation
+	 */
+	private static class ValidationResource implements AutoCloseable
+	{
+<span class="fc" id="L470">		private AtomicInteger rowNr = new AtomicInteger();</span>
+		private List&lt;Attribute&gt; requiredValueAttrs;
+		private List&lt;Attribute&gt; refAttrs;
+		private Map&lt;String, HugeSet&lt;Object&gt;&gt; refEntitiesIds;
+		private List&lt;Attribute&gt; uniqueAttrs;
+		private Map&lt;String, HugeMap&lt;Object, Object&gt;&gt; uniqueAttrsValues;
+		private List&lt;Attribute&gt; readonlyAttrs;
+		private boolean selfReferencing;
+		private Set&lt;ConstraintViolation&gt; violations;
+
+		public ValidationResource()
+<span class="fc" id="L481">		{</span>
+<span class="fc" id="L482">			rowNr = new AtomicInteger();</span>
+<span class="fc" id="L483">		}</span>
+
+		public int getRow()
+		{
+<span class="fc" id="L487">			return rowNr.get();</span>
+		}
+
+		public void incrementRow()
+		{
+<span class="fc" id="L492">			rowNr.incrementAndGet();</span>
+<span class="fc" id="L493">		}</span>
+
+		public List&lt;Attribute&gt; getRequiredValueAttrs()
+		{
+<span class="pc bpc" id="L497" title="1 of 2 branches missed.">			return requiredValueAttrs != null ? unmodifiableList(requiredValueAttrs) : emptyList();</span>
+		}
+
+		public void setRequiredValueAttrs(List&lt;Attribute&gt; requiredValueAttrs)
+		{
+<span class="fc" id="L502">			this.requiredValueAttrs = requiredValueAttrs;</span>
+<span class="fc" id="L503">		}</span>
+
+		public List&lt;Attribute&gt; getRefAttrs()
+		{
+<span class="fc" id="L507">			return unmodifiableList(refAttrs);</span>
+		}
+
+		public void setRefAttrs(List&lt;Attribute&gt; refAttrs)
+		{
+<span class="fc" id="L512">			this.refAttrs = refAttrs;</span>
+<span class="fc" id="L513">		}</span>
+
+		public Map&lt;String, HugeSet&lt;Object&gt;&gt; getRefEntitiesIds()
+		{
+<span class="pc bpc" id="L517" title="1 of 2 branches missed.">			return refEntitiesIds != null ? unmodifiableMap(refEntitiesIds) : emptyMap();</span>
+		}
+
+		public void setRefEntitiesIds(Map&lt;String, HugeSet&lt;Object&gt;&gt; refEntitiesIds)
+		{
+<span class="fc" id="L522">			this.refEntitiesIds = refEntitiesIds;</span>
+<span class="fc" id="L523">		}</span>
+
+		public void addRefEntityId(String name, Object idValue)
+		{
+<span class="fc" id="L527">			HugeSet&lt;Object&gt; refEntityIds = refEntitiesIds.get(name);</span>
+			// only add entity id if this validation run requires entity
+<span class="pc bpc" id="L529" title="1 of 2 branches missed.">			if (refEntityIds != null)</span>
+			{
+<span class="fc" id="L531">				refEntityIds.add(idValue);</span>
+			}
+<span class="fc" id="L533">		}</span>
+
+		public List&lt;Attribute&gt; getUniqueAttrs()
+		{
+<span class="pc bpc" id="L537" title="1 of 2 branches missed.">			return uniqueAttrs != null ? unmodifiableList(uniqueAttrs) : emptyList();</span>
+		}
+
+		public void setUniqueAttrs(List&lt;Attribute&gt; uniqueAttrs)
+		{
+<span class="fc" id="L542">			this.uniqueAttrs = uniqueAttrs;</span>
+<span class="fc" id="L543">		}</span>
+
+		public Map&lt;String, HugeMap&lt;Object, Object&gt;&gt; getUniqueAttrsValues()
+		{
+<span class="pc bpc" id="L547" title="1 of 2 branches missed.">			return uniqueAttrsValues != null ? unmodifiableMap(uniqueAttrsValues) : emptyMap();</span>
+		}
+
+		public void setUniqueAttrsValues(Map&lt;String, HugeMap&lt;Object, Object&gt;&gt; uniqueAttrsValues)
+		{
+<span class="fc" id="L552">			this.uniqueAttrsValues = uniqueAttrsValues;</span>
+<span class="fc" id="L553">		}</span>
+
+		public List&lt;Attribute&gt; getReadonlyAttrs()
+		{
+<span class="pc bpc" id="L557" title="1 of 2 branches missed.">			return readonlyAttrs != null ? unmodifiableList(readonlyAttrs) : emptyList();</span>
+		}
+
+		public void setReadonlyAttrs(List&lt;Attribute&gt; readonlyAttrs)
+		{
+<span class="fc" id="L562">			this.readonlyAttrs = readonlyAttrs;</span>
+<span class="fc" id="L563">		}</span>
+
+		public void setSelfReferencing(boolean selfReferencing)
+		{
+<span class="fc" id="L567">			this.selfReferencing = selfReferencing;</span>
+<span class="fc" id="L568">		}</span>
+
+		public boolean isSelfReferencing()
+		{
+<span class="fc" id="L572">			return selfReferencing;</span>
+		}
+
+		public boolean hasViolations()
+		{
+<span class="pc bpc" id="L577" title="1 of 4 branches missed.">			return violations != null &amp;&amp; !violations.isEmpty();</span>
+		}
+
+		public void addViolation(ConstraintViolation constraintViolation)
+		{
+<span class="pc bpc" id="L582" title="1 of 2 branches missed.">			if (violations == null)</span>
+			{
+<span class="fc" id="L584">				violations = new LinkedHashSet&lt;&gt;();</span>
+			}
+<span class="fc" id="L586">			violations.add(constraintViolation);</span>
+<span class="fc" id="L587">		}</span>
+
+		public Set&lt;ConstraintViolation&gt; getViolations()
+		{
+<span class="pc bpc" id="L591" title="1 of 2 branches missed.">			return violations != null ? unmodifiableSet(violations) : emptySet();</span>
+		}
+
+		@Override
+		public void close()
+		{
+<span class="pc bpc" id="L597" title="1 of 2 branches missed.">			if (refEntitiesIds != null)</span>
+			{
+<span class="fc bfc" id="L599" title="All 2 branches covered.">				for (HugeSet&lt;Object&gt; refEntityIds : refEntitiesIds.values())</span>
+				{
+					try
+					{
+<span class="fc" id="L603">						refEntityIds.close();</span>
+					}
+<span class="nc" id="L605">					catch (IOException e)</span>
+					{
+<span class="nc" id="L607">						throw new RuntimeException(e);</span>
+<span class="fc" id="L608">					}</span>
+<span class="fc" id="L609">				}</span>
+			}
+<span class="pc bpc" id="L611" title="1 of 2 branches missed.">			if (uniqueAttrsValues != null)</span>
+			{
+<span class="fc bfc" id="L613" title="All 2 branches covered.">				for (HugeMap&lt;Object, Object&gt; uniqueAttrValues : uniqueAttrsValues.values())</span>
+				{
+					try
+					{
+<span class="fc" id="L617">						uniqueAttrValues.close();</span>
+					}
+<span class="nc" id="L619">					catch (IOException e)</span>
+					{
+<span class="nc" id="L621">						throw new RuntimeException(e);</span>
+<span class="fc" id="L622">					}</span>
+<span class="fc" id="L623">				}</span>
+			}
+<span class="fc" id="L625">		}</span>
+	}
+
+<span class="fc" id="L628">	private class ValidationProfile</span>
+	{
+		private boolean validateRequired;
+		private boolean validateUniqueness;
+		private boolean validateReadonly;
+
+		boolean isValidateRequired()
+		{
+<span class="fc" id="L636">			return validateRequired;</span>
+		}
+
+		boolean isValidateUniqueness()
+		{
+<span class="fc" id="L641">			return validateUniqueness;</span>
+		}
+
+		boolean isValidateReadonly()
+		{
+<span class="fc" id="L646">			return validateReadonly;</span>
+		}
+
+		public ValidationProfile invoke()
+		{
+<span class="fc bfc" id="L651" title="All 2 branches covered.">			validateRequired = !getCapabilities().contains(VALIDATE_NOTNULL_CONSTRAINT);</span>
+<span class="pc bpc" id="L652" title="1 of 2 branches missed.">			validateUniqueness = !getCapabilities().contains(VALIDATE_UNIQUE_CONSTRAINT);</span>
+<span class="pc bpc" id="L653" title="1 of 2 branches missed.">			validateReadonly = !getCapabilities().contains(VALIDATE_READONLY_CONSTRAINT);</span>
+<span class="fc" id="L654">			return this;</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

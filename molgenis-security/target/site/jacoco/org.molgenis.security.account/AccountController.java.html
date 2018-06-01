@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AccountController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security.account</a> &gt; <span class="el_source">AccountController.java</span></div><h1>AccountController.java</h1><pre class="source lang-java linenums">package org.molgenis.security.account;
+
+import org.molgenis.core.util.CountryCodes;
+import org.molgenis.data.MolgenisDataAccessException;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.data.security.auth.UserFactory;
+import org.molgenis.security.captcha.CaptchaException;
+import org.molgenis.security.captcha.CaptchaRequest;
+import org.molgenis.security.captcha.CaptchaService;
+import org.molgenis.security.settings.AuthenticationSettings;
+import org.molgenis.security.user.MolgenisUserException;
+import org.molgenis.web.ErrorMessageResponse;
+import org.molgenis.web.ErrorMessageResponse.ErrorMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.RedirectStrategy;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.util.StringUtils;
+import org.springframework.validation.BindException;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.ModelAndView;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+
+import javax.naming.NoPermissionException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.Map;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.security.account.AccountController.URI;
+import static org.molgenis.security.user.UserAccountService.MIN_PASSWORD_LENGTH;
+
+@Controller
+@RequestMapping(URI)
+public class AccountController
+{
+<span class="fc" id="L46">	private static final Logger LOG = LoggerFactory.getLogger(AccountController.class);</span>
+
+	public static final String URI = &quot;/account&quot;;
+	private static final String CHANGE_PASSWORD_RELATIVE_URI = &quot;/password/change&quot;;
+	public static final String CHANGE_PASSWORD_URI = URI + CHANGE_PASSWORD_RELATIVE_URI;
+
+	static final String REGISTRATION_SUCCESS_MESSAGE_USER = &quot;You have successfully registered, an activation e-mail has been sent to your email.&quot;;
+	static final String REGISTRATION_SUCCESS_MESSAGE_ADMIN = &quot;You have successfully registered, your request has been forwarded to the administrator.&quot;;
+
+	private final AccountService accountService;
+	private final CaptchaService captchaService;
+	private final RedirectStrategy redirectStrategy;
+	private final AuthenticationSettings authenticationSettings;
+	private final UserFactory userFactory;
+
+	public AccountController(AccountService accountService, CaptchaService captchaService,
+			RedirectStrategy redirectStrategy, AuthenticationSettings authenticationSettings, UserFactory userFactory)
+<span class="fc" id="L63">	{</span>
+<span class="fc" id="L64">		this.accountService = requireNonNull(accountService);</span>
+<span class="fc" id="L65">		this.captchaService = requireNonNull(captchaService);</span>
+<span class="fc" id="L66">		this.redirectStrategy = requireNonNull(redirectStrategy);</span>
+<span class="fc" id="L67">		this.authenticationSettings = requireNonNull(authenticationSettings);</span>
+<span class="fc" id="L68">		this.userFactory = requireNonNull(userFactory);</span>
+<span class="fc" id="L69">	}</span>
+
+	@GetMapping(&quot;/login&quot;)
+	public String getLoginForm()
+	{
+<span class="fc" id="L74">		return &quot;login-modal&quot;;</span>
+	}
+
+	@GetMapping(&quot;/register&quot;)
+	public ModelAndView getRegisterForm()
+	{
+<span class="fc" id="L80">		ModelAndView model = new ModelAndView(&quot;register-modal&quot;);</span>
+<span class="fc" id="L81">		model.addObject(&quot;countries&quot;, CountryCodes.get());</span>
+<span class="fc" id="L82">		model.addObject(&quot;min_password_length&quot;, MIN_PASSWORD_LENGTH);</span>
+<span class="fc" id="L83">		return model;</span>
+	}
+
+	@GetMapping(&quot;/password/reset&quot;)
+	public String getPasswordResetForm()
+	{
+<span class="fc" id="L89">		return &quot;resetpassword-modal&quot;;</span>
+	}
+
+	@GetMapping(CHANGE_PASSWORD_RELATIVE_URI)
+	public ModelAndView getChangePasswordForm()
+	{
+<span class="nc" id="L95">		ModelAndView model = new ModelAndView(&quot;view-change-password&quot;);</span>
+<span class="nc" id="L96">		model.addObject(&quot;min_password_length&quot;, MIN_PASSWORD_LENGTH);</span>
+<span class="nc" id="L97">		return model;</span>
+	}
+
+	@PostMapping(CHANGE_PASSWORD_RELATIVE_URI)
+	public void changePassword(@Valid ChangePasswordForm form, HttpServletRequest request, HttpServletResponse response)
+			throws IOException
+	{
+		try
+		{
+			// Change password of current user
+<span class="nc" id="L107">			Authentication authentication = SecurityContextHolder.getContext().getAuthentication();</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">			if (authentication != null)</span>
+			{
+<span class="nc" id="L110">				accountService.changePassword(authentication.getName(), form.getPassword1());</span>
+			}
+
+			// Redirect to homepage
+<span class="nc" id="L114">			redirectStrategy.sendRedirect(request, response, &quot;/&quot;);</span>
+		}
+<span class="nc" id="L116">		catch (Exception e)</span>
+		{
+<span class="nc" id="L118">			LOG.error(&quot;Error changing password&quot;, e);</span>
+<span class="nc" id="L119">		}</span>
+<span class="nc" id="L120">	}</span>
+
+	// Spring's FormHttpMessageConverter cannot bind target classes (as ModelAttribute can)
+	@PostMapping(value = &quot;/register&quot;, headers = &quot;Content-Type=application/x-www-form-urlencoded&quot;)
+	@ResponseBody
+	public Map&lt;String, String&gt; registerUser(@Valid @ModelAttribute RegisterRequest registerRequest,
+			@Valid @ModelAttribute CaptchaRequest captchaRequest, HttpServletRequest request) throws Exception
+	{
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">		if (authenticationSettings.getSignUp())</span>
+		{
+<span class="fc bfc" id="L130" title="All 2 branches covered.">			if (!registerRequest.getPassword().equals(registerRequest.getConfirmPassword()))</span>
+			{
+<span class="fc" id="L132">				throw new BindException(RegisterRequest.class, &quot;password does not match confirm password&quot;);</span>
+			}
+<span class="fc bfc" id="L134" title="All 2 branches covered.">			if (!captchaService.validateCaptcha(captchaRequest.getCaptcha()))</span>
+			{
+<span class="fc" id="L136">				throw new CaptchaException(&quot;invalid captcha answer&quot;);</span>
+			}
+<span class="fc" id="L138">			User user = toUser(registerRequest);</span>
+<span class="fc" id="L139">			String activationUri = null;</span>
+<span class="fc bfc" id="L140" title="All 2 branches covered.">			if (StringUtils.isEmpty(request.getHeader(&quot;X-Forwarded-Host&quot;)))</span>
+			{
+<span class="fc" id="L142">				activationUri = ServletUriComponentsBuilder.fromCurrentRequest()</span>
+<span class="fc" id="L143">														   .replacePath(URI + &quot;/activate&quot;)</span>
+<span class="fc" id="L144">														   .build()</span>
+<span class="fc" id="L145">														   .toUriString();</span>
+			}
+			else
+			{
+<span class="fc" id="L149">				String scheme = request.getHeader(&quot;X-Forwarded-Proto&quot;);</span>
+<span class="fc bfc" id="L150" title="All 2 branches covered.">				if (scheme == null) scheme = request.getScheme();</span>
+<span class="fc" id="L151">				activationUri = scheme + &quot;://&quot; + request.getHeader(&quot;X-Forwarded-Host&quot;) + URI + &quot;/activate&quot;;</span>
+			}
+<span class="fc" id="L153">			accountService.createUser(user, activationUri);</span>
+
+<span class="fc bfc" id="L155" title="All 2 branches covered.">			String successMessage = authenticationSettings.getSignUpModeration() ? REGISTRATION_SUCCESS_MESSAGE_ADMIN : REGISTRATION_SUCCESS_MESSAGE_USER;</span>
+<span class="fc" id="L156">			captchaService.removeCaptcha();</span>
+<span class="fc" id="L157">			return Collections.singletonMap(&quot;message&quot;, successMessage);</span>
+		}
+		else
+		{
+<span class="nc" id="L161">			throw new NoPermissionException(&quot;Self registration is disabled&quot;);</span>
+		}
+	}
+
+	@GetMapping(&quot;/activate/{activationCode}&quot;)
+	public String activateUser(@Valid @NotNull @PathVariable String activationCode, Model model)
+	{
+		try
+		{
+<span class="fc" id="L170">			accountService.activateUser(activationCode);</span>
+<span class="fc" id="L171">			model.addAttribute(&quot;successMessage&quot;, &quot;Your account has been activated, you can now sign in.&quot;);</span>
+		}
+<span class="fc" id="L173">		catch (MolgenisUserException e)</span>
+		{
+<span class="fc" id="L175">			model.addAttribute(&quot;warningMessage&quot;, e.getMessage());</span>
+		}
+<span class="nc" id="L177">		catch (RuntimeException e)</span>
+		{
+<span class="nc" id="L179">			model.addAttribute(&quot;errorMessage&quot;, e.getMessage());</span>
+<span class="fc" id="L180">		}</span>
+<span class="fc" id="L181">		return &quot;forward:/&quot;;</span>
+	}
+
+	// Spring's FormHttpMessageConverter cannot bind target classes (as ModelAttribute can)
+	@PostMapping(value = &quot;/password/reset&quot;, headers = &quot;Content-Type=application/x-www-form-urlencoded&quot;)
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void resetPassword(@Valid @ModelAttribute PasswordResetRequest passwordResetRequest)
+	{
+<span class="fc" id="L189">		accountService.resetPassword(passwordResetRequest.getEmail());</span>
+<span class="fc" id="L190">	}</span>
+
+	@ExceptionHandler(MolgenisDataAccessException.class)
+	@ResponseStatus(value = HttpStatus.UNAUTHORIZED)
+	private void handleMolgenisDataAccessException(MolgenisDataAccessException e)
+	{
+<span class="nc" id="L196">	}</span>
+
+	@ExceptionHandler(CaptchaException.class)
+	@ResponseStatus(value = HttpStatus.BAD_REQUEST)
+	private void handleCaptchaException(CaptchaException e)
+	{
+<span class="fc" id="L202">	}</span>
+
+	@ExceptionHandler(MolgenisUserException.class)
+	@ResponseStatus(value = HttpStatus.BAD_REQUEST)
+	@ResponseBody
+	public ErrorMessageResponse handleMolgenisUserException(MolgenisUserException e)
+	{
+<span class="nc" id="L209">		LOG.debug(&quot;&quot;, e);</span>
+<span class="nc" id="L210">		return new ErrorMessageResponse(Collections.singletonList(new ErrorMessage(e.getMessage())));</span>
+	}
+
+	@ExceptionHandler(UsernameAlreadyExistsException.class)
+	@ResponseStatus(value = HttpStatus.BAD_REQUEST)
+	@ResponseBody
+	public ErrorMessageResponse handleUsernameAlreadyExistsException(UsernameAlreadyExistsException e)
+	{
+<span class="nc" id="L218">		LOG.debug(&quot;&quot;, e);</span>
+<span class="nc" id="L219">		return new ErrorMessageResponse(Collections.singletonList(new ErrorMessage(e.getMessage())));</span>
+	}
+
+	@ExceptionHandler(EmailAlreadyExistsException.class)
+	@ResponseStatus(value = HttpStatus.BAD_REQUEST)
+	@ResponseBody
+	public ErrorMessageResponse handleEmailAlreadyExistsException(EmailAlreadyExistsException e)
+	{
+<span class="nc" id="L227">		LOG.debug(&quot;&quot;, e);</span>
+<span class="nc" id="L228">		return new ErrorMessageResponse(Collections.singletonList(new ErrorMessage(e.getMessage())));</span>
+	}
+
+	@ExceptionHandler(MolgenisDataException.class)
+	@ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
+	@ResponseBody
+	public ErrorMessageResponse handleMolgenisDataException(MolgenisDataException e)
+	{
+<span class="nc" id="L236">		LOG.error(&quot;&quot;, e);</span>
+<span class="nc" id="L237">		return new ErrorMessageResponse(Collections.singletonList(new ErrorMessage(e.getMessage())));</span>
+	}
+
+	@ExceptionHandler(RuntimeException.class)
+	@ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
+	@ResponseBody
+	public ErrorMessageResponse handleRuntimeException(RuntimeException e)
+	{
+<span class="nc" id="L245">		LOG.error(&quot;&quot;, e);</span>
+<span class="nc" id="L246">		return new ErrorMessageResponse(Collections.singletonList(new ErrorMessage(e.getMessage())));</span>
+	}
+
+	private User toUser(RegisterRequest request)
+	{
+<span class="fc" id="L251">		User user = userFactory.create();</span>
+<span class="fc" id="L252">		user.setUsername(request.getUsername());</span>
+<span class="fc" id="L253">		user.setPassword(request.getPassword());</span>
+<span class="fc" id="L254">		user.setEmail(request.getEmail());</span>
+<span class="fc" id="L255">		user.setPhone(request.getPhone());</span>
+<span class="fc" id="L256">		user.setFax(request.getFax());</span>
+<span class="fc" id="L257">		user.setTollFreePhone(request.getTollFreePhone());</span>
+<span class="fc" id="L258">		user.setAddress(request.getAddress());</span>
+<span class="fc" id="L259">		user.setTitle(request.getTitle());</span>
+<span class="fc" id="L260">		user.setLastName(request.getLastname());</span>
+<span class="fc" id="L261">		user.setFirstName(request.getFirstname());</span>
+<span class="fc" id="L262">		user.setDepartment(request.getDepartment());</span>
+<span class="fc" id="L263">		user.setCity(request.getCity());</span>
+<span class="fc" id="L264">		user.setCountry(CountryCodes.get(request.getCountry()));</span>
+<span class="fc" id="L265">		user.setChangePassword(false);</span>
+<span class="fc" id="L266">		user.setSuperuser(false);</span>
+<span class="fc" id="L267">		return user;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

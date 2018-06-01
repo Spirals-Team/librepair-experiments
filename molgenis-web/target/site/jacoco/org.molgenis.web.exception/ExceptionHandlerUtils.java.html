@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExceptionHandlerUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">web</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.web.exception</a> &gt; <span class="el_source">ExceptionHandlerUtils.java</span></div><h1>ExceptionHandlerUtils.java</h1><pre class="source lang-java linenums">package org.molgenis.web.exception;
+
+import org.molgenis.i18n.MessageSourceHolder;
+import org.molgenis.web.ErrorMessageResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.MessageSource;
+import org.springframework.context.i18n.LocaleContextHolder;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.web.util.matcher.ELRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.validation.BindingResult;
+import org.springframework.validation.Errors;
+import org.springframework.validation.FieldError;
+import org.springframework.validation.ObjectError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.ModelAndView;
+
+import javax.servlet.http.HttpServletRequest;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+import static com.google.common.collect.Lists.newArrayList;
+
+class ExceptionHandlerUtils
+{
+	private static final String VIEW_EXCEPTION = &quot;view-exception&quot;;
+	private static final String KEY_ERROR_MESSAGE_RESPONSE = &quot;errorMessageResponse&quot;;
+	public static final String DEVELOPMENT = &quot;development&quot;;
+	public static final String PRODUCTION = &quot;production&quot;;
+	public static final String STACK_TRACE = &quot;stackTrace&quot;;
+	public static final String HTTP_STATUS_CODE = &quot;httpStatusCode&quot;;
+
+<span class="fc" id="L41">	private static final RequestMatcher requestMatcher = new ELRequestMatcher(</span>
+			&quot;hasHeader('X-Requested-With','XMLHttpRequest')&quot;);
+	public static final String OPTIONS = &quot;OPTIONS&quot;;
+
+<span class="fc" id="L45">	private static final Logger LOG = LoggerFactory.getLogger(ExceptionHandlerUtils.class);</span>
+
+	private ExceptionHandlerUtils()
+	{
+	}
+
+	static Object handleException(Exception e, HandlerMethod handlerMethod, HttpStatus httpStatus, String errorCode,
+			String environment)
+	{
+<span class="fc" id="L54">		return handleException(e, isHtmlRequest(handlerMethod), httpStatus, errorCode, environment);</span>
+	}
+
+	static Object handleException(Exception e, HandlerMethod handlerMethod, HttpStatus httpStatus, String errorCode)
+	{
+<span class="fc" id="L59">		return handleException(e, isHtmlRequest(handlerMethod), httpStatus, errorCode, PRODUCTION);</span>
+	}
+
+	static Object handleException(Exception e, HttpServletRequest httpServletRequest, HttpStatus httpStatus,
+			String errorCode, String environment)
+	{
+<span class="nc" id="L65">		return handleException(e, isHtmlRequest(httpServletRequest), httpStatus, errorCode, environment);</span>
+	}
+
+	static Object handleException(Exception e, HttpServletRequest httpServletRequest, HttpStatus httpStatus,
+			String errorCode)
+	{
+<span class="fc" id="L71">		return handleException(e, isHtmlRequest(httpServletRequest), httpStatus, errorCode, PRODUCTION);</span>
+	}
+
+	private static Object handleException(Exception e, boolean isHtmlRequest, HttpStatus httpStatus, String errorCode,
+			String environment)
+	{
+<span class="fc" id="L77">		LOG.info(&quot;&quot;, e);</span>
+<span class="fc" id="L78">		ErrorMessageResponse errorMessageResponse = createErrorMessageResponse(e, errorCode);</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">		if (isHtmlRequest)</span>
+		{
+<span class="fc" id="L81">			Map&lt;String, Object&gt; model = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L82">			model.put(KEY_ERROR_MESSAGE_RESPONSE, errorMessageResponse);</span>
+<span class="fc" id="L83">			model.put(HTTP_STATUS_CODE, httpStatus.value());</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">			if (environment.equals(DEVELOPMENT))</span>
+			{
+<span class="fc" id="L86">				model.put(STACK_TRACE, e.getStackTrace());</span>
+			}
+<span class="fc" id="L88">			return new ModelAndView(VIEW_EXCEPTION, model, httpStatus);</span>
+		}
+		else
+		{
+<span class="fc" id="L92">			return new ResponseEntity&lt;&gt;(errorMessageResponse, httpStatus);</span>
+		}
+	}
+
+	private static ErrorMessageResponse createErrorMessageResponse(Exception e, String errorCode)
+	{
+<span class="fc bfc" id="L98" title="All 2 branches covered.">		if (e instanceof Errors)</span>
+		{
+<span class="fc" id="L100">			return getErrorMessageResponse((Errors) e);</span>
+		}
+<span class="fc bfc" id="L102" title="All 2 branches covered.">		else if (e instanceof MethodArgumentNotValidException)</span>
+		{
+<span class="fc" id="L104">			return getErrorMessageResponse(((MethodArgumentNotValidException) e).getBindingResult());</span>
+		}
+		else
+		{
+<span class="fc" id="L108">			return new ErrorMessageResponse(new ErrorMessageResponse.ErrorMessage(e.getLocalizedMessage(), errorCode));</span>
+		}
+	}
+
+	private static ErrorMessageResponse getErrorMessageResponse(Errors errors)
+	{
+<span class="fc" id="L114">		List&lt;ErrorMessageResponse.ErrorMessage&gt; errorMessages = newArrayList();</span>
+<span class="fc" id="L115">		Locale locale = LocaleContextHolder.getLocale();</span>
+<span class="fc" id="L116">		MessageSource messageSource = MessageSourceHolder.getMessageSource();</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">		for (ObjectError objectError : errors.getGlobalErrors())</span>
+		{
+<span class="fc" id="L119">			String message = messageSource.getMessage(&quot;org.molgenis.web.exception.ObjectError&quot;,</span>
+<span class="fc" id="L120">					new Object[] { objectError.getObjectName(), objectError }, locale);</span>
+<span class="fc" id="L121">			errorMessages.add(new ErrorMessageResponse.ErrorMessage(message, objectError.getCode()));</span>
+<span class="fc" id="L122">		}</span>
+<span class="fc bfc" id="L123" title="All 2 branches covered.">		for (FieldError fieldError : errors.getFieldErrors())</span>
+		{
+<span class="fc" id="L125">			String message = messageSource.getMessage(&quot;org.molgenis.web.exception.FieldError&quot;,</span>
+<span class="fc" id="L126">					new Object[] { fieldError.getField(), fieldError.getObjectName(), fieldError }, locale);</span>
+<span class="fc" id="L127">			errorMessages.add(new ErrorMessageResponse.ErrorMessage(message, fieldError.getCode()));</span>
+<span class="fc" id="L128">		}</span>
+<span class="fc" id="L129">		return new ErrorMessageResponse(errorMessages);</span>
+	}
+
+	private static boolean isHtmlRequest(HandlerMethod handlerMethod)
+	{
+<span class="pc bpc" id="L134" title="1 of 4 branches missed.">		return !(handlerMethod.hasMethodAnnotation(ResponseBody.class) || handlerMethod.hasMethodAnnotation(</span>
+<span class="pc bpc" id="L135" title="1 of 2 branches missed.">				ResponseStatus.class) || handlerMethod.getBeanType().isAnnotationPresent(ResponseBody.class)</span>
+<span class="pc bpc" id="L136" title="1 of 2 branches missed.">				|| handlerMethod.getBeanType().isAnnotationPresent(RestController.class));</span>
+	}
+
+	private static boolean isHtmlRequest(HttpServletRequest httpServletRequest)
+	{
+<span class="pc bpc" id="L141" title="3 of 4 branches missed.">		return !(OPTIONS.equals(httpServletRequest.getMethod()) || requestMatcher.matches(httpServletRequest));</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

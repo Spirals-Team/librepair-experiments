@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EmxImportService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-import</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.importer.emx</a> &gt; <span class="el_source">EmxImportService.java</span></div><h1>EmxImportService.java</h1><pre class="source lang-java linenums">package org.molgenis.data.importer.emx;
+
+import com.google.common.collect.ImmutableMap;
+import org.molgenis.data.DataService;
+import org.molgenis.data.DatabaseAction;
+import org.molgenis.data.RepositoryCollection;
+import org.molgenis.data.importer.*;
+import org.molgenis.data.meta.MetaDataService;
+import org.molgenis.data.meta.model.EntityType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.Ordered;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+
+import java.io.File;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Set;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Maps.newLinkedHashMap;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.StreamSupport.stream;
+
+@Component
+public class EmxImportService implements ImportService
+{
+<span class="nc" id="L29">	private static final Logger LOG = LoggerFactory.getLogger(EmxImportService.class);</span>
+
+	private final MetaDataParser parser;
+	private final ImportWriter writer;
+	private final DataService dataService;
+
+	public EmxImportService(MetaDataParser parser, ImportWriter writer, DataService dataService)
+<span class="nc" id="L36">	{</span>
+<span class="nc" id="L37">		this.parser = requireNonNull(parser);</span>
+<span class="nc" id="L38">		this.writer = requireNonNull(writer);</span>
+<span class="nc" id="L39">		this.dataService = requireNonNull(dataService);</span>
+<span class="nc" id="L40">	}</span>
+
+	@Override
+	public boolean canImport(File file, RepositoryCollection source)
+	{
+<span class="nc" id="L45">		String fileNameExtension = StringUtils.getFilenameExtension(file.getName());</span>
+<span class="nc bnc" id="L46" title="All 2 branches missed.">		if (getSupportedFileExtensions().contains(fileNameExtension.toLowerCase()))</span>
+		{
+<span class="nc bnc" id="L48" title="All 2 branches missed.">			for (String entityTypeId : source.getEntityTypeIds())</span>
+			{
+<span class="nc bnc" id="L50" title="All 2 branches missed.">				if (entityTypeId.equalsIgnoreCase(EmxMetaDataParser.EMX_ATTRIBUTES)) return true;</span>
+<span class="nc bnc" id="L51" title="All 2 branches missed.">				if (entityTypeId.equalsIgnoreCase(EmxMetaDataParser.EMX_LANGUAGES)) return true;</span>
+<span class="nc bnc" id="L52" title="All 2 branches missed.">				if (entityTypeId.equalsIgnoreCase(EmxMetaDataParser.EMX_I18NSTRINGS)) return true;</span>
+<span class="nc bnc" id="L53" title="All 2 branches missed.">				if (dataService.getMeta().getEntityType(entityTypeId) != null) return true;</span>
+<span class="nc" id="L54">			}</span>
+		}
+
+<span class="nc" id="L57">		return false;</span>
+	}
+
+	@Override
+	public EntityImportReport doImport(final RepositoryCollection source, DatabaseAction databaseAction,
+			String packageId)
+	{
+<span class="nc" id="L64">		ParsedMetaData parsedMetaData = parser.parse(source, packageId);</span>
+
+		// TODO altered entities (merge, see getEntityType)
+<span class="nc" id="L67">		return doImport(new EmxImportJob(databaseAction, source, parsedMetaData, packageId));</span>
+	}
+
+	/**
+	 * Does the import in a transaction. Manually rolls back schema changes if something goes wrong. Refreshes the
+	 * metadata.
+	 *
+	 * @return {@link EntityImportReport} describing what happened
+	 */
+	public EntityImportReport doImport(EmxImportJob job)
+	{
+		try
+		{
+<span class="nc" id="L80">			return writer.doImport(job);</span>
+		}
+<span class="nc" id="L82">		catch (Exception e)</span>
+		{
+<span class="nc" id="L84">			LOG.error(&quot;Error handling EmxImportJob&quot;, e);</span>
+<span class="nc" id="L85">			throw e;</span>
+		}
+	}
+
+	@Override
+	public EntitiesValidationReport validateImport(File file, RepositoryCollection source)
+	{
+<span class="nc" id="L92">		return parser.validate(source);</span>
+	}
+
+	@Override
+	public int getOrder()
+	{
+<span class="nc" id="L98">		return Ordered.HIGHEST_PRECEDENCE;</span>
+	}
+
+	@Override
+	public List&lt;DatabaseAction&gt; getSupportedDatabaseActions()
+	{
+<span class="nc" id="L104">		return newArrayList(DatabaseAction.values());</span>
+	}
+
+	@Override
+	public boolean getMustChangeEntityName()
+	{
+<span class="nc" id="L110">		return false;</span>
+	}
+
+	@Override
+	public Set&lt;String&gt; getSupportedFileExtensions()
+	{
+<span class="nc" id="L116">		return EmxFileExtensions.getEmx();</span>
+	}
+
+	@Override
+	public LinkedHashMap&lt;String, Boolean&gt; determineImportableEntities(MetaDataService metaDataService,
+			RepositoryCollection repositoryCollection, String selectedPackage)
+	{
+<span class="nc" id="L123">		List&lt;String&gt; skipEntities = newArrayList(EmxMetaDataParser.EMX_ATTRIBUTES, EmxMetaDataParser.EMX_PACKAGES,</span>
+				EmxMetaDataParser.EMX_ENTITIES, EmxMetaDataParser.EMX_TAGS);
+<span class="nc" id="L125">		ImmutableMap&lt;String, EntityType&gt; entityTypeMap = parser.parse(repositoryCollection, selectedPackage)</span>
+<span class="nc" id="L126">															   .getEntityMap();</span>
+
+<span class="nc" id="L128">		LinkedHashMap&lt;String, Boolean&gt; importableEntitiesMap = newLinkedHashMap();</span>
+<span class="nc" id="L129">		stream(entityTypeMap.keySet().spliterator(), false).forEach(entityTypeId -&gt;</span>
+		{
+<span class="nc bnc" id="L131" title="All 4 branches missed.">			boolean importable = skipEntities.contains(entityTypeId) || metaDataService.isEntityTypeCompatible(</span>
+<span class="nc" id="L132">					entityTypeMap.get(entityTypeId));</span>
+
+<span class="nc" id="L134">			importableEntitiesMap.put(entityTypeId, importable);</span>
+<span class="nc" id="L135">		});</span>
+
+<span class="nc" id="L137">		return importableEntitiesMap;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

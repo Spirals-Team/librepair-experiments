@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AmazonBucketClientImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">amazon-bucket</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.amazon.bucket.client</a> &gt; <span class="el_source">AmazonBucketClientImpl.java</span></div><h1>AmazonBucketClientImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.amazon.bucket.client;
+
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.model.GetObjectRequest;
+import com.amazonaws.services.s3.model.ObjectListing;
+import com.amazonaws.services.s3.model.S3Object;
+import com.amazonaws.services.s3.model.S3ObjectSummary;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.excel.ExcelFileExtensions;
+import org.molgenis.data.file.FileStore;
+import org.springframework.stereotype.Component;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Date;
+import java.util.TreeMap;
+
+@Component
+<span class="fc" id="L24">public class AmazonBucketClientImpl implements AmazonBucketClient</span>
+{
+	@Override
+	public AmazonS3 getClient(String accessKey, String secretKey, String region)
+	{
+<span class="nc" id="L29">		BasicAWSCredentials awsCreds = new BasicAWSCredentials(accessKey, secretKey);</span>
+<span class="nc" id="L30">		return AmazonS3ClientBuilder.standard()</span>
+<span class="nc" id="L31">									.withCredentials(new AWSStaticCredentialsProvider(awsCreds))</span>
+<span class="nc" id="L32">									.withRegion(region)</span>
+<span class="nc" id="L33">									.build();</span>
+	}
+
+	@Override
+	public File downloadFile(AmazonS3 s3Client, FileStore fileStore, String jobIdentifier, String bucketName,
+			String keyName, String extension, boolean isExpression, String targetEntityType) throws IOException
+	{
+		String key;
+		//The key can be a regular expression instead of the actual key.
+		//This is indicated by the &quot;isExpression&quot; boolean
+<span class="fc bfc" id="L43" title="All 2 branches covered.">		if (isExpression)</span>
+		{
+<span class="fc" id="L45">			key = this.getMostRecentMatchingKey(s3Client, bucketName, keyName);</span>
+		}
+		else
+		{
+<span class="fc" id="L49">			key = keyName;</span>
+		}
+<span class="fc" id="L51">		S3Object s3Object = s3Client.getObject(new GetObjectRequest(bucketName, key));</span>
+<span class="fc" id="L52">		InputStream in = s3Object.getObjectContent();</span>
+
+<span class="fc" id="L54">		return storeFile(fileStore, key, extension, targetEntityType, jobIdentifier, in);</span>
+	}
+
+	private File storeFile(FileStore fileStore, String key, String extension, String targetEntityName,
+			String jobIdentifier, InputStream in) throws IOException
+	{
+		//no extension given, default is excel
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">		if (!StringUtils.isNotEmpty(extension))</span>
+		{
+<span class="fc" id="L63">			extension = &quot;xlsx&quot;;</span>
+		}
+<span class="fc" id="L65">		String relativePath = &quot;bucket_&quot; + jobIdentifier;</span>
+<span class="fc" id="L66">		File folder = new File(fileStore.getStorageDir(), relativePath);</span>
+<span class="fc" id="L67">		folder.mkdir();</span>
+
+		String filename;
+<span class="pc bpc" id="L70" title="3 of 4 branches missed.">		if (StringUtils.isNotEmpty(targetEntityName) &amp;&amp; !ExcelFileExtensions.getExcel().contains(extension))</span>
+		{
+<span class="nc" id="L72">			filename = String.format(&quot;%s%s%s.%s&quot;, relativePath, File.separatorChar, targetEntityName, extension);</span>
+		}
+		else
+		{
+<span class="fc" id="L76">			String fileRoot = key.replaceAll(&quot;[\\/:*?\&quot;&lt;&gt;|]&quot;, &quot;_&quot;);</span>
+<span class="fc" id="L77">			filename = String.format(&quot;%s%s%s.%s&quot;, relativePath, File.separatorChar, fileRoot, extension);</span>
+		}
+
+<span class="fc" id="L80">		return fileStore.store(in, filename);</span>
+	}
+
+	//in case of an key expression all matching keys are collected and the most recent file is downloaded.
+	private String getMostRecentMatchingKey(AmazonS3 s3Client, String bucketName, String regex)
+	{
+<span class="fc" id="L86">		ObjectListing objectListing = s3Client.listObjects(bucketName);</span>
+<span class="fc" id="L87">		TreeMap&lt;Date, String&gt; keys = new TreeMap&lt;&gt;();</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">		for (S3ObjectSummary objectSummary : objectListing.getObjectSummaries())</span>
+		{
+<span class="fc bfc" id="L90" title="All 2 branches covered.">			if (objectSummary.getKey().matches(regex))</span>
+			{
+<span class="fc" id="L92">				keys.put(objectSummary.getLastModified(), objectSummary.getKey());</span>
+			}
+<span class="fc" id="L94">		}</span>
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">		if (keys.size() == 0) throw new MolgenisDataException(&quot;No key matching regular expression: &quot; + regex);</span>
+<span class="fc" id="L96">		return keys.lastEntry().getValue();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

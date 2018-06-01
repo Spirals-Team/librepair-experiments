@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexedRepositoryDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-index</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.index</a> &gt; <span class="el_source">IndexedRepositoryDecorator.java</span></div><h1>IndexedRepositoryDecorator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.index;
+
+import org.molgenis.data.*;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.aggregation.AggregateQuery;
+import org.molgenis.data.aggregation.AggregateResult;
+import org.molgenis.data.index.exception.UnknownIndexException;
+import org.molgenis.data.index.job.IndexJobScheduler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
+
+import static java.lang.String.format;
+import static java.util.Collections.unmodifiableSet;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.QueryUtils.*;
+import static org.molgenis.data.RepositoryCapability.AGGREGATEABLE;
+import static org.molgenis.data.RepositoryCapability.QUERYABLE;
+
+/**
+ * Decorator for indexed repositories. Sends all queries with operators that are not supported by the decorated
+ * repository to the index.
+ */
+class IndexedRepositoryDecorator extends AbstractRepositoryDecorator&lt;Entity&gt;
+{
+<span class="fc" id="L32">	private static final Logger LOG = LoggerFactory.getLogger(IndexedRepositoryDecorator.class);</span>
+	private static final String INDEX_REPOSITORY = &quot;Index Repository&quot;;
+	private static final String DECORATED_REPOSITORY = &quot;Decorated Repository&quot;;
+
+	private final SearchService searchService;
+	private final IndexJobScheduler indexJobScheduler;
+
+	/**
+	 * Operators NOT supported by the decorated repository.
+	 */
+	private Set&lt;Operator&gt; unsupportedOperators;
+
+	IndexedRepositoryDecorator(Repository&lt;Entity&gt; delegateRepository, SearchService searchService,
+			IndexJobScheduler indexJobScheduler)
+	{
+<span class="fc" id="L47">		super(delegateRepository);</span>
+<span class="fc" id="L48">		this.searchService = requireNonNull(searchService);</span>
+<span class="fc" id="L49">		this.indexJobScheduler = requireNonNull(indexJobScheduler);</span>
+<span class="fc" id="L50">		Set&lt;Operator&gt; operators = getQueryOperators();</span>
+<span class="fc" id="L51">		operators.removeAll(delegate().getQueryOperators());</span>
+<span class="fc" id="L52">		unsupportedOperators = Collections.unmodifiableSet(operators);</span>
+<span class="fc" id="L53">	}</span>
+
+	@Override
+	public Entity findOne(Query&lt;Entity&gt; q)
+	{
+<span class="fc bfc" id="L58" title="All 2 branches covered.">		if (querySupported(q))</span>
+		{
+<span class="fc" id="L60">			LOG.debug(&quot;public Entity findOne({}) entityTypeId: [{}] repository: [{}]&quot;, q, getEntityType().getId(),</span>
+					DECORATED_REPOSITORY);
+<span class="fc" id="L62">			return delegate().findOne(q);</span>
+		}
+		else
+		{
+<span class="fc" id="L66">			LOG.debug(&quot;public Entity findOne({}) entityTypeId: [{}] repository: [{}]&quot;, q, getEntityType().getId(),</span>
+					INDEX_REPOSITORY);
+<span class="fc" id="L68">			Object entityId = tryTwice(() -&gt; searchService.searchOne(getEntityType(), q));</span>
+<span class="pc bpc" id="L69" title="1 of 2 branches missed.">			return entityId != null ? delegate().findOneById(entityId, q.getFetch()) : null;</span>
+		}
+
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; findAll(Query&lt;Entity&gt; q)
+	{
+<span class="fc bfc" id="L77" title="All 2 branches covered.">		if (querySupported(q))</span>
+		{
+<span class="fc" id="L79">			LOG.debug(&quot;public Entity findAll({}) entityTypeId: [{}] repository: [{}]&quot;, q, getEntityType().getId(),</span>
+					DECORATED_REPOSITORY);
+<span class="fc" id="L81">			return delegate().findAll(q);</span>
+		}
+		else
+		{
+<span class="fc" id="L85">			LOG.debug(&quot;public Entity findAll({}) entityTypeId: [{}] repository: [{}]&quot;, q, getEntityType().getId(),</span>
+					INDEX_REPOSITORY);
+<span class="fc" id="L87">			Stream&lt;Object&gt; entityIds = tryTwice(() -&gt; searchService.search(getEntityType(), q));</span>
+<span class="fc" id="L88">			return delegate().findAll(entityIds, q.getFetch());</span>
+		}
+	}
+
+	/**
+	 * Gets the capabilities of the underlying repository and adds three read capabilities provided by the index:
+	 * {@link RepositoryCapability#INDEXABLE}, {@link RepositoryCapability#QUERYABLE} and {@link RepositoryCapability#AGGREGATEABLE}.
+	 * Does not add other index capabilities like{@link RepositoryCapability#WRITABLE} because those might conflict with the underlying repository.
+	 */
+	@Override
+	public Set&lt;RepositoryCapability&gt; getCapabilities()
+	{
+<span class="fc" id="L100">		Set&lt;RepositoryCapability&gt; capabilities = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L101">		capabilities.addAll(delegate().getCapabilities());</span>
+<span class="fc" id="L102">		capabilities.addAll(EnumSet.of(QUERYABLE, AGGREGATEABLE));</span>
+<span class="fc" id="L103">		return unmodifiableSet(capabilities);</span>
+	}
+
+	@Override
+	public Set&lt;Operator&gt; getQueryOperators()
+	{
+<span class="fc" id="L109">		return EnumSet.allOf(Operator.class);</span>
+	}
+
+	@Override
+	public long count(Query&lt;Entity&gt; q)
+	{
+		// TODO check if the index is stable. If index is stable you can better check index for count results
+<span class="fc bfc" id="L116" title="All 2 branches covered.">		if (querySupported(q))</span>
+		{
+<span class="fc" id="L118">			LOG.debug(&quot;public long count({}) entityTypeId: [{}] repository: [{}]&quot;, q, getEntityType().getId(),</span>
+					DECORATED_REPOSITORY);
+<span class="fc" id="L120">			return delegate().count(q);</span>
+		}
+		else
+		{
+<span class="fc" id="L124">			LOG.debug(&quot;public long count({}) entityTypeId: [{}] repository: [{}]&quot;, q, getEntityType().getId(),</span>
+					INDEX_REPOSITORY);
+<span class="fc" id="L126">			return tryTwice(() -&gt; searchService.count(getEntityType(), q));</span>
+		}
+	}
+
+	@Override
+	public AggregateResult aggregate(AggregateQuery aggregateQuery)
+	{
+<span class="fc" id="L133">		return tryTwice(() -&gt; searchService.aggregate(getEntityType(), aggregateQuery));</span>
+	}
+
+	/**
+	 * Executes an action on an index that may be unstable.
+	 *
+	 * If the Index was unknown, waits for the index to be stable and then tries again.
+	 * @param action the action that gets executed
+	 * @param &lt;R&gt; the result type of the action
+	 * @return the result
+	 * @throws MolgenisDataException if the action still failed when the index was stable, with a translated error message.
+	 */
+	private &lt;R&gt; R tryTwice(Supplier&lt;R&gt; action)
+	{
+		try
+		{
+<span class="fc" id="L149">			return action.get();</span>
+		}
+<span class="fc" id="L151">		catch (UnknownIndexException e)</span>
+		{
+<span class="fc" id="L153">			waitForIndexToBeStable();</span>
+			try
+			{
+<span class="fc" id="L156">				return action.get();</span>
+			}
+<span class="fc" id="L158">			catch (UnknownIndexException e1)</span>
+			{
+<span class="fc" id="L160">				throw new MolgenisDataException(</span>
+<span class="fc" id="L161">						format(&quot;Error executing query, index for entity type '%s' with id '%s' does not exist&quot;,</span>
+<span class="fc" id="L162">								getEntityType().getLabel(), getEntityType().getId()));</span>
+			}
+		}
+	}
+
+	/**
+	 * Checks if the underlying repository can handle this query. Queries with unsupported operators, queries that use
+	 * attributes with computed values or queries with nested query rule field are delegated to the index.
+	 */
+	private boolean querySupported(Query&lt;Entity&gt; q)
+	{
+<span class="fc bfc" id="L173" title="All 4 branches covered.">		return !containsAnyOperator(q, unsupportedOperators) &amp;&amp; !containsComputedAttribute(q, getEntityType())</span>
+<span class="fc bfc" id="L174" title="All 2 branches covered.">				&amp;&amp; !containsNestedQueryRuleField(q);</span>
+	}
+
+	private void waitForIndexToBeStable()
+	{
+		try
+		{
+<span class="fc" id="L181">			indexJobScheduler.waitForIndexToBeStableIncludingReferences(getEntityType());</span>
+		}
+<span class="nc" id="L183">		catch (InterruptedException e)</span>
+		{
+<span class="nc" id="L185">			Thread.currentThread().interrupt();</span>
+<span class="fc" id="L186">		}</span>
+<span class="fc" id="L187">	}</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

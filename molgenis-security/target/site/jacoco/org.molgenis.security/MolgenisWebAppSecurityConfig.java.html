@@ -1,0 +1,467 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MolgenisWebAppSecurityConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security</a> &gt; <span class="el_source">MolgenisWebAppSecurityConfig.java</span></div><h1>MolgenisWebAppSecurityConfig.java</h1><pre class="source lang-java linenums">package org.molgenis.security;
+
+import com.google.api.client.googleapis.auth.oauth2.GooglePublicKeysManager;
+import com.google.api.client.http.HttpTransport;
+import com.google.api.client.http.javanet.NetHttpTransport;
+import com.google.api.client.json.JsonFactory;
+import com.google.api.client.json.jackson2.JacksonFactory;
+import org.molgenis.data.DataService;
+import org.molgenis.data.security.auth.GroupMemberFactory;
+import org.molgenis.data.security.auth.TokenFactory;
+import org.molgenis.data.security.auth.UserFactory;
+import org.molgenis.data.security.user.UserService;
+import org.molgenis.security.account.AccountController;
+import org.molgenis.security.core.MolgenisPasswordEncoder;
+import org.molgenis.security.core.token.TokenService;
+import org.molgenis.security.core.utils.SecurityUtils;
+import org.molgenis.security.google.GoogleAuthenticationProcessingFilter;
+import org.molgenis.security.login.MolgenisLoginController;
+import org.molgenis.security.settings.AuthenticationSettings;
+import org.molgenis.security.token.DataServiceTokenService;
+import org.molgenis.security.token.TokenAuthenticationFilter;
+import org.molgenis.security.token.TokenAuthenticationProvider;
+import org.molgenis.security.token.TokenGenerator;
+import org.molgenis.security.twofactor.TwoFactorAuthenticationController;
+import org.molgenis.security.twofactor.auth.*;
+import org.molgenis.security.twofactor.service.OtpService;
+import org.molgenis.security.twofactor.service.RecoveryService;
+import org.molgenis.security.twofactor.service.TwoFactorAuthenticationService;
+import org.molgenis.security.user.MolgenisUserDetailsChecker;
+import org.molgenis.security.user.UserAccountService;
+import org.molgenis.security.user.UserDetailsService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchyAuthoritiesMapper;
+import org.springframework.security.access.intercept.RunAsImplAuthenticationProvider;
+import org.springframework.security.access.vote.RoleHierarchyVoter;
+import org.springframework.security.access.vote.RoleVoter;
+import org.springframework.security.authentication.AnonymousAuthenticationProvider;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.builders.WebSecurity;
+import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.security.config.annotation.web.configurers.ExpressionUrlAuthorizationConfigurer;
+import org.springframework.security.core.authority.AuthorityUtils;
+import org.springframework.security.core.authority.mapping.GrantedAuthoritiesMapper;
+import org.springframework.security.core.userdetails.UserDetailsChecker;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.DefaultRedirectStrategy;
+import org.springframework.security.web.RedirectStrategy;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
+import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.logout.SimpleUrlLogoutSuccessHandler;
+import org.springframework.security.web.authentication.switchuser.SwitchUserFilter;
+import org.springframework.security.web.header.writers.CacheControlHeadersWriter;
+import org.springframework.security.web.header.writers.DelegatingRequestMatcherHeaderWriter;
+import org.springframework.security.web.session.HttpSessionEventPublisher;
+import org.springframework.security.web.session.InvalidSessionStrategy;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+
+import javax.servlet.Filter;
+
+import static org.molgenis.core.framework.ui.ResourcePathPatterns.*;
+import static org.molgenis.security.UriConstants.PATH_SEGMENT_APPS;
+import static org.molgenis.security.google.GoogleAuthenticationProcessingFilter.GOOGLE_AUTHENTICATION_URL;
+
+<span class="nc" id="L74">public abstract class MolgenisWebAppSecurityConfig extends WebSecurityConfigurerAdapter</span>
+{
+	private static final String ANONYMOUS_AUTHENTICATION_KEY = &quot;anonymousAuthenticationKey&quot;;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private UserService userService;
+
+	@Autowired
+	private AuthenticationSettings authenticationSettings;
+
+	@Autowired
+	private TokenFactory tokenFactory;
+
+	@Autowired
+	private UserFactory userFactory;
+
+	@Autowired
+	private GroupMemberFactory groupMemberFactory;
+
+	@Autowired
+	private OtpService otpService;
+
+	@Autowired
+	private TwoFactorAuthenticationService twoFactorAuthenticationService;
+
+	@Autowired
+	private RecoveryService recoveryService;
+
+	@Autowired
+	private UserAccountService userAccountService;
+
+	@Override
+	protected void configure(HttpSecurity http) throws Exception
+	{
+		// do not write cache control headers for static resources
+<span class="nc" id="L112">		RequestMatcher matcher = new NegatedRequestMatcher(</span>
+				new OrRequestMatcher(new AntPathRequestMatcher(PATTERN_CSS), new AntPathRequestMatcher(PATTERN_JS),
+						new AntPathRequestMatcher(PATTERN_IMG), new AntPathRequestMatcher(PATTERN_FONTS)));
+
+<span class="nc" id="L116">		DelegatingRequestMatcherHeaderWriter cacheControlHeaderWriter = new DelegatingRequestMatcherHeaderWriter(</span>
+				matcher, new CacheControlHeadersWriter());
+
+<span class="nc" id="L119">		http.sessionManagement().invalidSessionStrategy(invalidSessionStrategy());</span>
+
+		// add default header options but use custom cache control header writer
+<span class="nc" id="L122">		http.cors().and().headers()</span>
+<span class="nc" id="L123">			.contentTypeOptions()</span>
+<span class="nc" id="L124">			.and()</span>
+<span class="nc" id="L125">			.xssProtection()</span>
+<span class="nc" id="L126">			.and()</span>
+<span class="nc" id="L127">			.httpStrictTransportSecurity()</span>
+<span class="nc" id="L128">			.and()</span>
+<span class="nc" id="L129">			.frameOptions()</span>
+<span class="nc" id="L130">			.and()</span>
+<span class="nc" id="L131">			.addHeaderWriter(cacheControlHeaderWriter);</span>
+
+<span class="nc" id="L133">		http.addFilterBefore(anonymousAuthFilter(), AnonymousAuthenticationFilter.class);</span>
+
+<span class="nc" id="L135">		http.authenticationProvider(anonymousAuthenticationProvider());</span>
+
+<span class="nc" id="L137">		http.authenticationProvider(tokenAuthenticationProvider());</span>
+
+<span class="nc" id="L139">		http.authenticationProvider(runAsAuthenticationProvider());</span>
+
+<span class="nc" id="L141">		http.addFilterBefore(tokenAuthenticationFilter(), AnonymousAuthenticationFilter.class);</span>
+
+<span class="nc" id="L143">		http.addFilterBefore(googleAuthenticationProcessingFilter(), TokenAuthenticationFilter.class);</span>
+
+<span class="nc" id="L145">		http.addFilterAfter(changePasswordFilter(), SwitchUserFilter.class);</span>
+
+<span class="nc" id="L147">		http.addFilterAfter(twoFactorAuthenticationFilter(), MolgenisChangePasswordFilter.class);</span>
+<span class="nc" id="L148">		http.authenticationProvider(twoFactorAuthenticationProvider());</span>
+<span class="nc" id="L149">		http.authenticationProvider(recoveryAuthenticationProvider());</span>
+
+<span class="nc" id="L151">		ExpressionUrlAuthorizationConfigurer&lt;HttpSecurity&gt;.ExpressionInterceptUrlRegistry expressionInterceptUrlRegistry = http</span>
+<span class="nc" id="L152">				.authorizeRequests();</span>
+<span class="nc" id="L153">		configureUrlAuthorization(expressionInterceptUrlRegistry);</span>
+
+<span class="nc" id="L155">		expressionInterceptUrlRegistry</span>
+
+<span class="nc" id="L157">				.antMatchers(MolgenisLoginController.URI)</span>
+<span class="nc" id="L158">				.permitAll()</span>
+
+<span class="nc" id="L160">				.antMatchers(TwoFactorAuthenticationController.URI + &quot;/**&quot;)</span>
+<span class="nc" id="L161">				.permitAll()</span>
+
+<span class="nc" id="L163">				.antMatchers(GOOGLE_AUTHENTICATION_URL)</span>
+<span class="nc" id="L164">				.permitAll()</span>
+
+<span class="nc" id="L166">				.antMatchers(&quot;/beacon/**&quot;)</span>
+<span class="nc" id="L167">				.permitAll()</span>
+
+<span class="nc" id="L169">				.antMatchers(&quot;/logo/**&quot;)</span>
+<span class="nc" id="L170">				.permitAll()</span>
+
+<span class="nc" id="L172">				.antMatchers(&quot;/molgenis.py&quot;)</span>
+<span class="nc" id="L173">				.permitAll()</span>
+
+<span class="nc" id="L175">				.antMatchers(&quot;/molgenis.R&quot;)</span>
+<span class="nc" id="L176">				.permitAll()</span>
+
+<span class="nc" id="L178">				.antMatchers(AccountController.CHANGE_PASSWORD_URI)</span>
+<span class="nc" id="L179">				.authenticated()</span>
+
+<span class="nc" id="L181">				.antMatchers(&quot;/account/**&quot;)</span>
+<span class="nc" id="L182">				.permitAll()</span>
+
+<span class="nc" id="L184">				.antMatchers(PATTERN_SWAGGER)</span>
+<span class="nc" id="L185">				.permitAll()</span>
+
+<span class="nc" id="L187">				.antMatchers(PATTERN_CSS)</span>
+<span class="nc" id="L188">				.permitAll()</span>
+
+<span class="nc" id="L190">				.antMatchers(PATTERN_IMG)</span>
+<span class="nc" id="L191">				.permitAll()</span>
+
+<span class="nc" id="L193">				.antMatchers(PATTERN_JS)</span>
+<span class="nc" id="L194">				.permitAll()</span>
+
+<span class="nc" id="L196">				.antMatchers(PATTERN_FONTS)</span>
+<span class="nc" id="L197">				.permitAll()</span>
+
+<span class="nc" id="L199">				.antMatchers(&quot;/html/**&quot;)</span>
+<span class="nc" id="L200">				.permitAll()</span>
+
+<span class="nc" id="L202">				.antMatchers(&quot;/plugin/void/**&quot;)</span>
+<span class="nc" id="L203">				.permitAll()</span>
+
+<span class="nc" id="L205">				.antMatchers(&quot;/api/**&quot;)</span>
+<span class="nc" id="L206">				.permitAll()</span>
+
+<span class="nc" id="L208">				.antMatchers(&quot;/webjars/**&quot;)</span>
+<span class="nc" id="L209">				.permitAll()</span>
+
+<span class="nc" id="L211">				.antMatchers(&quot;/search&quot;)</span>
+<span class="nc" id="L212">				.permitAll()</span>
+
+<span class="nc" id="L214">				.antMatchers(&quot;/captcha&quot;)</span>
+<span class="nc" id="L215">				.permitAll()</span>
+
+<span class="nc" id="L217">				.antMatchers(&quot;/dataindexerstatus&quot;)</span>
+<span class="nc" id="L218">				.authenticated()</span>
+
+<span class="nc" id="L220">				.antMatchers(&quot;/permission/**/read/**&quot;)</span>
+<span class="nc" id="L221">				.permitAll()</span>
+
+<span class="nc" id="L223">				.antMatchers(&quot;/permission/**/write/**&quot;)</span>
+<span class="nc" id="L224">				.permitAll()</span>
+
+<span class="nc" id="L226">				.antMatchers(&quot;/scripts/**/run&quot;)</span>
+<span class="nc" id="L227">				.authenticated()</span>
+
+<span class="nc" id="L229">				.antMatchers(&quot;/scripts/**/start&quot;)</span>
+<span class="nc" id="L230">				.authenticated()</span>
+
+<span class="nc" id="L232">				.antMatchers(&quot;/files/**&quot;)</span>
+<span class="nc" id="L233">				.permitAll()</span>
+
+<span class="nc" id="L235">				.antMatchers('/' + PATH_SEGMENT_APPS + &quot;/**&quot;)</span>
+<span class="nc" id="L236">				.permitAll()</span>
+
+<span class="nc" id="L238">				.anyRequest()</span>
+<span class="nc" id="L239">				.denyAll()</span>
+<span class="nc" id="L240">				.and()</span>
+
+<span class="nc" id="L242">				.httpBasic()</span>
+<span class="nc" id="L243">				.authenticationEntryPoint(authenticationEntryPoint())</span>
+<span class="nc" id="L244">				.and()</span>
+
+<span class="nc" id="L246">				.formLogin()</span>
+<span class="nc" id="L247">				.loginPage(MolgenisLoginController.URI)</span>
+<span class="nc" id="L248">				.failureUrl(MolgenisLoginController.URI + &quot;?error&quot;)</span>
+<span class="nc" id="L249">				.and()</span>
+
+<span class="nc" id="L251">				.logout().deleteCookies(&quot;JSESSIONID&quot;).addLogoutHandler((req, res, auth) -&gt;</span>
+		{
+<span class="nc bnc" id="L253" title="All 2 branches missed.">					if (req.getSession(false) != null</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">							&amp;&amp; req.getSession().getAttribute(&quot;continueWithUnsupportedBrowser&quot;) != null)</span>
+					{
+<span class="nc" id="L256">						req.setAttribute(&quot;continueWithUnsupportedBrowser&quot;, true);</span>
+					}
+<span class="nc" id="L258">				})</span>
+
+<span class="nc" id="L260">				.logoutSuccessHandler((req, res, auth) -&gt;</span>
+				{
+<span class="nc" id="L262">					StringBuilder logoutSuccessUrl = new StringBuilder(&quot;/&quot;);</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">					if (req.getAttribute(&quot;continueWithUnsupportedBrowser&quot;) != null)</span>
+					{
+<span class="nc" id="L265">						logoutSuccessUrl.append(&quot;?continueWithUnsupportedBrowser=true&quot;);</span>
+					}
+<span class="nc" id="L267">					SimpleUrlLogoutSuccessHandler logoutSuccessHandler = new SimpleUrlLogoutSuccessHandler();</span>
+<span class="nc" id="L268">					logoutSuccessHandler.setDefaultTargetUrl(logoutSuccessUrl.toString());</span>
+<span class="nc" id="L269">					logoutSuccessHandler.onLogoutSuccess(req, res, auth);</span>
+<span class="nc" id="L270">				})</span>
+<span class="nc" id="L271">				.and()</span>
+
+<span class="nc" id="L273">				.csrf()</span>
+<span class="nc" id="L274">				.disable();</span>
+
+<span class="nc" id="L276">	}</span>
+
+	@Override
+	public void configure(WebSecurity web) throws Exception
+	{
+<span class="nc" id="L281">		web.ignoring()</span>
+<span class="nc" id="L282">		   .antMatchers(PATTERN_CSS)</span>
+<span class="nc" id="L283">		   .antMatchers(PATTERN_IMG)</span>
+<span class="nc" id="L284">		   .antMatchers(PATTERN_JS)</span>
+<span class="nc" id="L285">		   .antMatchers(PATTERN_FONTS);</span>
+<span class="nc" id="L286">	}</span>
+
+	@Bean
+	public AuthenticationProvider runAsAuthenticationProvider()
+	{
+<span class="nc" id="L291">		RunAsImplAuthenticationProvider provider = new RunAsImplAuthenticationProvider();</span>
+<span class="nc" id="L292">		provider.setKey(&quot;Job Execution&quot;);</span>
+<span class="nc" id="L293">		return provider;</span>
+	}
+
+	protected abstract void configureUrlAuthorization(
+			ExpressionUrlAuthorizationConfigurer&lt;HttpSecurity&gt;.ExpressionInterceptUrlRegistry expressionInterceptUrlRegistry);
+
+	protected abstract RoleHierarchy roleHierarchy();
+
+	@Bean
+	public AnonymousAuthenticationFilter anonymousAuthFilter()
+	{
+<span class="nc" id="L304">		return new AnonymousAuthenticationFilter(ANONYMOUS_AUTHENTICATION_KEY, SecurityUtils.ANONYMOUS_USERNAME,</span>
+<span class="nc" id="L305">				AuthorityUtils.createAuthorityList(SecurityUtils.AUTHORITY_ANONYMOUS));</span>
+	}
+
+	@Bean
+	public AnonymousAuthenticationProvider anonymousAuthenticationProvider()
+	{
+<span class="nc" id="L311">		return new AnonymousAuthenticationProvider(ANONYMOUS_AUTHENTICATION_KEY);</span>
+	}
+
+	@Bean
+	public TokenService tokenService()
+	{
+<span class="nc" id="L317">		return new DataServiceTokenService(new TokenGenerator(), dataService, userDetailsService(), tokenFactory);</span>
+	}
+
+	@Bean
+	public AuthenticationProvider tokenAuthenticationProvider()
+	{
+<span class="nc" id="L323">		return new TokenAuthenticationProvider(tokenService(), userDetailsChecker());</span>
+	}
+
+	@Bean
+	public Filter tokenAuthenticationFilter()
+	{
+<span class="nc" id="L329">		return new TokenAuthenticationFilter(tokenAuthenticationProvider());</span>
+	}
+
+	@Bean
+	public GooglePublicKeysManager googlePublicKeysManager()
+	{
+<span class="nc" id="L335">		HttpTransport transport = new NetHttpTransport();</span>
+<span class="nc" id="L336">		JsonFactory jsonFactory = new JacksonFactory();</span>
+<span class="nc" id="L337">		return new GooglePublicKeysManager(transport, jsonFactory);</span>
+	}
+
+	@Bean
+	public Filter googleAuthenticationProcessingFilter() throws Exception
+	{
+<span class="nc" id="L343">		GoogleAuthenticationProcessingFilter googleAuthenticationProcessingFilter = new GoogleAuthenticationProcessingFilter(</span>
+<span class="nc" id="L344">				googlePublicKeysManager(), dataService, (UserDetailsService) userDetailsService(),</span>
+				authenticationSettings, userFactory, groupMemberFactory);
+<span class="nc" id="L346">		googleAuthenticationProcessingFilter.setAuthenticationManager(authenticationManagerBean());</span>
+<span class="nc" id="L347">		return googleAuthenticationProcessingFilter;</span>
+	}
+
+	@Bean
+	public Filter changePasswordFilter()
+	{
+<span class="nc" id="L353">		return new MolgenisChangePasswordFilter(userService, redirectStrategy());</span>
+	}
+
+	@Bean
+	public TwoFactorAuthenticationFilter twoFactorAuthenticationFilter()
+	{
+<span class="nc" id="L359">		return new TwoFactorAuthenticationFilter(authenticationSettings, twoFactorAuthenticationService,</span>
+<span class="nc" id="L360">				redirectStrategy(), userAccountService);</span>
+	}
+
+	@Bean
+	public TwoFactorAuthenticationProvider twoFactorAuthenticationProvider()
+	{
+<span class="nc" id="L366">		return new TwoFactorAuthenticationProviderImpl(twoFactorAuthenticationService, otpService, recoveryService);</span>
+	}
+
+	@Bean
+	public RecoveryAuthenticationProvider recoveryAuthenticationProvider()
+	{
+<span class="nc" id="L372">		return new RecoveryAuthenticationProviderImpl(recoveryService);</span>
+	}
+
+	@Bean
+	public RedirectStrategy redirectStrategy()
+	{
+<span class="nc" id="L378">		return new DefaultRedirectStrategy();</span>
+	}
+
+	@Bean
+	public RoleHierarchy roleHierarchyBean()
+	{
+<span class="nc" id="L384">		return roleHierarchy();</span>
+	}
+
+	@Bean
+	public RoleVoter roleVoter()
+	{
+<span class="nc" id="L390">		return new RoleHierarchyVoter(roleHierarchy());</span>
+	}
+
+	@Bean
+	public GrantedAuthoritiesMapper roleHierarchyAuthoritiesMapper()
+	{
+<span class="nc" id="L396">		return new RoleHierarchyAuthoritiesMapper(roleHierarchy());</span>
+	}
+
+	@Bean
+	public PasswordEncoder passwordEncoder()
+	{
+<span class="nc" id="L402">		return new MolgenisPasswordEncoder(new BCryptPasswordEncoder());</span>
+	}
+
+	@Override
+	protected org.springframework.security.core.userdetails.UserDetailsService userDetailsService()
+	{
+<span class="nc" id="L408">		return new UserDetailsService(dataService, roleHierarchyAuthoritiesMapper());</span>
+	}
+
+	@Override
+	@Bean
+	public org.springframework.security.core.userdetails.UserDetailsService userDetailsServiceBean() throws Exception
+	{
+<span class="nc" id="L415">		return userDetailsService();</span>
+	}
+
+	@Bean
+	public UserDetailsChecker userDetailsChecker()
+	{
+<span class="nc" id="L421">		return new MolgenisUserDetailsChecker();</span>
+	}
+
+	@Override
+	protected void configure(AuthenticationManagerBuilder auth)
+	{
+		try
+		{
+<span class="nc" id="L429">			DaoAuthenticationProvider authenticationProvider = new DaoAuthenticationProvider();</span>
+<span class="nc" id="L430">			authenticationProvider.setPasswordEncoder(passwordEncoder());</span>
+<span class="nc" id="L431">			authenticationProvider.setUserDetailsService(userDetailsServiceBean());</span>
+<span class="nc" id="L432">			authenticationProvider.setPreAuthenticationChecks(userDetailsChecker());</span>
+<span class="nc" id="L433">			auth.authenticationProvider(authenticationProvider);</span>
+		}
+<span class="nc" id="L435">		catch (Exception e)</span>
+		{
+<span class="nc" id="L437">			throw new RuntimeException(e);</span>
+<span class="nc" id="L438">		}</span>
+<span class="nc" id="L439">	}</span>
+
+	@Bean
+	@Override
+	public AuthenticationManager authenticationManagerBean() throws Exception
+	{
+<span class="nc" id="L445">		return super.authenticationManagerBean();</span>
+	}
+
+	@Bean
+	public LoginUrlAuthenticationEntryPoint authenticationEntryPoint()
+	{
+<span class="nc" id="L451">		return new AjaxAwareLoginUrlAuthenticationEntryPoint(MolgenisLoginController.URI);</span>
+	}
+
+	@Bean
+	public InvalidSessionStrategy invalidSessionStrategy()
+	{
+<span class="nc" id="L457">		return new AjaxAwareInvalidSessionStrategy(</span>
+				MolgenisLoginController.URI + '?' + MolgenisLoginController.PARAM_SESSION_EXPIRED);
+	}
+
+	@Bean
+	public HttpSessionEventPublisher httpSessionEventPublisher()
+	{
+<span class="nc" id="L464">		return new HttpSessionEventPublisher();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

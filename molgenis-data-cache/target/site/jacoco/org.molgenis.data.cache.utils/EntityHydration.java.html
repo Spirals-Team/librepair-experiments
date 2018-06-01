@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityHydration.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-cache</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.cache.utils</a> &gt; <span class="el_source">EntityHydration.java</span></div><h1>EntityHydration.java</h1><pre class="source lang-java linenums">package org.molgenis.data.cache.utils;
+
+import org.molgenis.data.Entity;
+import org.molgenis.data.EntityManager;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.EntityWithComputedAttributes;
+import org.molgenis.util.UnexpectedEnumException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Maps.newHashMap;
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.EntityManager.CreationMode.NO_POPULATE;
+import static org.molgenis.data.support.EntityTypeUtils.isMultipleReferenceType;
+import static org.molgenis.data.support.EntityTypeUtils.isSingleReferenceType;
+
+/**
+ * Hydrates and dehydrates entities.
+ */
+@Component
+public class EntityHydration
+{
+<span class="fc" id="L31">	private static final Logger LOG = LoggerFactory.getLogger(EntityHydration.class);</span>
+	private final EntityManager entityManager;
+
+	public EntityHydration(EntityManager entityManager)
+<span class="fc" id="L35">	{</span>
+<span class="fc" id="L36">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L37">	}</span>
+
+	/**
+	 * Rehydrate an entity. Entity can be an {@link EntityWithComputedAttributes}
+	 * if there are attributes present with an expression
+	 *
+	 * @param entityType       metadata of the entity to rehydrate
+	 * @param dehydratedEntity map with key value pairs representing this entity
+	 * @return hydrated entity
+	 */
+	@SuppressWarnings(&quot;unchecked&quot;)
+	public Entity hydrate(Map&lt;String, Object&gt; dehydratedEntity, EntityType entityType)
+	{
+<span class="fc" id="L50">		LOG.trace(&quot;Hydrating entity: {} for entity {}&quot;, dehydratedEntity, entityType.getId());</span>
+
+<span class="fc" id="L52">		Entity hydratedEntity = entityManager.create(entityType, NO_POPULATE);</span>
+
+<span class="fc bfc" id="L54" title="All 2 branches covered.">		for (Attribute attribute : entityType.getAtomicAttributes())</span>
+		{
+			// Only hydrate the attribute if it is NOT computed.
+			// Computed attributes will be calculated based on the metadata
+<span class="fc bfc" id="L58" title="All 2 branches covered.">			if (attribute.getExpression() == null)</span>
+			{
+<span class="fc" id="L60">				String name = attribute.getName();</span>
+<span class="fc" id="L61">				Object value = dehydratedEntity.get(name);</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">				if (value != null)</span>
+				{
+<span class="fc bfc" id="L64" title="All 2 branches covered.">					if (isMultipleReferenceType(attribute))</span>
+					{
+						// We can do this cast because during dehydration, mrefs and categorical mrefs are stored as a List of Object
+<span class="fc" id="L67">						value = entityManager.getReferences(attribute.getRefEntity(), (List&lt;Object&gt;) value);</span>
+					}
+<span class="fc bfc" id="L69" title="All 2 branches covered.">					else if (isSingleReferenceType(attribute))</span>
+					{
+<span class="fc" id="L71">						value = entityManager.getReference(attribute.getRefEntity(), value);</span>
+					}
+				}
+<span class="fc" id="L74">				hydratedEntity.set(name, value);</span>
+			}
+<span class="fc" id="L76">		}</span>
+
+<span class="fc" id="L78">		return hydratedEntity;</span>
+	}
+
+	/**
+	 * Creates a Map containing the values required to rebuild this entity.
+	 * For references to other entities only stores the ids.
+	 *
+	 * @param entity the {@link Entity} to dehydrate
+	 * @return Map representation of the entity
+	 */
+	public Map&lt;String, Object&gt; dehydrate(Entity entity)
+	{
+<span class="fc" id="L90">		LOG.trace(&quot;Dehydrating entity {}&quot;, entity);</span>
+<span class="fc" id="L91">		Map&lt;String, Object&gt; dehydratedEntity = newHashMap();</span>
+<span class="fc" id="L92">		EntityType entityType = entity.getEntityType();</span>
+
+<span class="fc" id="L94">		entityType.getAtomicAttributes().forEach(attribute -&gt;</span>
+		{
+			// Only dehydrate if the attribute is NOT computed
+<span class="fc bfc" id="L97" title="All 2 branches covered.">			if (!attribute.hasExpression())</span>
+			{
+<span class="fc" id="L99">				String name = attribute.getName();</span>
+<span class="fc" id="L100">				AttributeType type = attribute.getDataType();</span>
+
+<span class="fc" id="L102">				dehydratedEntity.put(name, getValueBasedOnType(entity, name, type));</span>
+			}
+<span class="fc" id="L104">		});</span>
+
+<span class="fc" id="L106">		return dehydratedEntity;</span>
+	}
+
+	private static Object getValueBasedOnType(Entity entity, String name, AttributeType type)
+	{
+		Object value;
+<span class="pc bpc" id="L112" title="2 of 7 branches missed.">		switch (type)</span>
+		{
+			case CATEGORICAL:
+			case FILE:
+			case XREF:
+<span class="fc" id="L117">				Entity xrefEntity = entity.getEntity(name);</span>
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">				value = xrefEntity != null ? xrefEntity.getIdValue() : null;</span>
+<span class="fc" id="L119">				break;</span>
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="fc" id="L123">				List&lt;Object&gt; mrefIdentifiers = newArrayList();</span>
+<span class="fc" id="L124">				entity.getEntities(name).forEach(mrefEntity -&gt;</span>
+				{
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">					if (mrefEntity != null) mrefIdentifiers.add(mrefEntity.getIdValue());</span>
+<span class="fc" id="L127">				});</span>
+<span class="fc" id="L128">				value = mrefIdentifiers;</span>
+<span class="fc" id="L129">				break;</span>
+			case DATE:
+<span class="fc" id="L131">				value = entity.getLocalDate(name);</span>
+<span class="fc" id="L132">				break;</span>
+			case DATE_TIME:
+<span class="fc" id="L134">				value = entity.getInstant(name);</span>
+<span class="fc" id="L135">				break;</span>
+			case BOOL:
+			case DECIMAL:
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case INT:
+			case LONG:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L147">				value = entity.get(name);</span>
+<span class="fc" id="L148">				break;</span>
+			case COMPOUND:
+<span class="nc" id="L150">				throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, type.toString()));</span>
+			default:
+<span class="nc" id="L152">				throw new UnexpectedEnumException(type);</span>
+		}
+
+<span class="fc" id="L155">		LOG.trace(&quot;Dehydrating attribute '{}' of type [{}] resulted in value: {}&quot;, name, type.toString(), value);</span>
+<span class="fc" id="L156">		return value;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

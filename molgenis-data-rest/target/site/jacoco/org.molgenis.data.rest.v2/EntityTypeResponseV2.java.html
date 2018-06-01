@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityTypeResponseV2.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-rest</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.rest.v2</a> &gt; <span class="el_source">EntityTypeResponseV2.java</span></div><h1>EntityTypeResponseV2.java</h1><pre class="source lang-java linenums">package org.molgenis.data.rest.v2;
+
+import com.google.common.collect.Iterables;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Fetch;
+import org.molgenis.data.RepositoryCapability;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.rest.util.Href;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.EntityTypePermission;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.security.core.Permission;
+import org.molgenis.security.core.UserPermissionEvaluator;
+
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Streams.stream;
+import static org.molgenis.data.meta.AttributeType.COMPOUND;
+import static org.molgenis.data.rest.v2.AttributeResponseV2.filterAttributes;
+import static org.molgenis.data.rest.v2.RestControllerV2.BASE_URI;
+import static org.molgenis.i18n.LanguageService.getCurrentUserLanguageCode;
+
+class EntityTypeResponseV2
+{
+	private final String href;
+	private final String hrefCollection;
+	private final String name;
+	private final String label;
+	private final String description;
+	private final List&lt;AttributeResponseV2&gt; attributes;
+	private final String labelAttribute;
+	private final String idAttribute;
+	private final List&lt;String&gt; lookupAttributes;
+	private final Boolean isAbstract;
+	/**
+	 * Is this user allowed to add/update/delete entities of this type?
+	 */
+	private final Boolean writable;
+	private String languageCode;
+	private final Set&lt;Permission&gt; permissions;
+
+	public EntityTypeResponseV2(EntityType meta, UserPermissionEvaluator userPermissionEvaluator,
+			DataService dataService,
+			boolean includeCategories)
+	{
+<span class="nc" id="L50">		this(meta, null, userPermissionEvaluator, dataService, includeCategories);</span>
+<span class="nc" id="L51">	}</span>
+
+	/**
+	 * @param fetch set of lowercase attribute names to include in response
+	 */
+	public EntityTypeResponseV2(EntityType meta, Fetch fetch, UserPermissionEvaluator userPermissionEvaluator,
+			DataService dataService, boolean includeCategories)
+<span class="fc" id="L58">	{</span>
+<span class="fc" id="L59">		String name = meta.getId();</span>
+<span class="fc" id="L60">		this.href = Href.concatMetaEntityHrefV2(BASE_URI, name);</span>
+<span class="fc" id="L61">		this.hrefCollection = String.format(&quot;%s/%s&quot;, BASE_URI, name); // FIXME apply Href escaping fix</span>
+
+<span class="fc" id="L63">		this.name = name;</span>
+<span class="fc" id="L64">		this.description = meta.getDescription(getCurrentUserLanguageCode());</span>
+<span class="fc" id="L65">		this.label = meta.getLabel(getCurrentUserLanguageCode());</span>
+
+		// filter attribute parts
+<span class="fc" id="L68">		Iterable&lt;Attribute&gt; filteredAttrs = filterAttributes(fetch, meta.getAttributes());</span>
+
+<span class="fc" id="L70">		this.attributes = stream(filteredAttrs).map(attr -&gt;</span>
+		{
+<span class="fc" id="L72">			Fetch subAttrFetch = null;</span>
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">			if (fetch != null)</span>
+			{
+<span class="fc bfc" id="L75" title="All 2 branches covered.">				if (attr.getDataType().equals(COMPOUND))</span>
+				{
+<span class="fc" id="L77">					subAttrFetch = fetch;</span>
+				}
+				else
+				{
+<span class="fc" id="L81">					subAttrFetch = fetch.getFetch(attr);</span>
+				}
+			}
+<span class="nc bnc" id="L84" title="All 2 branches missed.">			else if (EntityTypeUtils.isReferenceType(attr))</span>
+			{
+<span class="nc" id="L86">				subAttrFetch = AttributeFilterToFetchConverter.createDefaultAttributeFetch(attr, languageCode);</span>
+			}
+<span class="fc" id="L88">			return new AttributeResponseV2(name, meta, attr, subAttrFetch, userPermissionEvaluator, dataService,</span>
+					includeCategories);
+<span class="fc" id="L90">		}).collect(Collectors.toList());</span>
+
+<span class="fc" id="L92">		languageCode = getCurrentUserLanguageCode();</span>
+
+<span class="fc" id="L94">		Attribute labelAttribute = meta.getLabelAttribute(languageCode);</span>
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">		this.labelAttribute = labelAttribute != null ? labelAttribute.getName() : null;</span>
+
+<span class="fc" id="L97">		Attribute idAttribute = meta.getIdAttribute();</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">		this.idAttribute = idAttribute != null ? idAttribute.getName() : null;</span>
+
+<span class="fc" id="L100">		Iterable&lt;Attribute&gt; lookupAttributes = meta.getLookupAttributes();</span>
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">		this.lookupAttributes = lookupAttributes != null ? newArrayList(</span>
+<span class="fc" id="L102">				Iterables.transform(lookupAttributes, Attribute::getName)) : null;</span>
+
+<span class="fc" id="L104">		this.isAbstract = meta.isAbstract();</span>
+
+<span class="fc" id="L106">		this.writable =</span>
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">				userPermissionEvaluator.hasPermission(new EntityTypeIdentity(name), EntityTypePermission.UPDATE_DATA)</span>
+<span class="pc bnc" id="L108" title="All 2 branches missed.">				&amp;&amp; dataService.getCapabilities(name).contains(RepositoryCapability.WRITABLE);</span>
+
+<span class="fc" id="L110">		this.permissions = userPermissionEvaluator.getPermissions(new EntityTypeIdentity(name),</span>
+<span class="fc" id="L111">				EntityTypePermission.values());</span>
+<span class="fc" id="L112">	}</span>
+
+	public String getHref()
+	{
+<span class="nc" id="L116">		return href;</span>
+	}
+
+	public String getHrefCollection()
+	{
+<span class="nc" id="L121">		return hrefCollection;</span>
+	}
+
+	public String getName()
+	{
+<span class="nc" id="L126">		return name;</span>
+	}
+
+	public String getLabel()
+	{
+<span class="nc" id="L131">		return label;</span>
+	}
+
+	public String getDescription()
+	{
+<span class="nc" id="L136">		return description;</span>
+	}
+
+	public String getIdAttribute()
+	{
+<span class="nc" id="L141">		return idAttribute;</span>
+	}
+
+	public List&lt;String&gt; getLookupAttributes()
+	{
+<span class="nc" id="L146">		return lookupAttributes;</span>
+	}
+
+	public List&lt;AttributeResponseV2&gt; getAttributes()
+	{
+<span class="nc" id="L151">		return attributes;</span>
+	}
+
+	public String getLabelAttribute()
+	{
+<span class="nc" id="L156">		return labelAttribute;</span>
+	}
+
+	public boolean isAbstract()
+	{
+<span class="nc" id="L161">		return isAbstract;</span>
+	}
+
+	public Boolean getWritable()
+	{
+<span class="nc" id="L166">		return writable;</span>
+	}
+
+	public String getLanguageCode()
+	{
+<span class="nc" id="L171">		return languageCode;</span>
+	}
+
+	public Set&lt;Permission&gt; getPermissions()
+	{
+<span class="nc" id="L176">		return permissions;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

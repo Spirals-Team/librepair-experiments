@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExcelRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-excel</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.excel</a> &gt; <span class="el_source">ExcelRepository.java</span></div><h1>ExcelRepository.java</h1><pre class="source lang-java linenums">package org.molgenis.data.excel;
+
+import com.google.common.collect.Iterables;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.util.CellReference;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.RepositoryCapability;
+import org.molgenis.data.file.processor.AbstractCellProcessor;
+import org.molgenis.data.file.processor.CellProcessor;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.support.AbstractRepository;
+
+import java.util.*;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.meta.AttributeType.STRING;
+
+/**
+ * ExcelSheet {@link org.molgenis.data.Repository} implementation
+ * &lt;p&gt;
+ * It is assumed that the first row of the sheet is the header row.
+ * &lt;p&gt;
+ * All attributes will be of the string type. The cell values are converted to string.
+ * &lt;p&gt;
+ * The url of this Repository is defined as excel://${filename}/${sheetname}
+ */
+public class ExcelRepository extends AbstractRepository
+{
+	private final Sheet sheet;
+	private final EntityTypeFactory entityTypeFactory;
+	private final AttributeFactory attrMetaFactory;
+
+	/**
+	 * process cells after reading
+	 */
+	private List&lt;CellProcessor&gt; cellProcessors;
+	/**
+	 * column names index
+	 */
+	private Map&lt;String, Integer&gt; colNamesMap;
+	private EntityType entityType;
+
+	public ExcelRepository(String fileName, Sheet sheet, EntityTypeFactory entityTypeFactory,
+			AttributeFactory attrMetaFactory)
+	{
+<span class="fc" id="L53">		this(fileName, sheet, entityTypeFactory, attrMetaFactory, null);</span>
+<span class="fc" id="L54">	}</span>
+
+	public ExcelRepository(String fileName, Sheet sheet, EntityTypeFactory entityTypeFactory,
+			AttributeFactory attrMetaFactory, List&lt;CellProcessor&gt; cellProcessors)
+<span class="fc" id="L58">	{</span>
+<span class="fc" id="L59">		this.sheet = requireNonNull(sheet);</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">		if (sheet.getNumMergedRegions() &gt; 0)</span>
+		{
+<span class="fc" id="L62">			throw new MolgenisDataException(</span>
+<span class="fc" id="L63">					format(&quot;Sheet [%s] contains merged regions which is not supported&quot;, sheet.getSheetName()));</span>
+		}
+<span class="fc" id="L65">		this.entityTypeFactory = requireNonNull(entityTypeFactory);</span>
+<span class="fc" id="L66">		this.attrMetaFactory = requireNonNull(attrMetaFactory);</span>
+<span class="fc" id="L67">		this.cellProcessors = cellProcessors;</span>
+<span class="fc" id="L68">	}</span>
+
+	public int getNrRows()
+	{
+<span class="fc" id="L72">		return sheet.getLastRowNum() + 1; // getLastRowNum is 0-based</span>
+	}
+
+	@Override
+	public Iterator&lt;Entity&gt; iterator()
+	{
+<span class="fc" id="L78">		final Iterator&lt;Row&gt; it = sheet.iterator();</span>
+<span class="pc bpc" id="L79" title="1 of 2 branches missed.">		if (!it.hasNext()) return Collections.&lt;Entity&gt;emptyList().iterator();</span>
+
+		// create column header index once and reuse
+<span class="fc" id="L82">		Row headerRow = it.next();</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">		if (colNamesMap == null)</span>
+		{
+<span class="fc" id="L85">			colNamesMap = toColNamesMap(headerRow);</span>
+		}
+
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">		if (!it.hasNext()) return Collections.&lt;Entity&gt;emptyList().iterator();</span>
+
+<span class="fc" id="L90">		return new Iterator&lt;Entity&gt;()</span>
+<span class="fc" id="L91">		{</span>
+<span class="fc" id="L92">			ExcelEntity next = null;</span>
+
+			@Override
+			public boolean hasNext()
+			{
+<span class="fc" id="L97">				getAndUpdateNext();</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">				return next != null;</span>
+			}
+
+			@Override
+			public ExcelEntity next()
+			{
+<span class="fc" id="L104">				boolean hasNext = hasNext();</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">				if (!hasNext)</span>
+				{
+<span class="fc" id="L107">					throw new NoSuchElementException();</span>
+				}
+<span class="fc" id="L109">				ExcelEntity result = next;</span>
+<span class="fc" id="L110">				next = null;</span>
+<span class="fc" id="L111">				return result;</span>
+			}
+
+			@Override
+			public void remove()
+			{
+<span class="nc" id="L117">				throw new UnsupportedOperationException();</span>
+			}
+
+			private void getAndUpdateNext()
+			{
+				// iterator skips empty lines.
+<span class="fc bfc" id="L123" title="All 4 branches covered.">				if (it.hasNext() &amp;&amp; next == null)</span>
+				{
+<span class="fc" id="L125">					ExcelEntity entity = new ExcelEntity(it.next(), colNamesMap, cellProcessors, getEntityType());</span>
+
+					// check if there is any column containing a value
+<span class="fc bfc" id="L128" title="All 2 branches covered.">					for (String name : entity.getAttributeNames())</span>
+					{
+<span class="fc bfc" id="L130" title="All 2 branches covered.">						if (StringUtils.isNotEmpty(entity.getString(name)))</span>
+						{
+<span class="fc" id="L132">							next = entity;</span>
+<span class="fc" id="L133">							break;</span>
+						}
+<span class="fc" id="L135">					}</span>
+					// next line not empty?
+<span class="fc bfc" id="L137" title="All 2 branches covered.">					if (next == null)</span>
+					{
+<span class="fc" id="L139">						getAndUpdateNext();</span>
+					}
+				}
+<span class="fc" id="L142">			}</span>
+		};
+	}
+
+	public void addCellProcessor(CellProcessor cellProcessor)
+	{
+<span class="pc bpc" id="L148" title="1 of 2 branches missed.">		if (cellProcessors == null) cellProcessors = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L149">		cellProcessors.add(cellProcessor);</span>
+<span class="fc" id="L150">	}</span>
+
+	public EntityType getEntityType()
+	{
+<span class="fc bfc" id="L154" title="All 2 branches covered.">		if (entityType == null)</span>
+		{
+<span class="fc" id="L156">			String sheetName = sheet.getSheetName();</span>
+<span class="fc" id="L157">			EntityType entityType = entityTypeFactory.create(sheetName).setLabel(sheetName);</span>
+
+<span class="fc bfc" id="L159" title="All 2 branches covered.">			if (colNamesMap == null)</span>
+			{
+<span class="fc" id="L161">				Iterator&lt;Row&gt; it = sheet.iterator();</span>
+<span class="pc bpc" id="L162" title="1 of 2 branches missed.">				if (it.hasNext())</span>
+				{
+					// First row contains the headers
+<span class="fc" id="L165">					colNamesMap = toColNamesMap(it.next());</span>
+				}
+			}
+
+<span class="pc bpc" id="L169" title="1 of 2 branches missed.">			if (colNamesMap != null)</span>
+			{
+<span class="fc bfc" id="L171" title="All 2 branches covered.">				for (String colName : colNamesMap.keySet())</span>
+				{
+<span class="fc" id="L173">					entityType.addAttribute(attrMetaFactory.create().setName(colName).setDataType(STRING));</span>
+<span class="fc" id="L174">				}</span>
+			}
+<span class="fc" id="L176">			this.entityType = entityType;</span>
+		}
+
+<span class="fc" id="L179">		return entityType;</span>
+	}
+
+	private Map&lt;String, Integer&gt; toColNamesMap(Row headerRow)
+	{
+<span class="pc bpc" id="L184" title="1 of 2 branches missed.">		if (headerRow == null) return null;</span>
+
+<span class="fc" id="L186">		Map&lt;String, Integer&gt; columnIdx = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L187">		int i = 0;</span>
+<span class="fc bfc" id="L188" title="All 2 branches covered.">		for (Iterator&lt;Cell&gt; it = headerRow.cellIterator(); it.hasNext(); )</span>
+		{
+			try
+			{
+<span class="fc" id="L192">				String header = AbstractCellProcessor.processCell(ExcelUtils.toValue(it.next()), true, cellProcessors);</span>
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">				if (header != null)</span>
+				{
+<span class="fc bfc" id="L195" title="All 2 branches covered.">					if (columnIdx.containsKey(header))</span>
+					{
+<span class="fc" id="L197">						throw new MolgenisDataException(</span>
+<span class="fc" id="L198">								format(&quot;Duplicate column header '%s' in sheet '%s' not allowed&quot;, header,</span>
+<span class="fc" id="L199">										headerRow.getSheet().getSheetName()));</span>
+					}
+<span class="fc" id="L201">					columnIdx.put(header, i++);</span>
+				}
+			}
+<span class="nc" id="L204">			catch (final IllegalStateException ex)</span>
+			{
+<span class="nc" id="L206">				final int row = headerRow.getRowNum();</span>
+<span class="nc" id="L207">				final String column = CellReference.convertNumToColString(i);</span>
+<span class="nc" id="L208">				throw new IllegalStateException(&quot;Invalid value at [&quot; + sheet.getSheetName() + &quot;] &quot; + column + row + 1,</span>
+						ex);
+<span class="fc" id="L210">			}</span>
+		}
+<span class="fc" id="L212">		return columnIdx;</span>
+	}
+
+	@Override
+	public Set&lt;RepositoryCapability&gt; getCapabilities()
+	{
+<span class="nc" id="L218">		return Collections.emptySet();</span>
+	}
+
+	@Override
+	public long count()
+	{
+<span class="nc" id="L224">		return Iterables.size(this);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

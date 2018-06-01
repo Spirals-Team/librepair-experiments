@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityTypeDependencyResolver.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.meta</a> &gt; <span class="el_source">EntityTypeDependencyResolver.java</span></div><h1>EntityTypeDependencyResolver.java</h1><pre class="source lang-java linenums">package org.molgenis.data.meta;
+
+import com.google.common.collect.Sets;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.util.GenericDependencyResolver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Stream;
+
+import static java.util.Collections.emptyList;
+import static java.util.Collections.singletonList;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.*;
+import static java.util.stream.StreamSupport.stream;
+
+/**
+ * Sort {@link EntityType} collection based on their dependencies.
+ */
+@Component
+public class EntityTypeDependencyResolver
+{
+	private final GenericDependencyResolver genericDependencyResolver;
+<span class="fc" id="L27">	private static final Logger LOG = LoggerFactory.getLogger(EntityTypeDependencyResolver.class);</span>
+
+	public EntityTypeDependencyResolver(GenericDependencyResolver genericDependencyResolver)
+<span class="fc" id="L30">	{</span>
+<span class="fc" id="L31">		this.genericDependencyResolver = requireNonNull(genericDependencyResolver);</span>
+<span class="fc" id="L32">	}</span>
+
+	/**
+	 * Sort {@link EntityType} collection based on their dependencies.
+	 *
+	 * @param entityTypes entity meta data collection
+	 * @return sorted entity meta data collection based on dependencies
+	 */
+	public List&lt;EntityType&gt; resolve(Collection&lt;EntityType&gt; entityTypes)
+	{
+<span class="fc bfc" id="L42" title="All 2 branches covered.">		if (entityTypes.isEmpty())</span>
+		{
+<span class="fc" id="L44">			return emptyList();</span>
+		}
+<span class="fc bfc" id="L46" title="All 2 branches covered.">		if (entityTypes.size() == 1)</span>
+		{
+<span class="fc" id="L48">			return singletonList(entityTypes.iterator().next());</span>
+		}
+
+		// EntityType doesn't have equals/hashcode methods, map to nodes first
+		// ensure that nodes exist for all dependencies
+<span class="fc" id="L53">		Set&lt;EntityTypeNode&gt; entityTypeNodes = entityTypes.stream()</span>
+<span class="fc" id="L54">														 .map(EntityTypeNode::new)</span>
+<span class="fc" id="L55">														 .flatMap(node -&gt; Stream.concat(Stream.of(node),</span>
+<span class="fc" id="L56">																 expandEntityTypeDependencies(node).stream()))</span>
+<span class="fc" id="L57">														 .collect(toCollection(HashSet::new));</span>
+
+		// Sort nodes based on dependencies
+<span class="fc" id="L60">		List&lt;EntityTypeNode&gt; resolvedEntityMetaNodes = genericDependencyResolver.resolve(entityTypeNodes,</span>
+<span class="fc" id="L61">				getDependencies());</span>
+		// Map nodes back to EntityType
+<span class="fc" id="L63">		List&lt;EntityType&gt; resolvedEntityMetas = resolvedEntityMetaNodes.stream()</span>
+<span class="fc" id="L64">																	  .map(EntityTypeNode::getEntityType)</span>
+<span class="fc" id="L65">																	  .collect(toList());</span>
+
+		// getDependencies might have included items that are not in the input list, remove additional items
+<span class="fc bfc" id="L68" title="All 2 branches covered.">		if (resolvedEntityMetas.size() == entityTypes.size())</span>
+		{
+<span class="fc" id="L70">			return resolvedEntityMetas;</span>
+		}
+		else
+		{
+<span class="fc" id="L74">			Map&lt;String, EntityType&gt; entityTypeMap = entityTypes.stream()</span>
+<span class="fc" id="L75">															   .collect(toMap(EntityType::getId, Function.identity()));</span>
+<span class="fc" id="L76">			return resolvedEntityMetas.stream()</span>
+<span class="fc" id="L77">									  .filter(resolvedEntityMeta -&gt; entityTypeMap.containsKey(</span>
+<span class="fc" id="L78">											  resolvedEntityMeta.getId()))</span>
+<span class="fc" id="L79">									  .collect(toList());</span>
+		}
+	}
+
+	/**
+	 * Returns dependencies of the given entity meta data.
+	 *
+	 * @return dependencies of the entity meta data node
+	 */
+	private static Function&lt;EntityTypeNode, Set&lt;EntityTypeNode&gt;&gt; getDependencies()
+	{
+<span class="fc" id="L90">		return entityTypeNode -&gt;</span>
+		{
+			// get referenced entities excluding entities of mappedBy attributes
+<span class="fc" id="L93">			EntityType entityType = entityTypeNode.getEntityType();</span>
+<span class="fc" id="L94">			Set&lt;EntityTypeNode&gt; refEntityMetaSet = stream(entityType.getOwnAllAttributes().spliterator(),</span>
+<span class="fc" id="L95">					false).flatMap(attr -&gt;</span>
+			{
+<span class="fc" id="L97">				EntityType refEntity = attr.getRefEntity();</span>
+<span class="fc bfc" id="L98" title="All 6 branches covered.">				if (refEntity != null &amp;&amp; !attr.isMappedBy() &amp;&amp; !refEntity.getId().equals(entityType.getId()))</span>
+				{
+<span class="fc" id="L100">					return Stream.of(new EntityTypeNode(refEntity));</span>
+				}
+				else
+				{
+<span class="fc" id="L104">					return Stream.empty();</span>
+				}
+<span class="fc" id="L106">			}).collect(toCollection(HashSet::new));</span>
+
+<span class="fc" id="L108">			EntityType extendsEntityMeta = entityType.getExtends();</span>
+<span class="fc bfc" id="L109" title="All 2 branches covered.">			if (extendsEntityMeta != null)</span>
+			{
+<span class="fc" id="L111">				refEntityMetaSet.add(new EntityTypeNode(extendsEntityMeta));</span>
+			}
+<span class="fc" id="L113">			return refEntityMetaSet;</span>
+		};
+	}
+
+	/**
+	 * Returns whole tree dependencies of the given entity meta data.
+	 *
+	 * @param entityTypeNode entity meta data node
+	 * @return dependencies of the entity meta data node
+	 */
+	private static Set&lt;EntityTypeNode&gt; expandEntityTypeDependencies(EntityTypeNode entityTypeNode)
+	{
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="nc" id="L127">			LOG.trace(&quot;expandEntityTypeDependencies(EntityTypeNode entityTypeNode) --- entity: [{}], skip: [{}]&quot;,</span>
+<span class="nc" id="L128">					entityTypeNode.getEntityType().getId(), entityTypeNode.isSkip());</span>
+		}
+
+<span class="fc bfc" id="L131" title="All 2 branches covered.">		if (!entityTypeNode.isSkip())</span>
+		{
+			// get referenced entities excluding entities of mappedBy attributes
+<span class="fc" id="L134">			EntityType entityType = entityTypeNode.getEntityType();</span>
+<span class="fc" id="L135">			Set&lt;EntityTypeNode&gt; refEntityMetaSet = stream(entityType.getOwnAllAttributes().spliterator(),</span>
+<span class="fc" id="L136">					false).flatMap(attr -&gt;</span>
+			{
+<span class="fc" id="L138">				EntityType refEntity = attr.getRefEntity();</span>
+<span class="fc bfc" id="L139" title="All 6 branches covered.">				if (refEntity != null &amp;&amp; !attr.isMappedBy() &amp;&amp; !refEntity.getId().equals(entityType.getId()))</span>
+				{
+<span class="fc" id="L141">					EntityTypeNode nodeRef = new EntityTypeNode(refEntity, entityTypeNode.getStack());</span>
+<span class="fc" id="L142">					Set&lt;EntityTypeNode&gt; dependenciesRef = expandEntityTypeDependencies(nodeRef);</span>
+<span class="fc" id="L143">					dependenciesRef.add(nodeRef);</span>
+<span class="fc" id="L144">					return dependenciesRef.stream();</span>
+				}
+				else
+				{
+<span class="fc" id="L148">					return Stream.empty();</span>
+				}
+<span class="fc" id="L150">			}).collect(toCollection(HashSet::new));</span>
+
+<span class="fc" id="L152">			EntityType extendsEntityMeta = entityType.getExtends();</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">			if (extendsEntityMeta != null)</span>
+			{
+<span class="fc" id="L155">				EntityTypeNode nodeRef = new EntityTypeNode(extendsEntityMeta, entityTypeNode.getStack());</span>
+
+				// Add extended entity to set
+<span class="fc" id="L158">				refEntityMetaSet.add(nodeRef);</span>
+
+				// Add dependencies of extended entity to set
+<span class="fc" id="L161">				Set&lt;EntityTypeNode&gt; dependenciesRef = expandEntityTypeDependencies(nodeRef);</span>
+<span class="fc" id="L162">				refEntityMetaSet.addAll(dependenciesRef);</span>
+			}
+<span class="fc" id="L164">			return refEntityMetaSet;</span>
+		}
+		else
+		{
+<span class="fc" id="L168">			return Sets.newHashSet();</span>
+		}
+	}
+
+	/**
+	 * EntityType wrapper with equals/hashcode
+	 */
+	private static class EntityTypeNode
+	{
+		private final EntityType entityType;
+		private final Set&lt;EntityTypeNode&gt; stack;
+<span class="fc" id="L179">		private boolean skip = false;</span>
+
+		private EntityTypeNode(EntityType entityType)
+		{
+<span class="fc" id="L183">			this(entityType, Sets.newHashSet());</span>
+<span class="fc" id="L184">		}</span>
+
+		private EntityTypeNode(EntityType entityType, Set&lt;EntityTypeNode&gt; stack)
+<span class="fc" id="L187">		{</span>
+<span class="fc" id="L188">			this.entityType = requireNonNull(entityType);</span>
+<span class="fc" id="L189">			this.stack = requireNonNull(stack);</span>
+
+			// Check if EntityTypeNod is already used
+<span class="fc bfc" id="L192" title="All 2 branches covered.">			if (stack.contains(this))</span>
+			{
+<span class="fc" id="L194">				skip = true;</span>
+			}
+<span class="fc" id="L196">			this.stack.add(this);</span>
+<span class="fc" id="L197">		}</span>
+
+		private EntityType getEntityType()
+		{
+<span class="fc" id="L201">			return entityType;</span>
+		}
+
+		@Override
+		public boolean equals(Object o)
+		{
+<span class="fc bfc" id="L207" title="All 2 branches covered.">			if (this == o) return true;</span>
+<span class="pc bpc" id="L208" title="2 of 4 branches missed.">			if (o == null || getClass() != o.getClass()) return false;</span>
+
+<span class="fc" id="L210">			EntityTypeNode that = (EntityTypeNode) o;</span>
+<span class="fc" id="L211">			return entityType.getId().equals(that.entityType.getId());</span>
+		}
+
+		@Override
+		public int hashCode()
+		{
+<span class="fc" id="L217">			return entityType.getId().hashCode();</span>
+		}
+
+		@Override
+		public String toString()
+		{
+<span class="fc" id="L223">			return entityType.getId();</span>
+		}
+
+		private Set&lt;EntityTypeNode&gt; getStack()
+		{
+<span class="fc" id="L228">			return stack;</span>
+		}
+
+		private boolean isSkip()
+		{
+<span class="fc" id="L233">			return skip;</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

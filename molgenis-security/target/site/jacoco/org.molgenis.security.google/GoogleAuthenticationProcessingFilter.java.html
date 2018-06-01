@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GoogleAuthenticationProcessingFilter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security.google</a> &gt; <span class="el_source">GoogleAuthenticationProcessingFilter.java</span></div><h1>GoogleAuthenticationProcessingFilter.java</h1><pre class="source lang-java linenums">package org.molgenis.security.google;
+
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken.Payload;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
+import com.google.api.client.googleapis.auth.oauth2.GooglePublicKeysManager;
+import org.molgenis.data.DataService;
+import org.molgenis.data.security.auth.*;
+import org.molgenis.security.core.token.UnknownTokenException;
+import org.molgenis.security.login.MolgenisLoginController;
+import org.molgenis.security.settings.AuthenticationSettings;
+import org.molgenis.security.user.UserDetailsService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.authentication.AuthenticationServiceException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.web.authentication.AbstractAuthenticationProcessingFilter;
+import org.springframework.security.web.authentication.SimpleUrlAuthenticationFailureHandler;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.security.GeneralSecurityException;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.security.auth.GroupMemberMetaData.GROUP_MEMBER;
+import static org.molgenis.data.security.auth.GroupMetaData.GROUP;
+import static org.molgenis.data.security.auth.GroupMetaData.NAME;
+import static org.molgenis.data.security.auth.UserMetaData.*;
+import static org.molgenis.security.account.AccountService.ALL_USER_GROUP;
+import static org.molgenis.security.core.runas.RunAsSystemAspect.runAsSystem;
+import static org.springframework.http.HttpMethod.POST;
+
+public class GoogleAuthenticationProcessingFilter extends AbstractAuthenticationProcessingFilter
+{
+<span class="fc" id="L47">	private static final Logger LOG = LoggerFactory.getLogger(GoogleAuthenticationProcessingFilter.class);</span>
+
+	public static final String GOOGLE_AUTHENTICATION_URL = &quot;/login/google&quot;;
+	static final String PARAM_ID_TOKEN = &quot;id_token&quot;;
+	private static final String PROFILE_KEY_GIVEN_NAME = &quot;given_name&quot;;
+	private static final String PROFILE_KEY_FAMILY_NAME = &quot;family_name&quot;;
+
+	private final GooglePublicKeysManager googlePublicKeysManager;
+	private final DataService dataService;
+	private final UserDetailsService userDetailsService;
+	private final AuthenticationSettings authenticationSettings;
+	private final UserFactory userFactory;
+	private final GroupMemberFactory groupMemberFactory;
+
+	public GoogleAuthenticationProcessingFilter(GooglePublicKeysManager googlePublicKeysManager,
+			DataService dataService, UserDetailsService userDetailsService,
+			AuthenticationSettings authenticationSettings, UserFactory userFactory,
+			GroupMemberFactory groupMemberFactory)
+	{
+<span class="fc" id="L66">		super(new AntPathRequestMatcher(GOOGLE_AUTHENTICATION_URL, POST.toString()));</span>
+<span class="fc" id="L67">		this.userFactory = requireNonNull(userFactory);</span>
+<span class="fc" id="L68">		this.groupMemberFactory = requireNonNull(groupMemberFactory);</span>
+
+<span class="fc" id="L70">		setAuthenticationFailureHandler(new SimpleUrlAuthenticationFailureHandler(&quot;/login?error&quot;));</span>
+
+<span class="fc" id="L72">		this.googlePublicKeysManager = requireNonNull(googlePublicKeysManager);</span>
+<span class="fc" id="L73">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L74">		this.userDetailsService = requireNonNull(userDetailsService);</span>
+<span class="fc" id="L75">		this.authenticationSettings = requireNonNull(authenticationSettings);</span>
+<span class="fc" id="L76">	}</span>
+
+	@Override
+	public Authentication attemptAuthentication(HttpServletRequest request, HttpServletResponse response)
+			throws IOException, ServletException
+	{
+<span class="fc bfc" id="L82" title="All 2 branches covered.">		if (!authenticationSettings.getGoogleSignIn())</span>
+		{
+<span class="fc" id="L84">			throw new AuthenticationServiceException(&quot;Google authentication not available&quot;);</span>
+		}
+
+<span class="fc" id="L87">		String idTokenString = request.getParameter(PARAM_ID_TOKEN);</span>
+
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">		if (idTokenString != null)</span>
+		{
+			// verify token string is valid
+			GoogleIdToken idToken;
+			try
+			{
+<span class="nc" id="L95">				idToken = verify(idTokenString);</span>
+			}
+<span class="nc" id="L97">			catch (GeneralSecurityException e)</span>
+			{
+<span class="nc" id="L99">				throw new UnknownTokenException(e.getMessage(), e);</span>
+<span class="nc" id="L100">			}</span>
+
+			// google token is null implies that verification failed
+<span class="nc bnc" id="L103" title="All 2 branches missed.">			if (idToken != null)</span>
+			{
+<span class="nc" id="L105">				return createAuthentication(idToken.getPayload());</span>
+			}
+			else
+			{
+<span class="nc" id="L109">				throw new BadCredentialsException(format(&quot;Token [%s] verification failed&quot;, idTokenString));</span>
+			}
+		}
+<span class="fc" id="L112">		throw new UnknownTokenException(idTokenString);</span>
+	}
+
+	private GoogleIdToken verify(String idTokenString) throws GeneralSecurityException, IOException
+	{
+<span class="nc" id="L117">		List&lt;String&gt; audience = Collections.singletonList(authenticationSettings.getGoogleAppClientId());</span>
+<span class="nc" id="L118">		GoogleIdTokenVerifier googleIdTokenVerifier = new GoogleIdTokenVerifier.Builder(</span>
+<span class="nc" id="L119">				googlePublicKeysManager).setAudience(audience).build();</span>
+<span class="nc" id="L120">		return googleIdTokenVerifier.verify(idTokenString);</span>
+	}
+
+	private Authentication createAuthentication(Payload payload)
+	{
+<span class="nc" id="L125">		String email = payload.getEmail();</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">		if (email == null)</span>
+		{
+<span class="nc" id="L128">			throw new AuthenticationServiceException(</span>
+					&quot;Google URI token is missing required [email] claim, did you forget to specify scope [email]?&quot;);
+		}
+<span class="nc" id="L131">		Boolean emailVerified = payload.getEmailVerified();</span>
+<span class="nc bnc" id="L132" title="All 4 branches missed.">		if (emailVerified != null &amp;&amp; !emailVerified)</span>
+		{
+<span class="nc" id="L134">			throw new AuthenticationServiceException(&quot;Google account email is not verified&quot;);</span>
+		}
+<span class="nc" id="L136">		String principal = payload.getSubject();</span>
+<span class="nc" id="L137">		String credentials = payload.getAccessTokenHash();</span>
+
+<span class="nc" id="L139">		return runAsSystem(() -&gt;</span>
+		{
+			User user;
+
+<span class="nc" id="L143">			user = dataService.query(USER, User.class).eq(GOOGLEACCOUNTID, principal).findOne();</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">			if (user == null)</span>
+			{
+				// no user with google account
+<span class="nc" id="L147">				user = dataService.query(USER, User.class).eq(EMAIL, email).findOne();</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">				if (user != null)</span>
+				{
+					// connect google account to user
+<span class="nc" id="L151">					user.setGoogleAccountId(principal);</span>
+<span class="nc" id="L152">					dataService.update(USER, user);</span>
+				}
+				else
+				{
+					// create new user
+<span class="nc" id="L157">					String username = email;</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">					String givenName = payload.containsKey(PROFILE_KEY_GIVEN_NAME) ? payload.get(PROFILE_KEY_GIVEN_NAME)</span>
+<span class="nc" id="L159">																							.toString() : null;</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">					String familyName = payload.containsKey(PROFILE_KEY_FAMILY_NAME) ? payload.get(</span>
+<span class="nc" id="L161">							PROFILE_KEY_FAMILY_NAME).toString() : null;</span>
+<span class="nc" id="L162">					user = createMolgenisUser(username, email, givenName, familyName, principal);</span>
+				}
+			}
+<span class="nc bnc" id="L165" title="All 2 branches missed.">			if (!user.isActive())</span>
+			{
+<span class="nc" id="L167">				throw new DisabledException(MolgenisLoginController.ERROR_MESSAGE_DISABLED);</span>
+			}
+			// create authentication
+<span class="nc" id="L170">			Collection&lt;? extends GrantedAuthority&gt; authorities = userDetailsService.getAuthorities(user);</span>
+<span class="nc" id="L171">			return new UsernamePasswordAuthenticationToken(user.getUsername(), credentials, authorities);</span>
+		});
+	}
+
+	private User createMolgenisUser(String username, String email, String givenName, String familyName,
+			String googleAccountId)
+	{
+<span class="nc bnc" id="L178" title="All 2 branches missed.">		if (!authenticationSettings.getSignUp())</span>
+		{
+<span class="nc" id="L180">			throw new AuthenticationServiceException(&quot;Google authentication not possible: sign up disabled&quot;);</span>
+		}
+
+<span class="nc bnc" id="L183" title="All 2 branches missed.">		if (authenticationSettings.getSignUpModeration())</span>
+		{
+<span class="nc" id="L185">			throw new AuthenticationServiceException(&quot;Google authentication not possible: sign up moderation enabled&quot;);</span>
+		}
+
+		// create user
+<span class="nc" id="L189">		LOG.info(&quot;first login for [{}], creating MOLGENIS user&quot;, username);</span>
+<span class="nc" id="L190">		User user = userFactory.create();</span>
+<span class="nc" id="L191">		user.setUsername(username);</span>
+<span class="nc" id="L192">		user.setPassword(UUID.randomUUID().toString());</span>
+<span class="nc" id="L193">		user.setEmail(email);</span>
+<span class="nc" id="L194">		user.setActive(true);</span>
+<span class="nc" id="L195">		user.setSuperuser(false);</span>
+<span class="nc" id="L196">		user.setChangePassword(false);</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">		if (givenName != null)</span>
+		{
+<span class="nc" id="L199">			user.setFirstName(givenName);</span>
+		}
+<span class="nc bnc" id="L201" title="All 2 branches missed.">		if (familyName != null)</span>
+		{
+<span class="nc" id="L203">			user.setLastName(familyName);</span>
+		}
+<span class="nc" id="L205">		user.setGoogleAccountId(googleAccountId);</span>
+<span class="nc" id="L206">		dataService.add(USER, user);</span>
+
+		// add user to all-users group
+<span class="nc" id="L209">		GroupMember groupMember = groupMemberFactory.create();</span>
+<span class="nc" id="L210">		Group group = dataService.query(GROUP, Group.class).eq(NAME, ALL_USER_GROUP).findOne();</span>
+<span class="nc" id="L211">		groupMember.setLabel(format(&quot;%s-%s&quot;, group.getName(), user.getUsername()));</span>
+<span class="nc" id="L212">		groupMember.setGroup(group);</span>
+<span class="nc" id="L213">		groupMember.setUser(user);</span>
+<span class="nc" id="L214">		dataService.add(GROUP_MEMBER, groupMember);</span>
+
+<span class="nc" id="L216">		return user;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

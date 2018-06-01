@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexJobService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-index</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.index.job</a> &gt; <span class="el_source">IndexJobService.java</span></div><h1>IndexJobService.java</h1><pre class="source lang-java linenums">package org.molgenis.data.index.job;
+
+import org.molgenis.data.*;
+import org.molgenis.data.index.IndexService;
+import org.molgenis.data.index.meta.IndexAction;
+import org.molgenis.data.index.meta.IndexActionGroup;
+import org.molgenis.data.index.meta.IndexActionMetaData;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.jobs.Progress;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+import static java.text.MessageFormat.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.QueryRule.Operator.EQUALS;
+import static org.molgenis.data.index.meta.IndexActionGroupMetaData.INDEX_ACTION_GROUP;
+import static org.molgenis.data.index.meta.IndexActionMetaData.*;
+import static org.molgenis.data.util.EntityUtils.getTypedValue;
+
+/**
+ * Executes the {@link IndexAction}s stored in an {@link IndexActionGroup}.
+ */
+@Service
+public class IndexJobService
+{
+<span class="fc" id="L32">	private static final Logger LOG = LoggerFactory.getLogger(IndexJobService.class);</span>
+
+	private final DataService dataService;
+	private final IndexService indexService;
+	private final EntityTypeFactory entityTypeFactory;
+
+	public IndexJobService(DataService dataService, IndexService indexService, EntityTypeFactory entityTypeFactory)
+<span class="fc" id="L39">	{</span>
+<span class="fc" id="L40">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L41">		this.indexService = requireNonNull(indexService);</span>
+<span class="fc" id="L42">		this.entityTypeFactory = requireNonNull(entityTypeFactory);</span>
+<span class="fc" id="L43">	}</span>
+
+	public Void executeJob(Progress progress, String transactionId)
+	{
+<span class="fc" id="L47">		requireNonNull(progress);</span>
+<span class="fc" id="L48">		IndexActionGroup indexActionGroup = dataService.findOneById(INDEX_ACTION_GROUP, transactionId,</span>
+				IndexActionGroup.class);
+<span class="pc bpc" id="L50" title="1 of 4 branches missed.">		if (indexActionGroup != null &amp;&amp; indexActionGroup.getCount() &gt; 0)</span>
+		{
+<span class="fc" id="L52">			progress.setProgressMax(indexActionGroup.getCount());</span>
+<span class="fc" id="L53">			progress.status(format(&quot;Start indexing for transaction id: [{0}]&quot;, transactionId));</span>
+<span class="fc" id="L54">			performIndexActions(progress, transactionId);</span>
+<span class="fc" id="L55">			progress.status(format(&quot;Finished indexing for transaction id: [{0}]&quot;, transactionId));</span>
+		}
+		else
+		{
+<span class="fc" id="L59">			progress.status(format(&quot;No index actions found for transaction id: [{0}]&quot;, transactionId));</span>
+		}
+<span class="fc" id="L61">		return null;</span>
+	}
+
+	/**
+	 * Performs the IndexActions.
+	 *
+	 * @param progress {@link Progress} instance to log progress information to
+	 */
+	private void performIndexActions(Progress progress, String transactionId)
+	{
+<span class="fc" id="L71">		List&lt;IndexAction&gt; indexActions = dataService.findAll(INDEX_ACTION, createQueryGetAllIndexActions(transactionId),</span>
+<span class="fc" id="L72">				IndexAction.class).collect(toList());</span>
+		try
+		{
+<span class="fc" id="L75">			boolean success = true;</span>
+<span class="fc" id="L76">			int count = 0;</span>
+<span class="fc bfc" id="L77" title="All 2 branches covered.">			for (IndexAction indexAction : indexActions)</span>
+			{
+<span class="fc" id="L79">				success &amp;= performAction(progress, count++, indexAction);</span>
+<span class="fc" id="L80">			}</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">			if (success)</span>
+			{
+<span class="fc" id="L83">				progress.progress(count, &quot;Executed all index actions, cleaning up the actions...&quot;);</span>
+<span class="fc" id="L84">				dataService.delete(INDEX_ACTION, indexActions.stream());</span>
+<span class="fc" id="L85">				dataService.deleteById(INDEX_ACTION_GROUP, transactionId);</span>
+<span class="fc" id="L86">				progress.progress(count, &quot;Cleaned up the actions.&quot;);</span>
+			}
+		}
+<span class="nc" id="L89">		catch (Exception ex)</span>
+		{
+<span class="nc" id="L91">			LOG.error(&quot;Error performing index actions&quot;, ex);</span>
+<span class="nc" id="L92">			throw ex;</span>
+		}
+		finally
+		{
+<span class="fc" id="L96">			progress.status(&quot;Refresh index start&quot;);</span>
+<span class="fc" id="L97">			indexService.refreshIndex();</span>
+<span class="fc" id="L98">			progress.status(&quot;Refresh index done&quot;);</span>
+		}
+<span class="fc" id="L100">	}</span>
+
+	/**
+	 * Performs a single IndexAction
+	 *
+	 * @param progress      {@link Progress} to report progress to
+	 * @param progressCount the progress count for this IndexAction
+	 * @param indexAction   Entity of type IndexActionMetaData
+	 * @return boolean indicating success or failure
+	 */
+	private boolean performAction(Progress progress, int progressCount, IndexAction indexAction)
+	{
+<span class="fc" id="L112">		requireNonNull(indexAction);</span>
+<span class="fc" id="L113">		String entityTypeId = indexAction.getEntityTypeId();</span>
+<span class="fc" id="L114">		updateIndexActionStatus(indexAction, IndexActionMetaData.IndexStatus.STARTED);</span>
+<span class="fc" id="L115">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+		try
+		{
+<span class="fc bfc" id="L118" title="All 2 branches covered.">			if (entityType != null)</span>
+			{
+<span class="fc bfc" id="L120" title="All 2 branches covered.">				if (indexAction.getEntityId() != null)</span>
+				{
+<span class="fc" id="L122">					progress.progress(progressCount,</span>
+<span class="fc" id="L123">							format(&quot;Indexing {0}.{1}&quot;, entityType.getId(), indexAction.getEntityId()));</span>
+<span class="fc" id="L124">					rebuildIndexOneEntity(entityTypeId, indexAction.getEntityId());</span>
+				}
+				else
+				{
+<span class="fc" id="L128">					progress.progress(progressCount, format(&quot;Indexing {0}&quot;, entityType.getId()));</span>
+<span class="fc" id="L129">					final Repository&lt;Entity&gt; repository = dataService.getRepository(entityType.getId());</span>
+<span class="fc" id="L130">					indexService.rebuildIndex(repository);</span>
+<span class="fc" id="L131">				}</span>
+			}
+			else
+			{
+<span class="fc" id="L135">				entityType = getEntityType(indexAction);</span>
+<span class="pc bpc" id="L136" title="1 of 2 branches missed.">				if (indexService.hasIndex(entityType))</span>
+				{
+<span class="fc" id="L138">					progress.progress(progressCount, format(&quot;Dropping entityType with id: {0}&quot;, entityType.getId()));</span>
+<span class="fc" id="L139">					indexService.deleteIndex(entityType);</span>
+				}
+				else
+				{
+					// Index Job is finished, here we concluded that we don't have enough info to continue the index job
+<span class="nc" id="L144">					progress.progress(progressCount,</span>
+<span class="nc" id="L145">							format(&quot;Skip index entity {0}.{1}&quot;, entityType.getId(), indexAction.getEntityId()));</span>
+				}
+			}
+<span class="fc" id="L148">			updateIndexActionStatus(indexAction, IndexActionMetaData.IndexStatus.FINISHED);</span>
+<span class="fc" id="L149">			return true;</span>
+		}
+<span class="fc" id="L151">		catch (Exception ex)</span>
+		{
+<span class="fc" id="L153">			LOG.error(&quot;Index job failed&quot;, ex);</span>
+<span class="fc" id="L154">			updateIndexActionStatus(indexAction, IndexActionMetaData.IndexStatus.FAILED);</span>
+<span class="fc" id="L155">			return false;</span>
+		}
+	}
+
+	/**
+	 * Updates the {@link IndexStatus} of a IndexAction and stores the change.
+	 *
+	 * @param indexAction the IndexAction of which the status is updated
+	 * @param status      the new {@link IndexStatus}
+	 */
+	private void updateIndexActionStatus(IndexAction indexAction, IndexActionMetaData.IndexStatus status)
+	{
+<span class="fc" id="L167">		indexAction.setIndexStatus(status);</span>
+<span class="fc" id="L168">		dataService.update(INDEX_ACTION, indexAction);</span>
+<span class="fc" id="L169">	}</span>
+
+	/**
+	 * Indexes one single entity instance.
+	 *
+	 * @param entityTypeId    the id of the entity's repository
+	 * @param untypedEntityId the identifier of the entity to update
+	 */
+	private void rebuildIndexOneEntity(String entityTypeId, String untypedEntityId)
+	{
+<span class="fc" id="L179">		LOG.trace(&quot;Indexing [{}].[{}]... &quot;, entityTypeId, untypedEntityId);</span>
+
+		// convert entity id string to typed entity id
+<span class="fc" id="L182">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="pc bpc" id="L183" title="1 of 2 branches missed.">		if (null != entityType)</span>
+		{
+<span class="fc" id="L185">			Object entityId = getTypedValue(untypedEntityId, entityType.getIdAttribute());</span>
+<span class="fc" id="L186">			String entityFullName = entityType.getId();</span>
+
+<span class="fc" id="L188">			Entity actualEntity = dataService.findOneById(entityFullName, entityId);</span>
+
+<span class="fc bfc" id="L190" title="All 2 branches covered.">			if (null == actualEntity)</span>
+			{
+				// Delete
+<span class="fc" id="L193">				LOG.debug(&quot;Index delete [{}].[{}].&quot;, entityFullName, entityId);</span>
+<span class="fc" id="L194">				indexService.deleteById(entityType, entityId);</span>
+<span class="fc" id="L195">				return;</span>
+			}
+
+<span class="fc" id="L198">			boolean indexEntityExists = indexService.hasIndex(entityType);</span>
+<span class="pc bpc" id="L199" title="1 of 2 branches missed.">			if (!indexEntityExists)</span>
+			{
+<span class="fc" id="L201">				LOG.debug(&quot;Create mapping of repository [{}] because it was not exist yet&quot;, entityTypeId);</span>
+<span class="fc" id="L202">				indexService.createIndex(entityType);</span>
+			}
+
+<span class="fc" id="L205">			LOG.debug(&quot;Index [{}].[{}].&quot;, entityTypeId, entityId);</span>
+<span class="fc" id="L206">			indexService.index(actualEntity.getEntityType(), actualEntity);</span>
+<span class="fc" id="L207">		}</span>
+		else
+		{
+<span class="nc" id="L210">			throw new MolgenisDataException(&quot;Unknown EntityType for entityTypeId: &quot; + entityTypeId);</span>
+		}
+<span class="fc" id="L212">	}</span>
+
+	/**
+	 * Retrieves the query to get all index actions sorted
+	 */
+	static Query&lt;IndexAction&gt; createQueryGetAllIndexActions(String transactionId)
+	{
+<span class="fc" id="L219">		QueryRule rule = new QueryRule(INDEX_ACTION_GROUP_ATTR, EQUALS, transactionId);</span>
+<span class="fc" id="L220">		QueryImpl&lt;IndexAction&gt; q = new QueryImpl&lt;&gt;(rule);</span>
+<span class="fc" id="L221">		q.setSort(new Sort(ACTION_ORDER));</span>
+<span class="fc" id="L222">		return q;</span>
+	}
+
+	private EntityType getEntityType(IndexAction indexAction)
+	{
+<span class="fc" id="L227">		return entityTypeFactory.create(indexAction.getEntityTypeId());</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

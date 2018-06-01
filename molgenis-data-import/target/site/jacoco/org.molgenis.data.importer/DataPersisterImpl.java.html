@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataPersisterImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-import</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.importer</a> &gt; <span class="el_source">DataPersisterImpl.java</span></div><h1>DataPersisterImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.data.importer;
+
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterators;
+import org.molgenis.data.*;
+import org.molgenis.data.meta.EntityTypeDependencyResolver;
+import org.molgenis.data.meta.MetaDataService;
+import org.molgenis.data.meta.MetaDataServiceImpl.EntityTypeWithoutMappedByAttributes;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.util.UnexpectedEnumException;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.function.Function.identity;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ID;
+import static org.molgenis.util.stream.MapCollectors.toLinkedMap;
+
+@Component
+public class DataPersisterImpl implements DataPersister
+{
+	private final MetaDataService metaDataService;
+	private final DataService dataService;
+	private final EntityTypeDependencyResolver entityTypeDependencyResolver;
+
+	DataPersisterImpl(MetaDataService metaDataService, DataService dataService,
+			EntityTypeDependencyResolver entityTypeDependencyResolver)
+<span class="fc" id="L38">	{</span>
+<span class="fc" id="L39">		this.metaDataService = requireNonNull(metaDataService);</span>
+<span class="fc" id="L40">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L41">		this.entityTypeDependencyResolver = requireNonNull(entityTypeDependencyResolver);</span>
+<span class="fc" id="L42">	}</span>
+
+	@Transactional
+	@Override
+	public PersistResult persist(DataProvider dataProvider, MetadataMode metadataMode, DataMode dataMode)
+	{
+<span class="fc" id="L48">		List&lt;EntityType&gt; sortedEntityTypes = getTopologicalSortedEntityTypes(dataProvider.getEntityTypes());</span>
+
+<span class="fc" id="L50">		preProcessEntityTypes(sortedEntityTypes, metadataMode);</span>
+<span class="fc" id="L51">		PersistResult persistResult = persistFirstPass(dataProvider, metadataMode, dataMode, sortedEntityTypes);</span>
+<span class="fc" id="L52">		persistSecondPass(dataProvider, sortedEntityTypes);</span>
+
+<span class="fc" id="L54">		return persistResult;</span>
+	}
+
+	private void preProcessEntityTypes(List&lt;EntityType&gt; entityTypes, MetadataMode metadataMode)
+	{
+<span class="pc bpc" id="L59" title="1 of 4 branches missed.">		switch (metadataMode)</span>
+		{
+			case ADD:
+<span class="fc" id="L62">				break;</span>
+			case UPDATE:
+			case UPSERT:
+<span class="fc" id="L65">				preProcessUpdatedEntityTypes(entityTypes);</span>
+<span class="fc" id="L66">				break;</span>
+			case NONE:
+<span class="fc" id="L68">				break;</span>
+			default:
+<span class="nc" id="L70">				throw new UnexpectedEnumException(metadataMode);</span>
+		}
+<span class="fc" id="L72">	}</span>
+
+	private PersistResult persistFirstPass(DataProvider dataProvider, MetadataMode metadataMode, DataMode dataMode,
+			List&lt;EntityType&gt; topologicalSortedEntityTypes)
+	{
+<span class="fc" id="L77">		ImmutableMap.Builder&lt;String, Long&gt; persistResultBuilder = ImmutableMap.builder();</span>
+<span class="fc" id="L78">		topologicalSortedEntityTypes.forEach(entityType -&gt;</span>
+		{
+<span class="fc" id="L80">			EntityType persistedEntityType = persistEntityTypeFirstPass(entityType, metadataMode);</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">			if (dataProvider.hasEntities(entityType))</span>
+			{
+<span class="fc bfc" id="L83" title="All 2 branches covered.">				if (entityType.isAbstract())</span>
+				{
+<span class="fc" id="L85">					throw new MolgenisDataException(</span>
+<span class="fc" id="L86">							format(&quot;Abstract entity type '%s' with id '%s' cannot contain entities&quot;,</span>
+<span class="fc" id="L87">									entityType.getLabel(), entityType.getId()));</span>
+				}
+<span class="fc" id="L89">				Stream&lt;Entity&gt; entities = dataProvider.getEntities(entityType);</span>
+<span class="fc" id="L90">				long nrPersistedEntities = persistEntitiesFirstPass(persistedEntityType, entities, dataMode);</span>
+<span class="fc" id="L91">				persistResultBuilder.put(entityType.getId(), nrPersistedEntities);</span>
+			}
+<span class="fc" id="L93">		});</span>
+<span class="fc" id="L94">		return PersistResult.create(persistResultBuilder.build());</span>
+	}
+
+	private void persistSecondPass(DataProvider dataProvider, List&lt;EntityType&gt; topologicalSortedEntityTypes)
+	{
+<span class="fc" id="L99">		topologicalSortedEntityTypes.forEach(entityType -&gt;</span>
+		{
+<span class="fc" id="L101">			EntityType persistedEntityType = persistEntityTypeSecondPass(entityType);</span>
+<span class="fc bfc" id="L102" title="All 2 branches covered.">			if (dataProvider.hasEntities(entityType))</span>
+			{
+<span class="fc" id="L104">				Stream&lt;Entity&gt; entities = dataProvider.getEntities(entityType);</span>
+<span class="fc" id="L105">				persistEntitiesSecondPass(persistedEntityType, entities);</span>
+			}
+<span class="fc" id="L107">		});</span>
+<span class="fc" id="L108">	}</span>
+
+	private void preProcessUpdatedEntityTypes(List&lt;EntityType&gt; entityTypes)
+	{
+<span class="fc" id="L112">		Map&lt;String, EntityType&gt; entityTypeMap = entityTypes.stream()</span>
+<span class="fc" id="L113">														   .collect(toLinkedMap(EntityType::getId, identity()));</span>
+<span class="fc" id="L114">		dataService.query(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="fc" id="L115">				   .in(ID, entityTypeMap.keySet())</span>
+<span class="fc" id="L116">				   .findAll()</span>
+<span class="fc" id="L117">				   .forEach(existingEntityType -&gt;</span>
+				   {
+<span class="fc" id="L119">					   EntityType entityType = entityTypeMap.get(existingEntityType.getId());</span>
+<span class="fc" id="L120">					   injectAttributeIdentifiers(entityType, existingEntityType);</span>
+<span class="fc" id="L121">				   });</span>
+<span class="fc" id="L122">	}</span>
+
+	private void injectAttributeIdentifiers(EntityType entityType, EntityType existingEntityType)
+	{
+<span class="fc" id="L126">		entityType.getOwnAllAttributes().forEach(ownAttr -&gt;</span>
+		{
+<span class="nc" id="L128">			Attribute existingAttr = existingEntityType.getAttribute(ownAttr.getName());</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">			if (existingAttr != null)</span>
+			{
+<span class="nc" id="L131">				ownAttr.setIdentifier(existingAttr.getIdentifier());</span>
+<span class="nc" id="L132">				ownAttr.setEntity(existingEntityType);</span>
+			}
+<span class="nc" id="L134">		});</span>
+<span class="fc" id="L135">	}</span>
+
+	private long persistEntitiesFirstPass(EntityType entityType, Stream&lt;Entity&gt; entities, DataMode dataMode)
+	{
+<span class="fc" id="L139">		AtomicLong nrPersistedEntities = new AtomicLong(0L);</span>
+<span class="pc bpc" id="L140" title="1 of 4 branches missed.">		switch (dataMode)</span>
+		{
+			case ADD:
+<span class="fc" id="L143">				addEntitiesFirstPass(entityType, entities.filter(countEntitiesFilter(nrPersistedEntities)));</span>
+<span class="fc" id="L144">				break;</span>
+			case UPDATE:
+<span class="fc" id="L146">				updateEntitiesFirstPass(entityType, entities.filter(countEntitiesFilter(nrPersistedEntities)));</span>
+<span class="fc" id="L147">				break;</span>
+			case UPSERT:
+<span class="fc" id="L149">				upsertEntitiesFirstPass(entityType, entities.filter(countEntitiesFilter(nrPersistedEntities)));</span>
+<span class="fc" id="L150">				break;</span>
+			default:
+<span class="nc" id="L152">				throw new UnexpectedEnumException(dataMode);</span>
+		}
+<span class="fc" id="L154">		return nrPersistedEntities.get();</span>
+	}
+
+	private Predicate&lt;Entity&gt; countEntitiesFilter(AtomicLong nrPersistedEntities)
+	{
+<span class="fc" id="L159">		return entity -&gt;</span>
+		{
+<span class="fc" id="L161">			nrPersistedEntities.incrementAndGet();</span>
+<span class="fc" id="L162">			return true;</span>
+		};
+	}
+
+	private void addEntitiesFirstPass(EntityType entityType, Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L168">		String entityTypeId = entityType.getId();</span>
+<span class="fc" id="L169">		dataService.add(entityTypeId, entities);</span>
+<span class="fc" id="L170">	}</span>
+
+	private void updateEntitiesFirstPass(EntityType entityType, Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L174">		String entityTypeId = entityType.getId();</span>
+<span class="fc" id="L175">		dataService.update(entityTypeId, entities);</span>
+<span class="fc" id="L176">	}</span>
+
+	private void upsertEntitiesFirstPass(EntityType entityType, Stream&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L180">		String entityTypeId = entityType.getId();</span>
+<span class="fc" id="L181">		Repository&lt;Entity&gt; repository = dataService.getRepository(entityTypeId);</span>
+<span class="fc" id="L182">		Iterators.partition(entities.iterator(), 1000).forEachRemaining(repository::upsertBatch);</span>
+<span class="fc" id="L183">	}</span>
+
+	private void persistEntitiesSecondPass(EntityType entityType, Stream&lt;Entity&gt; entities)
+	{
+<span class="fc bfc" id="L187" title="All 2 branches covered.">		if (entityType.hasMappedByAttributes())</span>
+		{
+<span class="fc" id="L189">			String entityTypeId = entityType.getId();</span>
+<span class="fc" id="L190">			dataService.update(entityTypeId, entities);</span>
+		}
+<span class="fc" id="L192">	}</span>
+
+	private EntityType persistEntityTypeFirstPass(EntityType entityType, MetadataMode metadataMode)
+	{
+		EntityType persistedEntityType;
+<span class="pc bpc" id="L197" title="1 of 5 branches missed.">		switch (metadataMode)</span>
+		{
+			case ADD:
+<span class="fc" id="L200">				persistedEntityType = addEntityTypeFirstPass(entityType);</span>
+<span class="fc" id="L201">				break;</span>
+			case UPDATE:
+<span class="fc" id="L203">				persistedEntityType = updateEntityTypeFirstPass(entityType);</span>
+<span class="fc" id="L204">				break;</span>
+			case UPSERT:
+<span class="fc" id="L206">				persistedEntityType = upsertEntityTypeFirstPass(entityType);</span>
+<span class="fc" id="L207">				break;</span>
+			case NONE:
+<span class="fc" id="L209">				persistedEntityType = entityType;</span>
+<span class="fc" id="L210">				break;</span>
+			default:
+<span class="nc" id="L212">				throw new UnexpectedEnumException(metadataMode);</span>
+		}
+<span class="fc" id="L214">		return persistedEntityType;</span>
+	}
+
+	private EntityType addEntityTypeFirstPass(EntityType entityType)
+	{
+		EntityType persistableEntityType;
+<span class="fc bfc" id="L220" title="All 2 branches covered.">		if (entityType.hasMappedByAttributes())</span>
+		{
+<span class="fc" id="L222">			persistableEntityType = new EntityTypeWithoutMappedByAttributes(entityType);</span>
+		}
+		else
+		{
+<span class="fc" id="L226">			persistableEntityType = entityType;</span>
+		}
+<span class="fc" id="L228">		metaDataService.addEntityType(persistableEntityType);</span>
+<span class="fc" id="L229">		return persistableEntityType;</span>
+	}
+
+	private EntityType updateEntityTypeFirstPass(EntityType entityType)
+	{
+<span class="fc" id="L234">		String entityTypeId = entityType.getId();</span>
+<span class="fc" id="L235">		EntityType existingEntityType = dataService.findOneById(ENTITY_TYPE_META_DATA, entityTypeId, EntityType.class);</span>
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">		if (existingEntityType == null)</span>
+		{
+<span class="nc" id="L238">			throw new UnknownEntityTypeException(entityType.getId());</span>
+		}
+<span class="fc" id="L240">		return updateEntityTypeFirstPass(entityType, existingEntityType);</span>
+
+	}
+
+	private EntityType updateEntityTypeFirstPass(EntityType entityType, EntityType existingEntityType)
+	{
+		EntityType persistableEntityType;
+<span class="pc bpc" id="L247" title="1 of 2 branches missed.">		if (entityType.hasMappedByAttributes())</span>
+		{
+<span class="nc" id="L249">			persistableEntityType = new EntityTypeWithoutMappedByAttributes(entityType, existingEntityType);</span>
+		}
+		else
+		{
+<span class="fc" id="L253">			persistableEntityType = entityType;</span>
+		}
+<span class="fc" id="L255">		metaDataService.updateEntityType(persistableEntityType);</span>
+<span class="fc" id="L256">		return persistableEntityType;</span>
+	}
+
+	private EntityType upsertEntityTypeFirstPass(EntityType entityType)
+	{
+		EntityType persistableEntityType;
+<span class="fc" id="L262">		String entityTypeId = entityType.getId();</span>
+<span class="fc" id="L263">		EntityType existingEntityType = dataService.findOneById(ENTITY_TYPE_META_DATA, entityTypeId, EntityType.class);</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">		if (existingEntityType == null)</span>
+		{
+<span class="fc" id="L266">			persistableEntityType = addEntityTypeFirstPass(entityType);</span>
+		}
+		else
+		{
+<span class="fc" id="L270">			persistableEntityType = updateEntityTypeFirstPass(entityType, existingEntityType);</span>
+		}
+<span class="fc" id="L272">		return persistableEntityType;</span>
+	}
+
+	private EntityType persistEntityTypeSecondPass(EntityType entityType)
+	{
+<span class="fc bfc" id="L277" title="All 2 branches covered.">		if (entityType.hasMappedByAttributes())</span>
+		{
+<span class="fc" id="L279">			metaDataService.updateEntityType(entityType);</span>
+		}
+<span class="fc" id="L281">		return entityType;</span>
+	}
+
+	private List&lt;EntityType&gt; getTopologicalSortedEntityTypes(Stream&lt;EntityType&gt; entityTypeStream)
+	{
+<span class="fc" id="L286">		return entityTypeDependencyResolver.resolve(entityTypeStream.collect(toList()));</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>
