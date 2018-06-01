@@ -1,0 +1,356 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2015 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span><a name="line.19"></a>
+<span class="sourceLineNo">020</span>package org.matsim.contrib.decongestion.tollSetting;<a name="line.20"></a>
+<span class="sourceLineNo">021</span><a name="line.21"></a>
+<span class="sourceLineNo">022</span>import java.util.HashMap;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.util.Map;<a name="line.23"></a>
+<span class="sourceLineNo">024</span><a name="line.24"></a>
+<span class="sourceLineNo">025</span>import org.apache.log4j.Logger;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import org.matsim.api.core.v01.Id;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.matsim.api.core.v01.events.LinkLeaveEvent;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.api.core.v01.events.handler.LinkLeaveEventHandler;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.api.core.v01.network.Link;<a name="line.29"></a>
+<span class="sourceLineNo">030</span><a name="line.30"></a>
+<span class="sourceLineNo">031</span>import com.google.inject.Inject;<a name="line.31"></a>
+<span class="sourceLineNo">032</span><a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.contrib.decongestion.DecongestionConfigGroup.IntegralApproach;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.contrib.decongestion.data.DecongestionInfo;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.contrib.decongestion.data.LinkInfo;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.core.utils.misc.Counter;<a name="line.36"></a>
+<span class="sourceLineNo">037</span><a name="line.37"></a>
+<span class="sourceLineNo">038</span>/**<a name="line.38"></a>
+<span class="sourceLineNo">039</span> * <a name="line.39"></a>
+<span class="sourceLineNo">040</span> * PDI-based toll adjustment, where e(t) = average delay<a name="line.40"></a>
+<span class="sourceLineNo">041</span> * <a name="line.41"></a>
+<span class="sourceLineNo">042</span> * @author ikaddoura<a name="line.42"></a>
+<span class="sourceLineNo">043</span> */<a name="line.43"></a>
+<span class="sourceLineNo">044</span><a name="line.44"></a>
+<span class="sourceLineNo">045</span>public class DecongestionTollingPID implements DecongestionTollSetting, LinkLeaveEventHandler {<a name="line.45"></a>
+<span class="sourceLineNo">046</span>        private static final Logger log = Logger.getLogger(DecongestionTollingPID.class);<a name="line.46"></a>
+<span class="sourceLineNo">047</span>        <a name="line.47"></a>
+<span class="sourceLineNo">048</span>        @Inject<a name="line.48"></a>
+<span class="sourceLineNo">049</span>        private DecongestionInfo congestionInfo;<a name="line.49"></a>
+<span class="sourceLineNo">050</span>        <a name="line.50"></a>
+<span class="sourceLineNo">051</span>        private Map&lt;Id&lt;Link&gt;, LinkInfo&gt; linkId2infoPreviousTollComputation = new HashMap&lt;&gt;();   <a name="line.51"></a>
+<span class="sourceLineNo">052</span>        private int tollUpdateCounter = 0;<a name="line.52"></a>
+<span class="sourceLineNo">053</span>        private final Map&lt;Id&lt;Link&gt;, Map&lt;Integer, Double&gt;&gt; linkId2time2totalDelayAllIterations = new HashMap&lt;&gt;();        <a name="line.53"></a>
+<span class="sourceLineNo">054</span>        <a name="line.54"></a>
+<span class="sourceLineNo">055</span>        private final Map&lt;Id&lt;Link&gt;, Map&lt;Integer, Double&gt;&gt; linkId2time2avgDelayAllIterations = new HashMap&lt;&gt;();  <a name="line.55"></a>
+<span class="sourceLineNo">056</span>        private final Map&lt;Id&lt;Link&gt;, Map&lt;Integer, Integer&gt;&gt; linkId2time2leavingAgents = new HashMap&lt;&gt;();<a name="line.56"></a>
+<span class="sourceLineNo">057</span><a name="line.57"></a>
+<span class="sourceLineNo">058</span>        @Override<a name="line.58"></a>
+<span class="sourceLineNo">059</span>        public void updateTolls() {<a name="line.59"></a>
+<span class="sourceLineNo">060</span>                <a name="line.60"></a>
+<span class="sourceLineNo">061</span>                final double K_p = congestionInfo.getDecongestionConfigGroup().getKp();<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                final double K_i = congestionInfo.getDecongestionConfigGroup().getKi();<a name="line.62"></a>
+<span class="sourceLineNo">063</span>                final double K_d = congestionInfo.getDecongestionConfigGroup().getKd();<a name="line.63"></a>
+<span class="sourceLineNo">064</span>                <a name="line.64"></a>
+<span class="sourceLineNo">065</span>                final String integralApproach = congestionInfo.getDecongestionConfigGroup().getIntegralApproach().toString();<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                <a name="line.66"></a>
+<span class="sourceLineNo">067</span>                final double timeBinSize = (double) this.congestionInfo.getScenario().getConfig().travelTimeCalculator().getTraveltimeBinSize();<a name="line.67"></a>
+<span class="sourceLineNo">068</span>                final double capacityPeriod = this.congestionInfo.getScenario().getNetwork().getCapacityPeriod();<a name="line.68"></a>
+<span class="sourceLineNo">069</span>                final double flowCapacityFactor = this.congestionInfo.getScenario().getConfig().qsim().getFlowCapFactor();<a name="line.69"></a>
+<span class="sourceLineNo">070</span>                final double toleratedAvgDelay = this.congestionInfo.getDecongestionConfigGroup().getToleratedAverageDelaySec();<a name="line.70"></a>
+<span class="sourceLineNo">071</span>                final boolean msa = this.congestionInfo.getDecongestionConfigGroup().isMsa();<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                final double blendFactorFromConfig = this.congestionInfo.getDecongestionConfigGroup().getTollBlendFactor();<a name="line.72"></a>
+<span class="sourceLineNo">073</span>                <a name="line.73"></a>
+<span class="sourceLineNo">074</span>                Counter counter = new Counter( "link # ", "" ) ;<a name="line.74"></a>
+<span class="sourceLineNo">075</span><a name="line.75"></a>
+<span class="sourceLineNo">076</span>                for (Id&lt;Link&gt; linkId : this.congestionInfo.getlinkInfos().keySet()) {<a name="line.76"></a>
+<span class="sourceLineNo">077</span><a name="line.77"></a>
+<span class="sourceLineNo">078</span>                        counter.incCounter();<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                        <a name="line.79"></a>
+<span class="sourceLineNo">080</span>                        double flowCapacityHeadwaySec = Double.NEGATIVE_INFINITY;<a name="line.80"></a>
+<span class="sourceLineNo">081</span>                        if (K_i != 0. &amp;&amp; integralApproach.equals(IntegralApproach.UnusedHeadway.toString())) {<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                                flowCapacityHeadwaySec = capacityPeriod / ( this.congestionInfo.getScenario().getNetwork().getLinks().get(linkId).getCapacity() * flowCapacityFactor);<a name="line.82"></a>
+<span class="sourceLineNo">083</span>                        }<a name="line.83"></a>
+<span class="sourceLineNo">084</span><a name="line.84"></a>
+<span class="sourceLineNo">085</span>                        LinkInfo linkInfo = this.congestionInfo.getlinkInfos().get(linkId);<a name="line.85"></a>
+<span class="sourceLineNo">086</span>                        for (Integer intervalNr : linkInfo.getTime2avgDelay().keySet()) {<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                                <a name="line.87"></a>
+<span class="sourceLineNo">088</span>                                // 0) average delay<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                                <a name="line.89"></a>
+<span class="sourceLineNo">090</span>                                double averageDelay = linkInfo.getTime2avgDelay().get(intervalNr);      <a name="line.90"></a>
+<span class="sourceLineNo">091</span>                                if (averageDelay &lt;= toleratedAvgDelay) {<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                                        averageDelay = 0.0;<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                                }<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                                                                <a name="line.94"></a>
+<span class="sourceLineNo">095</span>                                double toll = 0.;<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                                <a name="line.96"></a>
+<span class="sourceLineNo">097</span>                                // 1) proportional term<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                                <a name="line.98"></a>
+<span class="sourceLineNo">099</span>                                if (K_p != 0.) {<a name="line.99"></a>
+<span class="sourceLineNo">100</span>                                        toll += K_p * averageDelay;<a name="line.100"></a>
+<span class="sourceLineNo">101</span>                                }<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                <a name="line.102"></a>
+<span class="sourceLineNo">103</span>                                // 2) integral term<a name="line.103"></a>
+<span class="sourceLineNo">104</span>                                <a name="line.104"></a>
+<span class="sourceLineNo">105</span>//                              // Ideen:<a name="line.105"></a>
+<span class="sourceLineNo">106</span>                                // --&gt; letzten positiven averageDelay merken, und dann totalDelay -= lastAverageDelay ; --&gt; DONE (alpha = 1.0)<a name="line.106"></a>
+<span class="sourceLineNo">107</span>                                // --&gt; Mittel über die letzten positven averageDelays (exponential smoothing probably ok: lastAverageDelay = (1-alpha)*lastAvDelay + alpha*averageDelay ; ) --&gt; DONE<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                                // --&gt; \propto * (1/flow - 1/cap, so etwas wie die "headway reserve" oder "unused time headway") --&gt; DONE<a name="line.108"></a>
+<span class="sourceLineNo">109</span><a name="line.109"></a>
+<span class="sourceLineNo">110</span>                                if (K_i != 0.) {<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                                        <a name="line.111"></a>
+<span class="sourceLineNo">112</span>                                        // 2a) average approach<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                                        <a name="line.113"></a>
+<span class="sourceLineNo">114</span>                                        double avgDelayAllIterations = 0.;<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                                        if (integralApproach.equals(IntegralApproach.Average.toString())) {<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                                                if (averageDelay &gt; congestionInfo.getDecongestionConfigGroup().getToleratedAverageDelaySec()) {<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                                                        if (this.linkId2time2avgDelayAllIterations.get(linkId) == null) {<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                                                                avgDelayAllIterations = averageDelay;<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                                                                this.linkId2time2avgDelayAllIterations.put(linkId, new HashMap&lt;&gt;());<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                                                        } else {<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                                                                if (this.linkId2time2avgDelayAllIterations.get(linkId).get(intervalNr) == null) {<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                                                                        avgDelayAllIterations = averageDelay;<a name="line.122"></a>
+<span class="sourceLineNo">123</span>                                                                } else {<a name="line.123"></a>
+<span class="sourceLineNo">124</span>                                                                        avgDelayAllIterations =  (1 - congestionInfo.getDecongestionConfigGroup().getIntegralApproachAverageAlpha()) * this.linkId2time2avgDelayAllIterations.get(linkId).get(intervalNr)<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                                                                                        + congestionInfo.getDecongestionConfigGroup().getIntegralApproachAverageAlpha() * averageDelay;<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                                                                }<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                                                        }<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                                                        this.linkId2time2avgDelayAllIterations.get(linkId).put(intervalNr, avgDelayAllIterations);<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                                                }       <a name="line.129"></a>
+<span class="sourceLineNo">130</span>                                        }<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                                        <a name="line.131"></a>
+<span class="sourceLineNo">132</span>                                        // 2b) unused headway approach<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                                        <a name="line.133"></a>
+<span class="sourceLineNo">134</span>                                        double unusedHeadway = 0.;<a name="line.134"></a>
+<span class="sourceLineNo">135</span>                                        if (integralApproach.equals(IntegralApproach.UnusedHeadway.toString())) {<a name="line.135"></a>
+<span class="sourceLineNo">136</span>                                                double flowHeadwaySec = timeBinSize;<a name="line.136"></a>
+<span class="sourceLineNo">137</span>                                                if (this.linkId2time2leavingAgents.get(linkId) != null &amp;&amp; this.linkId2time2leavingAgents.get(linkId).get(intervalNr) != null) {<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                                                        flowHeadwaySec = timeBinSize / this.linkId2time2leavingAgents.get(linkId).get(intervalNr);<a name="line.138"></a>
+<span class="sourceLineNo">139</span>                                                }<a name="line.139"></a>
+<span class="sourceLineNo">140</span>                                                unusedHeadway = flowHeadwaySec - flowCapacityHeadwaySec;<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                                                if (unusedHeadway &lt; 0.) unusedHeadway = 0.; // there is no unused Headway<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                                        }<a name="line.142"></a>
+<span class="sourceLineNo">143</span><a name="line.143"></a>
+<span class="sourceLineNo">144</span>                                        // update the total delay over all iterations<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                                        double totalDelayAllIterations = 0.;<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                                        if (linkId2time2totalDelayAllIterations.get(linkId) == null) {  <a name="line.146"></a>
+<span class="sourceLineNo">147</span>                                                totalDelayAllIterations = averageDelay;<a name="line.147"></a>
+<span class="sourceLineNo">148</span>                                                this.linkId2time2totalDelayAllIterations.put(linkId, new HashMap&lt;&gt;());<a name="line.148"></a>
+<span class="sourceLineNo">149</span>                                        <a name="line.149"></a>
+<span class="sourceLineNo">150</span>                                        } else {<a name="line.150"></a>
+<span class="sourceLineNo">151</span>                                                <a name="line.151"></a>
+<span class="sourceLineNo">152</span>                                                if (this.linkId2time2totalDelayAllIterations.get(linkId).get(intervalNr) == null) {<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                                                        totalDelayAllIterations = averageDelay;<a name="line.153"></a>
+<span class="sourceLineNo">154</span>                                                <a name="line.154"></a>
+<span class="sourceLineNo">155</span>                                                } else {        <a name="line.155"></a>
+<span class="sourceLineNo">156</span>                                                                                                        <a name="line.156"></a>
+<span class="sourceLineNo">157</span>                                                        if (averageDelay &lt;= congestionInfo.getDecongestionConfigGroup().getToleratedAverageDelaySec()) {<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                                                                <a name="line.158"></a>
+<span class="sourceLineNo">159</span>                                                                if (integralApproach.equals(IntegralApproach.Average.toString())) {<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                                                                        totalDelayAllIterations = this.linkId2time2totalDelayAllIterations.get(linkId).get(intervalNr)<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                                                                                        - avgDelayAllIterations;<a name="line.161"></a>
+<span class="sourceLineNo">162</span>                                                                } else if (integralApproach.equals(IntegralApproach.UnusedHeadway.toString())) {<a name="line.162"></a>
+<span class="sourceLineNo">163</span>                                                                        totalDelayAllIterations = this.linkId2time2totalDelayAllIterations.get(linkId).get(intervalNr)<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                                                                                        - (congestionInfo.getDecongestionConfigGroup().getIntegralApproachUnusedHeadwayFactor() * unusedHeadway);<a name="line.164"></a>
+<span class="sourceLineNo">165</span>                                                                } else if (integralApproach.equals(IntegralApproach.Zero.toString())) {<a name="line.165"></a>
+<span class="sourceLineNo">166</span>                                                                        totalDelayAllIterations = 0.;<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                                                                } else {<a name="line.167"></a>
+<span class="sourceLineNo">168</span>                                                                        throw new RuntimeException("Unknown integral approach. Aborting...");<a name="line.168"></a>
+<span class="sourceLineNo">169</span>                                                                }<a name="line.169"></a>
+<span class="sourceLineNo">170</span>                                                                        <a name="line.170"></a>
+<span class="sourceLineNo">171</span>                                                        } else {<a name="line.171"></a>
+<span class="sourceLineNo">172</span>                                                                totalDelayAllIterations = this.linkId2time2totalDelayAllIterations.get(linkId).get(intervalNr) <a name="line.172"></a>
+<span class="sourceLineNo">173</span>                                                                                + averageDelay;<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                                                        }<a name="line.174"></a>
+<span class="sourceLineNo">175</span>                                                }<a name="line.175"></a>
+<span class="sourceLineNo">176</span>                                        }<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                                        this.linkId2time2totalDelayAllIterations.get(linkId).put(intervalNr, totalDelayAllIterations);                          <a name="line.177"></a>
+<span class="sourceLineNo">178</span>                                        toll += K_i * totalDelayAllIterations;<a name="line.178"></a>
+<span class="sourceLineNo">179</span>                                }<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                                <a name="line.180"></a>
+<span class="sourceLineNo">181</span>                                // 3) derivative term<a name="line.181"></a>
+<span class="sourceLineNo">182</span>                                <a name="line.182"></a>
+<span class="sourceLineNo">183</span>                                if (K_d != 0.) {<a name="line.183"></a>
+<span class="sourceLineNo">184</span>                                        double previousDelay = 0.;<a name="line.184"></a>
+<span class="sourceLineNo">185</span>                                        if (this.linkId2infoPreviousTollComputation.get(linkId) != null <a name="line.185"></a>
+<span class="sourceLineNo">186</span>                                                        &amp;&amp; this.linkId2infoPreviousTollComputation.get(linkId).getTime2avgDelay().get(intervalNr) != null) {<a name="line.186"></a>
+<span class="sourceLineNo">187</span>                                                previousDelay = this.linkId2infoPreviousTollComputation.get(linkId).getTime2avgDelay().get(intervalNr);<a name="line.187"></a>
+<span class="sourceLineNo">188</span>                                        }<a name="line.188"></a>
+<span class="sourceLineNo">189</span>                                <a name="line.189"></a>
+<span class="sourceLineNo">190</span>                                        double deltaDelay = averageDelay - previousDelay;<a name="line.190"></a>
+<span class="sourceLineNo">191</span>                                        toll += K_d * deltaDelay;<a name="line.191"></a>
+<span class="sourceLineNo">192</span>                                }<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                                <a name="line.193"></a>
+<span class="sourceLineNo">194</span>                                // 4) prevent negative tolls<a name="line.194"></a>
+<span class="sourceLineNo">195</span>                                <a name="line.195"></a>
+<span class="sourceLineNo">196</span>                                if (toll &lt; 0) {<a name="line.196"></a>
+<span class="sourceLineNo">197</span>                                        toll = 0;<a name="line.197"></a>
+<span class="sourceLineNo">198</span>                                }<a name="line.198"></a>
+<span class="sourceLineNo">199</span>                                <a name="line.199"></a>
+<span class="sourceLineNo">200</span>                                // 5) smoothen the tolls<a name="line.200"></a>
+<span class="sourceLineNo">201</span>                                <a name="line.201"></a>
+<span class="sourceLineNo">202</span>                                Double previousToll = linkInfo.getTime2toll().get(intervalNr);<a name="line.202"></a>
+<span class="sourceLineNo">203</span><a name="line.203"></a>
+<span class="sourceLineNo">204</span>                                double blendFactor;<a name="line.204"></a>
+<span class="sourceLineNo">205</span>                                if (msa) {<a name="line.205"></a>
+<span class="sourceLineNo">206</span>                                        if (this.tollUpdateCounter &gt; 0) {<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                                                blendFactor = 1.0 / (double) this.tollUpdateCounter;<a name="line.207"></a>
+<span class="sourceLineNo">208</span>                                        } else {<a name="line.208"></a>
+<span class="sourceLineNo">209</span>                                                blendFactor = 1.0;<a name="line.209"></a>
+<span class="sourceLineNo">210</span>                                        }<a name="line.210"></a>
+<span class="sourceLineNo">211</span>                                } else {<a name="line.211"></a>
+<span class="sourceLineNo">212</span>                                        blendFactor = blendFactorFromConfig;<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                                }<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                                <a name="line.214"></a>
+<span class="sourceLineNo">215</span>                                double smoothedToll;<a name="line.215"></a>
+<span class="sourceLineNo">216</span>                                if (previousToll != null &amp;&amp; previousToll &gt;= 0.) {<a name="line.216"></a>
+<span class="sourceLineNo">217</span>                                        smoothedToll = toll * blendFactor + previousToll * (1 - blendFactor);<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                                } else {<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                                        smoothedToll = toll;<a name="line.219"></a>
+<span class="sourceLineNo">220</span>                                }<a name="line.220"></a>
+<span class="sourceLineNo">221</span>                                                                <a name="line.221"></a>
+<span class="sourceLineNo">222</span>                                // 6) store the updated toll<a name="line.222"></a>
+<span class="sourceLineNo">223</span>                                <a name="line.223"></a>
+<span class="sourceLineNo">224</span>                                linkInfo.getTime2toll().put(intervalNr, smoothedToll);<a name="line.224"></a>
+<span class="sourceLineNo">225</span><a name="line.225"></a>
+<span class="sourceLineNo">226</span>                        }       <a name="line.226"></a>
+<span class="sourceLineNo">227</span>                }<a name="line.227"></a>
+<span class="sourceLineNo">228</span>                <a name="line.228"></a>
+<span class="sourceLineNo">229</span>                log.info("Updating tolls completed.");<a name="line.229"></a>
+<span class="sourceLineNo">230</span>                this.tollUpdateCounter++;<a name="line.230"></a>
+<span class="sourceLineNo">231</span>                <a name="line.231"></a>
+<span class="sourceLineNo">232</span>                // store the current link information for the next toll computation<a name="line.232"></a>
+<span class="sourceLineNo">233</span>                <a name="line.233"></a>
+<span class="sourceLineNo">234</span>                linkId2infoPreviousTollComputation = new HashMap&lt;&gt;();<a name="line.234"></a>
+<span class="sourceLineNo">235</span>                for ( Map.Entry&lt;Id&lt;Link&gt;,LinkInfo&gt; entry : this.congestionInfo.getlinkInfos().entrySet()) {<a name="line.235"></a>
+<span class="sourceLineNo">236</span>                        LinkInfo linkInfo = entry.getValue();;<a name="line.236"></a>
+<span class="sourceLineNo">237</span>                        <a name="line.237"></a>
+<span class="sourceLineNo">238</span>                        Map&lt;Integer, Double&gt; time2previousDelay = new HashMap&lt;&gt;();<a name="line.238"></a>
+<span class="sourceLineNo">239</span>                        for (Integer intervalNr : linkInfo.getTime2avgDelay().keySet()) {<a name="line.239"></a>
+<span class="sourceLineNo">240</span>                                time2previousDelay.put(intervalNr, linkInfo.getTime2avgDelay().get(intervalNr));<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                        }<a name="line.241"></a>
+<span class="sourceLineNo">242</span>                        <a name="line.242"></a>
+<span class="sourceLineNo">243</span>                        LinkInfo linkInfoPreviousTollComputation = new LinkInfo(linkInfo.getLink());<a name="line.243"></a>
+<span class="sourceLineNo">244</span>                        linkInfoPreviousTollComputation.setTime2avgDelay(time2previousDelay);<a name="line.244"></a>
+<span class="sourceLineNo">245</span>                        linkId2infoPreviousTollComputation.put(linkInfo.getLink().getId(), linkInfoPreviousTollComputation);<a name="line.245"></a>
+<span class="sourceLineNo">246</span>                }<a name="line.246"></a>
+<span class="sourceLineNo">247</span>        }<a name="line.247"></a>
+<span class="sourceLineNo">248</span><a name="line.248"></a>
+<span class="sourceLineNo">249</span>        @Override<a name="line.249"></a>
+<span class="sourceLineNo">250</span>        public void reset(int iteration) {<a name="line.250"></a>
+<span class="sourceLineNo">251</span>                this.linkId2time2leavingAgents.clear();<a name="line.251"></a>
+<span class="sourceLineNo">252</span>        }<a name="line.252"></a>
+<span class="sourceLineNo">253</span><a name="line.253"></a>
+<span class="sourceLineNo">254</span>        @Override<a name="line.254"></a>
+<span class="sourceLineNo">255</span>        public void handleEvent(LinkLeaveEvent event) {<a name="line.255"></a>
+<span class="sourceLineNo">256</span>                int timeBinNr = getIntervalNr(event.getTime());<a name="line.256"></a>
+<span class="sourceLineNo">257</span><a name="line.257"></a>
+<span class="sourceLineNo">258</span>                Id&lt;Link&gt; linkId = event.getLinkId();<a name="line.258"></a>
+<span class="sourceLineNo">259</span>                <a name="line.259"></a>
+<span class="sourceLineNo">260</span>                if (linkId2time2leavingAgents.get(linkId) != null) {<a name="line.260"></a>
+<span class="sourceLineNo">261</span>                        <a name="line.261"></a>
+<span class="sourceLineNo">262</span>                        if (linkId2time2leavingAgents.get(linkId).get(timeBinNr) != null) {<a name="line.262"></a>
+<span class="sourceLineNo">263</span>                                int leavingAgents = linkId2time2leavingAgents.get(linkId).get(timeBinNr) + 1;<a name="line.263"></a>
+<span class="sourceLineNo">264</span>                                linkId2time2leavingAgents.get(linkId).put(timeBinNr, leavingAgents);<a name="line.264"></a>
+<span class="sourceLineNo">265</span>                                <a name="line.265"></a>
+<span class="sourceLineNo">266</span>                        } else {<a name="line.266"></a>
+<span class="sourceLineNo">267</span>                                linkId2time2leavingAgents.get(linkId).put(timeBinNr, 1);<a name="line.267"></a>
+<span class="sourceLineNo">268</span>                        }<a name="line.268"></a>
+<span class="sourceLineNo">269</span>                        <a name="line.269"></a>
+<span class="sourceLineNo">270</span>                } else {<a name="line.270"></a>
+<span class="sourceLineNo">271</span>                        Map&lt;Integer, Integer&gt; time2leavingAgents = new HashMap&lt;&gt;();<a name="line.271"></a>
+<span class="sourceLineNo">272</span>                        time2leavingAgents.put(timeBinNr, 1);<a name="line.272"></a>
+<span class="sourceLineNo">273</span>                        linkId2time2leavingAgents.put(linkId, time2leavingAgents);<a name="line.273"></a>
+<span class="sourceLineNo">274</span>                        <a name="line.274"></a>
+<span class="sourceLineNo">275</span>                }<a name="line.275"></a>
+<span class="sourceLineNo">276</span>        }<a name="line.276"></a>
+<span class="sourceLineNo">277</span>        <a name="line.277"></a>
+<span class="sourceLineNo">278</span>        private int getIntervalNr(double time) {<a name="line.278"></a>
+<span class="sourceLineNo">279</span>                double timeBinSize = congestionInfo.getScenario().getConfig().travelTimeCalculator().getTraveltimeBinSize();            <a name="line.279"></a>
+<span class="sourceLineNo">280</span>                return (int) (time / timeBinSize);<a name="line.280"></a>
+<span class="sourceLineNo">281</span>        }<a name="line.281"></a>
+<span class="sourceLineNo">282</span><a name="line.282"></a>
+<span class="sourceLineNo">283</span>}<a name="line.283"></a>
+<span class="sourceLineNo">284</span><a name="line.284"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

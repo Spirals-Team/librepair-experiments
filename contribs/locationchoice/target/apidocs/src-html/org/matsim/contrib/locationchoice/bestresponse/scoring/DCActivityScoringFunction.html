@@ -1,0 +1,336 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2012 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span><a name="line.19"></a>
+<span class="sourceLineNo">020</span>package org.matsim.contrib.locationchoice.bestresponse.scoring;<a name="line.20"></a>
+<span class="sourceLineNo">021</span><a name="line.21"></a>
+<span class="sourceLineNo">022</span>import org.apache.log4j.Logger;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import org.matsim.api.core.v01.population.Activity;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import org.matsim.api.core.v01.population.Plan;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import org.matsim.api.core.v01.population.PlanElement;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import org.matsim.contrib.locationchoice.BestReplyDestinationChoice;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.matsim.contrib.locationchoice.DestinationChoiceConfigGroup;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.contrib.locationchoice.bestresponse.DestinationChoiceContext;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.contrib.locationchoice.facilityload.ScoringPenalty;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.contrib.locationchoice.utils.ActTypeConverter;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.core.scoring.functions.ScoringParameters;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.core.utils.misc.Time;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.facilities.ActivityFacilities;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.facilities.ActivityFacility;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.facilities.ActivityFacilityImpl;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.facilities.OpeningTime;<a name="line.36"></a>
+<span class="sourceLineNo">037</span>import org.matsim.pt.PtConstants;<a name="line.37"></a>
+<span class="sourceLineNo">038</span>import org.matsim.utils.objectattributes.ObjectAttributes;<a name="line.38"></a>
+<span class="sourceLineNo">039</span><a name="line.39"></a>
+<span class="sourceLineNo">040</span>import java.util.*;<a name="line.40"></a>
+<span class="sourceLineNo">041</span><a name="line.41"></a>
+<span class="sourceLineNo">042</span>// needs to be re-designed with delegation instead of inheritance. kai, oct'14<a name="line.42"></a>
+<span class="sourceLineNo">043</span>public class DCActivityScoringFunction extends org.matsim.deprecated.scoring.functions.CharyparNagelActivityScoring {<a name="line.43"></a>
+<span class="sourceLineNo">044</span>        static final Logger log = Logger.getLogger(DCActivityScoringFunction.class);<a name="line.44"></a>
+<span class="sourceLineNo">045</span>        private DestinationScoring destinationChoiceScoring;    <a name="line.45"></a>
+<span class="sourceLineNo">046</span>        private final ActivityFacilities facilities;<a name="line.46"></a>
+<span class="sourceLineNo">047</span>        private Plan plan;<a name="line.47"></a>
+<span class="sourceLineNo">048</span>        private final ScoringParameters params;<a name="line.48"></a>
+<span class="sourceLineNo">049</span>        public static final int DEFAULT_PRIORITY = 1;<a name="line.49"></a>
+<span class="sourceLineNo">050</span>        private final HashMap&lt;String, Double&gt; zeroUtilityDurations = new HashMap&lt;String, Double&gt;();<a name="line.50"></a>
+<span class="sourceLineNo">051</span>        private ActTypeConverter converter;<a name="line.51"></a>
+<span class="sourceLineNo">052</span>        private ObjectAttributes prefs;<a name="line.52"></a>
+<span class="sourceLineNo">053</span>        private DestinationChoiceContext dcContext;<a name="line.53"></a>
+<span class="sourceLineNo">054</span>        private DestinationChoiceConfigGroup dccg;<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        private List&lt;ScoringPenalty&gt; penalty = null;<a name="line.55"></a>
+<span class="sourceLineNo">056</span><a name="line.56"></a>
+<span class="sourceLineNo">057</span>        // needs to be re-designed with delegation instead of inheritance. kai, oct'14<a name="line.57"></a>
+<span class="sourceLineNo">058</span>        public DCActivityScoringFunction(Plan plan, DestinationChoiceContext dcContext) {<a name="line.58"></a>
+<span class="sourceLineNo">059</span>                super(dcContext.getParams());<a name="line.59"></a>
+<span class="sourceLineNo">060</span>                this.destinationChoiceScoring = new DestinationScoring(dcContext);<a name="line.60"></a>
+<span class="sourceLineNo">061</span>                this.facilities = dcContext.getScenario().getActivityFacilities();<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                this.plan = plan;<a name="line.62"></a>
+<span class="sourceLineNo">063</span>                this.params = dcContext.getParams();<a name="line.63"></a>
+<span class="sourceLineNo">064</span>                this.converter = dcContext.getConverter();<a name="line.64"></a>
+<span class="sourceLineNo">065</span>                this.prefs = dcContext.getPrefsAttributes();<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                this.dcContext = dcContext;<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                this.dccg = (DestinationChoiceConfigGroup) this.dcContext.getScenario().getConfig().getModule(DestinationChoiceConfigGroup.GROUP_NAME);<a name="line.67"></a>
+<span class="sourceLineNo">068</span>                this.penalty = new Vector&lt;ScoringPenalty&gt;();<a name="line.68"></a>
+<span class="sourceLineNo">069</span>        }<a name="line.69"></a>
+<span class="sourceLineNo">070</span>        <a name="line.70"></a>
+<span class="sourceLineNo">071</span>        @Override<a name="line.71"></a>
+<span class="sourceLineNo">072</span>        @Deprecated // needs to be re-designed with delegation instead of inheritance. kai, oct'14<a name="line.72"></a>
+<span class="sourceLineNo">073</span>        public void finish() {<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                super.finish();<a name="line.74"></a>
+<span class="sourceLineNo">075</span>                int activityIndex = -1 ;<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                for (PlanElement pe : this.plan.getPlanElements()) {<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                        if (pe instanceof Activity) {<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                                activityIndex++ ;<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                                this.score += destinationChoiceScoring.getDestinationScore(  (Activity)pe, <a name="line.79"></a>
+<span class="sourceLineNo">080</span>                                                BestReplyDestinationChoice.useScaleEpsilonFromConfig, activityIndex, this.plan.getPerson().getId() );<a name="line.80"></a>
+<span class="sourceLineNo">081</span>                        }<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                }<a name="line.82"></a>
+<span class="sourceLineNo">083</span>                // reduce score by penalty from capacity restraints<a name="line.83"></a>
+<span class="sourceLineNo">084</span>                Iterator&lt;ScoringPenalty&gt; pen_it = this.penalty.iterator();<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                while (pen_it.hasNext()){<a name="line.85"></a>
+<span class="sourceLineNo">086</span>                        ScoringPenalty penalty = pen_it.next();<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                        this.score -=penalty.getPenalty();<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                }<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                this.penalty.clear();<a name="line.89"></a>
+<span class="sourceLineNo">090</span>        }<a name="line.90"></a>
+<span class="sourceLineNo">091</span><a name="line.91"></a>
+<span class="sourceLineNo">092</span>        @Deprecated // needs to be re-designed with delegation instead of inheritance. kai, oct'14<a name="line.92"></a>
+<span class="sourceLineNo">093</span>        protected final double calcActScore(final double arrivalTime, final double departureTime, final Activity act) {<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                <a name="line.94"></a>
+<span class="sourceLineNo">095</span>                if (act.getType().equals(PtConstants.TRANSIT_ACTIVITY_TYPE)) return 0.0;<a name="line.95"></a>
+<span class="sourceLineNo">096</span><a name="line.96"></a>
+<span class="sourceLineNo">097</span>                double tmpScore = 0.0;<a name="line.97"></a>
+<span class="sourceLineNo">098</span><a name="line.98"></a>
+<span class="sourceLineNo">099</span>                        /* Calculate the times the agent actually performs the<a name="line.99"></a>
+<span class="sourceLineNo">100</span>                         * activity.  The facility must be open for the agent to<a name="line.100"></a>
+<span class="sourceLineNo">101</span>                         * perform the activity.  If it's closed, but the agent is<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                         * there, the agent must wait instead of performing the<a name="line.102"></a>
+<span class="sourceLineNo">103</span>                         * activity (until it opens).<a name="line.103"></a>
+<span class="sourceLineNo">104</span>                         *<a name="line.104"></a>
+<span class="sourceLineNo">105</span>                         *                                             Interval during which<a name="line.105"></a>
+<span class="sourceLineNo">106</span>                         * Relationship between times:                 activity is performed:<a name="line.106"></a>
+<span class="sourceLineNo">107</span>                         *<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                         *      O________C A~~D  ( 0 &lt;= C &lt;= A &lt;= D )   D...D (not performed)<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                         * A~~D O________C       ( A &lt;= D &lt;= O &lt;= C )   D...D (not performed)<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                         *      O__A+++++C~~D    ( O &lt;= A &lt;= C &lt;= D )   A...C<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                         *      O__A++D__C       ( O &lt;= A &lt;= D &lt;= C )   A...D<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                         *   A~~O++++++++C~~D    ( A &lt;= O &lt;= C &lt;= D )   O...C<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                         *   A~~O+++++D__C       ( A &lt;= O &lt;= D &lt;= C )   O...D<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                         *<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                         * Legend:<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                         *  A = arrivalTime    (when agent gets to the facility)<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                         *  D = departureTime  (when agent leaves the facility)<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                         *  O = openingTime    (when facility opens)<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                         *  C = closingTime    (when facility closes)<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                         *  + = agent performs activity<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                         *  ~ = agent waits (agent at facility, but not performing activity)<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                         *  _ = facility open, but agent not there<a name="line.122"></a>
+<span class="sourceLineNo">123</span>                         *<a name="line.123"></a>
+<span class="sourceLineNo">124</span>                         * assume O &lt;= C<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                         * assume A &lt;= D<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                         */<a name="line.126"></a>
+<span class="sourceLineNo">127</span><a name="line.127"></a>
+<span class="sourceLineNo">128</span>                        double[] openingInterval = this.getOpeningInterval(act);<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                        double openingTime = openingInterval[0];<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                        double closingTime = openingInterval[1];<a name="line.130"></a>
+<span class="sourceLineNo">131</span><a name="line.131"></a>
+<span class="sourceLineNo">132</span>                        double activityStart = arrivalTime;<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                        double activityEnd = departureTime;<a name="line.133"></a>
+<span class="sourceLineNo">134</span><a name="line.134"></a>
+<span class="sourceLineNo">135</span>                        if ((openingTime &gt;=  0) &amp;&amp; (arrivalTime &lt; openingTime)) {<a name="line.135"></a>
+<span class="sourceLineNo">136</span>                                activityStart = openingTime;<a name="line.136"></a>
+<span class="sourceLineNo">137</span>                        }<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                        if ((closingTime &gt;= 0) &amp;&amp; (closingTime &lt; departureTime)) {<a name="line.138"></a>
+<span class="sourceLineNo">139</span>                                activityEnd = closingTime;<a name="line.139"></a>
+<span class="sourceLineNo">140</span>                        }<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                        if ((openingTime &gt;= 0) &amp;&amp; (closingTime &gt;= 0)<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                                        &amp;&amp; ((openingTime &gt; departureTime) || (closingTime &lt; arrivalTime))) {<a name="line.142"></a>
+<span class="sourceLineNo">143</span>                                // agent could not perform action<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                                activityStart = departureTime;<a name="line.144"></a>
+<span class="sourceLineNo">145</span>                                activityEnd = departureTime;<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                        }<a name="line.146"></a>
+<span class="sourceLineNo">147</span>                        double duration = activityEnd - activityStart;<a name="line.147"></a>
+<span class="sourceLineNo">148</span><a name="line.148"></a>
+<span class="sourceLineNo">149</span>                        // disutility if too early<a name="line.149"></a>
+<span class="sourceLineNo">150</span>                        if (arrivalTime &lt; activityStart) {<a name="line.150"></a>
+<span class="sourceLineNo">151</span>                                // agent arrives to early, has to wait<a name="line.151"></a>
+<span class="sourceLineNo">152</span>                                tmpScore += this.params.marginalUtilityOfWaiting_s * (activityStart - arrivalTime);<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                        }<a name="line.153"></a>
+<span class="sourceLineNo">154</span><a name="line.154"></a>
+<span class="sourceLineNo">155</span>                        // disutility if too late<a name="line.155"></a>
+<span class="sourceLineNo">156</span><a name="line.156"></a>
+<span class="sourceLineNo">157</span>                        double latestStartTime = (Double)this.prefs.getAttribute(this.plan.getPerson().getId().toString(), "latestStartTime_" + act.getType()); <a name="line.157"></a>
+<span class="sourceLineNo">158</span>                        if ((latestStartTime &gt;= 0) &amp;&amp; (activityStart &gt; latestStartTime)) {<a name="line.158"></a>
+<span class="sourceLineNo">159</span>                                tmpScore += this.params.marginalUtilityOfLateArrival_s * (activityStart - latestStartTime);<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                        }<a name="line.160"></a>
+<span class="sourceLineNo">161</span><a name="line.161"></a>
+<span class="sourceLineNo">162</span>                        // utility of performing an action, duration is &gt;= 1, thus log is no problem<a name="line.162"></a>
+<span class="sourceLineNo">163</span>                        double typicalDuration = (Double)this.prefs.getAttribute(this.plan.getPerson().getId().toString(), "typicalDuration_" + act.getType());                 <a name="line.163"></a>
+<span class="sourceLineNo">164</span>                        // initialize zero utility durations here for better code readability, because we only need them here<a name="line.164"></a>
+<span class="sourceLineNo">165</span>                        double zeroUtilityDuration;<a name="line.165"></a>
+<span class="sourceLineNo">166</span>                        if (this.zeroUtilityDurations.containsKey(act.getType())) {<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                                zeroUtilityDuration = this.zeroUtilityDurations.get(act.getType());<a name="line.167"></a>
+<span class="sourceLineNo">168</span>                        } else {<a name="line.168"></a>
+<span class="sourceLineNo">169</span>                                zeroUtilityDuration = (typicalDuration / 3600.0) * Math.exp( -10.0 / (typicalDuration / 3600.0) / DCActivityScoringFunction.DEFAULT_PRIORITY);<a name="line.169"></a>
+<span class="sourceLineNo">170</span>                                this.zeroUtilityDurations.put(act.getType(), zeroUtilityDuration);<a name="line.170"></a>
+<span class="sourceLineNo">171</span>                        }<a name="line.171"></a>
+<span class="sourceLineNo">172</span>                        <a name="line.172"></a>
+<span class="sourceLineNo">173</span>                        // disutility if stopping too early<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                        double earliestEndTime = (Double)this.prefs.getAttribute(this.plan.getPerson().getId().toString(), "earliestEndTime_" + act.getType()); <a name="line.174"></a>
+<span class="sourceLineNo">175</span>                        if ((earliestEndTime &gt;= 0) &amp;&amp; (activityEnd &lt; earliestEndTime)) {<a name="line.175"></a>
+<span class="sourceLineNo">176</span>                                tmpScore += this.params.marginalUtilityOfEarlyDeparture_s * (earliestEndTime - activityEnd);<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                        }<a name="line.177"></a>
+<span class="sourceLineNo">178</span><a name="line.178"></a>
+<span class="sourceLineNo">179</span>                        // disutility if going to away to late<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                        if (activityEnd &lt; departureTime) {<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                                tmpScore += this.params.marginalUtilityOfWaiting_s * (departureTime - activityEnd);<a name="line.181"></a>
+<span class="sourceLineNo">182</span>                        }<a name="line.182"></a>
+<span class="sourceLineNo">183</span><a name="line.183"></a>
+<span class="sourceLineNo">184</span>                        // disutility if duration was too short<a name="line.184"></a>
+<span class="sourceLineNo">185</span>                        double minimalDuration = (Double)this.prefs.getAttribute(this.plan.getPerson().getId().toString(), "minimalDuration_" + act.getType()); <a name="line.185"></a>
+<span class="sourceLineNo">186</span>                        if ((minimalDuration &gt;= 0) &amp;&amp; (duration &lt; minimalDuration)) {<a name="line.186"></a>
+<span class="sourceLineNo">187</span>                                tmpScore += this.params.marginalUtilityOfEarlyDeparture_s * (minimalDuration - duration);<a name="line.187"></a>
+<span class="sourceLineNo">188</span>                        }<a name="line.188"></a>
+<span class="sourceLineNo">189</span><a name="line.189"></a>
+<span class="sourceLineNo">190</span>                        if (duration &gt; 0) {<a name="line.190"></a>
+<span class="sourceLineNo">191</span>                                <a name="line.191"></a>
+<span class="sourceLineNo">192</span>                                double utilPerf = this.params.marginalUtilityOfPerforming_s * typicalDuration<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                                                * Math.log((duration / 3600.0) / zeroUtilityDuration);<a name="line.193"></a>
+<span class="sourceLineNo">194</span>                                <a name="line.194"></a>
+<span class="sourceLineNo">195</span>                                double utilWait = this.params.marginalUtilityOfWaiting_s * duration;<a name="line.195"></a>
+<span class="sourceLineNo">196</span>                                tmpScore += Math.max(0, Math.max(utilPerf, utilWait));<a name="line.196"></a>
+<span class="sourceLineNo">197</span>                                <a name="line.197"></a>
+<span class="sourceLineNo">198</span>                                if (this.dcContext.getScaleEpsilon().isFlexibleType(this.converter.convertType(act.getType())) &amp;&amp;<a name="line.198"></a>
+<span class="sourceLineNo">199</span>                                                this.dccg.getRestraintFcnExp() &gt; 0.0 &amp;&amp;<a name="line.199"></a>
+<span class="sourceLineNo">200</span>                                                this.dccg.getRestraintFcnFactor() &gt; 0.0) {<a name="line.200"></a>
+<span class="sourceLineNo">201</span>                                        <a name="line.201"></a>
+<span class="sourceLineNo">202</span>                                                /* Penalty due to facility load: --------------------------------------------<a name="line.202"></a>
+<span class="sourceLineNo">203</span>                                                 * Store the temporary score to reduce it in finish() proportionally<a name="line.203"></a>
+<span class="sourceLineNo">204</span>                                                 * to score and dep. on facility load.<a name="line.204"></a>
+<span class="sourceLineNo">205</span>                                                 * TODO: maybe checking if activity is movable for this person (discussion)<a name="line.205"></a>
+<span class="sourceLineNo">206</span>                                                 */<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                                                this.penalty.add(new ScoringPenalty(activityStart, activityEnd,<a name="line.207"></a>
+<span class="sourceLineNo">208</span>                                                                        this.dcContext.getFacilityPenalties().get(act.getFacilityId()), tmpScore));<a name="line.208"></a>
+<span class="sourceLineNo">209</span>                                                //---------------------------------------------------------------------------<a name="line.209"></a>
+<span class="sourceLineNo">210</span>                                }<a name="line.210"></a>
+<span class="sourceLineNo">211</span>                        } else {<a name="line.211"></a>
+<span class="sourceLineNo">212</span>                                tmpScore += 2*this.params.marginalUtilityOfLateArrival_s*Math.abs(duration);<a name="line.212"></a>
+<span class="sourceLineNo">213</span>                        }<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                return tmpScore;<a name="line.214"></a>
+<span class="sourceLineNo">215</span>        }<a name="line.215"></a>
+<span class="sourceLineNo">216</span>        <a name="line.216"></a>
+<span class="sourceLineNo">217</span>        <a name="line.217"></a>
+<span class="sourceLineNo">218</span>        @Override<a name="line.218"></a>
+<span class="sourceLineNo">219</span>        @Deprecated // needs to be re-designed with delegation instead of inheritance. kai, oct'14<a name="line.219"></a>
+<span class="sourceLineNo">220</span>        protected double[] getOpeningInterval(Activity act) {<a name="line.220"></a>
+<span class="sourceLineNo">221</span>                // openInterval has two values<a name="line.221"></a>
+<span class="sourceLineNo">222</span>                // openInterval[0] will be the opening time<a name="line.222"></a>
+<span class="sourceLineNo">223</span>                // openInterval[1] will be the closing time<a name="line.223"></a>
+<span class="sourceLineNo">224</span>                double[] openInterval = new double[]{Time.UNDEFINED_TIME, Time.UNDEFINED_TIME};<a name="line.224"></a>
+<span class="sourceLineNo">225</span>                boolean foundAct = false;<a name="line.225"></a>
+<span class="sourceLineNo">226</span>                <a name="line.226"></a>
+<span class="sourceLineNo">227</span>                if (act.getType().contains("interaction") || // yyyy might be too loose. kai, feb'16 <a name="line.227"></a>
+<span class="sourceLineNo">228</span>                                (this.converter.convertType(act.getType()).startsWith("h") &amp;&amp; this.converter.isV1()) || <a name="line.228"></a>
+<span class="sourceLineNo">229</span>                                act.getType().equals("home")) {<a name="line.229"></a>
+<span class="sourceLineNo">230</span>                        return openInterval;<a name="line.230"></a>
+<span class="sourceLineNo">231</span>                } // pt interaction and home always open<a name="line.231"></a>
+<span class="sourceLineNo">232</span>                <a name="line.232"></a>
+<span class="sourceLineNo">233</span>                ActivityFacility facility = this.facilities.getFacilities().get(act.getFacilityId());           <a name="line.233"></a>
+<span class="sourceLineNo">234</span>                Iterator&lt;String&gt; facilityActTypeIterator = facility.getActivityOptions().keySet().iterator();<a name="line.234"></a>
+<span class="sourceLineNo">235</span>                String facilityActType = null;<a name="line.235"></a>
+<span class="sourceLineNo">236</span>                Set&lt;OpeningTime&gt; opentimes = null;<a name="line.236"></a>
+<span class="sourceLineNo">237</span><a name="line.237"></a>
+<span class="sourceLineNo">238</span>                while (facilityActTypeIterator.hasNext() &amp;&amp; !foundAct) {<a name="line.238"></a>
+<span class="sourceLineNo">239</span>                        facilityActType = facilityActTypeIterator.next();<a name="line.239"></a>
+<span class="sourceLineNo">240</span>                        if (this.converter.convertType(act.getType()).equals(this.converter.convertType(facilityActType))) { // TODO: check here actType conversions<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                                foundAct = true;<a name="line.241"></a>
+<span class="sourceLineNo">242</span>                                // choose appropriate opentime: either wed, wkday or wk<a name="line.242"></a>
+<span class="sourceLineNo">243</span>                                // if none is given, use undefined opentimes<a name="line.243"></a>
+<span class="sourceLineNo">244</span>                                opentimes = ((ActivityFacilityImpl) facility).getActivityOptions().get(facilityActType).getOpeningTimes();<a name="line.244"></a>
+<span class="sourceLineNo">245</span>                                if (opentimes != null) {<a name="line.245"></a>
+<span class="sourceLineNo">246</span>                                        // ignoring lunch breaks with the following procedure:<a name="line.246"></a>
+<span class="sourceLineNo">247</span>                                        // if there is only one wed/wkday/wk open time interval, use it<a name="line.247"></a>
+<span class="sourceLineNo">248</span>                                        // if there are two or more, use the earliest start time and the latest end time<a name="line.248"></a>
+<span class="sourceLineNo">249</span>                                        openInterval[0] = Double.MAX_VALUE;<a name="line.249"></a>
+<span class="sourceLineNo">250</span>                                        openInterval[1] = Double.MIN_VALUE;<a name="line.250"></a>
+<span class="sourceLineNo">251</span>                                        for (OpeningTime opentime : opentimes) {<a name="line.251"></a>
+<span class="sourceLineNo">252</span>                                                openInterval[0] = Math.min(openInterval[0], opentime.getStartTime());<a name="line.252"></a>
+<span class="sourceLineNo">253</span>                                                openInterval[1] = Math.max(openInterval[1], opentime.getEndTime());<a name="line.253"></a>
+<span class="sourceLineNo">254</span>                                        }<a name="line.254"></a>
+<span class="sourceLineNo">255</span>                                }<a name="line.255"></a>
+<span class="sourceLineNo">256</span>                        }<a name="line.256"></a>
+<span class="sourceLineNo">257</span>                }<a name="line.257"></a>
+<span class="sourceLineNo">258</span>                if (!foundAct) {<a name="line.258"></a>
+<span class="sourceLineNo">259</span>                        throw new RuntimeException("No suitable facility activity type found for activity " + act.getType() + <a name="line.259"></a>
+<span class="sourceLineNo">260</span>                        " and facility " + facility.getId() + ". Aborting...");<a name="line.260"></a>
+<span class="sourceLineNo">261</span>                }<a name="line.261"></a>
+<span class="sourceLineNo">262</span>                return openInterval;<a name="line.262"></a>
+<span class="sourceLineNo">263</span>        }<a name="line.263"></a>
+<span class="sourceLineNo">264</span>}<a name="line.264"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2017 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span><a name="line.19"></a>
+<span class="sourceLineNo">020</span>package org.matsim.contrib.drt.optimizer;<a name="line.20"></a>
+<span class="sourceLineNo">021</span><a name="line.21"></a>
+<span class="sourceLineNo">022</span>import java.util.Collection;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import java.util.Collections;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import java.util.Map;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import java.util.Objects;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import java.util.concurrent.ExecutionException;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import java.util.concurrent.ForkJoinPool;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import java.util.stream.Collectors;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import java.util.stream.Stream;<a name="line.29"></a>
+<span class="sourceLineNo">030</span><a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.api.core.v01.Id;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.contrib.drt.data.DrtRequest;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.contrib.drt.schedule.DrtStopTask;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.contrib.dvrp.data.Vehicle;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.contrib.dvrp.util.LinkTimePair;<a name="line.35"></a>
+<span class="sourceLineNo">036</span><a name="line.36"></a>
+<span class="sourceLineNo">037</span>import com.google.common.collect.ImmutableList;<a name="line.37"></a>
+<span class="sourceLineNo">038</span><a name="line.38"></a>
+<span class="sourceLineNo">039</span>/**<a name="line.39"></a>
+<span class="sourceLineNo">040</span> * @author michalm<a name="line.40"></a>
+<span class="sourceLineNo">041</span> */<a name="line.41"></a>
+<span class="sourceLineNo">042</span>public class VehicleData {<a name="line.42"></a>
+<span class="sourceLineNo">043</span>        public static class Entry {<a name="line.43"></a>
+<span class="sourceLineNo">044</span>                public final Vehicle vehicle;<a name="line.44"></a>
+<span class="sourceLineNo">045</span>                public final LinkTimePair start;<a name="line.45"></a>
+<span class="sourceLineNo">046</span>                public final int startOccupancy;<a name="line.46"></a>
+<span class="sourceLineNo">047</span>                public final ImmutableList&lt;Stop&gt; stops;<a name="line.47"></a>
+<span class="sourceLineNo">048</span><a name="line.48"></a>
+<span class="sourceLineNo">049</span>                public Entry(Vehicle vehicle, LinkTimePair start, int startOccupancy, ImmutableList&lt;Stop&gt; stops) {<a name="line.49"></a>
+<span class="sourceLineNo">050</span>                        this.vehicle = vehicle;<a name="line.50"></a>
+<span class="sourceLineNo">051</span>                        this.start = start;<a name="line.51"></a>
+<span class="sourceLineNo">052</span>                        this.startOccupancy = startOccupancy;<a name="line.52"></a>
+<span class="sourceLineNo">053</span>                        this.stops = stops;<a name="line.53"></a>
+<span class="sourceLineNo">054</span>                }<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        }<a name="line.55"></a>
+<span class="sourceLineNo">056</span><a name="line.56"></a>
+<span class="sourceLineNo">057</span>        public static class Stop {<a name="line.57"></a>
+<span class="sourceLineNo">058</span>                public final DrtStopTask task;<a name="line.58"></a>
+<span class="sourceLineNo">059</span>                public final double maxArrivalTime;// relating to max pass drive time (for dropoff requests)<a name="line.59"></a>
+<span class="sourceLineNo">060</span>                public final double maxDepartureTime;// relating to pass max wait time (for pickup requests)<a name="line.60"></a>
+<span class="sourceLineNo">061</span>                public final int occupancyChange;// diff in pickups and dropoffs<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                public final int outgoingOccupancy;<a name="line.62"></a>
+<span class="sourceLineNo">063</span><a name="line.63"></a>
+<span class="sourceLineNo">064</span>                public Stop(DrtStopTask task, int outputOccupancy) {<a name="line.64"></a>
+<span class="sourceLineNo">065</span>                        this.task = task;<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                        this.outgoingOccupancy = outputOccupancy;<a name="line.66"></a>
+<span class="sourceLineNo">067</span><a name="line.67"></a>
+<span class="sourceLineNo">068</span>                        maxArrivalTime = calcMaxArrivalTime();<a name="line.68"></a>
+<span class="sourceLineNo">069</span>                        maxDepartureTime = calcMaxDepartureTime();<a name="line.69"></a>
+<span class="sourceLineNo">070</span>                        occupancyChange = task.getPickupRequests().size() - task.getDropoffRequests().size();<a name="line.70"></a>
+<span class="sourceLineNo">071</span>                }<a name="line.71"></a>
+<span class="sourceLineNo">072</span><a name="line.72"></a>
+<span class="sourceLineNo">073</span>                private double calcMaxArrivalTime() {<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                        double maxTime = Double.MAX_VALUE;<a name="line.74"></a>
+<span class="sourceLineNo">075</span>                        for (DrtRequest r : task.getDropoffRequests()) {<a name="line.75"></a>
+<span class="sourceLineNo">076</span>                                double reqMaxArrivalTime = r.getLatestArrivalTime();<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                                if (reqMaxArrivalTime &lt; maxTime) {<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                                        maxTime = reqMaxArrivalTime;<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                                }<a name="line.79"></a>
+<span class="sourceLineNo">080</span>                        }<a name="line.80"></a>
+<span class="sourceLineNo">081</span>                        return maxTime;<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                }<a name="line.82"></a>
+<span class="sourceLineNo">083</span><a name="line.83"></a>
+<span class="sourceLineNo">084</span>                private double calcMaxDepartureTime() {<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                        double maxTime = Double.MAX_VALUE;<a name="line.85"></a>
+<span class="sourceLineNo">086</span>                        for (DrtRequest r : task.getPickupRequests()) {<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                                double reqMaxDepartureTime = r.getLatestStartTime();<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                                if (reqMaxDepartureTime &lt; maxTime) {<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                                        maxTime = reqMaxDepartureTime;<a name="line.89"></a>
+<span class="sourceLineNo">090</span>                                }<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                        }<a name="line.91"></a>
+<span class="sourceLineNo">092</span>                        return maxTime;<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                }<a name="line.93"></a>
+<span class="sourceLineNo">094</span><a name="line.94"></a>
+<span class="sourceLineNo">095</span>                @Override<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                public String toString() {<a name="line.96"></a>
+<span class="sourceLineNo">097</span>                        return "VehicleData.Stop for: " + task.toString();<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                }<a name="line.98"></a>
+<span class="sourceLineNo">099</span>        }<a name="line.99"></a>
+<span class="sourceLineNo">100</span><a name="line.100"></a>
+<span class="sourceLineNo">101</span>        public interface EntryFactory {<a name="line.101"></a>
+<span class="sourceLineNo">102</span>                Entry create(Vehicle vehicle, double currentTime);<a name="line.102"></a>
+<span class="sourceLineNo">103</span>        }<a name="line.103"></a>
+<span class="sourceLineNo">104</span><a name="line.104"></a>
+<span class="sourceLineNo">105</span>        private final double currentTime;<a name="line.105"></a>
+<span class="sourceLineNo">106</span>        private final EntryFactory entryFactory;<a name="line.106"></a>
+<span class="sourceLineNo">107</span>        private final Map&lt;Id&lt;Vehicle&gt;, Entry&gt; entries;<a name="line.107"></a>
+<span class="sourceLineNo">108</span><a name="line.108"></a>
+<span class="sourceLineNo">109</span>        public VehicleData(double currentTime, Stream&lt;? extends Vehicle&gt; vehicles, EntryFactory entryFactory,<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                        ForkJoinPool forkJoinPool) {<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                this.currentTime = currentTime;<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                this.entryFactory = entryFactory;<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                try {<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                        entries = forkJoinPool.submit(() -&gt; vehicles.parallel()//<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                                        .map(v -&gt; entryFactory.create(v, currentTime))//<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                                        .filter(Objects::nonNull)//<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                                        .collect(Collectors.toMap(e -&gt; e.vehicle.getId(), e -&gt; e)))//<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                                        .get();<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                } catch (InterruptedException | ExecutionException e) {<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                        throw new RuntimeException(e);<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                }<a name="line.121"></a>
+<span class="sourceLineNo">122</span>        }<a name="line.122"></a>
+<span class="sourceLineNo">123</span><a name="line.123"></a>
+<span class="sourceLineNo">124</span>        public void updateEntry(Vehicle vehicle) {<a name="line.124"></a>
+<span class="sourceLineNo">125</span>                Entry e = entryFactory.create(vehicle, currentTime);<a name="line.125"></a>
+<span class="sourceLineNo">126</span>                if (e != null) {<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                        entries.put(vehicle.getId(), e);<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                } else {<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                        entries.remove(vehicle.getId());<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                }<a name="line.130"></a>
+<span class="sourceLineNo">131</span>        }<a name="line.131"></a>
+<span class="sourceLineNo">132</span><a name="line.132"></a>
+<span class="sourceLineNo">133</span>        public int getSize() {<a name="line.133"></a>
+<span class="sourceLineNo">134</span>                return entries.size();<a name="line.134"></a>
+<span class="sourceLineNo">135</span>        }<a name="line.135"></a>
+<span class="sourceLineNo">136</span><a name="line.136"></a>
+<span class="sourceLineNo">137</span>        public Collection&lt;Entry&gt; getEntries() {<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                return Collections.unmodifiableCollection(entries.values());<a name="line.138"></a>
+<span class="sourceLineNo">139</span>        }<a name="line.139"></a>
+<span class="sourceLineNo">140</span>}<a name="line.140"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,341 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2013 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span><a name="line.19"></a>
+<span class="sourceLineNo">020</span>package org.matsim.contrib.minibus.replanning;<a name="line.20"></a>
+<span class="sourceLineNo">021</span><a name="line.21"></a>
+<span class="sourceLineNo">022</span>import com.vividsolutions.jts.geom.Coordinate;<a name="line.22"></a>
+<span class="sourceLineNo">023</span>import com.vividsolutions.jts.geom.Geometry;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import com.vividsolutions.jts.geom.GeometryFactory;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import com.vividsolutions.jts.operation.buffer.BufferOp;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import com.vividsolutions.jts.operation.buffer.BufferParameters;<a name="line.26"></a>
+<span class="sourceLineNo">027</span><a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.apache.log4j.Logger;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.api.core.v01.Coord;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.api.core.v01.Id;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.contrib.minibus.operator.Operator;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.contrib.minibus.operator.PPlan;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.contrib.minibus.routeProvider.PRouteProvider;<a name="line.33"></a>
+<span class="sourceLineNo">034</span>import org.matsim.core.utils.geometry.CoordUtils;<a name="line.34"></a>
+<span class="sourceLineNo">035</span>import org.matsim.core.utils.geometry.geotools.MGC;<a name="line.35"></a>
+<span class="sourceLineNo">036</span>import org.matsim.pt.transitSchedule.api.TransitRoute;<a name="line.36"></a>
+<span class="sourceLineNo">037</span>import org.matsim.pt.transitSchedule.api.TransitRouteStop;<a name="line.37"></a>
+<span class="sourceLineNo">038</span>import org.matsim.pt.transitSchedule.api.TransitStopFacility;<a name="line.38"></a>
+<span class="sourceLineNo">039</span><a name="line.39"></a>
+<span class="sourceLineNo">040</span>import java.util.*;<a name="line.40"></a>
+<span class="sourceLineNo">041</span><a name="line.41"></a>
+<span class="sourceLineNo">042</span>/**<a name="line.42"></a>
+<span class="sourceLineNo">043</span> * Takes the route transformed into a lineString to calculate a buffer around it. <a name="line.43"></a>
+<span class="sourceLineNo">044</span> * Chooses then randomly a new stop within the buffer and inserts it in both directions of the line.<a name="line.44"></a>
+<span class="sourceLineNo">045</span> * This is done assuming the most distant stops to be the termini.<a name="line.45"></a>
+<span class="sourceLineNo">046</span> * <a name="line.46"></a>
+<span class="sourceLineNo">047</span> * @author aneumann<a name="line.47"></a>
+<span class="sourceLineNo">048</span> *<a name="line.48"></a>
+<span class="sourceLineNo">049</span> */<a name="line.49"></a>
+<span class="sourceLineNo">050</span>public final class SidewaysRouteExtension extends AbstractPStrategyModule {<a name="line.50"></a>
+<span class="sourceLineNo">051</span>        <a name="line.51"></a>
+<span class="sourceLineNo">052</span>        private final static Logger log = Logger.getLogger(SidewaysRouteExtension.class);<a name="line.52"></a>
+<span class="sourceLineNo">053</span>        public static final String STRATEGY_NAME = "SidewaysRouteExtension";<a name="line.53"></a>
+<span class="sourceLineNo">054</span>        private final double bufferSize;<a name="line.54"></a>
+<span class="sourceLineNo">055</span>        private final double ratio;<a name="line.55"></a>
+<span class="sourceLineNo">056</span>        private final boolean excludeTermini;<a name="line.56"></a>
+<span class="sourceLineNo">057</span>        <a name="line.57"></a>
+<span class="sourceLineNo">058</span>        public SidewaysRouteExtension(ArrayList&lt;String&gt; parameter) {<a name="line.58"></a>
+<span class="sourceLineNo">059</span>                super();<a name="line.59"></a>
+<span class="sourceLineNo">060</span>                if(parameter.size() != 3){<a name="line.60"></a>
+<span class="sourceLineNo">061</span>                        log.error("Parameter 1: Buffer size in meter");<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                        log.error("Parameter 2: Ratio bufferSize to route's beeline length. If set to something very small, e.g. 0.01, the calculated buffer size may be smaller than the one specified in parameter 1. Parameter 1 will then be taken as minimal buffer size.");<a name="line.62"></a>
+<span class="sourceLineNo">063</span>                        log.error("Parameter 3: Remove buffer from termini - true/false");<a name="line.63"></a>
+<span class="sourceLineNo">064</span>                }<a name="line.64"></a>
+<span class="sourceLineNo">065</span>                this.bufferSize = Double.parseDouble(parameter.get(0));<a name="line.65"></a>
+<span class="sourceLineNo">066</span>                this.ratio = Double.parseDouble(parameter.get(1));<a name="line.66"></a>
+<span class="sourceLineNo">067</span>                this.excludeTermini = Boolean.parseBoolean(parameter.get(2));<a name="line.67"></a>
+<span class="sourceLineNo">068</span>        }<a name="line.68"></a>
+<span class="sourceLineNo">069</span><a name="line.69"></a>
+<span class="sourceLineNo">070</span>        @Override<a name="line.70"></a>
+<span class="sourceLineNo">071</span>        public PPlan run(Operator operator) {<a name="line.71"></a>
+<span class="sourceLineNo">072</span><a name="line.72"></a>
+<span class="sourceLineNo">073</span>                PPlan oldPlan = operator.getBestPlan();<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                ArrayList&lt;TransitStopFacility&gt; currentStopsToBeServed = oldPlan.getStopsToBeServed();<a name="line.74"></a>
+<span class="sourceLineNo">075</span>                <a name="line.75"></a>
+<span class="sourceLineNo">076</span>                TransitStopFacility baseStop = currentStopsToBeServed.get(0);<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                TransitStopFacility remoteStop = this.findStopWithLargestDistance(currentStopsToBeServed);<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                double bufferSizeBasedOnRatio = CoordUtils.calcEuclideanDistance(baseStop.getCoord(), remoteStop.getCoord()) * this.ratio;<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                <a name="line.79"></a>
+<span class="sourceLineNo">080</span>                List&lt;Geometry&gt; lineStrings = this.createGeometryFromStops(currentStopsToBeServed, remoteStop);<a name="line.80"></a>
+<span class="sourceLineNo">081</span>                Geometry buffer = this.createBuffer(lineStrings, Math.max(this.bufferSize, bufferSizeBasedOnRatio), this.excludeTermini);<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                <a name="line.82"></a>
+<span class="sourceLineNo">083</span>                Set&lt;Id&lt;TransitStopFacility&gt;&gt; stopsUsed = this.getStopsUsed(oldPlan.getLine().getRoutes().values());<a name="line.83"></a>
+<span class="sourceLineNo">084</span>                TransitStopFacility newStop = this.drawRandomStop(buffer, operator.getRouteProvider(), stopsUsed);<a name="line.84"></a>
+<span class="sourceLineNo">085</span>                <a name="line.85"></a>
+<span class="sourceLineNo">086</span>                if (newStop == null) {<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                        return null;<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                }<a name="line.88"></a>
+<span class="sourceLineNo">089</span>                <a name="line.89"></a>
+<span class="sourceLineNo">090</span>                ArrayList&lt;TransitStopFacility&gt; newStopsToBeServed = this.addStopToExistingStops(baseStop, remoteStop, currentStopsToBeServed, newStop);<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                <a name="line.91"></a>
+<span class="sourceLineNo">092</span>                // create new plan<a name="line.92"></a>
+<span class="sourceLineNo">093</span>                PPlan newPlan = new PPlan(operator.getNewPlanId(), this.getStrategyName(), oldPlan.getId());<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                newPlan.setNVehicles(1);<a name="line.94"></a>
+<span class="sourceLineNo">095</span>                newPlan.setStartTime(oldPlan.getStartTime());<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                newPlan.setEndTime(oldPlan.getEndTime());<a name="line.96"></a>
+<span class="sourceLineNo">097</span>                newPlan.setStopsToBeServed(newStopsToBeServed);<a name="line.97"></a>
+<span class="sourceLineNo">098</span>                <a name="line.98"></a>
+<span class="sourceLineNo">099</span>                newPlan.setLine(operator.getRouteProvider().createTransitLineFromOperatorPlan(operator.getId(), newPlan));<a name="line.99"></a>
+<span class="sourceLineNo">100</span>                <a name="line.100"></a>
+<span class="sourceLineNo">101</span>                return newPlan;<a name="line.101"></a>
+<span class="sourceLineNo">102</span>        }<a name="line.102"></a>
+<span class="sourceLineNo">103</span><a name="line.103"></a>
+<span class="sourceLineNo">104</span><a name="line.104"></a>
+<span class="sourceLineNo">105</span>        private ArrayList&lt;TransitStopFacility&gt; addStopToExistingStops(TransitStopFacility baseStop, TransitStopFacility remoteStop, ArrayList&lt;TransitStopFacility&gt; currentStopsToBeServed, TransitStopFacility newStop) {<a name="line.105"></a>
+<span class="sourceLineNo">106</span>                List&lt;TransitStopFacility&gt; markerStops = new LinkedList&lt;&gt;();<a name="line.106"></a>
+<span class="sourceLineNo">107</span>                markerStops.add(baseStop);<a name="line.107"></a>
+<span class="sourceLineNo">108</span>                markerStops.add(remoteStop);<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                <a name="line.109"></a>
+<span class="sourceLineNo">110</span>                List&lt;ArrayList&lt;TransitStopFacility&gt;&gt; subRoutes = this.cutRouteIntoSubRoutes(markerStops, currentStopsToBeServed);<a name="line.110"></a>
+<span class="sourceLineNo">111</span>                for (ArrayList&lt;TransitStopFacility&gt; subRoute : subRoutes) {<a name="line.111"></a>
+<span class="sourceLineNo">112</span>                        this.addNewStopBetweenTwoNearestExistingStops(subRoute, newStop);<a name="line.112"></a>
+<span class="sourceLineNo">113</span>                }<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                <a name="line.114"></a>
+<span class="sourceLineNo">115</span>                // merger sub routes<a name="line.115"></a>
+<span class="sourceLineNo">116</span>                ArrayList&lt;TransitStopFacility&gt; newStopsToBeServed = new ArrayList&lt;&gt;();<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                for (ArrayList&lt;TransitStopFacility&gt; subRoute : subRoutes) {<a name="line.117"></a>
+<span class="sourceLineNo">118</span>                        for (TransitStopFacility stop : subRoute) {<a name="line.118"></a>
+<span class="sourceLineNo">119</span>                                newStopsToBeServed.add(stop);<a name="line.119"></a>
+<span class="sourceLineNo">120</span>                        }<a name="line.120"></a>
+<span class="sourceLineNo">121</span>                }<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                return newStopsToBeServed;<a name="line.122"></a>
+<span class="sourceLineNo">123</span>        }<a name="line.123"></a>
+<span class="sourceLineNo">124</span><a name="line.124"></a>
+<span class="sourceLineNo">125</span><a name="line.125"></a>
+<span class="sourceLineNo">126</span>        private void addNewStopBetweenTwoNearestExistingStops(ArrayList&lt;TransitStopFacility&gt; stops, TransitStopFacility stop) {<a name="line.126"></a>
+<span class="sourceLineNo">127</span>                // find nearest stop<a name="line.127"></a>
+<span class="sourceLineNo">128</span>                double smallestDistance = Double.MAX_VALUE;<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                TransitStopFacility stopWithSmallestDistance = stops.get(0);<a name="line.129"></a>
+<span class="sourceLineNo">130</span>                TransitStopFacility stopWithSecondSmallestDistance = stops.get(0);<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                for (TransitStopFacility transitStopFacility : stops) {<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                        double currentDistance = CoordUtils.calcEuclideanDistance(stop.getCoord(), transitStopFacility.getCoord());<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                        if (currentDistance &lt; smallestDistance) {<a name="line.133"></a>
+<span class="sourceLineNo">134</span>                                smallestDistance = currentDistance;<a name="line.134"></a>
+<span class="sourceLineNo">135</span>                                stopWithSecondSmallestDistance = stopWithSmallestDistance;<a name="line.135"></a>
+<span class="sourceLineNo">136</span>                                stopWithSmallestDistance = transitStopFacility;<a name="line.136"></a>
+<span class="sourceLineNo">137</span>                        }<a name="line.137"></a>
+<span class="sourceLineNo">138</span>                }<a name="line.138"></a>
+<span class="sourceLineNo">139</span>                <a name="line.139"></a>
+<span class="sourceLineNo">140</span>                // find index to insert<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                int index = Math.min(stops.indexOf(stopWithSecondSmallestDistance), stops.indexOf(stopWithSmallestDistance));<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                <a name="line.142"></a>
+<span class="sourceLineNo">143</span>                // insert<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                stops.add(index + 1, stop);<a name="line.144"></a>
+<span class="sourceLineNo">145</span>        }<a name="line.145"></a>
+<span class="sourceLineNo">146</span><a name="line.146"></a>
+<span class="sourceLineNo">147</span>        private List&lt;ArrayList&lt;TransitStopFacility&gt;&gt; cutRouteIntoSubRoutes(List&lt;TransitStopFacility&gt; markerStops, ArrayList&lt;TransitStopFacility&gt; stops) {<a name="line.147"></a>
+<span class="sourceLineNo">148</span>                List&lt;ArrayList&lt;TransitStopFacility&gt;&gt; subRoutes = null;<a name="line.148"></a>
+<span class="sourceLineNo">149</span>                ArrayList&lt;TransitStopFacility&gt; subRoute = null;<a name="line.149"></a>
+<span class="sourceLineNo">150</span>                <a name="line.150"></a>
+<span class="sourceLineNo">151</span>                for (TransitStopFacility stop : stops) {<a name="line.151"></a>
+<span class="sourceLineNo">152</span>                        if (markerStops.contains(stop)) {<a name="line.152"></a>
+<span class="sourceLineNo">153</span>                                if (subRoutes == null) {<a name="line.153"></a>
+<span class="sourceLineNo">154</span>                                        // very first sub route<a name="line.154"></a>
+<span class="sourceLineNo">155</span>                                        subRoutes = new LinkedList&lt;&gt;();<a name="line.155"></a>
+<span class="sourceLineNo">156</span>                                        subRoute = new ArrayList&lt;&gt;();<a name="line.156"></a>
+<span class="sourceLineNo">157</span>                                        subRoute.add(stop);<a name="line.157"></a>
+<span class="sourceLineNo">158</span>                                        subRoutes.add(subRoute);<a name="line.158"></a>
+<span class="sourceLineNo">159</span>                                } else {<a name="line.159"></a>
+<span class="sourceLineNo">160</span>                                        // create new one<a name="line.160"></a>
+<span class="sourceLineNo">161</span>                                        subRoute = new ArrayList&lt;&gt;();<a name="line.161"></a>
+<span class="sourceLineNo">162</span>                                        subRoutes.add(subRoute);<a name="line.162"></a>
+<span class="sourceLineNo">163</span>                                        subRoute.add(stop);<a name="line.163"></a>
+<span class="sourceLineNo">164</span>                                }<a name="line.164"></a>
+<span class="sourceLineNo">165</span>                        } else {<a name="line.165"></a>
+<span class="sourceLineNo">166</span>                                subRoute.add(stop);<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                        }<a name="line.167"></a>
+<span class="sourceLineNo">168</span>                }<a name="line.168"></a>
+<span class="sourceLineNo">169</span>                <a name="line.169"></a>
+<span class="sourceLineNo">170</span>                return subRoutes;<a name="line.170"></a>
+<span class="sourceLineNo">171</span>        }<a name="line.171"></a>
+<span class="sourceLineNo">172</span><a name="line.172"></a>
+<span class="sourceLineNo">173</span>        private TransitStopFacility findStopWithLargestDistance(ArrayList&lt;TransitStopFacility&gt; stops) {<a name="line.173"></a>
+<span class="sourceLineNo">174</span>                Coord startCoord = stops.get(0).getCoord();<a name="line.174"></a>
+<span class="sourceLineNo">175</span>                double largestDistance = 0;<a name="line.175"></a>
+<span class="sourceLineNo">176</span>                TransitStopFacility stopWithLargestDistance = stops.get(0);<a name="line.176"></a>
+<span class="sourceLineNo">177</span>                for (TransitStopFacility transitStopFacility : stops) {<a name="line.177"></a>
+<span class="sourceLineNo">178</span>                        double currentDistance = CoordUtils.calcEuclideanDistance(startCoord, transitStopFacility.getCoord());<a name="line.178"></a>
+<span class="sourceLineNo">179</span>                        if (currentDistance &gt; largestDistance) {<a name="line.179"></a>
+<span class="sourceLineNo">180</span>                                largestDistance = currentDistance;<a name="line.180"></a>
+<span class="sourceLineNo">181</span>                                stopWithLargestDistance = transitStopFacility;<a name="line.181"></a>
+<span class="sourceLineNo">182</span>                        }<a name="line.182"></a>
+<span class="sourceLineNo">183</span>                }<a name="line.183"></a>
+<span class="sourceLineNo">184</span>                return stopWithLargestDistance;<a name="line.184"></a>
+<span class="sourceLineNo">185</span>        }<a name="line.185"></a>
+<span class="sourceLineNo">186</span><a name="line.186"></a>
+<span class="sourceLineNo">187</span>        private Set&lt;Id&lt;TransitStopFacility&gt;&gt; getStopsUsed(Collection&lt;TransitRoute&gt; routes) {<a name="line.187"></a>
+<span class="sourceLineNo">188</span>                Set&lt;Id&lt;TransitStopFacility&gt;&gt; stopsUsed = new TreeSet&lt;&gt;();<a name="line.188"></a>
+<span class="sourceLineNo">189</span>                for (TransitRoute route : routes) {<a name="line.189"></a>
+<span class="sourceLineNo">190</span>                        for (TransitRouteStop stop : route.getStops()) {<a name="line.190"></a>
+<span class="sourceLineNo">191</span>                                stopsUsed.add(stop.getStopFacility().getId());<a name="line.191"></a>
+<span class="sourceLineNo">192</span>                        }<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                }<a name="line.193"></a>
+<span class="sourceLineNo">194</span>                return stopsUsed;<a name="line.194"></a>
+<span class="sourceLineNo">195</span>        }<a name="line.195"></a>
+<span class="sourceLineNo">196</span><a name="line.196"></a>
+<span class="sourceLineNo">197</span>        private TransitStopFacility drawRandomStop(Geometry buffer, PRouteProvider pRouteProvider, Set&lt;Id&lt;TransitStopFacility&gt;&gt; stopsUsed) {<a name="line.197"></a>
+<span class="sourceLineNo">198</span>                List&lt;TransitStopFacility&gt; choiceSet = new LinkedList&lt;&gt;();<a name="line.198"></a>
+<span class="sourceLineNo">199</span>                <a name="line.199"></a>
+<span class="sourceLineNo">200</span>                // find choice-set<a name="line.200"></a>
+<span class="sourceLineNo">201</span>                for (TransitStopFacility stop : pRouteProvider.getAllPStops()) {<a name="line.201"></a>
+<span class="sourceLineNo">202</span>                        if (!stopsUsed.contains(stop.getId())) {<a name="line.202"></a>
+<span class="sourceLineNo">203</span>                                if (buffer.contains(MGC.coord2Point(stop.getCoord()))) {<a name="line.203"></a>
+<span class="sourceLineNo">204</span>                                        choiceSet.add(stop);<a name="line.204"></a>
+<span class="sourceLineNo">205</span>                                }<a name="line.205"></a>
+<span class="sourceLineNo">206</span>                        }<a name="line.206"></a>
+<span class="sourceLineNo">207</span>                }<a name="line.207"></a>
+<span class="sourceLineNo">208</span>                <a name="line.208"></a>
+<span class="sourceLineNo">209</span>                return pRouteProvider.drawRandomStopFromList(choiceSet);<a name="line.209"></a>
+<span class="sourceLineNo">210</span>        }<a name="line.210"></a>
+<span class="sourceLineNo">211</span><a name="line.211"></a>
+<span class="sourceLineNo">212</span><a name="line.212"></a>
+<span class="sourceLineNo">213</span>        private Geometry createBuffer(List&lt;Geometry&gt; lineStrings, double bufferSize, boolean excludeTermini) {<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                BufferParameters bufferParameters = new BufferParameters();<a name="line.214"></a>
+<span class="sourceLineNo">215</span>                <a name="line.215"></a>
+<span class="sourceLineNo">216</span>                if (excludeTermini) {<a name="line.216"></a>
+<span class="sourceLineNo">217</span>                        bufferParameters.setEndCapStyle(BufferParameters.CAP_FLAT);<a name="line.217"></a>
+<span class="sourceLineNo">218</span>                } else {<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                        bufferParameters.setEndCapStyle(BufferParameters.CAP_ROUND);<a name="line.219"></a>
+<span class="sourceLineNo">220</span>                }<a name="line.220"></a>
+<span class="sourceLineNo">221</span>                <a name="line.221"></a>
+<span class="sourceLineNo">222</span>                Geometry union = null;<a name="line.222"></a>
+<span class="sourceLineNo">223</span>                <a name="line.223"></a>
+<span class="sourceLineNo">224</span>                for (Geometry lineString : lineStrings) {<a name="line.224"></a>
+<span class="sourceLineNo">225</span>                        Geometry buffer = BufferOp.bufferOp(lineString, bufferSize, bufferParameters);<a name="line.225"></a>
+<span class="sourceLineNo">226</span>                        if (union == null) {<a name="line.226"></a>
+<span class="sourceLineNo">227</span>                                union = buffer;<a name="line.227"></a>
+<span class="sourceLineNo">228</span>                        } else {<a name="line.228"></a>
+<span class="sourceLineNo">229</span>                                union = union.union(buffer);<a name="line.229"></a>
+<span class="sourceLineNo">230</span>                        }<a name="line.230"></a>
+<span class="sourceLineNo">231</span>                }<a name="line.231"></a>
+<span class="sourceLineNo">232</span>                <a name="line.232"></a>
+<span class="sourceLineNo">233</span>                return union;<a name="line.233"></a>
+<span class="sourceLineNo">234</span>        }<a name="line.234"></a>
+<span class="sourceLineNo">235</span><a name="line.235"></a>
+<span class="sourceLineNo">236</span><a name="line.236"></a>
+<span class="sourceLineNo">237</span>        private List&lt;Geometry&gt; createGeometryFromStops(ArrayList&lt;TransitStopFacility&gt; stops, TransitStopFacility remoteStop) {<a name="line.237"></a>
+<span class="sourceLineNo">238</span>                List&lt;Geometry&gt; geometries = new LinkedList&lt;&gt;();<a name="line.238"></a>
+<span class="sourceLineNo">239</span>                <a name="line.239"></a>
+<span class="sourceLineNo">240</span>                ArrayList&lt;Coordinate&gt; coords = new ArrayList&lt;&gt;();<a name="line.240"></a>
+<span class="sourceLineNo">241</span>                for (TransitStopFacility stop : stops) {<a name="line.241"></a>
+<span class="sourceLineNo">242</span>                        if (stop.equals(remoteStop)) {<a name="line.242"></a>
+<span class="sourceLineNo">243</span>                                // terminate current line string<a name="line.243"></a>
+<span class="sourceLineNo">244</span>                                coords.add(new Coordinate(stop.getCoord().getX(), stop.getCoord().getY(), 0.0));<a name="line.244"></a>
+<span class="sourceLineNo">245</span>                                Coordinate[] coordinates = coords.toArray(new Coordinate[coords.size()]);<a name="line.245"></a>
+<span class="sourceLineNo">246</span>                                Geometry lineString = new GeometryFactory().createLineString(coordinates);<a name="line.246"></a>
+<span class="sourceLineNo">247</span>                                geometries.add(lineString);<a name="line.247"></a>
+<span class="sourceLineNo">248</span>                                // create new line string<a name="line.248"></a>
+<span class="sourceLineNo">249</span>                                coords = new ArrayList&lt;&gt;();<a name="line.249"></a>
+<span class="sourceLineNo">250</span>                                coords.add(new Coordinate(stop.getCoord().getX(), stop.getCoord().getY(), 0.0));<a name="line.250"></a>
+<span class="sourceLineNo">251</span>                        } else {<a name="line.251"></a>
+<span class="sourceLineNo">252</span>                                coords.add(new Coordinate(stop.getCoord().getX(), stop.getCoord().getY(), 0.0));<a name="line.252"></a>
+<span class="sourceLineNo">253</span>                        }<a name="line.253"></a>
+<span class="sourceLineNo">254</span>                }<a name="line.254"></a>
+<span class="sourceLineNo">255</span>                // add first stop to close the circle<a name="line.255"></a>
+<span class="sourceLineNo">256</span>                coords.add(new Coordinate(stops.get(0).getCoord().getX(), stops.get(0).getCoord().getY(), 0.0));<a name="line.256"></a>
+<span class="sourceLineNo">257</span>                <a name="line.257"></a>
+<span class="sourceLineNo">258</span>                Coordinate[] coordinates = coords.toArray(new Coordinate[coords.size()]);<a name="line.258"></a>
+<span class="sourceLineNo">259</span>                Geometry lineString = new GeometryFactory().createLineString(coordinates);<a name="line.259"></a>
+<span class="sourceLineNo">260</span>                geometries.add(lineString);<a name="line.260"></a>
+<span class="sourceLineNo">261</span>                return geometries;<a name="line.261"></a>
+<span class="sourceLineNo">262</span>        }<a name="line.262"></a>
+<span class="sourceLineNo">263</span><a name="line.263"></a>
+<span class="sourceLineNo">264</span><a name="line.264"></a>
+<span class="sourceLineNo">265</span>        @Override<a name="line.265"></a>
+<span class="sourceLineNo">266</span>        public String getStrategyName() {<a name="line.266"></a>
+<span class="sourceLineNo">267</span>                return SidewaysRouteExtension.STRATEGY_NAME;<a name="line.267"></a>
+<span class="sourceLineNo">268</span>        }<a name="line.268"></a>
+<span class="sourceLineNo">269</span>}<a name="line.269"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>

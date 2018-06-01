@@ -1,0 +1,314 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<title>Source code</title>
+<link rel="stylesheet" type="text/css" href="../../../../../../../stylesheet.css" title="Style">
+</head>
+<body>
+<div class="sourceContainer">
+<pre><span class="sourceLineNo">001</span>/* *********************************************************************** *<a name="line.1"></a>
+<span class="sourceLineNo">002</span> * project: org.matsim.*                                                                                                   *<a name="line.2"></a>
+<span class="sourceLineNo">003</span> *                                                                         *<a name="line.3"></a>
+<span class="sourceLineNo">004</span> * *********************************************************************** *<a name="line.4"></a>
+<span class="sourceLineNo">005</span> *                                                                         *<a name="line.5"></a>
+<span class="sourceLineNo">006</span> * copyright       : (C) 2008 by the members listed in the COPYING,        *<a name="line.6"></a>
+<span class="sourceLineNo">007</span> *                   LICENSE and WARRANTY file.                            *<a name="line.7"></a>
+<span class="sourceLineNo">008</span> * email           : info at matsim dot org                                *<a name="line.8"></a>
+<span class="sourceLineNo">009</span> *                                                                         *<a name="line.9"></a>
+<span class="sourceLineNo">010</span> * *********************************************************************** *<a name="line.10"></a>
+<span class="sourceLineNo">011</span> *                                                                         *<a name="line.11"></a>
+<span class="sourceLineNo">012</span> *   This program is free software; you can redistribute it and/or modify  *<a name="line.12"></a>
+<span class="sourceLineNo">013</span> *   it under the terms of the GNU General Public License as published by  *<a name="line.13"></a>
+<span class="sourceLineNo">014</span> *   the Free Software Foundation; either version 2 of the License, or     *<a name="line.14"></a>
+<span class="sourceLineNo">015</span> *   (at your option) any later version.                                   *<a name="line.15"></a>
+<span class="sourceLineNo">016</span> *   See also COPYING, LICENSE and WARRANTY file                           *<a name="line.16"></a>
+<span class="sourceLineNo">017</span> *                                                                         *<a name="line.17"></a>
+<span class="sourceLineNo">018</span> * *********************************************************************** */<a name="line.18"></a>
+<span class="sourceLineNo">019</span>package org.matsim.core.mobsim.qsim.agents;<a name="line.19"></a>
+<span class="sourceLineNo">020</span><a name="line.20"></a>
+<span class="sourceLineNo">021</span>import java.util.List;<a name="line.21"></a>
+<span class="sourceLineNo">022</span><a name="line.22"></a>
+<span class="sourceLineNo">023</span>import org.apache.log4j.Logger;<a name="line.23"></a>
+<span class="sourceLineNo">024</span>import org.matsim.api.core.v01.Id;<a name="line.24"></a>
+<span class="sourceLineNo">025</span>import org.matsim.api.core.v01.network.Link;<a name="line.25"></a>
+<span class="sourceLineNo">026</span>import org.matsim.api.core.v01.population.Leg;<a name="line.26"></a>
+<span class="sourceLineNo">027</span>import org.matsim.api.core.v01.population.Person;<a name="line.27"></a>
+<span class="sourceLineNo">028</span>import org.matsim.core.gbl.Gbl;<a name="line.28"></a>
+<span class="sourceLineNo">029</span>import org.matsim.core.mobsim.framework.DriverAgent;<a name="line.29"></a>
+<span class="sourceLineNo">030</span>import org.matsim.core.mobsim.framework.MobsimAgent;<a name="line.30"></a>
+<span class="sourceLineNo">031</span>import org.matsim.core.mobsim.qsim.interfaces.MobsimVehicle;<a name="line.31"></a>
+<span class="sourceLineNo">032</span>import org.matsim.core.population.routes.NetworkRoute;<a name="line.32"></a>
+<span class="sourceLineNo">033</span>import org.matsim.vehicles.Vehicle;<a name="line.33"></a>
+<span class="sourceLineNo">034</span><a name="line.34"></a>
+<span class="sourceLineNo">035</span>/**<a name="line.35"></a>
+<span class="sourceLineNo">036</span> * @author nagel<a name="line.36"></a>
+<span class="sourceLineNo">037</span> *<a name="line.37"></a>
+<span class="sourceLineNo">038</span> */<a name="line.38"></a>
+<span class="sourceLineNo">039</span>public final class PlanBasedDriverAgentImpl implements DriverAgent {<a name="line.39"></a>
+<span class="sourceLineNo">040</span><a name="line.40"></a>
+<span class="sourceLineNo">041</span>        private static final Logger log = Logger.getLogger(PlanBasedDriverAgentImpl.class);<a name="line.41"></a>
+<span class="sourceLineNo">042</span><a name="line.42"></a>
+<span class="sourceLineNo">043</span>        private BasicPlanAgentImpl basicPlanAgentDelegate;<a name="line.43"></a>
+<span class="sourceLineNo">044</span><a name="line.44"></a>
+<span class="sourceLineNo">045</span>        public PlanBasedDriverAgentImpl(BasicPlanAgentImpl basicAgent ) {<a name="line.45"></a>
+<span class="sourceLineNo">046</span>                this.basicPlanAgentDelegate = basicAgent ;<a name="line.46"></a>
+<span class="sourceLineNo">047</span>        }<a name="line.47"></a>
+<span class="sourceLineNo">048</span>        private static int expectedLinkWarnCount = 0;<a name="line.48"></a>
+<span class="sourceLineNo">049</span><a name="line.49"></a>
+<span class="sourceLineNo">050</span>        private Id&lt;Link&gt; cachedNextLinkId = null;<a name="line.50"></a>
+<span class="sourceLineNo">051</span><a name="line.51"></a>
+<span class="sourceLineNo">052</span>        @Override<a name="line.52"></a>
+<span class="sourceLineNo">053</span>        public final void notifyMoveOverNode(Id&lt;Link&gt; newLinkId) {<a name="line.53"></a>
+<span class="sourceLineNo">054</span>                if (expectedLinkWarnCount &lt; 10 &amp;&amp; !newLinkId.equals(this.cachedNextLinkId)) {<a name="line.54"></a>
+<span class="sourceLineNo">055</span>                        log.warn("Agent did not end up on expected link. Ok for within-day replanning agent, otherwise not.  Continuing " +<a name="line.55"></a>
+<span class="sourceLineNo">056</span>                                        "anyway ... This warning is suppressed after the first 10 warnings.") ;<a name="line.56"></a>
+<span class="sourceLineNo">057</span>                        expectedLinkWarnCount++;<a name="line.57"></a>
+<span class="sourceLineNo">058</span>                }<a name="line.58"></a>
+<span class="sourceLineNo">059</span>                Gbl.assertNotNull(newLinkId);<a name="line.59"></a>
+<span class="sourceLineNo">060</span>                this.basicPlanAgentDelegate.setCurrentLinkId( newLinkId ) ;<a name="line.60"></a>
+<span class="sourceLineNo">061</span>                this.basicPlanAgentDelegate.incCurrentLinkIndex();<a name="line.61"></a>
+<span class="sourceLineNo">062</span>                this.cachedNextLinkId = null; //reset cached nextLink<a name="line.62"></a>
+<span class="sourceLineNo">063</span>        }<a name="line.63"></a>
+<span class="sourceLineNo">064</span>        <a name="line.64"></a>
+<span class="sourceLineNo">065</span>        /**<a name="line.65"></a>
+<span class="sourceLineNo">066</span>         * Returns the next link the vehicle will drive along.<a name="line.66"></a>
+<span class="sourceLineNo">067</span>         *<a name="line.67"></a>
+<span class="sourceLineNo">068</span>         * @return The next link the vehicle will drive on, or null if an error has happened.<a name="line.68"></a>
+<span class="sourceLineNo">069</span>         */<a name="line.69"></a>
+<span class="sourceLineNo">070</span>        @Override<a name="line.70"></a>
+<span class="sourceLineNo">071</span>        public final Id&lt;Link&gt; chooseNextLinkId() {<a name="line.71"></a>
+<span class="sourceLineNo">072</span>                // To note: there is something really stupid going on here: A vehicle that is at the end of its route and on the destination link will arrive.<a name="line.72"></a>
+<span class="sourceLineNo">073</span>                // However, a vehicle that is on the destination link BUT NOT AT THE END OF ITS ROUTE will NOT arrive.  This makes the whole thing<a name="line.73"></a>
+<span class="sourceLineNo">074</span>                // very extremely messy.  kai, nov'14 (This behavior is no longer there. kai, nov'14)<a name="line.74"></a>
+<span class="sourceLineNo">075</span><a name="line.75"></a>
+<span class="sourceLineNo">076</span>                // Please, let's try, amidst all checking and caching, to have this method return the same thing<a name="line.76"></a>
+<span class="sourceLineNo">077</span>                // if it is called several times in a row. Otherwise, you get Heisenbugs.<a name="line.77"></a>
+<span class="sourceLineNo">078</span>                // I just fixed a situation where this method would give a warning about a bad route and return null<a name="line.78"></a>
+<span class="sourceLineNo">079</span>                // the first time it is called, and happily return a link id when called the second time.  michaz 2013-08<a name="line.79"></a>
+<span class="sourceLineNo">080</span><a name="line.80"></a>
+<span class="sourceLineNo">081</span>                // Agreed.  One should also not assume that anything here is the result of one consistent design process.  Rather, many people added<a name="line.81"></a>
+<span class="sourceLineNo">082</span>                // and removed material as they needed it for their own studies.  Making the whole code more consistent would be highly<a name="line.82"></a>
+<span class="sourceLineNo">083</span>                // desirable.  kai, nov'14<a name="line.83"></a>
+<span class="sourceLineNo">084</span><a name="line.84"></a>
+<span class="sourceLineNo">085</span>                // (1) if there is a cached link id, use that one: <a name="line.85"></a>
+<span class="sourceLineNo">086</span>                if (this.cachedNextLinkId != null &amp;&amp; !(this.cachedNextLinkId.equals(this.getCurrentLinkId())) ) {<a name="line.86"></a>
+<span class="sourceLineNo">087</span>                        // cachedNextLinkId used to be set to null when a leg started.  Now the BasicPlanAgentImpl does not longer have access to cached<a name="line.87"></a>
+<span class="sourceLineNo">088</span>                        // value.  kai, nov'14<a name="line.88"></a>
+<span class="sourceLineNo">089</span><a name="line.89"></a>
+<span class="sourceLineNo">090</span>                        return this.cachedNextLinkId;<a name="line.90"></a>
+<span class="sourceLineNo">091</span>                }<a name="line.91"></a>
+<span class="sourceLineNo">092</span><a name="line.92"></a>
+<span class="sourceLineNo">093</span>                // (2) routes that are not network routes cannot be interpreted<a name="line.93"></a>
+<span class="sourceLineNo">094</span>                if ( ! ( this.basicPlanAgentDelegate.getCurrentLeg().getRoute() instanceof NetworkRoute ) ) {<a name="line.94"></a>
+<span class="sourceLineNo">095</span>                        return null ;<a name="line.95"></a>
+<span class="sourceLineNo">096</span>                }<a name="line.96"></a>
+<span class="sourceLineNo">097</span><a name="line.97"></a>
+<span class="sourceLineNo">098</span>                List&lt;Id&lt;Link&gt;&gt; routeLinkIds = ((NetworkRoute) this.basicPlanAgentDelegate.getCurrentLeg().getRoute()).getLinkIds();<a name="line.98"></a>
+<span class="sourceLineNo">099</span>                <a name="line.99"></a>
+<span class="sourceLineNo">100</span>                // (3) if route has run dry, we return the destination link (except for one special case, which however may not be necessary any more):<a name="line.100"></a>
+<span class="sourceLineNo">101</span>                if (this.basicPlanAgentDelegate.getCurrentLinkIndex() &gt;= routeLinkIds.size() ) {<a name="line.101"></a>
+<span class="sourceLineNo">102</span><a name="line.102"></a>
+<span class="sourceLineNo">103</span>                        // special case:<a name="line.103"></a>
+<span class="sourceLineNo">104</span>                        if (this.getCurrentLinkId().equals( this.getDestinationLinkId() )  <a name="line.104"></a>
+<span class="sourceLineNo">105</span>                                        &amp;&amp; this.basicPlanAgentDelegate.getCurrentLinkIndex() &gt; routeLinkIds.size()) {<a name="line.105"></a>
+<span class="sourceLineNo">106</span>                                // this can happen if the last link in a route is a loop link. Don't ask, it can happen in special transit simulation cases... mrieser/jan2014<a name="line.106"></a>
+<span class="sourceLineNo">107</span><a name="line.107"></a>
+<span class="sourceLineNo">108</span>                                // the condition for arrival used to be "route has run dry AND destination link not attached to current link".  now with loop links,<a name="line.108"></a>
+<span class="sourceLineNo">109</span>                                // this condition was not triggered.  So no wonder that for such cases a special condition was needed.  kai, nov'14<a name="line.109"></a>
+<span class="sourceLineNo">110</span>                                <a name="line.110"></a>
+<span class="sourceLineNo">111</span>                                // The special condition may not be necessary any more. kai, nov'14<a name="line.111"></a>
+<span class="sourceLineNo">112</span><a name="line.112"></a>
+<span class="sourceLineNo">113</span>                                return null;<a name="line.113"></a>
+<span class="sourceLineNo">114</span>                        }<a name="line.114"></a>
+<span class="sourceLineNo">115</span>                        <a name="line.115"></a>
+<span class="sourceLineNo">116</span>                        this.cachedNextLinkId = this.getDestinationLinkId();<a name="line.116"></a>
+<span class="sourceLineNo">117</span>                        return this.cachedNextLinkId;<a name="line.117"></a>
+<span class="sourceLineNo">118</span><a name="line.118"></a>
+<span class="sourceLineNo">119</span>                }<a name="line.119"></a>
+<span class="sourceLineNo">120</span><a name="line.120"></a>
+<span class="sourceLineNo">121</span>                // (4) otherwise (normal case): return the next link of the plan (after caching it):<a name="line.121"></a>
+<span class="sourceLineNo">122</span>                this.cachedNextLinkId = routeLinkIds.get(this.basicPlanAgentDelegate.getCurrentLinkIndex());<a name="line.122"></a>
+<span class="sourceLineNo">123</span>                return this.cachedNextLinkId;<a name="line.123"></a>
+<span class="sourceLineNo">124</span>                <a name="line.124"></a>
+<span class="sourceLineNo">125</span>        }<a name="line.125"></a>
+<span class="sourceLineNo">126</span><a name="line.126"></a>
+<span class="sourceLineNo">127</span>        @Override<a name="line.127"></a>
+<span class="sourceLineNo">128</span>        public final boolean isWantingToArriveOnCurrentLink( ) {<a name="line.128"></a>
+<span class="sourceLineNo">129</span>                <a name="line.129"></a>
+<span class="sourceLineNo">130</span>                if ( ! ( this.basicPlanAgentDelegate.getCurrentLeg().getRoute() instanceof NetworkRoute ) ) {<a name="line.130"></a>
+<span class="sourceLineNo">131</span>                        // non-network links in the past have always returned true (i.e. "null" to the chooseNextLink question). kai, nov'14<a name="line.131"></a>
+<span class="sourceLineNo">132</span>                        return true ;<a name="line.132"></a>
+<span class="sourceLineNo">133</span>                }<a name="line.133"></a>
+<span class="sourceLineNo">134</span><a name="line.134"></a>
+<span class="sourceLineNo">135</span>                final List&lt;Id&lt;Link&gt;&gt; routeLinkIds = ((NetworkRoute) this.basicPlanAgentDelegate.getCurrentLeg().getRoute()).getLinkIds();<a name="line.135"></a>
+<span class="sourceLineNo">136</span>                final int routeLinkIdsSize = routeLinkIds.size();<a name="line.136"></a>
+<span class="sourceLineNo">137</span>                <a name="line.137"></a>
+<span class="sourceLineNo">138</span>                // the standard condition used to be "route has run dry AND destination link not attached to current link":<a name="line.138"></a>
+<span class="sourceLineNo">139</span>                // 2nd condition essentially meant "destination link EQUALS current link" but really stupid way of stating this.  Thus<a name="line.139"></a>
+<span class="sourceLineNo">140</span>                // changing the second condition to "being at destination".  This breaks old code; I will fix as far as it is covered by tests.  kai, nov'14<a name="line.140"></a>
+<span class="sourceLineNo">141</span>                if ( this.basicPlanAgentDelegate.getCurrentLinkIndex() &gt;= routeLinkIdsSize &amp;&amp; this.getCurrentLinkId().equals( this.getDestinationLinkId() ) ) {<a name="line.141"></a>
+<span class="sourceLineNo">142</span>                        return true ;<a name="line.142"></a>
+<span class="sourceLineNo">143</span>                }<a name="line.143"></a>
+<span class="sourceLineNo">144</span>                <a name="line.144"></a>
+<span class="sourceLineNo">145</span>// the following are possible consistency checks on which previous code may have relied. Relatively expensive because of hash map lookups. kai, nov'14<a name="line.145"></a>
+<span class="sourceLineNo">146</span>                        <a name="line.146"></a>
+<span class="sourceLineNo">147</span>//              Link currentLink = this.getScenario().getNetwork().getLinks().get( this.getCurrentLinkId() ) ;<a name="line.147"></a>
+<span class="sourceLineNo">148</span>//              Link destinationLink = this.getScenario().getNetwork().getLinks().get( this.getDestinationLinkId() ) ;<a name="line.148"></a>
+<span class="sourceLineNo">149</span>//                      <a name="line.149"></a>
+<span class="sourceLineNo">150</span>//              if ( this.currentLinkIndex &gt;= routeLinkIdsSize ) { // route has run dry<a name="line.150"></a>
+<span class="sourceLineNo">151</span>//                      if ( currentLink.getToNode() == destinationLink.getFromNode() ) { // will arrive on next link<a name="line.151"></a>
+<span class="sourceLineNo">152</span>//                              return false ;<a name="line.152"></a>
+<span class="sourceLineNo">153</span>//                      } else { // will not arrive on next link<a name="line.153"></a>
+<span class="sourceLineNo">154</span>//                              log.error("route has run dry, and destination link is not attached to next node.  In consequence, vehicle has no chance to continue "<a name="line.154"></a>
+<span class="sourceLineNo">155</span>//                                              + "correctly.  Make it arrive here rather than explode it at the intersection.") ;<a name="line.155"></a>
+<span class="sourceLineNo">156</span>//                              return true ;<a name="line.156"></a>
+<span class="sourceLineNo">157</span>//                      }<a name="line.157"></a>
+<span class="sourceLineNo">158</span>//              }<a name="line.158"></a>
+<span class="sourceLineNo">159</span>                        <a name="line.159"></a>
+<span class="sourceLineNo">160</span>//              Link nextLink = this.getScenario().getNetwork().getLinks().get( routeLinkIds.get(this.getCurrentLinkIndex()) ) ;<a name="line.160"></a>
+<span class="sourceLineNo">161</span>//              <a name="line.161"></a>
+<span class="sourceLineNo">162</span>//              if ( currentLink.getToNode() != nextLink.getFromNode() ) {<a name="line.162"></a>
+<span class="sourceLineNo">163</span>//                      log.error("route is inconsistent.  In consequence, vehicle has no chance to continue correctly." +  <a name="line.163"></a>
+<span class="sourceLineNo">164</span>//                                      "Make it arrive here rather than explode it at the intersection." ) ;<a name="line.164"></a>
+<span class="sourceLineNo">165</span>//                      return true ;<a name="line.165"></a>
+<span class="sourceLineNo">166</span>//              }<a name="line.166"></a>
+<span class="sourceLineNo">167</span>                        <a name="line.167"></a>
+<span class="sourceLineNo">168</span>                return false ;<a name="line.168"></a>
+<span class="sourceLineNo">169</span>        }<a name="line.169"></a>
+<span class="sourceLineNo">170</span><a name="line.170"></a>
+<span class="sourceLineNo">171</span><a name="line.171"></a>
+<span class="sourceLineNo">172</span>        // ============================================================================================================================<a name="line.172"></a>
+<span class="sourceLineNo">173</span>        // below there only (package-)private methods or setters/getters<a name="line.173"></a>
+<span class="sourceLineNo">174</span><a name="line.174"></a>
+<span class="sourceLineNo">175</span>        /**<a name="line.175"></a>
+<span class="sourceLineNo">176</span>         * Some data of the currently simulated Leg is cached to speed up<a name="line.176"></a>
+<span class="sourceLineNo">177</span>         * the simulation. If the Leg changes (for example the Route or<a name="line.177"></a>
+<span class="sourceLineNo">178</span>         * the Destination Link), those cached data has to be reseted.<a name="line.178"></a>
+<span class="sourceLineNo">179</span>         *&lt;/p&gt;<a name="line.179"></a>
+<span class="sourceLineNo">180</span>         * If the Leg has not changed, calling this method should have no effect<a name="line.180"></a>
+<span class="sourceLineNo">181</span>         * on the Results of the Simulation!<a name="line.181"></a>
+<span class="sourceLineNo">182</span>         */<a name="line.182"></a>
+<span class="sourceLineNo">183</span>        /* package */ public final void resetCaches() {<a name="line.183"></a>
+<span class="sourceLineNo">184</span><a name="line.184"></a>
+<span class="sourceLineNo">185</span>                // moving this method not to WithinDay for the time being since it seems to make some sense to keep this where the internals are<a name="line.185"></a>
+<span class="sourceLineNo">186</span>                // known best.  kai, oct'10<a name="line.186"></a>
+<span class="sourceLineNo">187</span>                // Compromise: package-private here; making it public in the Withinday class.  kai, nov'10<a name="line.187"></a>
+<span class="sourceLineNo">188</span><a name="line.188"></a>
+<span class="sourceLineNo">189</span>                this.cachedNextLinkId = null;<a name="line.189"></a>
+<span class="sourceLineNo">190</span>                <a name="line.190"></a>
+<span class="sourceLineNo">191</span>                if( this.basicPlanAgentDelegate.getCurrentPlanElement()==null ) {<a name="line.191"></a>
+<span class="sourceLineNo">192</span>                        throw new RuntimeException("encountered unexpected null pointer" ) ;<a name="line.192"></a>
+<span class="sourceLineNo">193</span>                }<a name="line.193"></a>
+<span class="sourceLineNo">194</span><a name="line.194"></a>
+<span class="sourceLineNo">195</span>                if (this.basicPlanAgentDelegate.getCurrentPlanElement() instanceof Leg) {<a name="line.195"></a>
+<span class="sourceLineNo">196</span>                        if (basicPlanAgentDelegate.getCurrentLeg().getRoute() == null) {<a name="line.196"></a>
+<span class="sourceLineNo">197</span>                                log.error("The agent " + this.getId() + " has no route in its leg. Setting agent state to abort." );<a name="line.197"></a>
+<span class="sourceLineNo">198</span>                                this.basicPlanAgentDelegate.setState(MobsimAgent.State.ABORT) ;<a name="line.198"></a>
+<span class="sourceLineNo">199</span>                        }<a name="line.199"></a>
+<span class="sourceLineNo">200</span>                } <a name="line.200"></a>
+<span class="sourceLineNo">201</span>//              else {                  <a name="line.201"></a>
+<span class="sourceLineNo">202</span>//                      this.basicPlanAgentDelegate.calculateAndSetDepartureTime((Activity) this.basicPlanAgentDelegate.getCurrentPlanElement());<a name="line.202"></a>
+<span class="sourceLineNo">203</span>//              }<a name="line.203"></a>
+<span class="sourceLineNo">204</span>                this.basicPlanAgentDelegate.resetCaches(); <a name="line.204"></a>
+<span class="sourceLineNo">205</span>        }<a name="line.205"></a>
+<span class="sourceLineNo">206</span><a name="line.206"></a>
+<span class="sourceLineNo">207</span>        @Override<a name="line.207"></a>
+<span class="sourceLineNo">208</span>        public Id&lt;Person&gt; getId() {<a name="line.208"></a>
+<span class="sourceLineNo">209</span>                return this.basicPlanAgentDelegate.getId();<a name="line.209"></a>
+<span class="sourceLineNo">210</span>        }<a name="line.210"></a>
+<span class="sourceLineNo">211</span><a name="line.211"></a>
+<span class="sourceLineNo">212</span>        @Override<a name="line.212"></a>
+<span class="sourceLineNo">213</span>        public Id&lt;Link&gt; getCurrentLinkId() {<a name="line.213"></a>
+<span class="sourceLineNo">214</span>                return this.basicPlanAgentDelegate.getCurrentLinkId() ;<a name="line.214"></a>
+<span class="sourceLineNo">215</span>        }<a name="line.215"></a>
+<span class="sourceLineNo">216</span><a name="line.216"></a>
+<span class="sourceLineNo">217</span>        @Override<a name="line.217"></a>
+<span class="sourceLineNo">218</span>        public Id&lt;Link&gt; getDestinationLinkId() {<a name="line.218"></a>
+<span class="sourceLineNo">219</span>                return this.basicPlanAgentDelegate.getDestinationLinkId() ;<a name="line.219"></a>
+<span class="sourceLineNo">220</span>        }<a name="line.220"></a>
+<span class="sourceLineNo">221</span><a name="line.221"></a>
+<span class="sourceLineNo">222</span>        @Override<a name="line.222"></a>
+<span class="sourceLineNo">223</span>        public void setVehicle(MobsimVehicle veh) {<a name="line.223"></a>
+<span class="sourceLineNo">224</span>                this.basicPlanAgentDelegate.setVehicle( veh );<a name="line.224"></a>
+<span class="sourceLineNo">225</span>        }<a name="line.225"></a>
+<span class="sourceLineNo">226</span><a name="line.226"></a>
+<span class="sourceLineNo">227</span>        @Override<a name="line.227"></a>
+<span class="sourceLineNo">228</span>        public MobsimVehicle getVehicle() {<a name="line.228"></a>
+<span class="sourceLineNo">229</span>                return this.basicPlanAgentDelegate.getVehicle() ;<a name="line.229"></a>
+<span class="sourceLineNo">230</span>        }<a name="line.230"></a>
+<span class="sourceLineNo">231</span><a name="line.231"></a>
+<span class="sourceLineNo">232</span>        @Override<a name="line.232"></a>
+<span class="sourceLineNo">233</span>        public Id&lt;Vehicle&gt; getPlannedVehicleId() {<a name="line.233"></a>
+<span class="sourceLineNo">234</span>                return this.basicPlanAgentDelegate.getPlannedVehicleId() ;<a name="line.234"></a>
+<span class="sourceLineNo">235</span>        }<a name="line.235"></a>
+<span class="sourceLineNo">236</span><a name="line.236"></a>
+<span class="sourceLineNo">237</span>        @Override<a name="line.237"></a>
+<span class="sourceLineNo">238</span>        public String getMode() {<a name="line.238"></a>
+<span class="sourceLineNo">239</span>                return this.basicPlanAgentDelegate.getMode() ;<a name="line.239"></a>
+<span class="sourceLineNo">240</span>        }<a name="line.240"></a>
+<span class="sourceLineNo">241</span><a name="line.241"></a>
+<span class="sourceLineNo">242</span>}<a name="line.242"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre>
+</div>
+</body>
+</html>
