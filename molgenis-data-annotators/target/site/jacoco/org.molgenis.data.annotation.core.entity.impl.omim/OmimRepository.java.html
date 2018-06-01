@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OmimRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.entity.impl.omim</a> &gt; <span class="el_source">OmimRepository.java</span></div><h1>OmimRepository.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.entity.impl.omim;
+
+import au.com.bytecode.opencsv.CSVReader;
+import com.google.common.collect.Iterables;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.Query;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.RepositoryCapability;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.support.AbstractRepository;
+import org.molgenis.data.support.DynamicEntity;
+
+import java.io.*;
+import java.util.*;
+import java.util.stream.Stream;
+
+import static au.com.bytecode.opencsv.CSVParser.DEFAULT_QUOTE_CHARACTER;
+import static com.google.common.collect.Lists.newArrayList;
+import static java.nio.charset.Charset.forName;
+import static java.util.Arrays.asList;
+import static java.util.Collections.emptySet;
+import static org.apache.commons.lang3.StringUtils.join;
+import static org.molgenis.data.annotation.core.entity.impl.omim.OmimAnnotator.NAME;
+import static org.molgenis.data.annotation.core.entity.impl.omim.OmimAnnotator.SEPARATOR;
+import static org.molgenis.data.meta.model.EntityType.AttributeRole.ROLE_ID;
+
+public class OmimRepository extends AbstractRepository
+{
+	public static final String OMIM_AUTO_ID_COL_NAME = &quot;ID&quot;;
+	public static final String OMIM_PHENOTYPE_COL_NAME = &quot;Phenotype&quot;;
+	public static final String OMIM_GENE_SYMBOLS_COL_NAME = &quot;Gene_Name&quot;;
+	public static final String OMIM_MIM_NUMBER_COL_NAME = &quot;MIMNumber&quot;;
+	public static final String OMIM_CYTO_LOCATION_COL_NAME = &quot;CytoLocation&quot;;
+	public static final String OMIM_ENTRY_COL_NAME = &quot;OmimEntry&quot;;
+	public static final String OMIM_TYPE_COL_NAME = &quot;OmimType&quot;;
+	private final AttributeFactory attributeFactory;
+	private final EntityTypeFactory entityTypeFactory;
+
+	private Map&lt;String, List&lt;Entity&gt;&gt; entitiesByGeneSymbol;
+
+	private final File file;
+
+	public OmimRepository(File file, EntityTypeFactory entityTypeFactory, AttributeFactory attributeFactory)
+<span class="fc" id="L47">	{</span>
+<span class="fc" id="L48">		this.file = file;</span>
+<span class="fc" id="L49">		this.entityTypeFactory = entityTypeFactory;</span>
+<span class="fc" id="L50">		this.attributeFactory = attributeFactory;</span>
+<span class="fc" id="L51">	}</span>
+
+	@Override
+	public Set&lt;RepositoryCapability&gt; getCapabilities()
+	{
+<span class="nc" id="L56">		return emptySet();</span>
+	}
+
+	@Override
+	public EntityType getEntityType()
+	{
+<span class="fc" id="L62">		EntityType entityType = entityTypeFactory.create(NAME);</span>
+<span class="fc" id="L63">		entityType.addAttribute(attributeFactory.create().setName(OMIM_GENE_SYMBOLS_COL_NAME), ROLE_ID);</span>
+<span class="fc" id="L64">		entityType.addAttribute(attributeFactory.create().setName(OMIM_PHENOTYPE_COL_NAME));</span>
+<span class="fc" id="L65">		entityType.addAttribute(attributeFactory.create().setName(OMIM_MIM_NUMBER_COL_NAME));</span>
+<span class="fc" id="L66">		entityType.addAttribute(attributeFactory.create().setName(OMIM_CYTO_LOCATION_COL_NAME));</span>
+<span class="fc" id="L67">		entityType.addAttribute(attributeFactory.create().setName(OMIM_ENTRY_COL_NAME));</span>
+<span class="fc" id="L68">		entityType.addAttribute(attributeFactory.create().setName(OMIM_TYPE_COL_NAME));</span>
+<span class="fc" id="L69">		return entityType;</span>
+	}
+
+	@Override
+	public Iterator&lt;Entity&gt; iterator()
+	{
+<span class="fc" id="L75">		return getEntities().iterator();</span>
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; findAll(Query&lt;Entity&gt; q)
+	{
+<span class="fc bfc" id="L81" title="All 2 branches covered.">		if (q.getRules().isEmpty())</span>
+		{
+<span class="fc" id="L83">			return getEntities().stream();</span>
+		}
+
+<span class="pc bpc" id="L86" title="1 of 4 branches missed.">		if ((q.getRules().size() != 1) || (q.getRules().get(0).getOperator() != Operator.EQUALS))</span>
+		{
+<span class="fc" id="L88">			throw new MolgenisDataException(&quot;The only query allowed on this Repository is gene EQUALS&quot;);</span>
+		}
+
+<span class="fc" id="L91">		String geneSymbol = (String) q.getRules().get(0).getValue();</span>
+<span class="fc" id="L92">		List&lt;Entity&gt; entities = getEntitiesByGeneSymbol().get(geneSymbol);</span>
+
+<span class="pc bpc" id="L94" title="1 of 2 branches missed.">		return entities != null ? entities.stream() : Stream.empty();</span>
+	}
+
+	@Override
+	public long count()
+	{
+<span class="fc" id="L100">		return Iterables.size(this);</span>
+	}
+
+	private List&lt;Entity&gt; getEntities()
+	{
+<span class="fc" id="L105">		List&lt;Entity&gt; entities = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L106">		getEntitiesByGeneSymbol().forEach((geneSymbol, geneSymbolEntities) -&gt; entities.addAll(geneSymbolEntities));</span>
+<span class="fc" id="L107">		return entities;</span>
+	}
+
+	private Map&lt;String, List&lt;Entity&gt;&gt; getEntitiesByGeneSymbol()
+	{
+<span class="fc bfc" id="L112" title="All 2 branches covered.">		if (entitiesByGeneSymbol == null)</span>
+		{
+<span class="fc" id="L114">			Map&lt;String, List&lt;List&lt;String&gt;&gt;&gt; omimEntriesByGeneSymbol = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L115">			entitiesByGeneSymbol = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="fc" id="L117">			try (CSVReader csvReader = new CSVReader(new InputStreamReader(new FileInputStream(file), forName(&quot;UTF-8&quot;)),</span>
+					SEPARATOR, DEFAULT_QUOTE_CHARACTER, 1))
+			{
+
+<span class="fc" id="L121">				String[] values = csvReader.readNext();</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">				while (values != null)</span>
+				{
+<span class="fc" id="L124">					addLineToMap(omimEntriesByGeneSymbol, values);</span>
+<span class="fc" id="L125">					values = csvReader.readNext();</span>
+				}
+
+<span class="fc bfc" id="L128" title="All 2 branches covered.">				for (String geneSymbol : omimEntriesByGeneSymbol.keySet())</span>
+				{
+<span class="fc" id="L130">					addEntityToGeneEntityList(omimEntriesByGeneSymbol, geneSymbol);</span>
+<span class="fc" id="L131">				}</span>
+			}
+<span class="nc" id="L133">			catch (IOException e)</span>
+			{
+<span class="nc" id="L135">				throw new UncheckedIOException(e);</span>
+<span class="fc" id="L136">			}</span>
+		}
+<span class="fc" id="L138">		return entitiesByGeneSymbol;</span>
+	}
+
+	/**
+	 * Uses the map containing the parsed OMIM map to create a list of {@link Entity}
+	 */
+	private void addEntityToGeneEntityList(Map&lt;String, List&lt;List&lt;String&gt;&gt;&gt; omimEntriesByGeneSymbol, String geneSymbol)
+	{
+<span class="fc" id="L146">		Entity entity = new DynamicEntity(getEntityType());</span>
+<span class="fc" id="L147">		entity.set(OMIM_GENE_SYMBOLS_COL_NAME, geneSymbol);</span>
+<span class="fc" id="L148">		entity.set(OMIM_PHENOTYPE_COL_NAME, join(omimEntriesByGeneSymbol.get(geneSymbol).get(0), &quot;,&quot;));</span>
+<span class="fc" id="L149">		entity.set(OMIM_MIM_NUMBER_COL_NAME, join(omimEntriesByGeneSymbol.get(geneSymbol).get(1), &quot;,&quot;));</span>
+<span class="fc" id="L150">		entity.set(OMIM_CYTO_LOCATION_COL_NAME, join(omimEntriesByGeneSymbol.get(geneSymbol).get(2), &quot;,&quot;));</span>
+<span class="fc" id="L151">		entity.set(OMIM_TYPE_COL_NAME, join(omimEntriesByGeneSymbol.get(geneSymbol).get(3), &quot;,&quot;));</span>
+<span class="fc" id="L152">		entity.set(OMIM_ENTRY_COL_NAME, join(omimEntriesByGeneSymbol.get(geneSymbol).get(4), &quot;,&quot;));</span>
+
+<span class="fc" id="L154">		List&lt;Entity&gt; entities = entitiesByGeneSymbol.computeIfAbsent(geneSymbol, k -&gt; new ArrayList&lt;&gt;());</span>
+<span class="fc" id="L155">		entities.add(entity);</span>
+<span class="fc" id="L156">	}</span>
+
+	/*
+	 * Get and parse OMIM entries.
+	 * 
+	 * Do not store entries without an OMIM identifier... e.g. this one: Leukemia, acute myelogenous (3)|KRAS, KRAS2,
+	 * RASK2, NS, CFC2|190070|12p12.1
+	 * 
+	 * But do store this one: Leukemia, acute myelogenous, 601626 (3)|GMPS|600358|3q25.31
+	 */
+	private void addLineToMap(Map&lt;String, List&lt;List&lt;String&gt;&gt;&gt; omimEntriesByGeneSymbol, String[] values)
+	{
+		// trim mapping method field, example: (3)
+<span class="fc" id="L169">		String entry = values[0];</span>
+<span class="fc" id="L170">		entry = entry.substring(0, entry.length() - 3);</span>
+<span class="fc" id="L171">		entry = entry.trim();</span>
+
+		// last six characters should be OMIM id
+<span class="fc" id="L174">		entry = entry.substring(entry.length() - 6);</span>
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">		if (entry.matches(&quot;[0-9]+&quot;))</span>
+		{
+<span class="fc" id="L177">			String disorder = values[0].substring(0, values[0].length() - 12);</span>
+<span class="fc" id="L178">			List&lt;String&gt; genes = asList(values[1].split(&quot;, &quot;));</span>
+<span class="fc" id="L179">			String causalIdentifier = values[2];</span>
+<span class="fc" id="L180">			String cytogenicLocation = values[3];</span>
+<span class="fc" id="L181">			String type = values[0].substring(values[0].length() - 2, values[0].length() - 1);</span>
+<span class="fc" id="L182">			String omimEntry = entry;</span>
+
+<span class="fc bfc" id="L184" title="All 2 branches covered.">			for (String geneSymbol : genes)</span>
+			{
+<span class="pc bpc" id="L186" title="1 of 2 branches missed.">				if (omimEntriesByGeneSymbol.containsKey(geneSymbol))</span>
+				{
+<span class="nc" id="L188">					omimEntriesByGeneSymbol.get(geneSymbol).get(0).add(disorder); // first list is phenoype</span>
+<span class="nc" id="L189">					omimEntriesByGeneSymbol.get(geneSymbol).get(1).add(causalIdentifier); // second is mim number</span>
+<span class="nc" id="L190">					omimEntriesByGeneSymbol.get(geneSymbol).get(2).add(cytogenicLocation); // third is cyto location</span>
+<span class="nc" id="L191">					omimEntriesByGeneSymbol.get(geneSymbol).get(3).add(type); // fourth is type of syndrome</span>
+<span class="nc" id="L192">					omimEntriesByGeneSymbol.get(geneSymbol).get(4).add(omimEntry); // fifth is omim entry location</span>
+				}
+				else
+				{
+<span class="fc" id="L196">					LinkedList&lt;List&lt;String&gt;&gt; mapList = new LinkedList&lt;&gt;();</span>
+<span class="fc" id="L197">					mapList.add(newArrayList(disorder));</span>
+<span class="fc" id="L198">					mapList.add(newArrayList(causalIdentifier));</span>
+<span class="fc" id="L199">					mapList.add(newArrayList(cytogenicLocation));</span>
+<span class="fc" id="L200">					mapList.add(newArrayList(type));</span>
+<span class="fc" id="L201">					mapList.add(newArrayList(omimEntry));</span>
+<span class="fc" id="L202">					omimEntriesByGeneSymbol.put(geneSymbol, mapList);</span>
+				}
+<span class="fc" id="L204">			}</span>
+		}
+<span class="fc" id="L206">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

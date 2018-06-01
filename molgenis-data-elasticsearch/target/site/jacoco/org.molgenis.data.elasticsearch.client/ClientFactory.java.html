@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClientFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-elasticsearch</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.elasticsearch.client</a> &gt; <span class="el_source">ClientFactory.java</span></div><h1>ClientFactory.java</h1><pre class="source lang-java linenums">package org.molgenis.data.elasticsearch.client;
+
+import org.elasticsearch.client.Client;
+import org.elasticsearch.client.transport.TransportClient;
+import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.molgenis.data.MolgenisDataException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.retry.RetryContext;
+import org.springframework.retry.support.RetryTemplate;
+
+import java.net.InetSocketAddress;
+import java.util.List;
+import java.util.Objects;
+
+/**
+ * Creates an Elasticsearch transport client based on given configuration settings.
+ */
+class ClientFactory
+{
+<span class="fc" id="L21">	private static final Logger LOG = LoggerFactory.getLogger(ClientFactory.class);</span>
+
+	private final RetryTemplate retryTemplate;
+	private final String clusterName;
+	private final List&lt;InetSocketAddress&gt; inetAddresses;
+	private final PreBuiltTransportClientFactory preBuiltTransportClientFactory;
+
+	/**
+	 * * @param clusterName name of the cluster
+	 *
+	 * @param inetAddresses                  addresses to connect to
+	 * @param preBuiltTransportClientFactory {@link PreBuiltTransportClientFactory} used to create the client
+	 * @param retryTemplate                  {@link RetryTemplate} to keep trying to connect
+	 * @param clusterName                    name of the cluster
+	 */
+	public ClientFactory(RetryTemplate retryTemplate, String clusterName, List&lt;InetSocketAddress&gt; inetAddresses,
+			PreBuiltTransportClientFactory preBuiltTransportClientFactory)
+<span class="fc" id="L38">	{</span>
+<span class="fc" id="L39">		this.retryTemplate = Objects.requireNonNull(retryTemplate);</span>
+<span class="fc" id="L40">		this.clusterName = Objects.requireNonNull(clusterName);</span>
+<span class="fc" id="L41">		this.inetAddresses = Objects.requireNonNull(inetAddresses);</span>
+<span class="fc bfc" id="L42" title="All 2 branches covered.">		if (inetAddresses.isEmpty())</span>
+		{
+<span class="fc" id="L44">			throw new IllegalArgumentException(&quot;inetAddresses cannot be empty&quot;);</span>
+		}
+<span class="fc" id="L46">		this.preBuiltTransportClientFactory = Objects.requireNonNull(preBuiltTransportClientFactory);</span>
+<span class="fc" id="L47">	}</span>
+
+	/**
+	 * Tries to create a Client connecting to cluster on the given adresses.
+	 *
+	 * @throws InterruptedException if this thread gets interrupted while trying to connect
+	 * @throws MolgenisDataException if maximum number of retries is exceeded
+	 */
+	Client createClient() throws InterruptedException
+	{
+
+<span class="fc" id="L58">		Client client = retryTemplate.execute(this::tryCreateClient);</span>
+<span class="fc" id="L59">		LOG.info(&quot;Connected to Elasticsearch cluster '{}'.&quot;, clusterName);</span>
+<span class="fc" id="L60">		return client;</span>
+	}
+
+	private Client tryCreateClient(RetryContext retryContext) throws InterruptedException
+	{
+<span class="pc bpc" id="L65" title="1 of 2 branches missed.">		if (Thread.interrupted())</span>
+		{
+<span class="nc" id="L67">			throw new InterruptedException();</span>
+		}
+
+<span class="fc" id="L70">		TransportClient result = preBuiltTransportClientFactory.build(clusterName, null)</span>
+<span class="fc" id="L71">															   .addTransportAddresses(createInetTransportAddresses());</span>
+<span class="fc bfc" id="L72" title="All 2 branches covered.">		if (result.connectedNodes().isEmpty())</span>
+		{
+<span class="fc" id="L74">			result.close();</span>
+<span class="fc" id="L75">			LOG.error(&quot;Failed to connect to Elasticsearch cluster '{}' on {}. Retry count = {}&quot;, clusterName,</span>
+<span class="fc" id="L76">					inetAddresses, retryContext.getRetryCount());</span>
+<span class="fc" id="L77">			throw new MolgenisDataException(</span>
+<span class="fc" id="L78">					String.format(&quot;Failed to connect to Elasticsearch cluster '%s' on %s. Is Elasticsearch running?&quot;,</span>
+							clusterName, inetAddresses));
+		}
+<span class="fc" id="L81">		return result;</span>
+	}
+
+	private InetSocketTransportAddress[] createInetTransportAddresses()
+	{
+<span class="fc" id="L86">		return inetAddresses.stream().map(InetSocketTransportAddress::new).toArray(InetSocketTransportAddress[]::new);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

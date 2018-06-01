@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StyleServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">core-ui</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.core.ui.style</a> &gt; <span class="el_source">StyleServiceImpl.java</span></div><h1>StyleServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.core.ui.style;
+
+import org.molgenis.core.ui.file.FileDownloadController;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Query;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.data.file.model.FileMeta;
+import org.molgenis.data.file.model.FileMetaFactory;
+import org.molgenis.data.file.model.FileMetaMetaData;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.settings.AppSettings;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import org.springframework.web.util.UriComponents;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.core.ui.style.BootstrapVersion.BOOTSTRAP_VERSION_3;
+import static org.molgenis.core.ui.style.StyleSheetMetadata.STYLE_SHEET;
+
+@Component
+public class StyleServiceImpl implements StyleService
+{
+	public static final String BOOTSTRAP_FALL_BACK_THEME = &quot;bootstrap-basic.min.css&quot;;
+	private final AppSettings appSettings;
+	private final IdGenerator idGenerator;
+	private final FileStore fileStore;
+	private final FileMetaFactory fileMetaFactory;
+	private final StyleSheetFactory styleSheetFactory;
+	private final DataService dataService;
+
+	public StyleServiceImpl(AppSettings appSettings, IdGenerator idGenerator, FileStore fileStore,
+			FileMetaFactory fileMetaFactory, StyleSheetFactory styleSheetFactory, DataService dataService)
+<span class="fc" id="L44">	{</span>
+<span class="fc" id="L45">		this.appSettings = requireNonNull(appSettings);</span>
+<span class="fc" id="L46">		this.idGenerator = requireNonNull(idGenerator);</span>
+<span class="fc" id="L47">		this.fileStore = requireNonNull(fileStore);</span>
+<span class="fc" id="L48">		this.fileMetaFactory = requireNonNull(fileMetaFactory);</span>
+<span class="fc" id="L49">		this.styleSheetFactory = requireNonNull(styleSheetFactory);</span>
+<span class="fc" id="L50">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L51">	}</span>
+
+	@Override
+	public Set&lt;Style&gt; getAvailableStyles()
+	{
+<span class="fc" id="L56">		Stream&lt;StyleSheet&gt; styleEntities = dataService.findAll(StyleSheetMetadata.STYLE_SHEET, StyleSheet.class);</span>
+
+<span class="fc" id="L58">		return styleEntities.map(s -&gt; Style.createLocal(s.getName())).collect(Collectors.toSet());</span>
+	}
+
+	@Override
+	public Style addStyle(String styleId, String bootstrap3FileName, InputStream bootstrap3StyleData,
+			String bootstrap4FileName, InputStream bootstrap4StyleData) throws MolgenisStyleException
+	{
+<span class="fc bfc" id="L65" title="All 2 branches covered.">		if (dataService.getRepository(STYLE_SHEET).findOneById(styleId) != null)</span>
+		{
+<span class="fc" id="L67">			throw new MolgenisStyleException(</span>
+<span class="fc" id="L68">					String.format(&quot;A style with the same identifier (%s) already exists&quot;, styleId));</span>
+		}
+
+<span class="fc" id="L71">		StyleSheet styleSheet = styleSheetFactory.create(styleId);</span>
+<span class="fc" id="L72">		styleSheet.setName(styleId);</span>
+
+<span class="fc" id="L74">		FileMeta bootstrap3ThemeFileMeta = createStyleSheetFileMeta(bootstrap3FileName, bootstrap3StyleData);</span>
+<span class="fc" id="L75">		styleSheet.setBootstrap3Theme(bootstrap3ThemeFileMeta);</span>
+
+		// Setting the bootstrap 4 style is optional
+<span class="pc bpc" id="L78" title="1 of 4 branches missed.">		if (bootstrap4FileName != null &amp;&amp; bootstrap4StyleData != null)</span>
+		{
+<span class="fc" id="L80">			FileMeta bootstrap4ThemeFileMeta = createStyleSheetFileMeta(bootstrap4FileName, bootstrap4StyleData);</span>
+<span class="fc" id="L81">			styleSheet.setBootstrap4Theme(bootstrap4ThemeFileMeta);</span>
+		}
+
+<span class="fc" id="L84">		dataService.add(STYLE_SHEET, styleSheet);</span>
+
+<span class="fc" id="L86">		return Style.createLocal(styleSheet.getName());</span>
+	}
+
+	private FileMeta createStyleSheetFileMeta(String fileName, InputStream data) throws MolgenisStyleException
+	{
+<span class="fc" id="L91">		String fileId = idGenerator.generateId();</span>
+		try
+		{
+<span class="fc" id="L94">			fileStore.store(data, fileId);</span>
+		}
+<span class="nc" id="L96">		catch (IOException e)</span>
+		{
+<span class="nc" id="L98">			throw new MolgenisStyleException(&quot;Unable to save style file with name : &quot; + fileName, e);</span>
+<span class="fc" id="L99">		}</span>
+
+<span class="fc" id="L101">		FileMeta fileMeta = fileMetaFactory.create(fileId);</span>
+<span class="fc" id="L102">		fileMeta.setContentType(&quot;css&quot;);</span>
+<span class="fc" id="L103">		fileMeta.setFilename(fileName);</span>
+<span class="fc" id="L104">		fileMeta.setSize(fileStore.getFile(fileId).length());</span>
+<span class="fc" id="L105">		fileMeta.setUrl(buildFileUrl(fileId));</span>
+<span class="fc" id="L106">		dataService.add(FileMetaMetaData.FILE_META, fileMeta);</span>
+<span class="fc" id="L107">		return fileMeta;</span>
+	}
+
+	@Override
+	public void setSelectedStyle(String styleName)
+	{
+		// Pressing save in the UI without doing a selection returns undefined
+<span class="fc bfc" id="L114" title="All 2 branches covered.">		if (!styleName.equals(&quot;undefined&quot;))</span>
+		{
+<span class="fc" id="L116">			String bootstrapTheme = getStyle(styleName).getLocation();</span>
+<span class="fc" id="L117">			appSettings.setBootstrapTheme(bootstrapTheme);</span>
+		}
+<span class="fc" id="L119">	}</span>
+
+	@Override
+	public Style getSelectedStyle()
+	{
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">		for (Style style : getAvailableStyles())</span>
+		{
+<span class="fc" id="L126">			String bootstrapTheme = appSettings.getBootstrapTheme();</span>
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">			if (style.getLocation().equals(bootstrapTheme))</span>
+			{
+<span class="fc" id="L129">				return style;</span>
+			}
+<span class="nc" id="L131">		}</span>
+<span class="nc" id="L132">		return null;</span>
+	}
+
+	@Override
+	public Style getStyle(String styleName)
+	{
+		try
+		{
+<span class="fc bfc" id="L140" title="All 2 branches covered.">			for (Style style : getAvailableStyles())</span>
+			{
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">				if (style.getName().equals(styleName))</span>
+				{
+<span class="fc" id="L144">					return style;</span>
+				}
+<span class="nc" id="L146">			}</span>
+		}
+<span class="nc" id="L148">		catch (Exception e)</span>
+		{
+<span class="nc" id="L150">			throw new IllegalArgumentException(e + &quot; Selected style was not found&quot;);</span>
+<span class="fc" id="L151">		}</span>
+
+<span class="fc" id="L153">		return null;</span>
+	}
+
+	@Override
+	@RunAsSystem
+	public FileSystemResource getThemeData(String styleName, BootstrapVersion bootstrapVersion)
+			throws MolgenisStyleException
+	{
+<span class="fc" id="L161">		StyleSheet styleSheet = findThemeByName(styleName);</span>
+
+<span class="fc bfc" id="L163" title="All 2 branches covered.">		if (styleSheet == null)</span>
+		{
+<span class="fc" id="L165">			throw new MolgenisStyleException(&quot;No theme found for with name: &quot; + styleName);</span>
+		}
+
+		// Fetch the theme file from the store.
+		FileMeta fileMeta;
+<span class="fc bfc" id="L170" title="All 2 branches covered.">		if (bootstrapVersion.equals(BOOTSTRAP_VERSION_3))</span>
+		{
+<span class="fc" id="L172">			fileMeta = styleSheet.getBootstrap3Theme();</span>
+		}
+		else
+		{
+<span class="fc" id="L176">			fileMeta = styleSheet.getBootstrap4Theme();</span>
+			// If no bootstrap 4 theme was set fetch the default theme from the resources folder
+<span class="fc bfc" id="L178" title="All 2 branches covered.">			if (fileMeta == null)</span>
+			{
+<span class="fc" id="L180">				StyleSheet fallBackTheme = findThemeByName(BOOTSTRAP_FALL_BACK_THEME);</span>
+<span class="fc" id="L181">				fileMeta = fallBackTheme.getBootstrap4Theme();</span>
+			}
+		}
+
+<span class="fc" id="L185">		File file = fileStore.getFile(fileMeta.getId());</span>
+<span class="fc" id="L186">		return new FileSystemResource(file);</span>
+	}
+
+	@Override
+	public StyleSheet findThemeByName(String themeName)
+	{
+<span class="fc" id="L192">		Query&lt;StyleSheet&gt; findByName = new QueryImpl&lt;StyleSheet&gt;().eq(StyleSheetMetadata.NAME, themeName);</span>
+<span class="fc" id="L193">		return dataService.findOne(StyleSheetMetadata.STYLE_SHEET, findByName, StyleSheet.class);</span>
+	}
+
+	/**
+	 * Build a downLoadUrl for the file identified by the given fileId. If this method is called outside of a
+	 * request context ( system initialization for example) the server context is used for generating a relative path
+	 */
+	private String buildFileUrl(String fileId)
+	{
+
+<span class="pc bpc" id="L203" title="1 of 2 branches missed.">		if (RequestContextHolder.getRequestAttributes() != null)</span>
+		{
+<span class="nc" id="L205">			ServletUriComponentsBuilder currentRequest = ServletUriComponentsBuilder.fromCurrentRequest();</span>
+<span class="nc" id="L206">			UriComponents downloadUri = currentRequest.replacePath(FileDownloadController.URI + '/' + fileId)</span>
+<span class="nc" id="L207">													  .replaceQuery(null)</span>
+<span class="nc" id="L208">													  .build();</span>
+<span class="nc" id="L209">			return downloadUri.toUriString();</span>
+		}
+		else
+		{
+			// TODO this is a workaround for the situation where the File url needs to be created without a request
+			// context, in order to fix the properly we would need to add a deploy time property
+			// defining the file download server location
+<span class="fc" id="L216">			return FileDownloadController.URI + '/' + fileId;</span>
+		}
+
+	}
+
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NegotiatorController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">dataexplorer</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.dataexplorer.negotiator</a> &gt; <span class="el_source">NegotiatorController.java</span></div><h1>NegotiatorController.java</h1><pre class="source lang-java linenums">package org.molgenis.dataexplorer.negotiator;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.Query;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.plugin.model.PluginIdentity;
+import org.molgenis.data.plugin.model.PluginPermission;
+import org.molgenis.data.rest.convert.QueryRsqlConverter;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.dataexplorer.negotiator.config.NegotiatorConfig;
+import org.molgenis.dataexplorer.negotiator.config.NegotiatorEntityConfig;
+import org.molgenis.dataexplorer.negotiator.config.NegotiatorEntityConfigMeta;
+import org.molgenis.js.magma.JsMagmaScriptEvaluator;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.web.ErrorMessageResponse;
+import org.molgenis.web.PluginController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.MessageSource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.Base64;
+import java.util.List;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.dataexplorer.negotiator.NegotiatorController.URI;
+import static org.molgenis.dataexplorer.negotiator.config.NegotiatorEntityConfigMeta.ENABLED_EXPRESSION;
+import static org.springframework.context.i18n.LocaleContextHolder.getLocale;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+
+@Controller
+@RequestMapping(URI)
+public class NegotiatorController extends PluginController
+{
+<span class="fc" id="L50">	private static final Logger LOG = LoggerFactory.getLogger(NegotiatorController.class);</span>
+	private static final String ID = &quot;directory&quot;;
+	static final String URI = PluginController.PLUGIN_URI_PREFIX + ID;
+
+	private final RestTemplate restTemplate;
+	private final UserPermissionEvaluator permissions;
+	private final DataService dataService;
+	private final QueryRsqlConverter rsqlQueryConverter;
+	private final JsMagmaScriptEvaluator jsMagmaScriptEvaluator;
+	private final MessageSource messageSource;
+
+	public NegotiatorController(RestTemplate restTemplate, UserPermissionEvaluator permissions, DataService dataService,
+			QueryRsqlConverter rsqlQueryConverter, JsMagmaScriptEvaluator jsMagmaScriptEvaluator,
+			MessageSource messageSource)
+	{
+<span class="fc" id="L65">		super(URI);</span>
+<span class="fc" id="L66">		this.restTemplate = requireNonNull(restTemplate);</span>
+<span class="fc" id="L67">		this.permissions = requireNonNull(permissions);</span>
+<span class="fc" id="L68">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L69">		this.rsqlQueryConverter = requireNonNull(rsqlQueryConverter);</span>
+<span class="fc" id="L70">		this.jsMagmaScriptEvaluator = requireNonNull(jsMagmaScriptEvaluator);</span>
+<span class="fc" id="L71">		this.messageSource = requireNonNull(messageSource);</span>
+<span class="fc" id="L72">	}</span>
+
+	@RunAsSystem
+	public boolean showDirectoryButton(String entityTypeId)
+	{
+<span class="fc" id="L77">		NegotiatorEntityConfig settings = getNegotiatorEntityConfig(entityTypeId);</span>
+<span class="fc bfc" id="L78" title="All 4 branches covered.">		return settings != null &amp;&amp; permissions.hasPermission(new PluginIdentity(ID), PluginPermission.VIEW_PLUGIN);</span>
+	}
+
+	@PostMapping(&quot;/validate&quot;)
+	@ResponseBody
+	public ExportValidationResponse validateNegotiatorExport(@RequestBody NegotiatorRequest request)
+	{
+<span class="fc" id="L85">		boolean isValidRequest = true;</span>
+<span class="fc" id="L86">		String message = &quot;&quot;;</span>
+		List&lt;String&gt; enabledCollectionsLabels;
+		List&lt;String&gt; disabledCollectionLabels;
+
+<span class="fc" id="L90">		NegotiatorEntityConfig entityConfig = getNegotiatorEntityConfig(request.getEntityId());</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">		if (null != entityConfig)</span>
+		{
+<span class="fc" id="L93">			LOG.info(&quot;Validating negotiator request\n\n{}&quot;, request);</span>
+
+<span class="fc" id="L95">			List&lt;Entity&gt; collectionEntities = getCollectionEntities(request);</span>
+<span class="fc" id="L96">			List&lt;Entity&gt; disabledCollections = getDisabledCollections(collectionEntities, entityConfig);</span>
+
+<span class="fc" id="L98">			Function&lt;Entity, String&gt; getLabel = entity -&gt; entity.getLabelValue().toString();</span>
+<span class="fc" id="L99">			disabledCollectionLabels = disabledCollections.stream().map(getLabel).collect(toList());</span>
+<span class="fc" id="L100">			enabledCollectionsLabels = collectionEntities.stream()</span>
+<span class="fc bfc" id="L101" title="All 2 branches covered.">														 .filter(e -&gt; !disabledCollections.contains(e))</span>
+<span class="fc" id="L102">														 .map(getLabel)</span>
+<span class="fc" id="L103">														 .collect(toList());</span>
+
+<span class="fc bfc" id="L105" title="All 2 branches covered.">			if (!disabledCollections.isEmpty())</span>
+			{
+<span class="fc" id="L107">				message = messageSource.getMessage(&quot;dataexplorer_directory_disabled&quot;,</span>
+<span class="fc" id="L108">						new Object[] { disabledCollections.size(), collectionEntities.size() }, getLocale());</span>
+			}
+
+<span class="fc bfc" id="L111" title="All 4 branches covered.">			if (collectionEntities.isEmpty() || (collectionEntities.size() == disabledCollections.size()))</span>
+			{
+<span class="fc" id="L113">				isValidRequest = false;</span>
+<span class="fc" id="L114">				message = messageSource.getMessage(&quot;dataexplorer_directory_no_rows&quot;, new Object[] {}, getLocale());</span>
+			}
+<span class="fc" id="L116">		}</span>
+		else
+		{
+<span class="fc" id="L119">			throw new MolgenisDataException(</span>
+<span class="fc" id="L120">					messageSource.getMessage(&quot;dataexplorer_directory_no_config&quot;, new Object[] {}, getLocale()));</span>
+		}
+<span class="fc" id="L122">		return ExportValidationResponse.create(isValidRequest, message, enabledCollectionsLabels,</span>
+				disabledCollectionLabels);
+	}
+
+	@PostMapping(&quot;/export&quot;)
+	@ResponseBody
+	public String exportToNegotiator(@RequestBody NegotiatorRequest request)
+	{
+<span class="fc" id="L130">		LOG.info(&quot;Sending Negotiator request&quot;);</span>
+
+<span class="fc" id="L132">		NegotiatorEntityConfig entityConfig = getNegotiatorEntityConfig(request.getEntityId());</span>
+<span class="fc" id="L133">		NegotiatorConfig config = entityConfig.getNegotiatorConfig();</span>
+<span class="fc" id="L134">		String expression = config.getString(ENABLED_EXPRESSION);</span>
+
+<span class="fc" id="L136">		List&lt;Collection&gt; nonDisabledCollectionEntities = getCollectionEntities(request).stream()</span>
+<span class="fc" id="L137">																					   .filter(entity -&gt;</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">																							   expression == null</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">																									   || evaluateExpressionOnEntity(</span>
+																									   expression,
+																									   entity))
+<span class="pc" id="L142">																					   .map(entity -&gt; getEntityCollection(</span>
+																							   entityConfig, entity))
+<span class="fc" id="L144">																					   .collect(toList());</span>
+
+<span class="fc" id="L146">		HttpEntity&lt;NegotiatorQuery&gt; queryHttpEntity = getNegotiatorQueryHttpEntity(request, config,</span>
+				nonDisabledCollectionEntities);
+
+<span class="fc" id="L149">		return postQueryToNegotiator(config, queryHttpEntity);</span>
+	}
+
+	private Collection getEntityCollection(NegotiatorEntityConfig entityConfig, Entity entity)
+	{
+<span class="nc" id="L154">		Attribute collectionAttr = entityConfig.getEntity(NegotiatorEntityConfigMeta.COLLECTION_ID, Attribute.class);</span>
+
+<span class="nc" id="L156">		Attribute biobankAttr = entityConfig.getEntity(NegotiatorEntityConfigMeta.BIOBANK_ID, Attribute.class);</span>
+
+<span class="nc" id="L158">		String biobankString = getStringValue(biobankAttr, entity);</span>
+<span class="nc" id="L159">		String collectionString = getStringValue(collectionAttr, entity);</span>
+
+<span class="nc" id="L161">		return Collection.create(collectionString, biobankString);</span>
+	}
+
+	private String getStringValue(Attribute attribute, Entity entity)
+	{
+		String stringValue;
+<span class="nc" id="L167">		Object value = entity.get(attribute.getName());</span>
+
+<span class="nc bnc" id="L169" title="All 2 branches missed.">		if (EntityTypeUtils.isMultipleReferenceType(attribute))</span>
+		{
+<span class="nc" id="L171">			throw new MolgenisDataException(</span>
+<span class="nc" id="L172">					String.format(&quot;The %s cannot be an mref or categorical mref&quot;, attribute.getName()));</span>
+		}
+
+		//If the configured attr is an xref or categorical we assume the id value should be used
+<span class="nc bnc" id="L176" title="All 2 branches missed.">		if (EntityTypeUtils.isReferenceType(attribute))</span>
+		{
+<span class="nc bnc" id="L178" title="All 2 branches missed.">			stringValue = value != null ? ((Entity) value).getIdValue().toString() : &quot;&quot;;</span>
+		}
+		else
+		{
+<span class="nc bnc" id="L182" title="All 2 branches missed.">			stringValue = value != null ? value.toString() : &quot;&quot;;</span>
+		}
+<span class="nc" id="L184">		return stringValue;</span>
+	}
+
+	private String postQueryToNegotiator(NegotiatorConfig config, HttpEntity&lt;NegotiatorQuery&gt; queryHttpEntity)
+	{
+		try
+		{
+<span class="fc" id="L191">			LOG.trace(&quot;NEGOTIATOR_URL: [{}]&quot;, config.getNegotiatorURL());</span>
+<span class="fc" id="L192">			String redirectURL = restTemplate.postForLocation(config.getNegotiatorURL(), queryHttpEntity)</span>
+<span class="fc" id="L193">											 .toASCIIString();</span>
+<span class="fc" id="L194">			LOG.trace(&quot;Redirecting to %s&quot;, redirectURL);</span>
+<span class="fc" id="L195">			return redirectURL;</span>
+		}
+<span class="nc" id="L197">		catch (RestClientException e)</span>
+		{
+<span class="nc" id="L199">			LOG.error(&quot;Posting to the negotiator went wrong: &quot;, e);</span>
+<span class="nc" id="L200">			throw e;</span>
+		}
+	}
+
+	private List&lt;Entity&gt; getCollectionEntities(NegotiatorRequest request)
+	{
+<span class="fc" id="L206">		EntityType selectedEntityType = dataService.getEntityType(request.getEntityId());</span>
+<span class="fc" id="L207">		Query&lt;Entity&gt; molgenisQuery = rsqlQueryConverter.convert(request.getRsql()).createQuery(selectedEntityType);</span>
+<span class="fc" id="L208">		return dataService.findAll(selectedEntityType.getId(), molgenisQuery).collect(toList());</span>
+	}
+
+	private List&lt;Entity&gt; getDisabledCollections(List&lt;Entity&gt; entities, NegotiatorEntityConfig config)
+	{
+<span class="fc" id="L213">		String expression = config.getString(ENABLED_EXPRESSION);</span>
+<span class="fc" id="L214">		return entities.stream()</span>
+<span class="fc bfc" id="L215" title="All 2 branches covered.">					   .filter(entity -&gt; !evaluateExpressionOnEntity(expression, entity))</span>
+<span class="fc" id="L216">					   .collect(Collectors.toList());</span>
+	}
+
+	private boolean evaluateExpressionOnEntity(String expression, Entity entity)
+	{
+<span class="pc bpc" id="L221" title="1 of 2 branches missed.">		return expression == null ? true : Boolean.valueOf(jsMagmaScriptEvaluator.eval(expression, entity).toString());</span>
+	}
+
+	private HttpEntity&lt;NegotiatorQuery&gt; getNegotiatorQueryHttpEntity(NegotiatorRequest request, NegotiatorConfig config,
+			List&lt;Collection&gt; collections)
+	{
+<span class="fc" id="L227">		NegotiatorQuery query = NegotiatorQuery.create(request.getURL(), collections, request.getHumanReadable(),</span>
+<span class="fc" id="L228">				request.getnToken());</span>
+
+<span class="fc" id="L230">		HttpHeaders headers = new HttpHeaders();</span>
+<span class="fc" id="L231">		headers.setContentType(APPLICATION_JSON);</span>
+<span class="fc" id="L232">		String username = config.getUsername();</span>
+<span class="fc" id="L233">		String password = config.getPassword();</span>
+<span class="fc" id="L234">		headers.set(&quot;Authorization&quot;, generateBase64Authentication(username, password));</span>
+
+<span class="fc" id="L236">		return new HttpEntity&lt;&gt;(query, headers);</span>
+	}
+
+	private NegotiatorEntityConfig getNegotiatorEntityConfig(String entityId)
+	{
+<span class="fc" id="L241">		Query&lt;NegotiatorEntityConfig&gt; query = new QueryImpl&lt;NegotiatorEntityConfig&gt;().eq(</span>
+				NegotiatorEntityConfigMeta.ENTITY, entityId);
+<span class="fc" id="L243">		return dataService.findOne(NegotiatorEntityConfigMeta.NEGOTIATORENTITYCONFIG, query,</span>
+				NegotiatorEntityConfig.class);
+	}
+
+	/**
+	 * Generate base64 authentication based on username and password.
+	 *
+	 * @return Authentication header value.
+	 */
+	private static String generateBase64Authentication(String username, String password)
+	{
+<span class="fc" id="L254">		requireNonNull(username, password);</span>
+<span class="fc" id="L255">		String userPass = username + &quot;:&quot; + password;</span>
+<span class="fc" id="L256">		String userPassBase64 = Base64.getEncoder().encodeToString(userPass.getBytes(UTF_8));</span>
+<span class="fc" id="L257">		return &quot;Basic &quot; + userPassBase64;</span>
+	}
+
+	@ExceptionHandler(RuntimeException.class)
+	@ResponseBody
+	@ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+	public ErrorMessageResponse handleRuntimeException(RuntimeException e)
+	{
+<span class="nc" id="L265">		LOG.error(e.getMessage(), e);</span>
+<span class="nc" id="L266">		return new ErrorMessageResponse(new ErrorMessageResponse.ErrorMessage(</span>
+<span class="nc" id="L267">				&quot;An error occurred. Please contact the administrator.&lt;br /&gt;Message:&quot; + e.getMessage()));</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

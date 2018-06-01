@@ -1,0 +1,1228 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RestController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-rest</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.rest</a> &gt; <span class="el_source">RestController.java</span></div><h1>RestController.java</h1><pre class="source lang-java linenums">package org.molgenis.data.rest;
+
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
+import com.google.common.collect.Sets.SetView;
+import cz.jirutka.rsql.parser.RSQLParserException;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.*;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.rest.service.RestService;
+import org.molgenis.data.rest.util.Href;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.data.security.auth.UserMetaData;
+import org.molgenis.data.support.DefaultEntityCollection;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.data.validation.ConstraintViolation;
+import org.molgenis.data.validation.MolgenisValidationException;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.security.core.token.TokenService;
+import org.molgenis.security.core.token.UnknownTokenException;
+import org.molgenis.security.settings.AuthenticationSettings;
+import org.molgenis.security.token.TokenParam;
+import org.molgenis.security.user.UserAccountService;
+import org.molgenis.web.ErrorMessageResponse;
+import org.molgenis.web.ErrorMessageResponse.ErrorMessage;
+import org.molgenis.web.rsql.MolgenisRSQL;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.convert.ConversionException;
+import org.springframework.core.convert.ConversionFailedException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.authentication.WebAuthenticationDetails;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.ObjectError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.MultipartHttpServletRequest;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.validation.Valid;
+import java.io.IOException;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.meta.AttributeType.*;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+import static org.molgenis.data.rest.RestController.BASE_URI;
+import static org.molgenis.data.security.auth.UserMetaData.USER;
+import static org.molgenis.data.util.EntityUtils.getTypedValue;
+import static org.molgenis.security.core.runas.RunAsSystemAspect.runAsSystem;
+import static org.molgenis.security.twofactor.auth.TwoFactorAuthenticationSetting.ENABLED;
+import static org.molgenis.security.twofactor.auth.TwoFactorAuthenticationSetting.ENFORCED;
+import static org.springframework.http.HttpStatus.*;
+import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
+
+/**
+ * Rest endpoint for the DataService
+ * &lt;p&gt;
+ * Query, create, update and delete entities.
+ * &lt;p&gt;
+ * If a repository isn't capable of doing the requested operation an error is thrown.
+ * &lt;p&gt;
+ * Response is json.
+ *
+ * @author erwin
+ */
+@org.springframework.web.bind.annotation.RestController
+@RequestMapping(BASE_URI)
+public class RestController
+{
+<span class="fc" id="L87">	private static final Logger LOG = LoggerFactory.getLogger(RestController.class);</span>
+
+	static final String BASE_URI = &quot;/api/v1&quot;;
+<span class="fc" id="L90">	private static final Pattern PATTERN_EXPANDS = Pattern.compile(&quot;([^\\[^\\]]+)(?:\\[(.+)\\])?&quot;);</span>
+
+	private final AuthenticationSettings authenticationSettings;
+	private final DataService dataService;
+	private final TokenService tokenService;
+	private final AuthenticationManager authenticationManager;
+	private final UserPermissionEvaluator permissionService;
+	private final UserAccountService userAccountService;
+	private final MolgenisRSQL molgenisRSQL;
+	private final RestService restService;
+
+	public RestController(AuthenticationSettings authenticationSettings, DataService dataService,
+			TokenService tokenService, AuthenticationManager authenticationManager,
+			UserPermissionEvaluator permissionService, UserAccountService userAccountService, MolgenisRSQL molgenisRSQL,
+			RestService restService)
+<span class="fc" id="L105">	{</span>
+<span class="fc" id="L106">		this.authenticationSettings = requireNonNull(authenticationSettings);</span>
+<span class="fc" id="L107">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L108">		this.tokenService = requireNonNull(tokenService);</span>
+<span class="fc" id="L109">		this.authenticationManager = requireNonNull(authenticationManager);</span>
+<span class="fc" id="L110">		this.userAccountService = requireNonNull(userAccountService);</span>
+<span class="fc" id="L111">		this.permissionService = requireNonNull(permissionService);</span>
+<span class="fc" id="L112">		this.molgenisRSQL = requireNonNull(molgenisRSQL);</span>
+<span class="fc" id="L113">		this.restService = requireNonNull(restService);</span>
+<span class="fc" id="L114">	}</span>
+
+	/**
+	 * Checks if an entity exists.
+	 */
+	@GetMapping(value = &quot;/{entityTypeId}/exist&quot;, produces = APPLICATION_JSON_VALUE)
+	public boolean entityExists(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId)
+	{
+		try
+		{
+<span class="nc" id="L124">			dataService.getRepository(entityTypeId);</span>
+<span class="nc" id="L125">			return true;</span>
+		}
+<span class="nc" id="L127">		catch (UnknownEntityTypeException e)</span>
+		{
+<span class="nc" id="L129">			return false;</span>
+		}
+	}
+
+	/**
+	 * Gets the metadata for an entity
+	 * &lt;p&gt;
+	 * Example url: /api/v1/person/meta
+	 *
+	 * @return EntityType
+	 */
+	@GetMapping(value = &quot;/{entityTypeId}/meta&quot;, produces = APPLICATION_JSON_VALUE)
+	public EntityTypeResponse retrieveEntityType(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@RequestParam(value = &quot;attributes&quot;, required = false) String[] attributes,
+			@RequestParam(value = &quot;expand&quot;, required = false) String[] attributeExpands)
+	{
+<span class="fc" id="L145">		Set&lt;String&gt; attributeSet = toAttributeSet(attributes);</span>
+<span class="fc" id="L146">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(attributeExpands);</span>
+
+<span class="fc" id="L148">		EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="pc bpc" id="L149" title="1 of 2 branches missed.">		if (meta == null)</span>
+		{
+<span class="nc" id="L151">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+<span class="fc" id="L153">		return new EntityTypeResponse(meta, attributeSet, attributeExpandSet, permissionService, dataService);</span>
+	}
+
+	/**
+	 * Same as retrieveEntityType (GET) only tunneled through POST.
+	 * &lt;p&gt;
+	 * Example url: /api/v1/person/meta?_method=GET
+	 *
+	 * @return EntityType
+	 */
+	@PostMapping(value = &quot;/{entityTypeId}/meta&quot;, params = &quot;_method=GET&quot;, produces = APPLICATION_JSON_VALUE)
+	public EntityTypeResponse retrieveEntityTypePost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@Valid @RequestBody EntityTypeRequest request)
+	{
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">		Set&lt;String&gt; attributesSet = toAttributeSet(request != null ? request.getAttributes() : null);</span>
+<span class="pc bpc" id="L168" title="1 of 2 branches missed.">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(request != null ? request.getExpand() : null);</span>
+
+<span class="fc" id="L170">		EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="pc bpc" id="L171" title="1 of 2 branches missed.">		if (meta == null)</span>
+		{
+<span class="nc" id="L173">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+<span class="fc" id="L175">		return new EntityTypeResponse(meta, attributesSet, attributeExpandSet, permissionService, dataService);</span>
+	}
+
+	/**
+	 * Example url: /api/v1/person/meta/emailaddresses
+	 *
+	 * @return EntityType
+	 */
+	@GetMapping(value = &quot;/{entityTypeId}/meta/{attributeName}&quot;, produces = APPLICATION_JSON_VALUE)
+	public AttributeResponse retrieveEntityAttributeMeta(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;attributeName&quot;) String attributeName,
+			@RequestParam(value = &quot;attributes&quot;, required = false) String[] attributes,
+			@RequestParam(value = &quot;expand&quot;, required = false) String[] attributeExpands)
+	{
+<span class="fc" id="L189">		Set&lt;String&gt; attributeSet = toAttributeSet(attributes);</span>
+<span class="fc" id="L190">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(attributeExpands);</span>
+
+<span class="nc" id="L192">		return getAttributePostInternal(entityTypeId, attributeName, attributeSet, attributeExpandSet);</span>
+	}
+
+	/**
+	 * Same as retrieveEntityAttributeMeta (GET) only tunneled through POST.
+	 *
+	 * @return EntityType
+	 */
+	@PostMapping(value = &quot;/{entityTypeId}/meta/{attributeName}&quot;, params = &quot;_method=GET&quot;, produces = APPLICATION_JSON_VALUE)
+	public AttributeResponse retrieveEntityAttributeMetaPost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;attributeName&quot;) String attributeName, @Valid @RequestBody EntityTypeRequest request)
+	{
+<span class="nc bnc" id="L204" title="All 2 branches missed.">		Set&lt;String&gt; attributeSet = toAttributeSet(request != null ? request.getAttributes() : null);</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(request != null ? request.getExpand() : null);</span>
+
+<span class="nc" id="L207">		return getAttributePostInternal(entityTypeId, attributeName, attributeSet, attributeExpandSet);</span>
+	}
+
+	/**
+	 * Get's an entity by it's id
+	 * &lt;p&gt;
+	 * Examples:
+	 * &lt;p&gt;
+	 * /api/v1/person/99 Retrieves a person with id 99
+	 */
+	@GetMapping(value = &quot;/{entityTypeId}/{id:.+}&quot;, produces = APPLICATION_JSON_VALUE)
+	public Map&lt;String, Object&gt; retrieveEntity(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;id&quot;) String untypedId,
+			@RequestParam(value = &quot;attributes&quot;, required = false) String[] attributes,
+			@RequestParam(value = &quot;expand&quot;, required = false) String[] attributeExpands)
+	{
+<span class="fc" id="L223">		Set&lt;String&gt; attributesSet = toAttributeSet(attributes);</span>
+<span class="fc" id="L224">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(attributeExpands);</span>
+
+<span class="fc" id="L226">		EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L227" title="All 2 branches covered.">		if (meta == null)</span>
+		{
+<span class="fc" id="L229">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+<span class="fc" id="L231">		Object id = getTypedValue(untypedId, meta.getIdAttribute());</span>
+<span class="fc" id="L232">		Entity entity = dataService.findOneById(entityTypeId, id);</span>
+<span class="pc bpc" id="L233" title="1 of 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="nc" id="L235">			throw new UnknownEntityException(meta, id);</span>
+		}
+
+<span class="fc" id="L238">		return getEntityAsMap(entity, meta, attributesSet, attributeExpandSet);</span>
+	}
+
+	/**
+	 * Same as retrieveEntity (GET) only tunneled through POST.
+	 */
+	@PostMapping(value = &quot;/{entityTypeId}/{id:.+}&quot;, params = &quot;_method=GET&quot;, produces = APPLICATION_JSON_VALUE)
+	@ResponseBody
+	public Map&lt;String, Object&gt; retrieveEntity(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;id&quot;) String untypedId, @Valid @RequestBody EntityTypeRequest request)
+	{
+<span class="nc bnc" id="L249" title="All 2 branches missed.">		Set&lt;String&gt; attributesSet = toAttributeSet(request != null ? request.getAttributes() : null);</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(request != null ? request.getExpand() : null);</span>
+
+<span class="nc" id="L252">		EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="nc" id="L253">		Object id = getTypedValue(untypedId, meta.getIdAttribute());</span>
+<span class="nc" id="L254">		Entity entity = dataService.findOneById(entityTypeId, id);</span>
+
+<span class="nc bnc" id="L256" title="All 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="nc" id="L258">			throw new UnknownEntityException(meta, untypedId);</span>
+		}
+
+<span class="nc" id="L261">		return getEntityAsMap(entity, meta, attributesSet, attributeExpandSet);</span>
+	}
+
+	/**
+	 * Get's an XREF entity or a list of MREF entities
+	 * &lt;p&gt;
+	 * Example:
+	 * &lt;p&gt;
+	 * /api/v1/person/99/address
+	 */
+	@GetMapping(value = &quot;/{entityTypeId}/{id}/{refAttributeName}&quot;, produces = APPLICATION_JSON_VALUE)
+	public Object retrieveEntityAttribute(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;id&quot;) String untypedId, @PathVariable(&quot;refAttributeName&quot;) String refAttributeName,
+			@Valid EntityCollectionRequest request,
+			@RequestParam(value = &quot;attributes&quot;, required = false) String[] attributes,
+			@RequestParam(value = &quot;expand&quot;, required = false) String[] attributeExpands)
+	{
+<span class="fc" id="L278">		Set&lt;String&gt; attributesSet = toAttributeSet(attributes);</span>
+<span class="fc" id="L279">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(attributeExpands);</span>
+
+<span class="fc" id="L281">		return retrieveEntityAttributeInternal(entityTypeId, untypedId, refAttributeName, request, attributesSet,</span>
+				attributeExpandSet);
+	}
+
+	/**
+	 * Get's an XREF entity or a list of MREF entities
+	 * &lt;p&gt;
+	 * Example:
+	 * &lt;p&gt;
+	 * /api/v1/person/99/address
+	 */
+	@PostMapping(value = &quot;/{entityTypeId}/{id}/{refAttributeName}&quot;, params = &quot;_method=GET&quot;, produces = APPLICATION_JSON_VALUE)
+	public Object retrieveEntityAttributePost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;id&quot;) String untypedId, @PathVariable(&quot;refAttributeName&quot;) String refAttributeName,
+			@Valid @RequestBody EntityCollectionRequest request)
+	{
+<span class="fc" id="L297">		Set&lt;String&gt; attributesSet = toAttributeSet(request.getAttributes());</span>
+<span class="fc" id="L298">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(request.getExpand());</span>
+
+<span class="fc" id="L300">		return retrieveEntityAttributeInternal(entityTypeId, untypedId, refAttributeName, request, attributesSet,</span>
+				attributeExpandSet);
+	}
+
+	/**
+	 * Do a query
+	 * &lt;p&gt;
+	 * Returns json
+	 */
+	@GetMapping(value = &quot;/{entityTypeId}&quot;, produces = APPLICATION_JSON_VALUE)
+	public EntityCollectionResponse retrieveEntityCollection(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@Valid EntityCollectionRequest request,
+			@RequestParam(value = &quot;attributes&quot;, required = false) String[] attributes,
+			@RequestParam(value = &quot;expand&quot;, required = false) String[] attributeExpands)
+	{
+<span class="fc" id="L315">		Set&lt;String&gt; attributesSet = toAttributeSet(attributes);</span>
+<span class="fc" id="L316">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(attributeExpands);</span>
+
+<span class="fc" id="L318">		return retrieveEntityCollectionInternal(entityTypeId, request, attributesSet, attributeExpandSet);</span>
+	}
+
+	/**
+	 * Same as retrieveEntityCollection (GET) only tunneled through POST.
+	 * &lt;p&gt;
+	 * Example url: /api/v1/person?_method=GET
+	 * &lt;p&gt;
+	 * Returns json
+	 */
+	@PostMapping(value = &quot;/{entityTypeId}&quot;, params = &quot;_method=GET&quot;, produces = APPLICATION_JSON_VALUE)
+	public EntityCollectionResponse retrieveEntityCollectionPost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@Valid @RequestBody EntityCollectionRequest request)
+	{
+<span class="fc" id="L332">		Set&lt;String&gt; attributesSet = toAttributeSet(request.getAttributes());</span>
+<span class="fc" id="L333">		Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet = toExpandMap(request.getExpand());</span>
+
+<span class="fc" id="L335">		return retrieveEntityCollectionInternal(entityTypeId, request, attributesSet, attributeExpandSet);</span>
+	}
+
+	/**
+	 * Does a rsql/fiql query, returns the result as csv
+	 * &lt;p&gt;
+	 * Parameters:
+	 * &lt;p&gt;
+	 * q: the query
+	 * &lt;p&gt;
+	 * attributes: the attributes to return, if not specified returns all attributes
+	 * &lt;p&gt;
+	 * start: the index of the first row, default 0
+	 * &lt;p&gt;
+	 * num: the number of results to return, default 100, max 10000
+	 * &lt;p&gt;
+	 * &lt;p&gt;
+	 * Example: /api/v1/csv/person?q=firstName==Piet&amp;attributes=firstName,lastName&amp;start=10&amp;num=100
+	 */
+	@GetMapping(value = &quot;/csv/{entityTypeId}&quot;, produces = &quot;text/csv&quot;)
+	@ResponseBody
+	public EntityCollection retrieveEntityCollection(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@RequestParam(value = &quot;attributes&quot;, required = false) String[] attributes, HttpServletRequest req,
+			HttpServletResponse resp) throws IOException
+	{
+<span class="fc" id="L360">		final Set&lt;String&gt; attributesSet = toAttributeSet(attributes);</span>
+
+		EntityType meta;
+		Iterable&lt;Entity&gt; entities;
+		try
+		{
+<span class="fc" id="L366">			meta = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L367">			Query&lt;Entity&gt; q = new QueryStringParser(meta, molgenisRSQL).parseQueryString(req.getParameterMap());</span>
+
+<span class="fc" id="L369">			String[] sortAttributeArray = req.getParameterMap().get(&quot;sortColumn&quot;);</span>
+<span class="pc bpc" id="L370" title="2 of 6 branches missed.">			if (sortAttributeArray != null &amp;&amp; sortAttributeArray.length == 1 &amp;&amp; StringUtils.isNotEmpty(</span>
+					sortAttributeArray[0]))
+			{
+<span class="fc" id="L373">				String sortAttribute = sortAttributeArray[0];</span>
+<span class="fc" id="L374">				String sortOrderArray[] = req.getParameterMap().get(&quot;sortOrder&quot;);</span>
+<span class="fc" id="L375">				Sort.Direction order = Sort.Direction.ASC;</span>
+
+<span class="pc bpc" id="L377" title="3 of 6 branches missed.">				if (sortOrderArray != null &amp;&amp; sortOrderArray.length == 1 &amp;&amp; StringUtils.isNotEmpty(sortOrderArray[0]))</span>
+				{
+<span class="fc" id="L379">					String sortOrder = sortOrderArray[0];</span>
+<span class="pc bpc" id="L380" title="7 of 10 branches missed.">					switch (sortOrder)</span>
+					{
+						case &quot;ASC&quot;:
+<span class="nc" id="L383">							order = Sort.Direction.ASC;</span>
+<span class="nc" id="L384">							break;</span>
+						case &quot;DESC&quot;:
+<span class="fc" id="L386">							order = Sort.Direction.DESC;</span>
+<span class="fc" id="L387">							break;</span>
+						default:
+<span class="nc" id="L389">							throw new RuntimeException(&quot;unknown sort order&quot;);</span>
+					}
+				}
+<span class="fc" id="L392">				q.sort().on(sortAttribute, order);</span>
+			}
+
+<span class="fc bfc" id="L395" title="All 2 branches covered.">			if (q.getPageSize() == 0)</span>
+			{
+<span class="fc" id="L397">				q.pageSize(EntityCollectionRequest.DEFAULT_ROW_COUNT);</span>
+			}
+
+<span class="pc bpc" id="L400" title="1 of 2 branches missed.">			if (q.getPageSize() &gt; EntityCollectionRequest.MAX_ROWS)</span>
+			{
+<span class="nc" id="L402">				resp.sendError(HttpServletResponse.SC_BAD_REQUEST,</span>
+						&quot;Num exceeded the maximum of &quot; + EntityCollectionRequest.MAX_ROWS + &quot; rows&quot;);
+<span class="nc" id="L404">				return null;</span>
+			}
+
+<span class="fc" id="L407">			entities = () -&gt; dataService.findAll(entityTypeId, q).iterator();</span>
+		}
+<span class="nc" id="L409">		catch (ConversionFailedException | RSQLParserException | UnknownAttributeException | IllegalArgumentException | UnsupportedOperationException | UnknownEntityException e)</span>
+		{
+<span class="nc" id="L411">			resp.sendError(HttpServletResponse.SC_BAD_REQUEST, e.getMessage());</span>
+<span class="nc" id="L412">			return null;</span>
+		}
+<span class="nc" id="L414">		catch (MolgenisDataAccessException e)</span>
+		{
+<span class="nc" id="L416">			resp.sendError(HttpServletResponse.SC_UNAUTHORIZED);</span>
+<span class="nc" id="L417">			return null;</span>
+<span class="fc" id="L418">		}</span>
+
+		// Check attribute names
+<span class="fc" id="L421">		Iterable&lt;String&gt; attributesIterable = Iterables.transform(meta.getAtomicAttributes(),</span>
+<span class="nc" id="L422">				attribute -&gt; attribute.getName().toLowerCase());</span>
+
+<span class="pc bpc" id="L424" title="1 of 2 branches missed.">		if (attributesSet != null)</span>
+		{
+<span class="nc" id="L426">			SetView&lt;String&gt; diff = Sets.difference(attributesSet, Sets.newHashSet(attributesIterable));</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">			if (!diff.isEmpty())</span>
+			{
+<span class="nc" id="L429">				resp.sendError(HttpServletResponse.SC_BAD_REQUEST, &quot;Unknown attributes &quot; + diff);</span>
+<span class="nc" id="L430">				return null;</span>
+			}
+		}
+
+<span class="fc" id="L434">		attributesIterable = Iterables.transform(meta.getAtomicAttributes(), Attribute::getName);</span>
+
+<span class="pc bpc" id="L436" title="1 of 2 branches missed.">		if (attributesSet != null)</span>
+		{
+<span class="nc" id="L438">			attributesIterable = Iterables.filter(attributesIterable,</span>
+<span class="nc" id="L439">					attribute -&gt; attributesSet.contains(attribute.toLowerCase()));</span>
+		}
+
+<span class="fc" id="L442">		return new DefaultEntityCollection(entities, attributesIterable);</span>
+	}
+
+	/**
+	 * Creates a new entity from a html form post.
+	 */
+	@Transactional
+	@PostMapping(value = &quot;/{entityTypeId}&quot;, headers = &quot;Content-Type=application/x-www-form-urlencoded&quot;)
+	public void createFromFormPost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId, HttpServletRequest request,
+			HttpServletResponse response)
+	{
+<span class="fc" id="L453">		Map&lt;String, Object&gt; paramMap = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L454" title="All 2 branches covered.">		for (String param : request.getParameterMap().keySet())</span>
+		{
+<span class="fc" id="L456">			String[] values = request.getParameterValues(param);</span>
+<span class="pc bpc" id="L457" title="1 of 2 branches missed.">			String value = values != null ? StringUtils.join(values, ',') : null;</span>
+<span class="pc bpc" id="L458" title="1 of 2 branches missed.">			if (StringUtils.isNotBlank(value))</span>
+			{
+<span class="fc" id="L460">				paramMap.put(param, value);</span>
+			}
+<span class="fc" id="L462">		}</span>
+
+<span class="fc" id="L464">		createInternal(entityTypeId, paramMap, response);</span>
+<span class="fc" id="L465">	}</span>
+
+	/**
+	 * Creates a new entity from a html form post.
+	 */
+	@Transactional
+	@PostMapping(value = &quot;/{entityTypeId}&quot;, headers = &quot;Content-Type=multipart/form-data&quot;)
+	public void createFromFormPostMultiPart(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			MultipartHttpServletRequest request, HttpServletResponse response)
+	{
+<span class="nc" id="L475">		Map&lt;String, Object&gt; paramMap = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">		for (String param : request.getParameterMap().keySet())</span>
+		{
+<span class="nc" id="L478">			String[] values = request.getParameterValues(param);</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">			String value = values != null ? StringUtils.join(values, ',') : null;</span>
+<span class="nc bnc" id="L480" title="All 2 branches missed.">			if (StringUtils.isNotBlank(value))</span>
+			{
+<span class="nc" id="L482">				paramMap.put(param, value);</span>
+			}
+<span class="nc" id="L484">		}</span>
+
+		// add files to param map
+<span class="nc bnc" id="L487" title="All 2 branches missed.">		for (Entry&lt;String, List&lt;MultipartFile&gt;&gt; entry : request.getMultiFileMap().entrySet())</span>
+		{
+<span class="nc" id="L489">			String param = entry.getKey();</span>
+<span class="nc" id="L490">			List&lt;MultipartFile&gt; files = entry.getValue();</span>
+<span class="nc bnc" id="L491" title="All 4 branches missed.">			if (files != null &amp;&amp; files.size() &gt; 1)</span>
+			{
+<span class="nc" id="L493">				throw new IllegalArgumentException(&quot;Multiple file input not supported&quot;);</span>
+			}
+<span class="nc bnc" id="L495" title="All 4 branches missed.">			paramMap.put(param, files != null &amp;&amp; !files.isEmpty() ? files.get(0) : null);</span>
+<span class="nc" id="L496">		}</span>
+<span class="nc" id="L497">		createInternal(entityTypeId, paramMap, response);</span>
+<span class="nc" id="L498">	}</span>
+
+	@Transactional
+	@PostMapping(&quot;/{entityTypeId}&quot;)
+	public void create(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId, @RequestBody Map&lt;String, Object&gt; entityMap,
+			HttpServletResponse response)
+	{
+<span class="pc bpc" id="L505" title="1 of 2 branches missed.">		if (entityMap == null)</span>
+		{
+<span class="nc" id="L507">			throw new IllegalArgumentException(&quot;Missing entity in body&quot;);</span>
+		}
+
+<span class="fc" id="L510">		createInternal(entityTypeId, entityMap, response);</span>
+<span class="fc" id="L511">	}</span>
+
+	/**
+	 * Updates an entity using PUT
+	 * &lt;p&gt;
+	 * Example url: /api/v1/person/99
+	 */
+	@Transactional
+	@PutMapping(&quot;/{entityTypeId}/{id}&quot;)
+	@ResponseStatus(OK)
+	public void update(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId, @PathVariable(&quot;id&quot;) String untypedId,
+			@RequestBody Map&lt;String, Object&gt; entityMap)
+	{
+<span class="fc" id="L524">		updateInternal(entityTypeId, untypedId, entityMap);</span>
+<span class="fc" id="L525">	}</span>
+
+	/**
+	 * Updates an entity by tunneling PUT through POST
+	 * &lt;p&gt;
+	 * Example url: /api/v1/person/99?_method=PUT
+	 */
+	@Transactional
+	@PostMapping(value = &quot;/{entityTypeId}/{id}&quot;, params = &quot;_method=PUT&quot;)
+	@ResponseStatus(OK)
+	public void updatePost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId, @PathVariable(&quot;id&quot;) String untypedId,
+			@RequestBody Map&lt;String, Object&gt; entityMap)
+	{
+<span class="fc" id="L538">		updateInternal(entityTypeId, untypedId, entityMap);</span>
+<span class="fc" id="L539">	}</span>
+
+	@PutMapping(value = &quot;/{entityTypeId}/{id}/{attributeName}&quot;)
+	@ResponseStatus(OK)
+	public void updateAttributePut(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;attributeName&quot;) String attributeName, @PathVariable(&quot;id&quot;) String untypedId,
+			@RequestBody Object paramValue)
+	{
+<span class="nc" id="L547">		updateAttribute(entityTypeId, attributeName, untypedId, paramValue);</span>
+<span class="nc" id="L548">	}</span>
+
+	// TODO alternative for synchronization, for example by adding updatAttribute methods to the REST api
+	@PostMapping(value = &quot;/{entityTypeId}/{id}/{attributeName}&quot;, params = &quot;_method=PUT&quot;)
+	@ResponseStatus(OK)
+	public synchronized void updateAttribute(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;attributeName&quot;) String attributeName, @PathVariable(&quot;id&quot;) String untypedId,
+			@RequestBody Object paramValue)
+	{
+<span class="fc" id="L557">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L558" title="All 2 branches covered.">		if (entityType == null)</span>
+		{
+<span class="fc" id="L560">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+
+<span class="fc" id="L563">		Object id = getTypedValue(untypedId, entityType.getIdAttribute());</span>
+
+<span class="fc" id="L565">		Entity entity = dataService.findOneById(entityTypeId, id);</span>
+<span class="fc bfc" id="L566" title="All 2 branches covered.">		if (entity == null)</span>
+		{
+<span class="fc" id="L568">			throw new UnknownEntityException(entityType, id);</span>
+		}
+
+<span class="fc" id="L571">		Attribute attr = entityType.getAttribute(attributeName);</span>
+<span class="fc bfc" id="L572" title="All 2 branches covered.">		if (attr == null)</span>
+		{
+<span class="fc" id="L574">			throw new UnknownAttributeException(entityType, attributeName);</span>
+		}
+
+<span class="pc bpc" id="L577" title="1 of 2 branches missed.">		if (attr.isReadOnly())</span>
+		{
+<span class="nc" id="L579">			throw new MolgenisDataAccessException(</span>
+					&quot;Attribute '&quot; + attributeName + &quot;' of entity '&quot; + entityTypeId + &quot;' is readonly&quot;);
+		}
+
+<span class="fc" id="L583">		Object value = this.restService.toEntityValue(attr, paramValue, id);</span>
+<span class="fc" id="L584">		entity.set(attributeName, value);</span>
+<span class="fc" id="L585">		dataService.update(entityTypeId, entity);</span>
+<span class="fc" id="L586">	}</span>
+
+	/**
+	 * Updates an entity from a html form post.
+	 * &lt;p&gt;
+	 * Tunnels PUT through POST
+	 * &lt;p&gt;
+	 * Example url: /api/v1/person/99?_method=PUT
+	 */
+	@Transactional
+	@PostMapping(value = &quot;/{entityTypeId}/{id}&quot;, params = &quot;_method=PUT&quot;, headers = &quot;Content-Type=multipart/form-data&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void updateFromFormPostMultiPart(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;id&quot;) String untypedId, MultipartHttpServletRequest request)
+	{
+<span class="nc" id="L601">		Map&lt;String, Object&gt; paramMap = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L602" title="All 2 branches missed.">		for (String param : request.getParameterMap().keySet())</span>
+		{
+<span class="nc" id="L604">			String[] values = request.getParameterValues(param);</span>
+<span class="nc bnc" id="L605" title="All 2 branches missed.">			String value = values != null ? StringUtils.join(values, ',') : null;</span>
+<span class="nc" id="L606">			paramMap.put(param, value);</span>
+<span class="nc" id="L607">		}</span>
+
+		// add files to param map
+<span class="nc bnc" id="L610" title="All 2 branches missed.">		for (Entry&lt;String, List&lt;MultipartFile&gt;&gt; entry : request.getMultiFileMap().entrySet())</span>
+		{
+<span class="nc" id="L612">			String param = entry.getKey();</span>
+<span class="nc" id="L613">			List&lt;MultipartFile&gt; files = entry.getValue();</span>
+<span class="nc bnc" id="L614" title="All 4 branches missed.">			if (files != null &amp;&amp; files.size() &gt; 1)</span>
+			{
+<span class="nc" id="L616">				throw new IllegalArgumentException(&quot;Multiple file input not supported&quot;);</span>
+			}
+<span class="nc bnc" id="L618" title="All 4 branches missed.">			paramMap.put(param, files != null &amp;&amp; !files.isEmpty() ? files.get(0) : null);</span>
+<span class="nc" id="L619">		}</span>
+<span class="nc" id="L620">		updateInternal(entityTypeId, untypedId, paramMap);</span>
+<span class="nc" id="L621">	}</span>
+
+	/**
+	 * Updates an entity from a html form post.
+	 * &lt;p&gt;
+	 * Tunnels PUT through POST
+	 * &lt;p&gt;
+	 * Example url: /api/v1/person/99?_method=PUT
+	 */
+	@Transactional
+	@PostMapping(value = &quot;/{entityTypeId}/{id}&quot;, params = &quot;_method=PUT&quot;, headers = &quot;Content-Type=application/x-www-form-urlencoded&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void updateFromFormPost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;id&quot;) String untypedId, HttpServletRequest request)
+	{
+<span class="fc" id="L636">		Map&lt;String, Object&gt; paramMap = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L637" title="All 2 branches covered.">		for (String param : request.getParameterMap().keySet())</span>
+		{
+<span class="fc" id="L639">			String[] values = request.getParameterValues(param);</span>
+<span class="pc bpc" id="L640" title="1 of 2 branches missed.">			String value = values != null ? StringUtils.join(values, ',') : null;</span>
+<span class="fc" id="L641">			paramMap.put(param, value);</span>
+<span class="fc" id="L642">		}</span>
+
+<span class="fc" id="L644">		updateInternal(entityTypeId, untypedId, paramMap);</span>
+<span class="fc" id="L645">	}</span>
+
+	/**
+	 * Deletes an entity by it's id
+	 */
+	@Transactional
+	@DeleteMapping(&quot;/{entityTypeId}/{id}&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void delete(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId, @PathVariable(&quot;id&quot;) String untypedId)
+	{
+<span class="fc" id="L655">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L656">		Object id = getTypedValue(untypedId, entityType.getIdAttribute());</span>
+
+<span class="pc bpc" id="L658" title="1 of 2 branches missed.">		if (ATTRIBUTE_META_DATA.equals(entityTypeId))</span>
+		{
+<span class="nc" id="L660">			dataService.getMeta().deleteAttributeById(id);</span>
+		}
+		else
+		{
+<span class="fc" id="L664">			dataService.deleteById(entityTypeId, id);</span>
+		}
+<span class="fc" id="L666">	}</span>
+
+	/**
+	 * Deletes an entity by it's id but tunnels DELETE through POST
+	 * &lt;p&gt;
+	 * Example url: /api/v1/person/99?_method=DELETE
+	 */
+	@PostMapping(value = &quot;/{entityTypeId}/{id}&quot;, params = &quot;_method=DELETE&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void deletePost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId, @PathVariable(&quot;id&quot;) String untypedId)
+	{
+<span class="fc" id="L677">		delete(entityTypeId, untypedId);</span>
+<span class="fc" id="L678">	}</span>
+
+	/**
+	 * Deletes all entities for the given entity name
+	 */
+	@DeleteMapping(&quot;/{entityTypeId}&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void deleteAll(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId)
+	{
+<span class="fc" id="L687">		dataService.deleteAll(entityTypeId);</span>
+<span class="fc" id="L688">	}</span>
+
+	/**
+	 * Deletes all entities for the given entity name but tunnels DELETE through POST
+	 */
+	@PostMapping(value = &quot;/{entityTypeId}&quot;, params = &quot;_method=DELETE&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void deleteAllPost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId)
+	{
+<span class="fc" id="L697">		dataService.deleteAll(entityTypeId);</span>
+<span class="fc" id="L698">	}</span>
+
+	/**
+	 * Deletes all entities and entity meta data for the given entity name
+	 */
+	@DeleteMapping(value = &quot;/{entityTypeId}/meta&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void deleteMeta(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId)
+	{
+<span class="fc" id="L707">		deleteMetaInternal(entityTypeId);</span>
+<span class="fc" id="L708">	}</span>
+
+	/**
+	 * Deletes all entities and entity meta data for the given entity name but tunnels DELETE through POST
+	 */
+	@PostMapping(value = &quot;/{entityTypeId}/meta&quot;, params = &quot;_method=DELETE&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void deleteMetaPost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId)
+	{
+<span class="fc" id="L717">		deleteMetaInternal(entityTypeId);</span>
+<span class="fc" id="L718">	}</span>
+
+	private void deleteMetaInternal(String entityTypeId)
+	{
+<span class="fc" id="L722">		dataService.getMeta().deleteEntityType(entityTypeId);</span>
+<span class="fc" id="L723">	}</span>
+
+	/**
+	 * Login to the api.
+	 * &lt;p&gt;
+	 * Returns a json object with a token on correct login else throws an AuthenticationException. Clients can use this
+	 * token when calling the api.
+	 * &lt;p&gt;
+	 * Example:
+	 * &lt;p&gt;
+	 * Request: {username:admin,password:xxx}
+	 * &lt;p&gt;
+	 * Response: {token: b4fd94dc-eae6-4d9a-a1b7-dd4525f2f75d}
+	 */
+	@PostMapping(value = &quot;/login&quot;, produces = APPLICATION_JSON_VALUE)
+	@ResponseBody
+	public LoginResponse login(@Valid @RequestBody LoginRequest login, HttpServletRequest request)
+	{
+<span class="nc bnc" id="L741" title="All 2 branches missed.">		if (login == null)</span>
+		{
+<span class="nc" id="L743">			throw new HttpMessageNotReadableException(&quot;Missing login&quot;);</span>
+		}
+<span class="nc bnc" id="L745" title="All 2 branches missed.">		if (isUser2fa())</span>
+		{
+<span class="nc" id="L747">			throw new BadCredentialsException(</span>
+					&quot;Login using /api/v1/login is disabled, two factor authentication is enabled&quot;);
+		}
+
+<span class="nc" id="L751">		return runAsSystem(() -&gt;</span>
+		{
+<span class="fc" id="L753">			UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(login.getUsername(),</span>
+<span class="fc" id="L754">					login.getPassword());</span>
+
+<span class="fc" id="L756">			authToken.setDetails(new WebAuthenticationDetails(request));</span>
+
+			// Authenticate the login
+<span class="fc" id="L759">			Authentication authentication = authenticationManager.authenticate(authToken);</span>
+<span class="pc bpc" id="L760" title="1 of 2 branches missed.">			if (!authentication.isAuthenticated())</span>
+			{
+<span class="nc" id="L762">				throw new BadCredentialsException(&quot;Unknown username or password&quot;);</span>
+			}
+
+<span class="fc" id="L765">			User user = dataService.findOne(USER,</span>
+<span class="fc" id="L766">					new QueryImpl&lt;User&gt;().eq(UserMetaData.USERNAME, authentication.getName()), User.class);</span>
+
+<span class="pc bpc" id="L768" title="1 of 2 branches missed.">			if (user.isChangePassword())</span>
+			{
+<span class="fc" id="L770">				throw new BadCredentialsException(</span>
+						&quot;Unable to log in because a password reset is required. Sign in to the website to reset your password.&quot;);
+			}
+
+			// User authenticated, log the user in
+<span class="nc" id="L775">			SecurityContextHolder.getContext().setAuthentication(authentication);</span>
+
+			// Generate a new token for the user
+<span class="nc" id="L778">			String token = tokenService.generateAndStoreToken(authentication.getName(), &quot;REST API login&quot;);</span>
+<span class="nc" id="L779">			return new LoginResponse(token, user.getUsername(), user.getFirstName(), user.getLastName());</span>
+		});
+	}
+
+	private boolean isUser2fa()
+	{
+<span class="pc bpc" id="L785" title="1 of 2 branches missed.">		return authenticationSettings.getTwoFactorAuthentication() == ENFORCED || (</span>
+<span class="pc bpc" id="L786" title="1 of 2 branches missed.">				authenticationSettings.getTwoFactorAuthentication() == ENABLED &amp;&amp; userAccountService.getCurrentUser()</span>
+<span class="pc bnc" id="L787" title="All 2 branches missed.">																									.isTwoFactorAuthentication());</span>
+	}
+
+	@PostMapping(&quot;/logout&quot;)
+	@ResponseStatus(OK)
+	public void logout(@TokenParam(required = true) String token, HttpServletRequest request)
+	{
+<span class="fc" id="L794">		tokenService.removeToken(token);</span>
+<span class="fc" id="L795">		SecurityContextHolder.getContext().setAuthentication(null);</span>
+
+<span class="pc bpc" id="L797" title="1 of 2 branches missed.">		if (request.getSession(false) != null)</span>
+		{
+<span class="nc" id="L799">			request.getSession().invalidate();</span>
+		}
+<span class="fc" id="L801">	}</span>
+
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	@ResponseStatus(BAD_REQUEST)
+	public ErrorMessageResponse handleHttpMessageNotReadableException(HttpMessageNotReadableException e)
+	{
+<span class="nc" id="L807">		LOG.error(&quot;&quot;, e);</span>
+<span class="nc" id="L808">		return new ErrorMessageResponse(new ErrorMessage(e.getMessage()));</span>
+	}
+
+	@ExceptionHandler(UnknownTokenException.class)
+	@ResponseStatus(NOT_FOUND)
+	public ErrorMessageResponse handleUnknownTokenException(UnknownTokenException e)
+	{
+<span class="nc" id="L815">		LOG.debug(&quot;&quot;, e);</span>
+<span class="nc" id="L816">		return new ErrorMessageResponse(new ErrorMessage(e.getMessage()));</span>
+	}
+
+	@ExceptionHandler(MethodArgumentNotValidException.class)
+	@ResponseStatus(BAD_REQUEST)
+	public ErrorMessageResponse handleMethodArgumentNotValidException(MethodArgumentNotValidException e)
+	{
+<span class="nc" id="L823">		LOG.debug(&quot;&quot;, e);</span>
+
+<span class="nc" id="L825">		List&lt;ErrorMessage&gt; messages = Lists.newArrayList();</span>
+<span class="nc bnc" id="L826" title="All 2 branches missed.">		for (ObjectError error : e.getBindingResult().getAllErrors())</span>
+		{
+<span class="nc" id="L828">			messages.add(new ErrorMessage(error.getDefaultMessage()));</span>
+<span class="nc" id="L829">		}</span>
+
+<span class="nc" id="L831">		return new ErrorMessageResponse(messages);</span>
+	}
+
+	@ExceptionHandler(MolgenisValidationException.class)
+	@ResponseStatus(BAD_REQUEST)
+	public ErrorMessageResponse handleMolgenisValidationException(MolgenisValidationException e)
+	{
+<span class="nc" id="L838">		LOG.info(&quot;&quot;, e);</span>
+
+<span class="nc" id="L840">		List&lt;ErrorMessage&gt; messages = Lists.newArrayList();</span>
+<span class="nc bnc" id="L841" title="All 2 branches missed.">		for (ConstraintViolation violation : e.getViolations())</span>
+		{
+<span class="nc" id="L843">			messages.add(new ErrorMessage(violation.getMessage()));</span>
+<span class="nc" id="L844">		}</span>
+
+<span class="nc" id="L846">		return new ErrorMessageResponse(messages);</span>
+	}
+
+	@ExceptionHandler(ConversionException.class)
+	@ResponseStatus(BAD_REQUEST)
+	public ErrorMessageResponse handleConversionException(ConversionException e)
+	{
+<span class="nc" id="L853">		LOG.info(&quot;&quot;, e);</span>
+<span class="nc" id="L854">		return new ErrorMessageResponse(new ErrorMessage(e.getMessage()));</span>
+	}
+
+	@ExceptionHandler(MolgenisDataException.class)
+	@ResponseStatus(BAD_REQUEST)
+	public ErrorMessageResponse handleMolgenisDataException(MolgenisDataException e)
+	{
+<span class="fc" id="L861">		LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L862">		return new ErrorMessageResponse(new ErrorMessage(e.getMessage()));</span>
+	}
+
+	@ExceptionHandler(AuthenticationException.class)
+	@ResponseStatus(UNAUTHORIZED)
+	public ErrorMessageResponse handleAuthenticationException(AuthenticationException e)
+	{
+<span class="fc" id="L869">		LOG.info(&quot;&quot;, e);</span>
+		// workaround for https://github.com/molgenis/molgenis/issues/4441
+<span class="fc" id="L871">		String message = e.getMessage();</span>
+<span class="fc" id="L872">		String messagePrefix = &quot;org.springframework.security.core.userdetails.UsernameNotFoundException: &quot;;</span>
+<span class="pc bpc" id="L873" title="1 of 2 branches missed.">		if (message.startsWith(messagePrefix))</span>
+		{
+<span class="nc" id="L875">			message = message.substring(messagePrefix.length());</span>
+		}
+<span class="fc" id="L877">		return new ErrorMessageResponse(new ErrorMessage(message));</span>
+	}
+
+	@ExceptionHandler(MolgenisDataAccessException.class)
+	@ResponseStatus(UNAUTHORIZED)
+	public ErrorMessageResponse handleMolgenisDataAccessException(MolgenisDataAccessException e)
+	{
+<span class="fc" id="L884">		LOG.info(&quot;&quot;, e);</span>
+<span class="fc" id="L885">		return new ErrorMessageResponse(new ErrorMessage(e.getMessage()));</span>
+	}
+
+	@ExceptionHandler(MolgenisReferencedEntityException.class)
+	@ResponseStatus(INTERNAL_SERVER_ERROR)
+	public ErrorMessageResponse handleMolgenisReferencingEntityException(MolgenisReferencedEntityException e)
+	{
+<span class="nc" id="L892">		LOG.error(&quot;&quot;, e);</span>
+<span class="nc" id="L893">		return new ErrorMessageResponse(new ErrorMessage(e.getMessage()));</span>
+	}
+
+	private void updateInternal(String entityTypeId, String untypedId, Map&lt;String, Object&gt; entityMap)
+	{
+<span class="fc" id="L898">		EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L899" title="All 2 branches covered.">		if (meta.getIdAttribute() == null)</span>
+		{
+<span class="fc" id="L901">			throw new IllegalArgumentException(entityTypeId + &quot; does not have an id attribute&quot;);</span>
+		}
+<span class="fc" id="L903">		Object id = getTypedValue(untypedId, meta.getIdAttribute());</span>
+
+<span class="fc" id="L905">		Entity existing = dataService.findOneById(entityTypeId, id, new Fetch().field(meta.getIdAttribute().getName()));</span>
+<span class="fc bfc" id="L906" title="All 2 branches covered.">		if (existing == null)</span>
+		{
+<span class="fc" id="L908">			throw new UnknownEntityException(meta, id);</span>
+		}
+
+<span class="fc" id="L911">		Entity entity = this.restService.toEntity(meta, entityMap);</span>
+
+<span class="fc" id="L913">		dataService.update(entityTypeId, entity);</span>
+<span class="fc" id="L914">		restService.updateMappedByEntities(entity, existing);</span>
+<span class="fc" id="L915">	}</span>
+
+	private void createInternal(String entityTypeId, Map&lt;String, Object&gt; entityMap, HttpServletResponse response)
+	{
+<span class="fc" id="L919">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L920">		Entity entity = this.restService.toEntity(entityType, entityMap);</span>
+
+<span class="pc bpc" id="L922" title="1 of 2 branches missed.">		if (ATTRIBUTE_META_DATA.equals(entityTypeId))</span>
+		{
+<span class="nc" id="L924">			dataService.getMeta().addAttribute(new Attribute(entity));</span>
+		}
+		else
+		{
+<span class="fc" id="L928">			dataService.add(entityTypeId, entity);</span>
+		}
+
+<span class="fc" id="L931">		restService.updateMappedByEntities(entity);</span>
+
+<span class="fc" id="L933">		Object id = entity.getIdValue();</span>
+<span class="pc bpc" id="L934" title="1 of 2 branches missed.">		if (id != null)</span>
+		{
+<span class="fc" id="L936">			response.addHeader(&quot;Location&quot;, Href.concatEntityHref(RestController.BASE_URI, entityTypeId, id));</span>
+		}
+
+<span class="fc" id="L939">		response.setStatus(HttpServletResponse.SC_CREATED);</span>
+<span class="fc" id="L940">	}</span>
+
+	private AttributeResponse getAttributePostInternal(String entityTypeId, String attributeName,
+			Set&lt;String&gt; attributeSet, Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet)
+	{
+<span class="fc" id="L945">		Attribute attribute = null;</span>
+<span class="fc" id="L946">		EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="pc bpc" id="L947" title="1 of 2 branches missed.">		if (meta != null)</span>
+		{
+<span class="nc" id="L949">			attribute = meta.getAttribute(attributeName);</span>
+		}
+<span class="pc bpc" id="L951" title="1 of 2 branches missed.">		if (attribute != null)</span>
+		{
+<span class="nc" id="L953">			return new AttributeResponse(entityTypeId, meta, attribute, attributeSet, attributeExpandSet,</span>
+					permissionService, dataService);
+		}
+		else
+		{
+<span class="fc" id="L958">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+	}
+
+	private Object retrieveEntityAttributeInternal(String entityTypeId, String untypedId, String refAttributeName,
+			EntityCollectionRequest request, Set&lt;String&gt; attributesSet, Map&lt;String, Set&lt;String&gt;&gt; attributeExpandSet)
+	{
+<span class="fc" id="L965">		EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="pc bpc" id="L966" title="1 of 2 branches missed.">		if (meta == null)</span>
+		{
+<span class="nc" id="L968">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+<span class="fc" id="L970">		Object id = getTypedValue(untypedId, meta.getIdAttribute());</span>
+
+		// Check if the entity has an attribute with name refAttributeName
+<span class="fc" id="L973">		Attribute attr = meta.getAttribute(refAttributeName);</span>
+<span class="fc bfc" id="L974" title="All 2 branches covered.">		if (attr == null)</span>
+		{
+<span class="fc" id="L976">			throw new UnknownAttributeException(meta, refAttributeName);</span>
+		}
+
+		// Get the entity
+<span class="fc" id="L980">		Entity entity = dataService.findOneById(entityTypeId, id);</span>
+<span class="pc bpc" id="L981" title="1 of 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="nc" id="L983">			throw new UnknownEntityException(meta, id);</span>
+		}
+
+<span class="fc" id="L986">		String attrHref = Href.concatAttributeHref(RestController.BASE_URI, meta.getId(), entity.getIdValue(),</span>
+				refAttributeName);
+<span class="pc bpc" id="L988" title="2 of 4 branches missed.">		switch (attr.getDataType())</span>
+		{
+			case COMPOUND:
+<span class="nc" id="L991">				Map&lt;String, Object&gt; entityHasAttributeMap = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L992">				entityHasAttributeMap.put(&quot;href&quot;, attrHref);</span>
+				@SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L994">				Iterable&lt;Attribute&gt; attributeParts = (Iterable&lt;Attribute&gt;) entity.get(refAttributeName);</span>
+<span class="nc bnc" id="L995" title="All 2 branches missed.">				for (Attribute attribute : attributeParts)</span>
+				{
+<span class="nc" id="L997">					String attrName = attribute.getName();</span>
+<span class="nc" id="L998">					entityHasAttributeMap.put(attrName, entity.get(attrName));</span>
+<span class="nc" id="L999">				}</span>
+<span class="nc" id="L1000">				return entityHasAttributeMap;</span>
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="nc" id="L1004">				List&lt;Entity&gt; mrefEntities = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L1005" title="All 2 branches missed.">				for (Entity e : entity.getEntities((attr.getName())))</span>
+<span class="nc" id="L1006">					mrefEntities.add(e);</span>
+<span class="nc" id="L1007">				int count = mrefEntities.size();</span>
+<span class="nc" id="L1008">				int toIndex = request.getStart() + request.getNum();</span>
+<span class="nc bnc" id="L1009" title="All 2 branches missed.">				mrefEntities = mrefEntities.subList(request.getStart(), toIndex &gt; count ? count : toIndex);</span>
+
+<span class="nc" id="L1011">				List&lt;Map&lt;String, Object&gt;&gt; refEntityMaps = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L1012" title="All 2 branches missed.">				for (Entity refEntity : mrefEntities)</span>
+				{
+<span class="nc" id="L1014">					Map&lt;String, Object&gt; refEntityMap = getEntityAsMap(refEntity, attr.getRefEntity(), attributesSet,</span>
+							attributeExpandSet);
+<span class="nc" id="L1016">					refEntityMaps.add(refEntityMap);</span>
+<span class="nc" id="L1017">				}</span>
+
+<span class="nc" id="L1019">				EntityPager pager = new EntityPager(request.getStart(), request.getNum(), (long) count, mrefEntities);</span>
+<span class="nc" id="L1020">				return new EntityCollectionResponse(pager, refEntityMaps, attrHref, null, permissionService,</span>
+						dataService);
+			case CATEGORICAL:
+			case XREF:
+<span class="fc" id="L1024">				Map&lt;String, Object&gt; entityXrefAttributeMap = getEntityAsMap((Entity) entity.get(refAttributeName),</span>
+<span class="fc" id="L1025">						attr.getRefEntity(), attributesSet, attributeExpandSet);</span>
+<span class="fc" id="L1026">				entityXrefAttributeMap.put(&quot;href&quot;, attrHref);</span>
+<span class="fc" id="L1027">				return entityXrefAttributeMap;</span>
+			default:
+<span class="fc" id="L1029">				Map&lt;String, Object&gt; entityAttributeMap = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L1030">				entityAttributeMap.put(&quot;href&quot;, attrHref);</span>
+<span class="fc" id="L1031">				entityAttributeMap.put(refAttributeName, entity.get(refAttributeName));</span>
+<span class="fc" id="L1032">				return entityAttributeMap;</span>
+		}
+	}
+
+	// Handles a Query
+	@SuppressWarnings(&quot;deprecation&quot;)
+	private EntityCollectionResponse retrieveEntityCollectionInternal(String entityTypeId,
+			EntityCollectionRequest request, Set&lt;String&gt; attributesSet, Map&lt;String, Set&lt;String&gt;&gt; attributeExpandsSet)
+	{
+<span class="fc" id="L1041">		EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="pc bpc" id="L1042" title="1 of 2 branches missed.">		if (meta == null)</span>
+		{
+<span class="nc" id="L1044">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+<span class="fc" id="L1046">		Repository&lt;Entity&gt; repository = dataService.getRepository(entityTypeId);</span>
+
+		// convert sort
+		Sort sort;
+<span class="fc" id="L1050">		SortV1 sortV1 = request.getSort();</span>
+<span class="pc bpc" id="L1051" title="1 of 2 branches missed.">		if (sortV1 != null)</span>
+		{
+<span class="nc" id="L1053">			sort = new Sort();</span>
+<span class="nc bnc" id="L1054" title="All 2 branches missed.">			for (SortV1.OrderV1 orderV1 : sortV1)</span>
+			{
+<span class="nc" id="L1056">				sort.on(orderV1.getProperty(),</span>
+<span class="nc bnc" id="L1057" title="All 2 branches missed.">						orderV1.getDirection() == SortV1.DirectionV1.ASC ? Sort.Direction.ASC : Sort.Direction.DESC);</span>
+<span class="nc" id="L1058">			}</span>
+		}
+		else
+		{
+<span class="fc" id="L1062">			sort = null;</span>
+		}
+
+<span class="pc bpc" id="L1065" title="1 of 2 branches missed.">		List&lt;QueryRule&gt; queryRules = request.getQ() == null ? Collections.emptyList() : request.getQ();</span>
+<span class="fc" id="L1066">		Query&lt;Entity&gt; q = new QueryImpl&lt;&gt;(queryRules).pageSize(request.getNum()).offset(request.getStart()).sort(sort);</span>
+
+<span class="fc" id="L1068">		Iterable&lt;Entity&gt; it = () -&gt; dataService.findAll(entityTypeId, q).iterator();</span>
+<span class="fc" id="L1069">		Long count = repository.count(new QueryImpl&lt;&gt;(q).setOffset(0).setPageSize(0));</span>
+<span class="fc" id="L1070">		EntityPager pager = new EntityPager(request.getStart(), request.getNum(), count, it);</span>
+
+<span class="fc" id="L1072">		List&lt;Map&lt;String, Object&gt;&gt; entities = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L1073" title="All 2 branches covered.">		for (Entity entity : it)</span>
+		{
+<span class="fc" id="L1075">			entities.add(getEntityAsMap(entity, meta, attributesSet, attributeExpandsSet));</span>
+<span class="fc" id="L1076">		}</span>
+
+<span class="fc" id="L1078">		return new EntityCollectionResponse(pager, entities, BASE_URI + &quot;/&quot; + entityTypeId, meta, permissionService,</span>
+				dataService);
+	}
+
+	// Transforms an entity to a Map so it can be transformed to json
+	private Map&lt;String, Object&gt; getEntityAsMap(Entity entity, EntityType meta, Set&lt;String&gt; attributesSet,
+			Map&lt;String, Set&lt;String&gt;&gt; attributeExpandsSet)
+	{
+<span class="pc bpc" id="L1086" title="1 of 2 branches missed.">		if (null == entity) throw new IllegalArgumentException(&quot;entity is null&quot;);</span>
+
+<span class="pc bpc" id="L1088" title="1 of 2 branches missed.">		if (null == meta) throw new IllegalArgumentException(&quot;meta is null&quot;);</span>
+
+<span class="fc" id="L1090">		Map&lt;String, Object&gt; entityMap = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L1091">		entityMap.put(&quot;href&quot;, Href.concatEntityHref(RestController.BASE_URI, meta.getId(), entity.getIdValue()));</span>
+
+<span class="fc bfc" id="L1093" title="All 2 branches covered.">		for (Attribute attr : meta.getAtomicAttributes())</span>
+		{
+			// filter fields
+<span class="pc bpc" id="L1096" title="1 of 4 branches missed.">			if (attributesSet != null &amp;&amp; !attributesSet.contains(attr.getName().toLowerCase())) continue;</span>
+
+<span class="fc" id="L1098">			String attrName = attr.getName();</span>
+<span class="fc" id="L1099">			AttributeType attrType = attr.getDataType();</span>
+
+<span class="pc bpc" id="L1101" title="1 of 2 branches missed.">			if (attrType == COMPOUND)</span>
+			{
+<span class="nc bnc" id="L1103" title="All 4 branches missed.">				if (attributeExpandsSet != null &amp;&amp; attributeExpandsSet.containsKey(attrName.toLowerCase()))</span>
+				{
+<span class="nc" id="L1105">					Set&lt;String&gt; subAttributesSet = attributeExpandsSet.get(attrName.toLowerCase());</span>
+<span class="nc" id="L1106">					entityMap.put(attrName,</span>
+<span class="nc" id="L1107">							new AttributeResponse(meta.getId(), meta, attr, subAttributesSet, null, permissionService,</span>
+									dataService));
+<span class="nc" id="L1109">				}</span>
+				else
+				{
+<span class="nc" id="L1112">					entityMap.put(attrName, Collections.singletonMap(&quot;href&quot;,</span>
+<span class="nc" id="L1113">							Href.concatAttributeHref(RestController.BASE_URI, meta.getId(), entity.getIdValue(),</span>
+									attrName)));
+				}
+			}
+<span class="pc bpc" id="L1117" title="1 of 2 branches missed.">			else if (attrType == DATE)</span>
+			{
+<span class="nc" id="L1119">				LocalDate date = entity.getLocalDate(attrName);</span>
+<span class="nc bnc" id="L1120" title="All 2 branches missed.">				entityMap.put(attrName, date != null ? date.toString() : null);</span>
+<span class="nc" id="L1121">			}</span>
+<span class="pc bpc" id="L1122" title="1 of 2 branches missed.">			else if (attrType == DATE_TIME)</span>
+			{
+<span class="nc" id="L1124">				Instant date = entity.getInstant(attrName);</span>
+<span class="nc bnc" id="L1125" title="All 2 branches missed.">				entityMap.put(attrName, date != null ? date.toString() : null);</span>
+<span class="nc" id="L1126">			}</span>
+<span class="pc bpc" id="L1127" title="6 of 12 branches missed.">			else if (attrType != XREF &amp;&amp; attrType != CATEGORICAL &amp;&amp; attrType != MREF &amp;&amp; attrType != CATEGORICAL_MREF</span>
+					&amp;&amp; attrType != ONE_TO_MANY &amp;&amp; attrType != FILE)
+			{
+<span class="fc" id="L1130">				entityMap.put(attrName, entity.get(attr.getName()));</span>
+			}
+<span class="nc bnc" id="L1132" title="All 8 branches missed.">			else if ((attrType == XREF || attrType == CATEGORICAL || attrType == FILE) &amp;&amp; attributeExpandsSet != null</span>
+<span class="nc bnc" id="L1133" title="All 2 branches missed.">					&amp;&amp; attributeExpandsSet.containsKey(attrName.toLowerCase()))</span>
+			{
+<span class="nc" id="L1135">				Entity refEntity = entity.getEntity(attr.getName());</span>
+<span class="nc bnc" id="L1136" title="All 2 branches missed.">				if (refEntity != null)</span>
+				{
+<span class="nc" id="L1138">					Set&lt;String&gt; subAttributesSet = attributeExpandsSet.get(attrName.toLowerCase());</span>
+<span class="nc" id="L1139">					EntityType refEntityType = dataService.getEntityType(attr.getRefEntity().getId());</span>
+<span class="nc" id="L1140">					Map&lt;String, Object&gt; refEntityMap = getEntityAsMap(refEntity, refEntityType, subAttributesSet, null);</span>
+<span class="nc" id="L1141">					entityMap.put(attrName, refEntityMap);</span>
+				}
+<span class="nc" id="L1143">			}</span>
+<span class="nc bnc" id="L1144" title="All 8 branches missed.">			else if ((attrType == MREF || attrType == CATEGORICAL_MREF || attrType == ONE_TO_MANY)</span>
+<span class="nc bnc" id="L1145" title="All 2 branches missed.">					&amp;&amp; attributeExpandsSet != null &amp;&amp; attributeExpandsSet.containsKey(attrName.toLowerCase()))</span>
+			{
+<span class="nc" id="L1147">				EntityType refEntityType = dataService.getEntityType(attr.getRefEntity().getId());</span>
+<span class="nc" id="L1148">				Iterable&lt;Entity&gt; mrefEntities = entity.getEntities(attr.getName());</span>
+
+<span class="nc" id="L1150">				Set&lt;String&gt; subAttributesSet = attributeExpandsSet.get(attrName.toLowerCase());</span>
+<span class="nc" id="L1151">				List&lt;Map&lt;String, Object&gt;&gt; refEntityMaps = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L1152" title="All 2 branches missed.">				for (Entity refEntity : mrefEntities)</span>
+				{
+<span class="nc" id="L1154">					Map&lt;String, Object&gt; refEntityMap = getEntityAsMap(refEntity, refEntityType, subAttributesSet, null);</span>
+<span class="nc" id="L1155">					refEntityMaps.add(refEntityMap);</span>
+<span class="nc" id="L1156">				}</span>
+
+<span class="nc" id="L1158">				EntityPager pager = new EntityPager(0, new EntityCollectionRequest().getNum(),</span>
+<span class="nc" id="L1159">						(long) refEntityMaps.size(), mrefEntities);</span>
+
+<span class="nc" id="L1161">				EntityCollectionResponse ecr = new EntityCollectionResponse(pager, refEntityMaps,</span>
+<span class="nc" id="L1162">						Href.concatAttributeHref(RestController.BASE_URI, meta.getId(), entity.getIdValue(), attrName),</span>
+						null, permissionService, dataService);
+
+<span class="nc" id="L1165">				entityMap.put(attrName, ecr);</span>
+<span class="nc" id="L1166">			}</span>
+<span class="nc bnc" id="L1167" title="All 6 branches missed.">			else if ((attrType == XREF &amp;&amp; entity.get(attr.getName()) != null) || (attrType == CATEGORICAL</span>
+<span class="nc bnc" id="L1168" title="All 12 branches missed.">					&amp;&amp; entity.get(attr.getName()) != null) || (attrType == FILE &amp;&amp; entity.get(attr.getName()) != null)</span>
+					|| attrType == MREF || attrType == CATEGORICAL_MREF || attrType == ONE_TO_MANY)
+			{
+				// Add href to ref field
+<span class="nc" id="L1172">				Map&lt;String, String&gt; ref = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L1173">				ref.put(&quot;href&quot;,</span>
+<span class="nc" id="L1174">						Href.concatAttributeHref(RestController.BASE_URI, meta.getId(), entity.getIdValue(), attrName));</span>
+<span class="nc" id="L1175">				entityMap.put(attrName, ref);</span>
+			}
+<span class="fc" id="L1177">		}</span>
+
+<span class="fc" id="L1179">		return entityMap;</span>
+	}
+
+	/**
+	 * @return set of lower case attribute names
+	 */
+	private Set&lt;String&gt; toAttributeSet(String[] attributes)
+	{
+<span class="fc bfc" id="L1187" title="All 4 branches covered.">		return attributes != null &amp;&amp; attributes.length &gt; 0 ? Sets.newHashSet(</span>
+<span class="fc" id="L1188">				Iterables.transform(Arrays.asList(attributes), String::toLowerCase)) : null;</span>
+	}
+
+	/**
+	 * expand is of form 'attr1', 'entity1[attr1]', 'entity1[attr1;attr2]'
+	 *
+	 * @return map from lower case expand names to a attribute set
+	 */
+	private Map&lt;String, Set&lt;String&gt;&gt; toExpandMap(String[] expands)
+	{
+<span class="fc bfc" id="L1198" title="All 2 branches covered.">		if (expands != null)</span>
+		{
+<span class="fc" id="L1200">			Map&lt;String, Set&lt;String&gt;&gt; expandMap = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L1201" title="All 2 branches covered.">			for (String expand : expands)</span>
+			{
+				// validate
+<span class="fc" id="L1204">				Matcher matcher = PATTERN_EXPANDS.matcher(expand);</span>
+<span class="pc bpc" id="L1205" title="1 of 2 branches missed.">				if (!matcher.matches()) throw new MolgenisDataException(&quot;invalid expand value: &quot; + expand);</span>
+
+				// for partial expands, create set
+<span class="fc" id="L1208">				expand = matcher.group(1);</span>
+<span class="fc" id="L1209">				String attrsStr = matcher.group(2);</span>
+				Set&lt;String&gt; attrSet;
+<span class="pc bpc" id="L1211" title="3 of 4 branches missed.">				if (attrsStr != null &amp;&amp; !attrsStr.isEmpty())</span>
+				{
+<span class="nc" id="L1213">					attrSet = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L1214" title="All 2 branches missed.">					for (String attr : attrsStr.split(&quot;;&quot;))</span>
+					{
+<span class="nc" id="L1216">						attrSet.add(attr.toLowerCase());</span>
+					}
+				}
+<span class="fc" id="L1219">				else attrSet = null;</span>
+
+<span class="fc" id="L1221">				expandMap.put(expand.toLowerCase(), attrSet);</span>
+			}
+<span class="fc" id="L1223">			return expandMap;</span>
+		}
+<span class="fc" id="L1225">		return null;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

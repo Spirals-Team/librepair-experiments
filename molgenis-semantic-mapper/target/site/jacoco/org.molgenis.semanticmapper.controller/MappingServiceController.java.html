@@ -1,0 +1,956 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MappingServiceController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">semantic-mapper</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.semanticmapper.controller</a> &gt; <span class="el_source">MappingServiceController.java</span></div><h1>MappingServiceController.java</h1><pre class="source lang-java linenums">package org.molgenis.semanticmapper.controller;
+
+import com.google.common.collect.*;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.core.ui.data.importer.wizard.ImportWizardController;
+import org.molgenis.core.ui.jobs.JobsController;
+import org.molgenis.core.ui.menu.MenuReaderService;
+import org.molgenis.data.*;
+import org.molgenis.data.aggregation.AggregateResult;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.semantic.Relation;
+import org.molgenis.data.support.AggregateQueryImpl;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.dataexplorer.controller.DataExplorerController;
+import org.molgenis.jobs.JobExecutor;
+import org.molgenis.ontology.core.model.OntologyTerm;
+import org.molgenis.security.core.runas.RunAsSystemAspect;
+import org.molgenis.security.user.UserAccountService;
+import org.molgenis.semanticmapper.data.request.GenerateAlgorithmRequest;
+import org.molgenis.semanticmapper.data.request.MappingServiceRequest;
+import org.molgenis.semanticmapper.job.MappingJobExecution;
+import org.molgenis.semanticmapper.job.MappingJobExecutionFactory;
+import org.molgenis.semanticmapper.mapping.model.*;
+import org.molgenis.semanticmapper.mapping.model.AttributeMapping.AlgorithmState;
+import org.molgenis.semanticmapper.service.AlgorithmService;
+import org.molgenis.semanticmapper.service.MappingService;
+import org.molgenis.semanticmapper.service.impl.AlgorithmEvaluation;
+import org.molgenis.semanticsearch.explain.bean.ExplainedAttribute;
+import org.molgenis.semanticsearch.service.OntologyTagService;
+import org.molgenis.semanticsearch.service.SemanticSearchService;
+import org.molgenis.web.PluginController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
+
+import javax.validation.Valid;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Streams.stream;
+import static java.text.MessageFormat.format;
+import static java.util.stream.Collectors.toList;
+import static org.apache.commons.lang3.StringUtils.trim;
+import static org.molgenis.data.meta.MetaUtils.isSystemPackage;
+import static org.molgenis.data.rest.util.Href.concatEntityHref;
+import static org.molgenis.data.validation.meta.NameValidator.validateEntityName;
+import static org.molgenis.security.core.utils.SecurityUtils.currentUserIsSu;
+import static org.molgenis.security.core.utils.SecurityUtils.getCurrentUsername;
+import static org.molgenis.semanticmapper.controller.MappingServiceController.URI;
+import static org.molgenis.semanticmapper.mapping.model.CategoryMapping.create;
+import static org.molgenis.semanticmapper.mapping.model.CategoryMapping.createEmpty;
+import static org.springframework.http.MediaType.*;
+import static org.springframework.http.ResponseEntity.created;
+
+@Controller
+@RequestMapping(URI)
+public class MappingServiceController extends PluginController
+{
+<span class="fc" id="L70">	private static final Logger LOG = LoggerFactory.getLogger(MappingServiceController.class);</span>
+
+	public static final String ID = &quot;mappingservice&quot;;
+	public static final String URI = PluginController.PLUGIN_URI_PREFIX + ID;
+	private static final String VIEW_MAPPING_PROJECTS = &quot;view-mapping-projects&quot;;
+	private static final String VIEW_ATTRIBUTE_MAPPING = &quot;view-attribute-mapping&quot;;
+	private static final String VIEW_SINGLE_MAPPING_PROJECT = &quot;view-single-mapping-project&quot;;
+	private static final String VIEW_CATEGORY_MAPPING_EDITOR = &quot;view-advanced-mapping-editor&quot;;
+	private static final String VIEW_ATTRIBUTE_MAPPING_FEEDBACK = &quot;view-attribute-mapping-feedback&quot;;
+
+	private final MappingService mappingService;
+	private final AlgorithmService algorithmService;
+	private final DataService dataService;
+	private final OntologyTagService ontologyTagService;
+	private final SemanticSearchService semanticSearchService;
+	private final MenuReaderService menuReaderService;
+	private final MappingJobExecutionFactory mappingJobExecutionFactory;
+	private final UserAccountService userAccountService;
+	private final JobExecutor jobExecutor;
+	private final JobsController jobsController;
+
+	public MappingServiceController(AlgorithmService algorithmService, MappingService mappingService,
+			DataService dataService, OntologyTagService ontologyTagService, SemanticSearchService semanticSearchService,
+			MenuReaderService menuReaderService, MappingJobExecutionFactory mappingJobExecutionFactory,
+			UserAccountService userAccountService, JobExecutor jobExecutor, JobsController jobsController)
+	{
+<span class="fc" id="L96">		super(URI);</span>
+<span class="fc" id="L97">		this.algorithmService = algorithmService;</span>
+<span class="fc" id="L98">		this.mappingService = mappingService;</span>
+<span class="fc" id="L99">		this.dataService = dataService;</span>
+<span class="fc" id="L100">		this.ontologyTagService = ontologyTagService;</span>
+<span class="fc" id="L101">		this.semanticSearchService = semanticSearchService;</span>
+<span class="fc" id="L102">		this.menuReaderService = menuReaderService;</span>
+<span class="fc" id="L103">		this.mappingJobExecutionFactory = mappingJobExecutionFactory;</span>
+<span class="fc" id="L104">		this.userAccountService = userAccountService;</span>
+<span class="fc" id="L105">		this.jobExecutor = jobExecutor;</span>
+<span class="fc" id="L106">		this.jobsController = jobsController;</span>
+<span class="fc" id="L107">	}</span>
+
+	/**
+	 * Initializes the model with all mapping projects and all entities to the model.
+	 *
+	 * @param model the model to initialized
+	 * @return view name of the mapping projects list
+	 */
+	@GetMapping
+	public String viewMappingProjects(Model model)
+	{
+<span class="nc" id="L118">		model.addAttribute(&quot;mappingProjects&quot;, mappingService.getAllMappingProjects());</span>
+<span class="nc" id="L119">		model.addAttribute(&quot;entityTypes&quot;, getWritableEntityTypes());</span>
+<span class="nc" id="L120">		model.addAttribute(&quot;user&quot;, getCurrentUsername());</span>
+<span class="nc" id="L121">		model.addAttribute(&quot;admin&quot;, currentUserIsSu());</span>
+<span class="nc" id="L122">		model.addAttribute(&quot;importerUri&quot;, menuReaderService.getMenu().findMenuItemPath(ImportWizardController.ID));</span>
+<span class="nc" id="L123">		return VIEW_MAPPING_PROJECTS;</span>
+	}
+
+	/**
+	 * Adds a new mapping project.
+	 *
+	 * @param name         name of the mapping project
+	 * @param targetEntity name of the project's first {@link MappingTarget}'s target entity
+	 * @return redirect URL for the newly created mapping project
+	 */
+	@PostMapping(&quot;/addMappingProject&quot;)
+	public String addMappingProject(@RequestParam(&quot;mapping-project-name&quot;) String name,
+			@RequestParam(&quot;target-entity&quot;) String targetEntity)
+	{
+<span class="nc" id="L137">		MappingProject newMappingProject = mappingService.addMappingProject(name, targetEntity);</span>
+<span class="nc" id="L138">		return &quot;redirect:&quot; + getMappingServiceMenuUrl() + &quot;/mappingproject/&quot; + newMappingProject.getIdentifier();</span>
+	}
+
+	/**
+	 * Removes a mapping project
+	 *
+	 * @param mappingProjectId the ID of the mapping project
+	 * @return redirect url to the same page to force a refresh
+	 */
+	@PostMapping(&quot;/removeMappingProject&quot;)
+	public String deleteMappingProject(@RequestParam() String mappingProjectId)
+	{
+<span class="nc" id="L150">		MappingProject project = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="nc" id="L151">		LOG.info(&quot;Deleting mappingProject &quot; + project.getName());</span>
+<span class="nc" id="L152">		mappingService.deleteMappingProject(mappingProjectId);</span>
+<span class="nc" id="L153">		return &quot;redirect:&quot; + getMappingServiceMenuUrl();</span>
+	}
+
+	/**
+	 * Removes a attribute mapping
+	 *
+	 * @param mappingProjectId the ID of the mapping project
+	 * @param target           the target entity
+	 * @param source           the source entity
+	 * @param attribute        the attribute that is mapped
+	 */
+	@PostMapping(&quot;/removeAttributeMapping&quot;)
+	public String removeAttributeMapping(@RequestParam() String mappingProjectId, @RequestParam() String target,
+			@RequestParam() String source, @RequestParam() String attribute)
+	{
+<span class="nc" id="L168">		MappingProject project = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="nc" id="L169">		project.getMappingTarget(target).getMappingForSource(source).deleteAttributeMapping(attribute);</span>
+<span class="nc" id="L170">		mappingService.updateMappingProject(project);</span>
+<span class="nc" id="L171">		return &quot;redirect:&quot; + getMappingServiceMenuUrl() + &quot;/mappingproject/&quot; + project.getIdentifier();</span>
+	}
+
+	/**
+	 * Adds a new {@link EntityMapping} to an existing {@link MappingTarget}
+	 *
+	 * @param target           the name of the {@link MappingTarget}'s entity to add a source entity to
+	 * @param source           the name of the source entity of the newly added {@link EntityMapping}
+	 * @param mappingProjectId the ID of the {@link MappingTarget}'s {@link MappingProject}
+	 * @return redirect URL for the mapping project
+	 */
+	@PostMapping(&quot;/addEntityMapping&quot;)
+	public String addEntityMapping(@RequestParam String mappingProjectId, String target, String source)
+	{
+<span class="nc" id="L185">		EntityType sourceEntityType = dataService.getEntityType(source);</span>
+<span class="nc" id="L186">		EntityType targetEntityType = dataService.getEntityType(target);</span>
+
+<span class="nc" id="L188">		Iterable&lt;Attribute&gt; attributes = targetEntityType.getAtomicAttributes();</span>
+
+<span class="nc" id="L190">		MappingProject project = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="nc" id="L191">		EntityMapping mapping = project.getMappingTarget(target).addSource(sourceEntityType);</span>
+<span class="nc" id="L192">		mappingService.updateMappingProject(project);</span>
+<span class="nc" id="L193">		autoGenerateAlgorithms(mapping, sourceEntityType, targetEntityType, attributes, project);</span>
+
+<span class="nc" id="L195">		return &quot;redirect:&quot; + getMappingServiceMenuUrl() + &quot;/mappingproject/&quot; + mappingProjectId;</span>
+	}
+
+	/**
+	 * Removes entity mapping
+	 *
+	 * @param mappingProjectId ID of the mapping project to remove entity mapping from
+	 * @param target           entity name of the mapping target
+	 * @param source           entity name of the mapping source
+	 * @return redirect url of the mapping project's page
+	 */
+	@PostMapping(&quot;/removeEntityMapping&quot;)
+	public String removeEntityMapping(@RequestParam String mappingProjectId, String target, String source)
+	{
+<span class="nc" id="L209">		MappingProject project = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="nc" id="L210">		project.getMappingTarget(target).removeSource(source);</span>
+<span class="nc" id="L211">		mappingService.updateMappingProject(project);</span>
+<span class="nc" id="L212">		return &quot;redirect:&quot; + getMappingServiceMenuUrl() + &quot;/mappingproject/&quot; + mappingProjectId;</span>
+	}
+
+	@PostMapping(&quot;/validateAttrMapping&quot;)
+	@ResponseBody
+	public AttributeMappingValidationReport validateAttributeMapping(
+			@Valid @RequestBody MappingServiceRequest mappingServiceRequest)
+	{
+<span class="nc" id="L220">		String targetEntityName = mappingServiceRequest.getTargetEntityName();</span>
+<span class="nc" id="L221">		EntityType targetEntityType = dataService.getEntityType(targetEntityName);</span>
+
+<span class="nc" id="L223">		String targetAttributeName = mappingServiceRequest.getTargetAttributeName();</span>
+<span class="nc" id="L224">		Attribute targetAttr = targetEntityType.getAttribute(targetAttributeName);</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">		if (targetAttr == null)</span>
+		{
+<span class="nc" id="L227">			throw new UnknownAttributeException(targetEntityType, targetAttributeName);</span>
+		}
+
+<span class="nc" id="L230">		String algorithm = mappingServiceRequest.getAlgorithm();</span>
+<span class="nc" id="L231">		Long offset = mappingServiceRequest.getOffset();</span>
+<span class="nc" id="L232">		Long num = mappingServiceRequest.getNum();</span>
+
+<span class="nc" id="L234">		Query&lt;Entity&gt; query = new QueryImpl&lt;&gt;().offset(offset.intValue()).pageSize(num.intValue());</span>
+<span class="nc" id="L235">		String sourceEntityName = mappingServiceRequest.getSourceEntityName();</span>
+<span class="nc" id="L236">		Iterable&lt;Entity&gt; sourceEntities = () -&gt; dataService.findAll(sourceEntityName, query).iterator();</span>
+
+<span class="nc" id="L238">		long total = dataService.count(sourceEntityName, new QueryImpl&lt;&gt;());</span>
+<span class="nc" id="L239">		long nrSuccess = 0, nrErrors = 0;</span>
+
+<span class="nc" id="L241">		Map&lt;String, String&gt; errorMessages = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">		for (AlgorithmEvaluation evaluation : algorithmService.applyAlgorithm(targetAttr, algorithm, sourceEntities))</span>
+		{
+<span class="nc bnc" id="L244" title="All 2 branches missed.">			if (evaluation.hasError())</span>
+			{
+<span class="nc" id="L246">				errorMessages.put(evaluation.getEntity().getIdValue().toString(), evaluation.getErrorMessage());</span>
+<span class="nc" id="L247">				++nrErrors;</span>
+			}
+			else
+			{
+<span class="nc" id="L251">				++nrSuccess;</span>
+			}
+<span class="nc" id="L253">		}</span>
+
+<span class="nc" id="L255">		return new AttributeMappingValidationReport(total, nrSuccess, nrErrors, errorMessages);</span>
+	}
+
+	private static class AttributeMappingValidationReport
+	{
+		private final Long total;
+		private final Long nrSuccess;
+		private final Long nrErrors;
+		private final Map&lt;String, String&gt; errorMessages;
+
+		public AttributeMappingValidationReport(Long total, Long nrSuccess, Long nrErrors,
+				Map&lt;String, String&gt; errorMessages)
+<span class="nc" id="L267">		{</span>
+<span class="nc" id="L268">			this.total = total;</span>
+<span class="nc" id="L269">			this.nrSuccess = nrSuccess;</span>
+<span class="nc" id="L270">			this.nrErrors = nrErrors;</span>
+<span class="nc" id="L271">			this.errorMessages = errorMessages;</span>
+<span class="nc" id="L272">		}</span>
+
+		@SuppressWarnings(&quot;unused&quot;)
+		public Long getTotal()
+		{
+<span class="nc" id="L277">			return total;</span>
+		}
+
+		@SuppressWarnings(&quot;unused&quot;)
+		public Long getNrSuccess()
+		{
+<span class="nc" id="L283">			return nrSuccess;</span>
+		}
+
+		@SuppressWarnings(&quot;unused&quot;)
+		public Long getNrErrors()
+		{
+<span class="nc" id="L289">			return nrErrors;</span>
+		}
+
+		@SuppressWarnings(&quot;unused&quot;)
+		public Map&lt;String, String&gt; getErrorMessages()
+		{
+<span class="nc" id="L295">			return errorMessages;</span>
+		}
+	}
+
+	/**
+	 * Adds a new {@link AttributeMapping} to an {@link EntityMapping}.
+	 *
+	 * @param mappingProjectId ID of the mapping project
+	 * @param target           name of the target entity
+	 * @param source           name of the source entity
+	 * @param targetAttribute  name of the target attribute
+	 * @param algorithm        the mapping algorithm
+	 * @return redirect URL for the attributemapping
+	 */
+	@PostMapping(&quot;/saveattributemapping&quot;)
+	public String saveAttributeMapping(@RequestParam() String mappingProjectId, @RequestParam() String target,
+			@RequestParam() String source, @RequestParam() String targetAttribute, @RequestParam() String algorithm,
+			@RequestParam() AlgorithmState algorithmState)
+	{
+<span class="fc" id="L314">		MappingProject mappingProject = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="fc" id="L315">		MappingTarget mappingTarget = mappingProject.getMappingTarget(target);</span>
+<span class="fc" id="L316">		EntityMapping mappingForSource = mappingTarget.getMappingForSource(source);</span>
+<span class="fc bfc" id="L317" title="All 2 branches covered.">		if (algorithm.isEmpty())</span>
+		{
+<span class="fc" id="L319">			mappingForSource.deleteAttributeMapping(targetAttribute);</span>
+		}
+		else
+		{
+<span class="fc" id="L323">			AttributeMapping attributeMapping = mappingForSource.getAttributeMapping(targetAttribute);</span>
+<span class="fc bfc" id="L324" title="All 2 branches covered.">			if (attributeMapping == null)</span>
+			{
+<span class="fc" id="L326">				attributeMapping = mappingForSource.addAttributeMapping(targetAttribute);</span>
+			}
+<span class="fc" id="L328">			attributeMapping.setAlgorithm(algorithm);</span>
+<span class="fc" id="L329">			attributeMapping.setAlgorithmState(algorithmState);</span>
+		}
+<span class="fc" id="L331">		mappingService.updateMappingProject(mappingProject);</span>
+<span class="fc" id="L332">		return &quot;redirect:&quot; + getMappingServiceMenuUrl() + &quot;/mappingproject/&quot; + mappingProject.getIdentifier();</span>
+	}
+
+	/**
+	 * Find the firstattributeMapping skip the the algorithmStates that are given in the {@link AttributeMapping} to an
+	 * {@link EntityMapping}.
+	 *
+	 * @param mappingProjectId    ID of the mapping project
+	 * @param target              name of the target entity
+	 * @param skipAlgorithmStates the mapping algorithm states that should skip
+	 */
+	@PostMapping(&quot;/firstattributemapping&quot;)
+	@ResponseBody
+	public FirstAttributeMappingInfo getFirstAttributeMappingInfo(@RequestParam() String mappingProjectId,
+			@RequestParam() String target,
+			@RequestParam(value = &quot;skipAlgorithmStates[]&quot;) List&lt;AlgorithmState&gt; skipAlgorithmStates, Model model)
+	{
+<span class="fc" id="L349">		MappingProject mappingProject = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="fc" id="L350">		MappingTarget mappingTarget = mappingProject.getMappingTarget(target);</span>
+<span class="fc" id="L351">		List&lt;String&gt; sourceNames = mappingTarget.getEntityMappings()</span>
+<span class="fc" id="L352">												.stream()</span>
+<span class="fc" id="L353">												.map(i -&gt; i.getSourceEntityType().getId())</span>
+<span class="fc" id="L354">												.collect(Collectors.toList());</span>
+
+<span class="fc" id="L356">		EntityType targetEntityMeta = mappingTarget.getTarget();</span>
+<span class="fc bfc" id="L357" title="All 2 branches covered.">		for (Attribute attribute : targetEntityMeta.getAtomicAttributes())</span>
+		{
+<span class="pc bpc" id="L359" title="1 of 2 branches missed.">			if (attribute.equals(targetEntityMeta.getIdAttribute()))</span>
+			{
+<span class="nc" id="L361">				continue;</span>
+			}
+
+<span class="fc bfc" id="L364" title="All 2 branches covered.">			for (String source : sourceNames)</span>
+			{
+<span class="fc" id="L366">				EntityMapping entityMapping = mappingTarget.getMappingForSource(source);</span>
+<span class="fc" id="L367">				AttributeMapping attributeMapping = entityMapping.getAttributeMapping(attribute.getName());</span>
+
+<span class="fc bfc" id="L369" title="All 2 branches covered.">				if (null != attributeMapping)</span>
+				{
+<span class="fc" id="L371">					AlgorithmState algorithmState = attributeMapping.getAlgorithmState();</span>
+<span class="pc bpc" id="L372" title="1 of 2 branches missed.">					if (null != skipAlgorithmStates)</span>
+					{
+<span class="fc bfc" id="L374" title="All 2 branches covered.">						if (skipAlgorithmStates.contains(algorithmState))</span>
+						{
+<span class="fc" id="L376">							continue;</span>
+						}
+					}
+				}
+
+<span class="fc" id="L381">				return FirstAttributeMappingInfo.create(mappingProjectId, target, source, attribute.getName());</span>
+			}
+<span class="fc" id="L383">		}</span>
+
+<span class="fc" id="L385">		return null;</span>
+	}
+
+	/**
+	 * Displays a mapping project.
+	 *
+	 * @param identifier identifier of the {@link MappingProject}
+	 * @param model      the model
+	 * @return View name for a single mapping project
+	 */
+	@GetMapping(&quot;/mappingproject/{id}&quot;)
+	public String viewMappingProject(@PathVariable(&quot;id&quot;) String identifier, Model model)
+	{
+<span class="fc" id="L398">		MappingProject project = mappingService.getMappingProject(identifier);</span>
+<span class="fc" id="L399">		MappingTarget mappingTarget = project.getMappingTargets().get(0);</span>
+<span class="fc" id="L400">		String target = mappingTarget.getName();</span>
+<span class="fc" id="L401">		model.addAttribute(&quot;entityTypes&quot;, getNewSources(mappingTarget));</span>
+<span class="fc" id="L402">		model.addAttribute(&quot;compatibleTargetEntities&quot;,</span>
+<span class="fc" id="L403">				mappingService.getCompatibleEntityTypes(mappingTarget.getTarget()).collect(toList()));</span>
+<span class="fc" id="L404">		model.addAttribute(&quot;selectedTarget&quot;, target);</span>
+<span class="fc" id="L405">		model.addAttribute(&quot;mappingProject&quot;, project);</span>
+<span class="fc" id="L406">		model.addAttribute(&quot;attributeTagMap&quot;, getTagsForAttribute(target, project));</span>
+<span class="fc" id="L407">		model.addAttribute(&quot;packages&quot;,</span>
+<span class="fc bfc" id="L408" title="All 2 branches covered.">				dataService.getMeta().getPackages().stream().filter(p -&gt; !isSystemPackage(p)).collect(toList()));</span>
+<span class="fc" id="L409">		return VIEW_SINGLE_MAPPING_PROJECT;</span>
+	}
+
+	@PostMapping(&quot;/mappingproject/clone&quot;)
+	public String cloneMappingProject(@RequestParam(&quot;mappingProjectId&quot;) String mappingProjectId)
+	{
+<span class="nc" id="L415">		mappingService.cloneMappingProject(mappingProjectId);</span>
+<span class="nc" id="L416">		return &quot;redirect:&quot; + getMappingServiceMenuUrl();</span>
+	}
+
+	/**
+	 * This controller will first of all check if the user-defined search terms exist. If so, the searchTerms will be
+	 * used directly in the SemanticSearchService. If the searchTerms are not defined by users, it will use the
+	 * ontologyTermTags in the SemantiSearchService. If neither of the searchTerms and the OntologyTermTags exist, it
+	 * will use the information from the targetAttribute in the SemanticSearchService
+	 * &lt;p&gt;
+	 * If string terms are sent to the SemanticSearchService, they will be first of all converted to the ontologyTerms
+	 * using findTag method
+	 */
+	@PostMapping(value = &quot;/attributeMapping/semanticsearch&quot;, consumes = APPLICATION_JSON_VALUE)
+	@ResponseBody
+	public List&lt;ExplainedAttribute&gt; getSemanticSearchAttributeMapping(@RequestBody Map&lt;String, String&gt; requestBody)
+	{
+<span class="nc" id="L432">		String mappingProjectId = requestBody.get(&quot;mappingProjectId&quot;);</span>
+<span class="nc" id="L433">		String target = requestBody.get(&quot;target&quot;);</span>
+<span class="nc" id="L434">		String source = requestBody.get(&quot;source&quot;);</span>
+<span class="nc" id="L435">		String targetAttributeName = requestBody.get(&quot;targetAttribute&quot;);</span>
+<span class="nc" id="L436">		String searchTermsString = requestBody.get(&quot;searchTerms&quot;);</span>
+<span class="nc" id="L437">		Set&lt;String&gt; searchTerms = new HashSet&lt;&gt;();</span>
+
+<span class="nc bnc" id="L439" title="All 2 branches missed.">		if (StringUtils.isNotBlank(searchTermsString))</span>
+		{
+<span class="nc" id="L441">			searchTerms.addAll(Sets.newHashSet(searchTermsString.toLowerCase().split(&quot;\\s+or\\s+&quot;))</span>
+<span class="nc" id="L442">								   .stream()</span>
+<span class="nc" id="L443">								   .filter(StringUtils::isNotBlank)</span>
+<span class="nc" id="L444">								   .map(String::trim)</span>
+<span class="nc" id="L445">								   .collect(Collectors.toSet()));</span>
+		}
+
+<span class="nc" id="L448">		MappingProject project = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="nc" id="L449">		MappingTarget mappingTarget = project.getMappingTarget(target);</span>
+<span class="nc" id="L450">		EntityMapping entityMapping = mappingTarget.getMappingForSource(source);</span>
+
+<span class="nc" id="L452">		Attribute targetAttribute = entityMapping.getTargetEntityType().getAttribute(targetAttributeName);</span>
+
+		// Find relevant attributes base on tags
+<span class="nc" id="L455">		Multimap&lt;Relation, OntologyTerm&gt; tagsForAttribute = ontologyTagService.getTagsForAttribute(</span>
+<span class="nc" id="L456">				entityMapping.getTargetEntityType(), targetAttribute);</span>
+
+<span class="nc" id="L458">		Map&lt;Attribute, ExplainedAttribute&gt; relevantAttributes = semanticSearchService.decisionTreeToFindRelevantAttributes(</span>
+<span class="nc" id="L459">				entityMapping.getSourceEntityType(), targetAttribute, tagsForAttribute.values(), searchTerms);</span>
+
+		// If no relevant attributes are found, return all source attributes
+<span class="nc bnc" id="L462" title="All 2 branches missed.">		if (relevantAttributes.isEmpty())</span>
+		{
+<span class="nc" id="L464">			return stream(entityMapping.getSourceEntityType().getAllAttributes()).map(ExplainedAttribute::create)</span>
+<span class="nc" id="L465">																				 .collect(toList());</span>
+		}
+<span class="nc" id="L467">		return newArrayList(relevantAttributes.values());</span>
+	}
+
+	@PostMapping(value = &quot;/attributemapping/algorithm&quot;, consumes = APPLICATION_JSON_VALUE)
+	@ResponseBody
+	public String getSuggestedAlgorithm(@RequestBody GenerateAlgorithmRequest generateAlgorithmRequest)
+	{
+<span class="nc" id="L474">		EntityType targetEntityType = dataService.getEntityType(generateAlgorithmRequest.getTargetEntityTypeId());</span>
+
+<span class="nc" id="L476">		EntityType sourceEntityType = dataService.getEntityType(generateAlgorithmRequest.getSourceEntityTypeId());</span>
+
+<span class="nc" id="L478">		Attribute targetAttribute = targetEntityType.getAttribute(generateAlgorithmRequest.getTargetAttributeName());</span>
+
+<span class="nc" id="L480">		List&lt;Attribute&gt; sourceAttributes = generateAlgorithmRequest.getSourceAttributes()</span>
+<span class="nc" id="L481">																   .stream()</span>
+<span class="nc" id="L482">																   .map(sourceEntityType::getAttribute)</span>
+<span class="nc" id="L483">																   .collect(Collectors.toList());</span>
+
+<span class="nc" id="L485">		String generateAlgorithm = algorithmService.generateAlgorithm(targetAttribute, targetEntityType,</span>
+				sourceAttributes, sourceEntityType);
+
+<span class="nc" id="L488">		return generateAlgorithm;</span>
+	}
+
+	/**
+	 * Checks if an entityTypeID already exists.
+	 * Used to validate ID field in the &quot;New dataset&quot; tab when creating a new integrated dataset.
+	 */
+	@GetMapping(&quot;/isNewEntity&quot;)
+	@ResponseBody
+	public boolean isNewEntity(@RequestParam String targetEntityTypeId)
+	{
+<span class="fc bfc" id="L499" title="All 2 branches covered.">		return dataService.getEntityType(targetEntityTypeId) == null;</span>
+	}
+
+	/**
+	 * Creates the integrated entity for a mapping project's target
+	 *
+	 * @param mappingProjectId   ID of the mapping project
+	 * @param targetEntityTypeId ID of the target entity to create or update
+	 * @param label              label of the target entity to create
+	 * @param packageId          ID of the package to put the newly created entity in
+	 * @return redirect URL to the data explorer displaying the newly generated entity
+	 */
+	@RequestMapping(&quot;/createIntegratedEntity&quot;)
+	public String createIntegratedEntity(@RequestParam String mappingProjectId, @RequestParam String targetEntityTypeId,
+			@RequestParam(required = false) String label,
+			@RequestParam(required = false, name = &quot;package&quot;) String packageId,
+			@RequestParam(required = false) Boolean addSourceAttribute)
+	{
+<span class="pc bpc" id="L517" title="2 of 4 branches missed.">		if (label != null &amp;&amp; label.trim().isEmpty())</span>
+		{
+<span class="nc" id="L519">			label = null;</span>
+		}
+
+<span class="fc" id="L522">		MappingJobExecution mappingJobExecution = scheduleMappingJobInternal(mappingProjectId, targetEntityTypeId,</span>
+				addSourceAttribute, packageId, label);
+<span class="fc" id="L524">		return format(&quot;redirect:{0}&quot;, jobsController.createJobExecutionViewHref(mappingJobExecution, 1000));</span>
+	}
+
+	/**
+	 * Schedules a {@link MappingJobExecution}.
+	 *
+	 * @param mappingProjectId   ID of the mapping project
+	 * @param targetEntityTypeId ID of the target entity to create or update
+	 * @param label              label of the target entity to create
+	 * @param packageId          ID of the package to put the newly created entity in
+	 * @return the href of the created MappingJobExecution
+	 */
+	@PostMapping(value = &quot;/map&quot;, produces = TEXT_PLAIN_VALUE)
+	public ResponseEntity&lt;String&gt; scheduleMappingJob(@RequestParam String mappingProjectId,
+			@RequestParam String targetEntityTypeId, @RequestParam(required = false) String label,
+			@RequestParam(required = false, name = &quot;package&quot;) String packageId,
+			@RequestParam(required = false) Boolean addSourceAttribute) throws URISyntaxException
+	{
+<span class="fc" id="L542">		mappingProjectId = mappingProjectId.trim();</span>
+<span class="fc" id="L543">		targetEntityTypeId = targetEntityTypeId.trim();</span>
+<span class="fc" id="L544">		label = trim(label);</span>
+<span class="fc" id="L545">		packageId = trim(packageId);</span>
+
+		try
+		{
+<span class="fc" id="L549">			validateEntityName(targetEntityTypeId);</span>
+<span class="fc bfc" id="L550" title="All 2 branches covered.">			if (mappingService.getMappingProject(mappingProjectId) == null)</span>
+			{
+<span class="fc" id="L552">				throw new MolgenisDataException(&quot;No mapping project found with ID &quot; + mappingProjectId);</span>
+			}
+<span class="pc bpc" id="L554" title="1 of 2 branches missed.">			if (packageId != null)</span>
+			{
+<span class="fc" id="L556">				Package package_ = dataService.getMeta().getPackage(packageId);</span>
+<span class="fc bfc" id="L557" title="All 2 branches covered.">				if (package_ == null)</span>
+				{
+<span class="fc" id="L559">					throw new MolgenisDataException(&quot;No package found with ID &quot; + packageId);</span>
+				}
+<span class="fc bfc" id="L561" title="All 2 branches covered.">				if (isSystemPackage(package_))</span>
+				{
+<span class="fc" id="L563">					throw new MolgenisDataException(format(&quot;Package [{0}] is a system package.&quot;, packageId));</span>
+				}
+			}
+		}
+<span class="fc" id="L567">		catch (MolgenisDataException mde)</span>
+		{
+<span class="fc" id="L569">			return ResponseEntity.badRequest().contentType(TEXT_PLAIN).body(mde.getMessage());</span>
+<span class="fc" id="L570">		}</span>
+
+<span class="fc" id="L572">		MappingJobExecution mappingJobExecution = scheduleMappingJobInternal(mappingProjectId, targetEntityTypeId,</span>
+				addSourceAttribute, packageId, label);
+<span class="fc" id="L574">		String jobHref = concatEntityHref(mappingJobExecution);</span>
+<span class="fc" id="L575">		return created(new URI(jobHref)).contentType(TEXT_PLAIN).body(jobHref);</span>
+	}
+
+	/**
+	 * Schedules a mappingJob for the current user.
+	 *
+	 * @param mappingProjectId   ID for the mapping project to run
+	 * @param targetEntityTypeId ID for the integrated dataset
+	 * @param addSourceAttribute indication if a source attribute should be added to the target {@link EntityType}
+	 * @return the HREF for the scheduled {@link MappingJobExecution}
+	 */
+	private MappingJobExecution scheduleMappingJobInternal(String mappingProjectId, String targetEntityTypeId,
+			Boolean addSourceAttribute, String packageId, String label)
+	{
+<span class="fc" id="L589">		MappingJobExecution mappingJobExecution = mappingJobExecutionFactory.create();</span>
+<span class="fc" id="L590">		mappingJobExecution.setUser(userAccountService.getCurrentUser());</span>
+<span class="fc" id="L591">		mappingJobExecution.setMappingProjectId(mappingProjectId);</span>
+<span class="fc" id="L592">		mappingJobExecution.setTargetEntityTypeId(targetEntityTypeId);</span>
+<span class="fc" id="L593">		mappingJobExecution.setAddSourceAttribute(addSourceAttribute);</span>
+<span class="fc" id="L594">		mappingJobExecution.setPackageId(packageId);</span>
+<span class="fc" id="L595">		mappingJobExecution.setLabel(label);</span>
+
+<span class="fc" id="L597">		jobExecutor.submit(mappingJobExecution);</span>
+
+<span class="fc" id="L599">		return mappingJobExecution;</span>
+	}
+
+	/**
+	 * Displays an {@link AttributeMapping}
+	 *
+	 * @param mappingProjectId ID of the {@link MappingProject}
+	 * @param target           name of the target entity
+	 * @param source           name of the source entity
+	 * @param targetAttribute  name of the target attribute
+	 */
+	@GetMapping(&quot;/attributeMapping&quot;)
+	public String viewAttributeMapping(@RequestParam() String mappingProjectId, @RequestParam() String target,
+			@RequestParam() String source, @RequestParam() String targetAttribute, Model model)
+	{
+<span class="nc" id="L614">		MappingProject project = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="nc" id="L615">		MappingTarget mappingTarget = project.getMappingTarget(target);</span>
+<span class="nc" id="L616">		EntityMapping entityMapping = mappingTarget.getMappingForSource(source);</span>
+<span class="nc" id="L617">		AttributeMapping attributeMapping = entityMapping.getAttributeMapping(targetAttribute);</span>
+
+<span class="nc bnc" id="L619" title="All 2 branches missed.">		if (attributeMapping == null)</span>
+		{
+<span class="nc" id="L621">			attributeMapping = entityMapping.addAttributeMapping(targetAttribute);</span>
+		}
+
+<span class="nc" id="L624">		EntityType refEntityType = attributeMapping.getTargetAttribute().getRefEntity();</span>
+<span class="nc bnc" id="L625" title="All 2 branches missed.">		if (refEntityType != null)</span>
+		{
+<span class="nc" id="L627">			Iterable&lt;Entity&gt; refEntities = () -&gt; dataService.findAll(refEntityType.getId()).iterator();</span>
+<span class="nc" id="L628">			model.addAttribute(&quot;categories&quot;, refEntities);</span>
+		}
+
+<span class="nc" id="L631">		Multimap&lt;Relation, OntologyTerm&gt; tagsForAttribute = ontologyTagService.getTagsForAttribute(</span>
+<span class="nc" id="L632">				entityMapping.getTargetEntityType(), attributeMapping.getTargetAttribute());</span>
+
+<span class="nc" id="L634">		model.addAttribute(&quot;tags&quot;, tagsForAttribute.values());</span>
+<span class="nc" id="L635">		model.addAttribute(&quot;dataExplorerUri&quot;, menuReaderService.getMenu().findMenuItemPath(DataExplorerController.ID));</span>
+<span class="nc" id="L636">		model.addAttribute(&quot;mappingProject&quot;, project);</span>
+<span class="nc" id="L637">		model.addAttribute(&quot;entityMapping&quot;, entityMapping);</span>
+<span class="nc" id="L638">		model.addAttribute(&quot;sourceAttributesSize&quot;,</span>
+<span class="nc" id="L639">				Iterables.size(entityMapping.getSourceEntityType().getAtomicAttributes()));</span>
+<span class="nc" id="L640">		model.addAttribute(&quot;attributeMapping&quot;, attributeMapping);</span>
+<span class="nc" id="L641">		model.addAttribute(&quot;attributes&quot;, newArrayList(dataService.getEntityType(source).getAtomicAttributes()));</span>
+
+<span class="nc" id="L643">		return VIEW_ATTRIBUTE_MAPPING;</span>
+	}
+
+	@PostMapping(&quot;/attributemappingfeedback&quot;)
+	public String attributeMappingFeedback(@RequestParam() String mappingProjectId, @RequestParam() String target,
+			@RequestParam() String source, @RequestParam() String targetAttribute, @RequestParam() String algorithm,
+			Model model)
+	{
+<span class="nc" id="L651">		MappingProject project = mappingService.getMappingProject(mappingProjectId);</span>
+
+<span class="nc" id="L653">		MappingTarget mappingTarget = project.getMappingTarget(target);</span>
+<span class="nc" id="L654">		EntityMapping entityMapping = mappingTarget.getMappingForSource(source);</span>
+
+		AttributeMapping algorithmTest;
+
+<span class="nc bnc" id="L658" title="All 2 branches missed.">		if (entityMapping.getAttributeMapping(targetAttribute) == null)</span>
+		{
+<span class="nc" id="L660">			algorithmTest = entityMapping.addAttributeMapping(targetAttribute);</span>
+<span class="nc" id="L661">			algorithmTest.setAlgorithm(algorithm);</span>
+		}
+		else
+		{
+<span class="nc" id="L665">			algorithmTest = entityMapping.getAttributeMapping(targetAttribute);</span>
+<span class="nc" id="L666">			algorithmTest.setAlgorithm(algorithm);</span>
+		}
+
+		try
+		{
+<span class="nc" id="L671">			Collection&lt;String&gt; sourceAttributeNames = algorithmService.getSourceAttributeNames(algorithm);</span>
+<span class="nc bnc" id="L672" title="All 2 branches missed.">			if (!sourceAttributeNames.isEmpty())</span>
+			{
+<span class="nc" id="L674">				List&lt;Attribute&gt; sourceAttributes = sourceAttributeNames.stream().map(attributeName -&gt;</span>
+				{
+<span class="nc" id="L676">					EntityType sourceEntityType = entityMapping.getSourceEntityType();</span>
+<span class="nc" id="L677">					return sourceEntityType.getAttribute(attributeName);</span>
+<span class="nc" id="L678">				}).filter(Objects::nonNull).collect(Collectors.toList());</span>
+
+<span class="nc" id="L680">				model.addAttribute(&quot;sourceAttributes&quot;, sourceAttributes);</span>
+			}
+		}
+<span class="nc" id="L683">		catch (Exception e)</span>
+		{
+<span class="nc" id="L685">			throw new RuntimeException(e);</span>
+<span class="nc" id="L686">		}</span>
+
+<span class="nc" id="L688">		model.addAttribute(&quot;mappingProjectId&quot;, mappingProjectId);</span>
+<span class="nc" id="L689">		model.addAttribute(&quot;target&quot;, target);</span>
+<span class="nc" id="L690">		model.addAttribute(&quot;source&quot;, source);</span>
+<span class="nc" id="L691">		model.addAttribute(&quot;targetAttribute&quot;, dataService.getEntityType(target).getAttribute(targetAttribute));</span>
+
+<span class="nc" id="L693">		FluentIterable&lt;Entity&gt; sourceEntities = FluentIterable.from(() -&gt; dataService.findAll(source).iterator())</span>
+<span class="nc" id="L694">															  .limit(10);</span>
+<span class="nc" id="L695">		ImmutableList&lt;AlgorithmResult&gt; algorithmResults = sourceEntities.transform(sourceEntity -&gt;</span>
+		{
+			try
+			{
+<span class="nc" id="L699">				return AlgorithmResult.createSuccess(</span>
+<span class="nc" id="L700">						algorithmService.apply(algorithmTest, sourceEntity, sourceEntity.getEntityType()),</span>
+						sourceEntity);
+			}
+<span class="nc" id="L703">			catch (Exception e)</span>
+			{
+<span class="nc" id="L705">				return AlgorithmResult.createFailure(e, sourceEntity);</span>
+			}
+<span class="nc" id="L707">		}).toList();</span>
+<span class="nc" id="L708">		model.addAttribute(&quot;feedbackRows&quot;, algorithmResults);</span>
+
+<span class="nc bnc" id="L710" title="All 4 branches missed.">		long missing = algorithmResults.stream().filter(r -&gt; r.isSuccess() &amp;&amp; r.getValue() == null).count();</span>
+<span class="nc" id="L711">		long success = algorithmResults.stream().filter(AlgorithmResult::isSuccess).count() - missing;</span>
+<span class="nc" id="L712">		long error = algorithmResults.size() - success - missing;</span>
+
+<span class="nc" id="L714">		model.addAttribute(&quot;success&quot;, success);</span>
+<span class="nc" id="L715">		model.addAttribute(&quot;missing&quot;, missing);</span>
+<span class="nc" id="L716">		model.addAttribute(&quot;error&quot;, error);</span>
+<span class="nc" id="L717">		model.addAttribute(&quot;dataexplorerUri&quot;, menuReaderService.getMenu().findMenuItemPath(DataExplorerController.ID));</span>
+<span class="nc" id="L718">		return VIEW_ATTRIBUTE_MAPPING_FEEDBACK;</span>
+	}
+
+	/**
+	 * Returns a view that allows the user to edit mappings involving xrefs / categoricals / strings
+	 */
+	@PostMapping(&quot;/advancedmappingeditor&quot;)
+	public String advancedMappingEditor(@RequestParam() String mappingProjectId, @RequestParam() String target,
+			@RequestParam() String source, @RequestParam() String targetAttribute,
+			@RequestParam() String sourceAttribute, @RequestParam String algorithm, Model model)
+	{
+<span class="nc" id="L729">		MappingProject project = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="nc" id="L730">		MappingTarget mappingTarget = project.getMappingTarget(target);</span>
+<span class="nc" id="L731">		EntityMapping entityMapping = mappingTarget.getMappingForSource(source);</span>
+<span class="nc" id="L732">		AttributeMapping attributeMapping = entityMapping.getAttributeMapping(targetAttribute);</span>
+
+<span class="nc" id="L734">		model.addAttribute(&quot;mappingProject&quot;, project);</span>
+<span class="nc" id="L735">		model.addAttribute(&quot;entityMapping&quot;, entityMapping);</span>
+<span class="nc" id="L736">		model.addAttribute(&quot;attributeMapping&quot;, attributeMapping);</span>
+
+		// set variables for the target column in the mapping editor
+<span class="nc" id="L739">		Attribute targetAttr = dataService.getEntityType(target).getAttribute(targetAttribute);</span>
+
+		Stream&lt;Entity&gt; targetAttributeEntities;
+<span class="nc" id="L742">		String targetAttributeIdAttribute = null;</span>
+<span class="nc" id="L743">		String targetAttributeLabelAttribute = null;</span>
+
+<span class="nc bnc" id="L745" title="All 2 branches missed.">		if (EntityTypeUtils.isReferenceType(targetAttr))</span>
+		{
+<span class="nc" id="L747">			targetAttributeEntities = dataService.findAll(</span>
+<span class="nc" id="L748">					dataService.getEntityType(target).getAttribute(targetAttribute).getRefEntity().getId());</span>
+
+<span class="nc" id="L750">			targetAttributeIdAttribute = dataService.getEntityType(target)</span>
+<span class="nc" id="L751">													.getAttribute(targetAttribute)</span>
+<span class="nc" id="L752">													.getRefEntity()</span>
+<span class="nc" id="L753">													.getIdAttribute()</span>
+<span class="nc" id="L754">													.getName();</span>
+
+<span class="nc" id="L756">			targetAttributeLabelAttribute = dataService.getEntityType(target)</span>
+<span class="nc" id="L757">													   .getAttribute(targetAttribute)</span>
+<span class="nc" id="L758">													   .getRefEntity()</span>
+<span class="nc" id="L759">													   .getLabelAttribute()</span>
+<span class="nc" id="L760">													   .getName();</span>
+		}
+		else
+		{
+<span class="nc" id="L764">			targetAttributeEntities = dataService.findAll(dataService.getEntityType(target).getId());</span>
+<span class="nc" id="L765">			targetAttributeIdAttribute = dataService.getEntityType(target).getIdAttribute().getName();</span>
+<span class="nc" id="L766">			targetAttributeLabelAttribute = dataService.getEntityType(target).getLabelAttribute().getName();</span>
+		}
+
+<span class="nc" id="L769">		model.addAttribute(&quot;targetAttributeEntities&quot;, (Iterable&lt;Entity&gt;) targetAttributeEntities::iterator);</span>
+<span class="nc" id="L770">		model.addAttribute(&quot;targetAttributeIdAttribute&quot;, targetAttributeIdAttribute);</span>
+<span class="nc" id="L771">		model.addAttribute(&quot;targetAttributeLabelAttribute&quot;, targetAttributeLabelAttribute);</span>
+
+		// set variables for the source column in the mapping editor
+<span class="nc" id="L774">		Attribute sourceAttr = dataService.getEntityType(source).getAttribute(sourceAttribute);</span>
+
+		Stream&lt;Entity&gt; sourceAttributeEntities;
+<span class="nc" id="L777">		String sourceAttributeIdAttribute = null;</span>
+<span class="nc" id="L778">		String sourceAttributeLabelAttribute = null;</span>
+
+<span class="nc bnc" id="L780" title="All 2 branches missed.">		if (EntityTypeUtils.isReferenceType(sourceAttr))</span>
+		{
+<span class="nc" id="L782">			sourceAttributeEntities = dataService.findAll(</span>
+<span class="nc" id="L783">					dataService.getEntityType(source).getAttribute(sourceAttribute).getRefEntity().getId());</span>
+
+<span class="nc" id="L785">			sourceAttributeIdAttribute = dataService.getEntityType(source)</span>
+<span class="nc" id="L786">													.getAttribute(sourceAttribute)</span>
+<span class="nc" id="L787">													.getRefEntity()</span>
+<span class="nc" id="L788">													.getIdAttribute()</span>
+<span class="nc" id="L789">													.getName();</span>
+
+<span class="nc" id="L791">			sourceAttributeLabelAttribute = dataService.getEntityType(source)</span>
+<span class="nc" id="L792">													   .getAttribute(sourceAttribute)</span>
+<span class="nc" id="L793">													   .getRefEntity()</span>
+<span class="nc" id="L794">													   .getLabelAttribute()</span>
+<span class="nc" id="L795">													   .getName();</span>
+		}
+		else
+		{
+<span class="nc" id="L799">			sourceAttributeEntities = dataService.findAll(dataService.getEntityType(source).getId());</span>
+<span class="nc" id="L800">			sourceAttributeIdAttribute = dataService.getEntityType(source).getIdAttribute().getName();</span>
+<span class="nc" id="L801">			sourceAttributeLabelAttribute = dataService.getEntityType(source).getLabelAttribute().getName();</span>
+		}
+
+<span class="nc" id="L804">		List&lt;Entity&gt; sourceAttributeEntityList = sourceAttributeEntities.collect(toList());</span>
+
+<span class="nc" id="L806">		model.addAttribute(&quot;sourceAttributeEntities&quot;, sourceAttributeEntityList);</span>
+<span class="nc" id="L807">		model.addAttribute(&quot;numberOfSourceAttributes&quot;, sourceAttributeEntityList.size());</span>
+<span class="nc" id="L808">		model.addAttribute(&quot;sourceAttributeIdAttribute&quot;, sourceAttributeIdAttribute);</span>
+<span class="nc" id="L809">		model.addAttribute(&quot;sourceAttributeLabelAttribute&quot;, sourceAttributeLabelAttribute);</span>
+
+		// Check if the selected source attribute is isAggregatable
+<span class="nc" id="L812">		Attribute sourceAttributeAttribute = dataService.getEntityType(source).getAttribute(sourceAttribute);</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">		if (sourceAttributeAttribute.isAggregatable())</span>
+		{
+<span class="nc" id="L815">			AggregateResult aggregate = dataService.aggregate(source,</span>
+<span class="nc" id="L816">					new AggregateQueryImpl().attrX(sourceAttributeAttribute).query(new QueryImpl&lt;&gt;()));</span>
+<span class="nc" id="L817">			List&lt;Long&gt; aggregateCounts = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L818" title="All 2 branches missed.">			for (List&lt;Long&gt; count : aggregate.getMatrix())</span>
+			{
+<span class="nc" id="L820">				aggregateCounts.add(count.get(0));</span>
+<span class="nc" id="L821">			}</span>
+<span class="nc" id="L822">			model.addAttribute(&quot;aggregates&quot;, aggregateCounts);</span>
+		}
+
+<span class="nc" id="L825">		model.addAttribute(&quot;target&quot;, target);</span>
+<span class="nc" id="L826">		model.addAttribute(&quot;source&quot;, source);</span>
+<span class="nc" id="L827">		model.addAttribute(&quot;targetAttribute&quot;, dataService.getEntityType(target).getAttribute(targetAttribute));</span>
+<span class="nc" id="L828">		model.addAttribute(&quot;sourceAttribute&quot;, dataService.getEntityType(source).getAttribute(sourceAttribute));</span>
+
+<span class="nc" id="L830">		CategoryMapping&lt;String, String&gt; categoryMapping = null;</span>
+<span class="nc bnc" id="L831" title="All 2 branches missed.">		if (algorithm == null)</span>
+		{
+<span class="nc" id="L833">			algorithm = attributeMapping.getAlgorithm();</span>
+		}
+		try
+		{
+<span class="nc" id="L837">			categoryMapping = create(algorithm);</span>
+		}
+<span class="nc" id="L839">		catch (Exception ignore)</span>
+		{
+<span class="nc" id="L841">		}</span>
+
+<span class="nc bnc" id="L843" title="All 2 branches missed.">		if (categoryMapping == null)</span>
+		{
+<span class="nc" id="L845">			categoryMapping = createEmpty(sourceAttribute);</span>
+		}
+<span class="nc" id="L847">		model.addAttribute(&quot;categoryMapping&quot;, categoryMapping);</span>
+
+<span class="nc" id="L849">		return VIEW_CATEGORY_MAPPING_EDITOR;</span>
+	}
+
+	@PostMapping(&quot;/savecategorymapping&quot;)
+	@ResponseBody
+	public void saveCategoryMapping(@RequestParam() String mappingProjectId, @RequestParam() String target,
+			@RequestParam() String source, @RequestParam() String targetAttribute, @RequestParam() String algorithm)
+	{
+<span class="nc" id="L857">		MappingProject mappingProject = mappingService.getMappingProject(mappingProjectId);</span>
+<span class="nc" id="L858">		MappingTarget mappingTarget = mappingProject.getMappingTarget(target);</span>
+<span class="nc" id="L859">		EntityMapping mappingForSource = mappingTarget.getMappingForSource(source);</span>
+<span class="nc" id="L860">		AttributeMapping attributeMapping = mappingForSource.getAttributeMapping(targetAttribute);</span>
+<span class="nc bnc" id="L861" title="All 2 branches missed.">		if (attributeMapping == null)</span>
+		{
+<span class="nc" id="L863">			attributeMapping = mappingForSource.addAttributeMapping(targetAttribute);</span>
+		}
+<span class="nc" id="L865">		attributeMapping.setAlgorithm(algorithm);</span>
+<span class="nc" id="L866">		attributeMapping.setAlgorithmState(AlgorithmState.CURATED);</span>
+<span class="nc" id="L867">		mappingService.updateMappingProject(mappingProject);</span>
+<span class="nc" id="L868">	}</span>
+
+	/**
+	 * Tests an algoritm by computing it for all entities in the source repository.
+	 *
+	 * @param mappingServiceRequest the {@link MappingServiceRequest} sent by the client
+	 * @return Map with the results and size of the source
+	 */
+	@PostMapping(value = &quot;/mappingattribute/testscript&quot;, consumes = APPLICATION_JSON_VALUE, produces = APPLICATION_JSON_VALUE)
+	@ResponseBody
+	public Map&lt;String, Object&gt; testScript(@RequestBody MappingServiceRequest mappingServiceRequest)
+	{
+<span class="nc" id="L880">		EntityType targetEntityType = dataService.getEntityType(mappingServiceRequest.getTargetEntityName());</span>
+<span class="nc bnc" id="L881" title="All 2 branches missed.">		Attribute targetAttribute = targetEntityType != null ? targetEntityType.getAttribute(</span>
+<span class="nc" id="L882">				mappingServiceRequest.getTargetAttributeName()) : null;</span>
+<span class="nc" id="L883">		Repository&lt;Entity&gt; sourceRepo = dataService.getRepository(mappingServiceRequest.getSourceEntityName());</span>
+
+<span class="nc" id="L885">		Iterable&lt;AlgorithmEvaluation&gt; algorithmEvaluations = algorithmService.applyAlgorithm(targetAttribute,</span>
+<span class="nc" id="L886">				mappingServiceRequest.getAlgorithm(), sourceRepo);</span>
+
+<span class="nc" id="L888">		List&lt;Object&gt; calculatedValues = newArrayList(</span>
+<span class="nc" id="L889">				Iterables.transform(algorithmEvaluations, AlgorithmEvaluation::getValue));</span>
+
+<span class="nc" id="L891">		return ImmutableMap.of(&quot;results&quot;, calculatedValues, &quot;totalCount&quot;, Iterables.size(sourceRepo));</span>
+	}
+
+	/**
+	 * Generate algorithms based on semantic matches between attribute tags and descriptions
+	 */
+	private void autoGenerateAlgorithms(EntityMapping mapping, EntityType sourceEntityType, EntityType targetEntityType,
+			Iterable&lt;Attribute&gt; attributes, MappingProject project)
+	{
+<span class="nc" id="L900">		attributes.forEach(</span>
+<span class="nc" id="L901">				attribute -&gt; algorithmService.autoGenerateAlgorithm(sourceEntityType, targetEntityType, mapping,</span>
+						attribute));
+<span class="nc" id="L903">		mappingService.updateMappingProject(project);</span>
+<span class="nc" id="L904">	}</span>
+
+	/**
+	 * Lists the entities that may be added as new sources to this mapping project's selected target
+	 *
+	 * @param target the selected target
+	 */
+	private List&lt;EntityType&gt; getNewSources(MappingTarget target)
+	{
+<span class="fc" id="L913">		return StreamSupport.stream(dataService.getEntityTypeIds().spliterator(), false)</span>
+<span class="fc" id="L914">							.filter((name) -&gt; isValidSource(target, name))</span>
+<span class="fc" id="L915">							.map(dataService::getEntityType)</span>
+<span class="fc" id="L916">							.collect(Collectors.toList());</span>
+	}
+
+	private static boolean isValidSource(MappingTarget target, String name)
+	{
+<span class="fc bfc" id="L921" title="All 2 branches covered.">		return !target.hasMappingFor(name);</span>
+	}
+
+	private List&lt;EntityType&gt; getEntityTypes()
+	{
+<span class="nc" id="L926">		return dataService.getEntityTypeIds().map(dataService::getEntityType).collect(toList());</span>
+	}
+
+	private List&lt;EntityType&gt; getWritableEntityTypes()
+	{
+<span class="nc" id="L931">		return getEntityTypes().stream()</span>
+<span class="nc bnc" id="L932" title="All 2 branches missed.">							   .filter(emd -&gt; !emd.isAbstract())</span>
+<span class="nc" id="L933">							   .filter(emd -&gt; dataService.getCapabilities(emd.getId())</span>
+<span class="nc" id="L934">														 .contains(RepositoryCapability.WRITABLE))</span>
+<span class="nc" id="L935">							   .collect(Collectors.toList());</span>
+	}
+
+	private Map&lt;String, List&lt;OntologyTerm&gt;&gt; getTagsForAttribute(String target, MappingProject project)
+	{
+<span class="fc" id="L940">		Map&lt;String, List&lt;OntologyTerm&gt;&gt; attributeTagMap = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L941" title="All 2 branches covered.">		for (Attribute amd : project.getMappingTarget(target).getTarget().getAtomicAttributes())</span>
+		{
+<span class="fc" id="L943">			EntityType targetMetaData = RunAsSystemAspect.runAsSystem(() -&gt; dataService.getEntityType(target));</span>
+<span class="fc" id="L944">			attributeTagMap.put(amd.getName(),</span>
+<span class="fc" id="L945">					newArrayList(ontologyTagService.getTagsForAttribute(targetMetaData, amd).values()));</span>
+<span class="fc" id="L946">		}</span>
+
+<span class="fc" id="L948">		return attributeTagMap;</span>
+	}
+
+	private String getMappingServiceMenuUrl()
+	{
+<span class="fc" id="L953">		return menuReaderService.getMenu().findMenuItemPath(ID);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

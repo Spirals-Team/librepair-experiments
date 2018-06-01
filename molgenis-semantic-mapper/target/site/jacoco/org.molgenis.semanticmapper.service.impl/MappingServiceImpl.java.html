@@ -1,0 +1,426 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MappingServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">semantic-mapper</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.semanticmapper.service.impl</a> &gt; <span class="el_source">MappingServiceImpl.java</span></div><h1>MappingServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.semanticmapper.service.impl;
+
+import org.molgenis.data.*;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.DefaultPackage;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.security.permission.PermissionSystemService;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.jobs.Progress;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.semanticmapper.mapping.model.AttributeMapping;
+import org.molgenis.semanticmapper.mapping.model.EntityMapping;
+import org.molgenis.semanticmapper.mapping.model.MappingProject;
+import org.molgenis.semanticmapper.mapping.model.MappingTarget;
+import org.molgenis.semanticmapper.repository.MappingProjectRepository;
+import org.molgenis.semanticmapper.service.AlgorithmService;
+import org.molgenis.semanticmapper.service.MappingService;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Maps.newHashMap;
+import static java.lang.Boolean.TRUE;
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.EntityManager.CreationMode.POPULATE;
+import static org.molgenis.data.meta.model.EntityType.AttributeCopyMode.DEEP_COPY_ATTRS;
+import static org.molgenis.data.support.EntityTypeUtils.hasSelfReferences;
+import static org.molgenis.data.support.EntityTypeUtils.isReferenceType;
+import static org.molgenis.semanticmapper.meta.MappingProjectMetaData.MAPPING_PROJECT;
+import static org.molgenis.semanticmapper.meta.MappingProjectMetaData.NAME;
+
+public class MappingServiceImpl implements MappingService
+{
+	public static final int MAPPING_BATCH_SIZE = 1000;
+
+	static final String SOURCE = &quot;source&quot;;
+
+	private final DataService dataService;
+	private final AlgorithmService algorithmService;
+	private final MappingProjectRepository mappingProjectRepository;
+	private final PermissionSystemService permissionSystemService;
+	private final AttributeFactory attrMetaFactory;
+	private final DefaultPackage defaultPackage;
+	private final EntityManager entityManager;
+
+	public MappingServiceImpl(DataService dataService, AlgorithmService algorithmService,
+			MappingProjectRepository mappingProjectRepository, PermissionSystemService permissionSystemService,
+			AttributeFactory attrMetaFactory, DefaultPackage defaultPackage, EntityManager entityManager)
+<span class="fc" id="L58">	{</span>
+<span class="fc" id="L59">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L60">		this.algorithmService = requireNonNull(algorithmService);</span>
+<span class="fc" id="L61">		this.mappingProjectRepository = requireNonNull(mappingProjectRepository);</span>
+<span class="fc" id="L62">		this.permissionSystemService = requireNonNull(permissionSystemService);</span>
+<span class="fc" id="L63">		this.attrMetaFactory = requireNonNull(attrMetaFactory);</span>
+<span class="fc" id="L64">		this.defaultPackage = requireNonNull(defaultPackage);</span>
+<span class="fc" id="L65">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L66">	}</span>
+
+	@Override
+	@RunAsSystem
+	@Transactional
+	public MappingProject addMappingProject(String projectName, String target)
+	{
+<span class="fc" id="L73">		MappingProject mappingProject = new MappingProject(projectName);</span>
+<span class="fc" id="L74">		mappingProject.addTarget(dataService.getEntityType(target));</span>
+<span class="fc" id="L75">		mappingProjectRepository.add(mappingProject);</span>
+<span class="fc" id="L76">		return mappingProject;</span>
+	}
+
+	@Override
+	@RunAsSystem
+	@Transactional
+	public void deleteMappingProject(String mappingProjectId)
+	{
+<span class="nc" id="L84">		mappingProjectRepository.delete(mappingProjectId);</span>
+<span class="nc" id="L85">	}</span>
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SYSTEM, ROLE_SU, ROLE_PLUGIN_WRITE_menumanager')&quot;)
+	@Transactional
+	public MappingProject cloneMappingProject(String mappingProjectId)
+	{
+<span class="fc" id="L92">		MappingProject mappingProject = mappingProjectRepository.getMappingProject(mappingProjectId);</span>
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">		if (mappingProject == null)</span>
+		{
+<span class="nc" id="L95">			throw new UnknownEntityException(MAPPING_PROJECT, mappingProjectId);</span>
+		}
+<span class="fc" id="L97">		String mappingProjectName = mappingProject.getName();</span>
+
+		// determine cloned mapping project name (use Windows 7 naming strategy):
+		String clonedMappingProjectName;
+<span class="pc" id="L101">		for (int i = 1; ; ++i)</span>
+		{
+<span class="pc bpc" id="L103" title="1 of 2 branches missed.">			if (i == 1)</span>
+			{
+<span class="fc" id="L105">				clonedMappingProjectName = mappingProjectName + &quot; - Copy&quot;;</span>
+			}
+			else
+			{
+<span class="nc" id="L109">				clonedMappingProjectName = mappingProjectName + &quot; - Copy (&quot; + i + &quot;)&quot;;</span>
+			}
+
+<span class="fc" id="L112">			if (mappingProjectRepository.getMappingProjects(new QueryImpl&lt;&gt;().eq(NAME, clonedMappingProjectName))</span>
+<span class="pc bpc" id="L113" title="1 of 2 branches missed.">										.isEmpty())</span>
+			{
+<span class="fc" id="L115">				break;</span>
+			}
+		}
+
+<span class="fc" id="L119">		return cloneMappingProject(mappingProject, clonedMappingProjectName);</span>
+	}
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SYSTEM, ROLE_SU, ROLE_PLUGIN_WRITE_menumanager')&quot;)
+	@Transactional
+	public MappingProject cloneMappingProject(String mappingProjectId, String clonedMappingProjectName)
+	{
+<span class="fc" id="L127">		MappingProject mappingProject = mappingProjectRepository.getMappingProject(mappingProjectId);</span>
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">		if (mappingProject == null)</span>
+		{
+<span class="nc" id="L130">			throw new UnknownEntityException(MAPPING_PROJECT, mappingProjectId);</span>
+		}
+
+<span class="fc" id="L133">		return cloneMappingProject(mappingProject, clonedMappingProjectName);</span>
+	}
+
+	private MappingProject cloneMappingProject(MappingProject mappingProject, String clonedMappingProjectName)
+	{
+<span class="fc" id="L138">		mappingProject.removeIdentifiers();</span>
+<span class="fc" id="L139">		mappingProject.setName(clonedMappingProjectName);</span>
+<span class="fc" id="L140">		mappingProjectRepository.add(mappingProject);</span>
+<span class="fc" id="L141">		return mappingProject;</span>
+	}
+
+	@Override
+	@RunAsSystem
+	public List&lt;MappingProject&gt; getAllMappingProjects()
+	{
+<span class="nc" id="L148">		return mappingProjectRepository.getAllMappingProjects();</span>
+	}
+
+	@Override
+	@RunAsSystem
+	@Transactional
+	public void updateMappingProject(MappingProject mappingProject)
+	{
+<span class="fc" id="L156">		mappingProjectRepository.update(mappingProject);</span>
+<span class="fc" id="L157">	}</span>
+
+	@Override
+	@RunAsSystem
+	public MappingProject getMappingProject(String identifier)
+	{
+<span class="fc" id="L163">		return mappingProjectRepository.getMappingProject(identifier);</span>
+	}
+
+	@Override
+	@Transactional
+	public long applyMappings(String mappingProjectId, String entityTypeId, Boolean addSourceAttribute,
+			String packageId, String label, Progress progress)
+	{
+<span class="fc" id="L171">		MappingProject mappingProject = getMappingProject(mappingProjectId);</span>
+<span class="fc" id="L172">		MappingTarget mappingTarget = mappingProject.getMappingTargets().get(0);</span>
+<span class="fc" id="L173">		progress.setProgressMax(calculateMaxProgress(mappingTarget));</span>
+
+<span class="fc" id="L175">		progress.progress(0, format(&quot;Checking target repository [%s]...&quot;, entityTypeId));</span>
+<span class="fc" id="L176">		EntityType targetMetadata = createTargetMetadata(mappingTarget, entityTypeId, packageId, label,</span>
+				addSourceAttribute);
+<span class="fc" id="L178">		Repository&lt;Entity&gt; targetRepo = getTargetRepository(entityTypeId, targetMetadata);</span>
+<span class="fc" id="L179">		return applyMappingsInternal(mappingTarget, targetRepo, progress);</span>
+	}
+
+	EntityType createTargetMetadata(MappingTarget mappingTarget, String entityTypeId, String packageId, String label,
+			Boolean addSourceAttribute)
+	{
+<span class="fc" id="L185">		EntityType targetMetadata = EntityType.newInstance(mappingTarget.getTarget(), DEEP_COPY_ATTRS, attrMetaFactory);</span>
+<span class="fc" id="L186">		targetMetadata.setId(entityTypeId);</span>
+
+<span class="fc bfc" id="L188" title="All 2 branches covered.">		if (label != null)</span>
+		{
+<span class="fc" id="L190">			targetMetadata.setLabel(label);</span>
+		}
+		else
+		{
+<span class="fc" id="L194">			targetMetadata.setLabel(entityTypeId);</span>
+		}
+
+<span class="fc bfc" id="L197" title="All 2 branches covered.">		if (TRUE.equals(addSourceAttribute))</span>
+		{
+<span class="fc" id="L199">			targetMetadata.addAttribute(attrMetaFactory.create().setName(SOURCE));</span>
+		}
+
+<span class="fc bfc" id="L202" title="All 2 branches covered.">		if (packageId == null)</span>
+		{
+<span class="fc" id="L204">			targetMetadata.setPackage(defaultPackage);</span>
+		}
+		else
+		{
+<span class="fc" id="L208">			targetMetadata.setPackage(dataService.getMeta().getPackage(packageId));</span>
+		}
+
+<span class="fc" id="L211">		return targetMetadata;</span>
+	}
+
+	private Repository&lt;Entity&gt; getTargetRepository(String entityTypeId, EntityType targetMetadata)
+	{
+		Repository&lt;Entity&gt; targetRepo;
+<span class="fc bfc" id="L217" title="All 2 branches covered.">		if (!dataService.hasRepository(entityTypeId))</span>
+		{
+<span class="fc" id="L219">			targetRepo = addTargetEntityType(targetMetadata);</span>
+		}
+		else
+		{
+<span class="fc" id="L223">			targetRepo = dataService.getRepository(entityTypeId);</span>
+<span class="fc" id="L224">			compareTargetMetadatas(targetRepo.getEntityType(), targetMetadata);</span>
+		}
+<span class="fc" id="L226">		return targetRepo;</span>
+	}
+
+	private Repository&lt;Entity&gt; addTargetEntityType(EntityType targetMetadata)
+	{
+<span class="fc" id="L231">		Repository&lt;Entity&gt; targetRepo = dataService.getMeta().createRepository(targetMetadata);</span>
+<span class="fc" id="L232">		permissionSystemService.giveUserWriteMetaPermissions(targetMetadata);</span>
+<span class="fc" id="L233">		return targetRepo;</span>
+	}
+
+	private long applyMappingsInternal(MappingTarget mappingTarget, Repository&lt;Entity&gt; targetRepo, Progress progress)
+	{
+<span class="fc" id="L238">		progress.status(&quot;Applying mappings to repository [&quot; + targetRepo.getEntityType().getId() + &quot;]&quot;);</span>
+<span class="fc" id="L239">		long result = applyMappingsToRepositories(mappingTarget, targetRepo, progress);</span>
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">		if (hasSelfReferences(targetRepo.getEntityType()))</span>
+		{
+<span class="nc" id="L242">			progress.status(&quot;Self reference found, applying the mapping for a second time to set references&quot;);</span>
+<span class="nc" id="L243">			applyMappingsToRepositories(mappingTarget, targetRepo, progress);</span>
+		}
+<span class="fc" id="L245">		progress.status(&quot;Done applying mappings to repository [&quot; + targetRepo.getEntityType().getId() + &quot;]&quot;);</span>
+<span class="fc" id="L246">		return result;</span>
+	}
+
+	public Stream&lt;EntityType&gt; getCompatibleEntityTypes(EntityType target)
+	{
+<span class="fc" id="L251">		return dataService.getMeta()</span>
+<span class="fc" id="L252">						  .getEntityTypes()</span>
+<span class="pc bpc" id="L253" title="1 of 2 branches missed.">						  .filter(candidate -&gt; !candidate.isAbstract())</span>
+<span class="fc" id="L254">						  .filter(isCompatible(target));</span>
+	}
+
+	private Predicate&lt;EntityType&gt; isCompatible(EntityType target)
+	{
+<span class="fc" id="L259">		return candidate -&gt;</span>
+		{
+			try
+			{
+<span class="fc" id="L263">				compareTargetMetadatas(candidate, target);</span>
+<span class="fc" id="L264">				return true;</span>
+			}
+<span class="fc" id="L266">			catch (MolgenisDataException incompatible)</span>
+			{
+<span class="fc" id="L268">				return false;</span>
+			}
+		};
+	}
+
+	/**
+	 * Compares the attributes between the target repository and the mapping target.
+	 * Applied Rules:
+	 * - The mapping target can not contain attributes which are not in the target repository
+	 * - The attributes of the mapping target with the same name as attributes in the target repository should have the same type
+	 * - If there are reference attributes, the name of the reference entity should be the same in both the target repository as in the mapping target
+	 *
+	 * @param targetRepositoryEntityType the target repository EntityType to check
+	 * @param mappingTargetEntityType    the mapping target EntityType to check
+	 * @throws MolgenisDataException if the types are not compatible
+	 */
+	private void compareTargetMetadatas(EntityType targetRepositoryEntityType, EntityType mappingTargetEntityType)
+	{
+<span class="fc" id="L286">		Map&lt;String, Attribute&gt; targetRepositoryAttributeMap = newHashMap();</span>
+<span class="fc" id="L287">		targetRepositoryEntityType.getAtomicAttributes()</span>
+<span class="fc" id="L288">								  .forEach(attribute -&gt; targetRepositoryAttributeMap.put(attribute.getName(),</span>
+										  attribute));
+
+<span class="fc bfc" id="L291" title="All 2 branches covered.">		for (Attribute mappingTargetAttribute : mappingTargetEntityType.getAtomicAttributes())</span>
+		{
+<span class="fc" id="L293">			String mappingTargetAttributeName = mappingTargetAttribute.getName();</span>
+<span class="fc" id="L294">			Attribute targetRepositoryAttribute = targetRepositoryAttributeMap.get(mappingTargetAttributeName);</span>
+<span class="fc bfc" id="L295" title="All 2 branches covered.">			if (targetRepositoryAttribute == null)</span>
+			{
+<span class="fc" id="L297">				throw new MolgenisDataException(format(&quot;Target repository does not contain the following attribute: %s&quot;,</span>
+						mappingTargetAttributeName));
+			}
+
+<span class="fc" id="L301">			AttributeType targetRepositoryAttributeType = targetRepositoryAttribute.getDataType();</span>
+<span class="fc" id="L302">			AttributeType mappingTargetAttributeType = mappingTargetAttribute.getDataType();</span>
+<span class="fc bfc" id="L303" title="All 2 branches covered.">			if (!mappingTargetAttributeType.equals(targetRepositoryAttributeType))</span>
+			{
+<span class="fc" id="L305">				throw new MolgenisDataException(</span>
+<span class="fc" id="L306">						format(&quot;attribute %s in the mapping target is type %s while attribute %s in the target repository is type %s. Please make sure the types are the same&quot;,</span>
+								mappingTargetAttributeName, mappingTargetAttributeType,
+<span class="fc" id="L308">								targetRepositoryAttribute.getName(), targetRepositoryAttributeType));</span>
+			}
+
+<span class="fc bfc" id="L311" title="All 2 branches covered.">			if (isReferenceType(mappingTargetAttribute))</span>
+			{
+<span class="fc" id="L313">				String mappingTargetRefEntityName = mappingTargetAttribute.getRefEntity().getId();</span>
+<span class="fc" id="L314">				String targetRepositoryRefEntityName = targetRepositoryAttribute.getRefEntity().getId();</span>
+<span class="pc bpc" id="L315" title="1 of 2 branches missed.">				if (!mappingTargetRefEntityName.equals(targetRepositoryRefEntityName))</span>
+				{
+<span class="fc" id="L317">					throw new MolgenisDataException(</span>
+<span class="fc" id="L318">							format(&quot;In the mapping target, attribute %s of type %s has reference entity %s while in the target repository attribute %s of type %s has reference entity %s. &quot;</span>
+											+ &quot;Please make sure the reference entities of your mapping target are pointing towards the same reference entities as your target repository&quot;,
+									mappingTargetAttributeName, mappingTargetAttributeType, mappingTargetRefEntityName,
+<span class="fc" id="L321">									targetRepositoryAttribute.getName(), targetRepositoryAttributeType,</span>
+									targetRepositoryRefEntityName));
+				}
+			}
+<span class="fc" id="L325">		}</span>
+<span class="fc" id="L326">	}</span>
+
+	private long applyMappingsToRepositories(MappingTarget mappingTarget, Repository&lt;Entity&gt; targetRepo,
+			Progress progress)
+	{
+<span class="fc" id="L331">		return mappingTarget.getEntityMappings()</span>
+<span class="fc" id="L332">							.stream()</span>
+<span class="fc" id="L333">							.mapToLong(sourceMapping -&gt; applyMappingToRepo(sourceMapping, targetRepo, progress))</span>
+<span class="fc" id="L334">							.sum();</span>
+	}
+
+	long applyMappingToRepo(EntityMapping sourceMapping, Repository&lt;Entity&gt; targetRepo, Progress progress)
+	{
+<span class="fc" id="L339">		progress.status(format(&quot;Mapping source [%s]...&quot;, sourceMapping.getLabel()));</span>
+<span class="fc" id="L340">		AtomicLong counter = new AtomicLong();</span>
+
+<span class="fc bfc" id="L342" title="All 2 branches covered.">		boolean canAdd = targetRepo.count() == 0;</span>
+<span class="fc" id="L343">		dataService.getRepository(sourceMapping.getName())</span>
+<span class="fc" id="L344">				   .forEachBatched(</span>
+<span class="fc" id="L345">						   entities -&gt; processBatch(sourceMapping, targetRepo, progress, counter, canAdd, entities),</span>
+						   MAPPING_BATCH_SIZE);
+
+<span class="fc" id="L348">		progress.status(format(&quot;Mapped %s [%s] entities.&quot;, counter, sourceMapping.getLabel()));</span>
+<span class="fc" id="L349">		return counter.get();</span>
+	}
+
+	private void processBatch(EntityMapping sourceMapping, Repository&lt;Entity&gt; targetRepo, Progress progress,
+			AtomicLong counter, boolean canAdd, List&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L355">		List&lt;Entity&gt; mappedEntities = mapEntities(sourceMapping, targetRepo.getEntityType(), entities);</span>
+<span class="fc bfc" id="L356" title="All 2 branches covered.">		if (canAdd)</span>
+		{
+<span class="fc" id="L358">			targetRepo.add(mappedEntities.stream());</span>
+		}
+		else
+		{
+<span class="fc" id="L362">			targetRepo.upsertBatch(mappedEntities);</span>
+		}
+<span class="fc" id="L364">		progress.increment(1);</span>
+<span class="fc" id="L365">		counter.addAndGet(entities.size());</span>
+<span class="fc" id="L366">	}</span>
+
+	private List&lt;Entity&gt; mapEntities(EntityMapping sourceMapping, EntityType targetMetaData, List&lt;Entity&gt; entities)
+	{
+<span class="fc" id="L370">		return entities.stream()</span>
+<span class="fc" id="L371">					   .map(sourceEntity -&gt; applyMappingToEntity(sourceMapping, sourceEntity, targetMetaData))</span>
+<span class="fc" id="L372">					   .collect(toList());</span>
+	}
+
+	/**
+	 * Package-private for testablility
+	 */
+	Entity applyMappingToEntity(EntityMapping sourceMapping, Entity sourceEntity, EntityType targetMetaData)
+	{
+<span class="fc" id="L380">		Entity target = entityManager.create(targetMetaData, POPULATE);</span>
+
+<span class="fc bfc" id="L382" title="All 2 branches covered.">		if (targetMetaData.getAttribute(SOURCE) != null)</span>
+		{
+<span class="fc" id="L384">			target.set(SOURCE, sourceMapping.getName());</span>
+		}
+
+<span class="fc" id="L387">		sourceMapping.getAttributeMappings()</span>
+<span class="fc" id="L388">					 .forEach(attributeMapping -&gt; applyMappingToAttribute(attributeMapping, sourceEntity, target,</span>
+<span class="fc" id="L389">							 sourceMapping.getSourceEntityType()));</span>
+<span class="fc" id="L390">		return target;</span>
+	}
+
+	private void applyMappingToAttribute(AttributeMapping attributeMapping, Entity sourceEntity, Entity target,
+			EntityType entityType)
+	{
+<span class="fc" id="L396">		String targetAttributeName = attributeMapping.getTargetAttribute().getName();</span>
+<span class="fc" id="L397">		Object typedValue = algorithmService.apply(attributeMapping, sourceEntity, entityType);</span>
+<span class="fc" id="L398">		target.set(targetAttributeName, typedValue);</span>
+<span class="fc" id="L399">	}</span>
+
+	int calculateMaxProgress(MappingTarget mappingTarget)
+	{
+<span class="fc" id="L403">		int batches = mappingTarget.getEntityMappings().stream().mapToInt(this::countBatches).sum();</span>
+<span class="fc bfc" id="L404" title="All 2 branches covered.">		if (mappingTarget.hasSelfReferences())</span>
+		{
+<span class="fc" id="L406">			batches *= 2;</span>
+		}
+<span class="fc" id="L408">		return batches;</span>
+	}
+
+	private int countBatches(EntityMapping entityMapping)
+	{
+<span class="fc" id="L413">		long sourceRows = dataService.count(entityMapping.getSourceEntityType().getId());</span>
+
+<span class="fc" id="L415">		long batches = sourceRows / MAPPING_BATCH_SIZE;</span>
+<span class="fc" id="L416">		long remainder = sourceRows % MAPPING_BATCH_SIZE;</span>
+
+<span class="fc bfc" id="L418" title="All 2 branches covered.">		if (remainder &gt; 0)</span>
+		{
+<span class="fc" id="L420">			batches++;</span>
+		}
+
+<span class="fc" id="L423">		return (int) batches;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

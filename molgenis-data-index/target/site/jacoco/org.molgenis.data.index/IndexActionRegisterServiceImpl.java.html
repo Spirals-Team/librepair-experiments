@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexActionRegisterServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-index</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.index</a> &gt; <span class="el_source">IndexActionRegisterServiceImpl.java</span></div><h1>IndexActionRegisterServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.data.index;
+
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.SetMultimap;
+import com.google.common.collect.Sets;
+import org.molgenis.data.DataService;
+import org.molgenis.data.EntityKey;
+import org.molgenis.data.Fetch;
+import org.molgenis.data.index.meta.IndexAction;
+import org.molgenis.data.index.meta.IndexActionFactory;
+import org.molgenis.data.index.meta.IndexActionGroup;
+import org.molgenis.data.index.meta.IndexActionGroupFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.data.transaction.TransactionInformation;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Multimaps.synchronizedSetMultimap;
+import static com.google.common.collect.Streams.mapWithIndex;
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
+import static org.molgenis.data.index.Impact.createSingleEntityImpact;
+import static org.molgenis.data.index.IndexDependencyModel.ENTITY_TYPE_FETCH;
+import static org.molgenis.data.index.meta.IndexActionGroupMetaData.INDEX_ACTION_GROUP;
+import static org.molgenis.data.index.meta.IndexActionMetaData.INDEX_ACTION;
+import static org.molgenis.data.index.meta.IndexActionMetaData.IndexStatus.PENDING;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+import static org.molgenis.data.meta.model.AttributeMetadata.REF_ENTITY_TYPE;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.data.transaction.TransactionManager.TRANSACTION_ID_RESOURCE_NAME;
+
+/**
+ * Registers changes made to an indexed repository that need to be fixed by indexing
+ * the relevant data.
+ */
+@Component
+public class IndexActionRegisterServiceImpl implements TransactionInformation, IndexActionRegisterService
+{
+<span class="fc" id="L53">	private static final Logger LOG = LoggerFactory.getLogger(IndexActionRegisterServiceImpl.class);</span>
+	private static final int LOG_EVERY = 1000;
+	private static final int ENTITY_FETCH_PAGE_SIZE = 1000;
+
+<span class="fc" id="L57">	private final SetMultimap&lt;String, Impact&gt; changesPerTransaction = synchronizedSetMultimap(HashMultimap.create());</span>
+
+	private final DataService dataService;
+	private final IndexActionFactory indexActionFactory;
+	private final IndexActionGroupFactory indexActionGroupFactory;
+	private final IndexingStrategy indexingStrategy;
+
+<span class="fc" id="L64">	private final Set&lt;String&gt; excludedEntities = Sets.newConcurrentHashSet();</span>
+
+	IndexActionRegisterServiceImpl(DataService dataService, IndexActionFactory indexActionFactory,
+			IndexActionGroupFactory indexActionGroupFactory, IndexingStrategy indexingStrategy)
+<span class="fc" id="L68">	{</span>
+<span class="fc" id="L69">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L70">		this.indexActionFactory = requireNonNull(indexActionFactory);</span>
+<span class="fc" id="L71">		this.indexActionGroupFactory = requireNonNull(indexActionGroupFactory);</span>
+<span class="fc" id="L72">		this.indexingStrategy = requireNonNull(indexingStrategy);</span>
+
+<span class="fc" id="L74">		addExcludedEntity(INDEX_ACTION_GROUP);</span>
+<span class="fc" id="L75">		addExcludedEntity(INDEX_ACTION);</span>
+<span class="fc" id="L76">	}</span>
+
+	@Override
+	public void addExcludedEntity(String entityFullName)
+	{
+<span class="fc" id="L81">		excludedEntities.add(entityFullName);</span>
+<span class="fc" id="L82">	}</span>
+
+	@Transactional
+	@Override
+	public synchronized void register(EntityType entityType, Object entityId)
+	{
+<span class="fc" id="L88">		String transactionId = (String) TransactionSynchronizationManager.getResource(TRANSACTION_ID_RESOURCE_NAME);</span>
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">		if (transactionId != null)</span>
+		{
+<span class="fc" id="L91">			Impact impact = createSingleEntityImpact(entityType.getId(), entityId);</span>
+<span class="fc" id="L92">			LOG.debug(&quot;register({})&quot;, impact);</span>
+
+<span class="fc" id="L94">			final boolean newlyRegistered = changesPerTransaction.put(transactionId, impact);</span>
+<span class="pc bpc" id="L95" title="2 of 4 branches missed.">			if (newlyRegistered &amp;&amp; LOG.isWarnEnabled())</span>
+			{
+<span class="fc" id="L97">				final int size = changesPerTransaction.get(transactionId).size();</span>
+<span class="pc bpc" id="L98" title="3 of 4 branches missed.">				if (size &gt;= LOG_EVERY &amp;&amp; size % LOG_EVERY == 0)</span>
+				{
+<span class="nc" id="L100">					LOG.warn(</span>
+							&quot;Transaction {} has caused {} IndexActions to be created. Consider streaming your data manipulations.&quot;,
+<span class="nc" id="L102">							transactionId, size);</span>
+				}
+			}
+<span class="fc" id="L105">		}</span>
+		else
+		{
+<span class="nc" id="L108">			LOG.error(&quot;Transaction id is unknown, register of entityFullName [{}] dataType [{}], entityId [{}]&quot;,</span>
+<span class="nc" id="L109">					entityType.getId(), entityId);</span>
+		}
+<span class="fc" id="L111">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void storeIndexActions(String transactionId)
+	{
+<span class="fc" id="L117">		Set&lt;Impact&gt; changes = getChangesForCurrentTransaction();</span>
+<span class="fc bfc" id="L118" title="All 2 branches covered.">		if (changes.isEmpty())</span>
+		{
+<span class="fc" id="L120">			return;</span>
+		}
+<span class="pc bpc" id="L122" title="1 of 2 branches missed.">		if (changes.stream().allMatch(impact -&gt; excludedEntities.contains(impact.getEntityTypeId())))</span>
+		{
+<span class="nc" id="L124">			return;</span>
+		}
+
+<span class="fc" id="L127">		IndexActionGroup indexActionGroup = indexActionGroupFactory.create(transactionId);</span>
+<span class="fc" id="L128">		IndexDependencyModel dependencyModel = createIndexDependencyModel(changes);</span>
+<span class="fc" id="L129">		Stream&lt;Impact&gt; impactStream = indexingStrategy.determineImpact(changes, dependencyModel)</span>
+<span class="fc" id="L130">													  .stream()</span>
+<span class="pc bpc" id="L131" title="1 of 2 branches missed.">													  .filter(key -&gt; !excludedEntities.contains(key.getEntityTypeId()));</span>
+<span class="fc" id="L132">		List&lt;IndexAction&gt; indexActions = mapWithIndex(impactStream,</span>
+<span class="fc" id="L133">				(key, actionOrder) -&gt; createIndexAction(indexActionGroup, key, (int) actionOrder)).collect(toList());</span>
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">		if (indexActions.isEmpty())</span>
+		{
+<span class="nc" id="L136">			return;</span>
+		}
+<span class="fc" id="L138">		LOG.debug(&quot;Store index actions for transaction {}&quot;, transactionId);</span>
+<span class="fc" id="L139">		dataService.add(INDEX_ACTION_GROUP,</span>
+<span class="fc" id="L140">				indexActionGroupFactory.create(transactionId).setCount(indexActions.size()));</span>
+<span class="fc" id="L141">		dataService.add(INDEX_ACTION, indexActions.stream());</span>
+<span class="fc" id="L142">	}</span>
+
+	private IndexDependencyModel createIndexDependencyModel(Set&lt;Impact&gt; changes)
+	{
+<span class="fc" id="L146">		Set&lt;String&gt; entityTypeIds = changes.stream().map(Impact::getEntityTypeId).collect(toSet());</span>
+<span class="pc bpc" id="L147" title="1 of 2 branches missed.">		boolean hasReferences = dataService.query(ATTRIBUTE_META_DATA).in(REF_ENTITY_TYPE, entityTypeIds).count() &gt; 0;</span>
+<span class="pc bpc" id="L148" title="1 of 2 branches missed.">		if (hasReferences)</span>
+		{
+<span class="nc" id="L150">			return new IndexDependencyModel(getEntityTypes());</span>
+		}
+		else
+		{
+<span class="fc" id="L154">			return new IndexDependencyModel(emptyList());</span>
+		}
+	}
+
+	private IndexAction createIndexAction(IndexActionGroup indexActionGroup, Impact key, int actionOrder)
+	{
+<span class="fc" id="L160">		IndexAction indexAction = indexActionFactory.create();</span>
+<span class="fc" id="L161">		indexAction.setIndexStatus(PENDING);</span>
+<span class="pc bpc" id="L162" title="1 of 2 branches missed.">		if (key.getId() != null)</span>
+		{
+<span class="fc" id="L164">			indexAction.setEntityId(key.getId().toString());</span>
+		}
+<span class="fc" id="L166">		indexAction.setEntityTypeId(key.getEntityTypeId());</span>
+<span class="fc" id="L167">		indexAction.setIndexActionGroup(indexActionGroup);</span>
+<span class="fc" id="L168">		indexAction.setActionOrder(actionOrder);</span>
+<span class="fc" id="L169">		return indexAction;</span>
+	}
+
+	/**
+	 * Retrieves all {@link EntityType}s.
+	 * Queryies in pages of size ENTITY_FETCH_PAGE_SIZE so that results can be cached.
+	 * Uses a {@link Fetch} that specifies all fields needed to determine the necessary index actions.
+	 *
+	 * @return List containing all {@link EntityType}s.
+	 */
+	private List&lt;EntityType&gt; getEntityTypes()
+	{
+<span class="nc" id="L181">		QueryImpl&lt;EntityType&gt; query = new QueryImpl&lt;&gt;();</span>
+<span class="nc" id="L182">		query.setPageSize(ENTITY_FETCH_PAGE_SIZE);</span>
+<span class="nc" id="L183">		query.setFetch(ENTITY_TYPE_FETCH);</span>
+
+<span class="nc" id="L185">		List&lt;EntityType&gt; result = newArrayList();</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">		for (int pageNum = 0; result.size() == pageNum * ENTITY_FETCH_PAGE_SIZE; pageNum++)</span>
+		{
+<span class="nc" id="L188">			query.offset(pageNum * ENTITY_FETCH_PAGE_SIZE);</span>
+<span class="nc" id="L189">			dataService.findAll(ENTITY_TYPE_META_DATA, query, EntityType.class).forEach(result::add);</span>
+		}
+<span class="nc" id="L191">		return result;</span>
+	}
+
+	@Override
+	public boolean forgetIndexActions(String transactionId)
+	{
+<span class="fc" id="L197">		LOG.debug(&quot;Forget index actions for transaction {}&quot;, transactionId);</span>
+<span class="fc" id="L198">		return !changesPerTransaction.removeAll(transactionId)</span>
+<span class="fc" id="L199">									 .stream()</span>
+<span class="fc" id="L200">									 .map(Impact::getEntityTypeId)</span>
+<span class="pc bpc" id="L201" title="1 of 2 branches missed.">									 .allMatch(excludedEntities::contains);</span>
+	}
+
+	private Set&lt;Impact&gt; getChangesForCurrentTransaction()
+	{
+<span class="fc" id="L206">		String transactionId = (String) TransactionSynchronizationManager.getResource(TRANSACTION_ID_RESOURCE_NAME);</span>
+<span class="fc" id="L207">		return Optional.of(changesPerTransaction.get(transactionId)).orElse(emptySet());</span>
+	}
+
+	/* TransactionInformation implementation */
+
+	@Override
+	public boolean isEntityDirty(EntityKey entityKey)
+	{
+<span class="fc" id="L215">		return getChangesForCurrentTransaction().stream()</span>
+<span class="fc" id="L216">												.filter(Impact::isSingleEntity)</span>
+<span class="fc" id="L217">												.map(Impact::toEntityKey)</span>
+<span class="fc" id="L218">												.anyMatch(entityKey::equals);</span>
+	}
+
+	@Override
+	public boolean isEntireRepositoryDirty(EntityType entityType)
+	{
+<span class="nc" id="L224">		return getChangesForCurrentTransaction().stream()</span>
+<span class="nc" id="L225">												.filter(Impact::isWholeRepository)</span>
+<span class="nc" id="L226">												.map(Impact::getEntityTypeId)</span>
+<span class="nc" id="L227">												.anyMatch(entityType.getId()::equals);</span>
+	}
+
+	@Override
+	public boolean isRepositoryCompletelyClean(EntityType entityType)
+	{
+<span class="nc bnc" id="L233" title="All 2 branches missed.">		return !getDirtyRepositories().contains(entityType.getId());</span>
+	}
+
+	@Override
+	public Set&lt;EntityKey&gt; getDirtyEntities()
+	{
+<span class="nc" id="L239">		return getChangesForCurrentTransaction().stream()</span>
+<span class="nc" id="L240">												.filter(Impact::isSingleEntity)</span>
+<span class="nc" id="L241">												.map(Impact::toEntityKey)</span>
+<span class="nc" id="L242">												.collect(toSet());</span>
+	}
+
+	@Override
+	public Set&lt;String&gt; getEntirelyDirtyRepositories()
+	{
+<span class="nc" id="L248">		return getChangesForCurrentTransaction().stream()</span>
+<span class="nc" id="L249">												.filter(Impact::isWholeRepository)</span>
+<span class="nc" id="L250">												.map(Impact::getEntityTypeId)</span>
+<span class="nc" id="L251">												.collect(toSet());</span>
+	}
+
+	@Override
+	public Set&lt;String&gt; getDirtyRepositories()
+	{
+<span class="nc" id="L257">		return getChangesForCurrentTransaction().stream().map(Impact::getEntityTypeId).collect(toSet());</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

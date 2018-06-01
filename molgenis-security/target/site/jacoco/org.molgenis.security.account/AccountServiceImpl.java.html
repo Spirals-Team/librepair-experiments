@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AccountServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.security.account</a> &gt; <span class="el_source">AccountServiceImpl.java</span></div><h1>AccountServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.security.account;
+
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.DataService;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.data.security.auth.Group;
+import org.molgenis.data.security.auth.GroupMember;
+import org.molgenis.data.security.auth.GroupMemberFactory;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.data.security.user.UserService;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.security.settings.AuthenticationSettings;
+import org.molgenis.security.user.MolgenisUserException;
+import org.molgenis.settings.AppSettings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.mail.MailException;
+import org.springframework.mail.MailSender;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.net.URI;
+import java.util.List;
+
+import static java.lang.String.format;
+import static java.util.Arrays.asList;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.populate.IdGenerator.Strategy.SECURE_RANDOM;
+import static org.molgenis.data.populate.IdGenerator.Strategy.SHORT_SECURE_RANDOM;
+import static org.molgenis.data.security.auth.GroupMemberMetaData.GROUP_MEMBER;
+import static org.molgenis.data.security.auth.GroupMetaData.GROUP;
+import static org.molgenis.data.security.auth.GroupMetaData.NAME;
+import static org.molgenis.data.security.auth.UserMetaData.*;
+
+@Service
+public class AccountServiceImpl implements AccountService
+{
+<span class="fc" id="L40">	private static final Logger LOG = LoggerFactory.getLogger(AccountServiceImpl.class);</span>
+
+	private final DataService dataService;
+	private final MailSender mailSender;
+	private final UserService userService;
+	private final AppSettings appSettings;
+	private final AuthenticationSettings authenticationSettings;
+	private final GroupMemberFactory groupMemberFactory;
+	private final IdGenerator idGenerator;
+
+	public AccountServiceImpl(DataService dataService, MailSender mailSender, UserService userService,
+			AppSettings appSettings, AuthenticationSettings authenticationSettings,
+			GroupMemberFactory groupMemberFactory, IdGenerator idGenerator)
+<span class="fc" id="L53">	{</span>
+<span class="fc" id="L54">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L55">		this.mailSender = requireNonNull(mailSender);</span>
+<span class="fc" id="L56">		this.userService = requireNonNull(userService);</span>
+<span class="fc" id="L57">		this.appSettings = requireNonNull(appSettings);</span>
+<span class="fc" id="L58">		this.authenticationSettings = requireNonNull(authenticationSettings);</span>
+<span class="fc" id="L59">		this.groupMemberFactory = requireNonNull(groupMemberFactory);</span>
+<span class="fc" id="L60">		this.idGenerator = requireNonNull(idGenerator);</span>
+<span class="fc" id="L61">	}</span>
+
+	@Override
+	@RunAsSystem
+	@Transactional
+	public void createUser(User user, String baseActivationUri)
+			throws UsernameAlreadyExistsException, EmailAlreadyExistsException
+	{
+		// Check if username already exists
+<span class="pc bpc" id="L70" title="1 of 2 branches missed.">		if (userService.getUser(user.getUsername()) != null)</span>
+		{
+<span class="nc" id="L72">			throw new UsernameAlreadyExistsException(&quot;Username '&quot; + user.getUsername() + &quot;' already exists.&quot;);</span>
+		}
+
+		// Check if email already exists
+<span class="pc bpc" id="L76" title="1 of 2 branches missed.">		if (userService.getUserByEmail(user.getEmail()) != null)</span>
+		{
+<span class="nc" id="L78">			throw new EmailAlreadyExistsException(&quot;Email '&quot; + user.getEmail() + &quot;' is already registered.&quot;);</span>
+		}
+
+		// collect activation info
+<span class="fc" id="L82">		String activationCode = idGenerator.generateId(SECURE_RANDOM);</span>
+		List&lt;String&gt; activationEmailAddresses;
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">		if (authenticationSettings.getSignUpModeration())</span>
+		{
+<span class="nc" id="L86">			activationEmailAddresses = userService.getSuEmailAddresses();</span>
+<span class="nc bnc" id="L87" title="All 4 branches missed.">			if (activationEmailAddresses == null || activationEmailAddresses.isEmpty())</span>
+<span class="nc" id="L88">				throw new MolgenisDataException(&quot;Administrator account is missing required email address&quot;);</span>
+		}
+		else
+		{
+<span class="fc" id="L92">			String activationEmailAddress = user.getEmail();</span>
+<span class="pc bpc" id="L93" title="2 of 4 branches missed.">			if (activationEmailAddress == null || activationEmailAddress.isEmpty())</span>
+<span class="nc" id="L94">				throw new MolgenisDataException(&quot;User '&quot; + user.getUsername() + &quot;' is missing required email address&quot;);</span>
+<span class="fc" id="L95">			activationEmailAddresses = asList(activationEmailAddress);</span>
+		}
+
+		// create user
+<span class="fc" id="L99">		user.setActivationCode(activationCode);</span>
+<span class="fc" id="L100">		user.setActive(false);</span>
+<span class="fc" id="L101">		dataService.add(USER, user);</span>
+<span class="fc" id="L102">		LOG.debug(&quot;created user &quot; + user.getUsername());</span>
+
+		// add user to group
+<span class="fc" id="L105">		Group group = dataService.query(GROUP, Group.class).eq(NAME, ALL_USER_GROUP).findOne();</span>
+<span class="fc" id="L106">		GroupMember groupMember = null;</span>
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">		if (group != null)</span>
+		{
+<span class="fc" id="L109">			groupMember = groupMemberFactory.create();</span>
+<span class="fc" id="L110">			groupMember.setGroup(group);</span>
+<span class="fc" id="L111">			groupMember.setUser(user);</span>
+<span class="fc" id="L112">			dataService.add(GROUP_MEMBER, groupMember);</span>
+		}
+
+		// send activation email
+<span class="fc" id="L116">		URI activationUri = URI.create(baseActivationUri + '/' + activationCode);</span>
+
+		try
+		{
+<span class="fc" id="L120">			SimpleMailMessage mailMessage = new SimpleMailMessage();</span>
+<span class="fc" id="L121">			mailMessage.setTo(activationEmailAddresses.toArray(new String[] {}));</span>
+<span class="fc" id="L122">			mailMessage.setSubject(&quot;User registration for &quot; + appSettings.getTitle());</span>
+<span class="fc" id="L123">			mailMessage.setText(createActivationEmailText(user, activationUri));</span>
+<span class="fc" id="L124">			mailSender.send(mailMessage);</span>
+		}
+<span class="nc" id="L126">		catch (MailException mce)</span>
+		{
+<span class="nc" id="L128">			LOG.error(&quot;Could not send signup mail&quot;, mce);</span>
+
+<span class="nc bnc" id="L130" title="All 2 branches missed.">			if (groupMember != null)</span>
+			{
+<span class="nc" id="L132">				dataService.delete(GROUP_MEMBER, groupMember);</span>
+			}
+
+<span class="nc" id="L135">			dataService.delete(USER, user);</span>
+
+<span class="nc" id="L137">			throw new MolgenisUserException(</span>
+					&quot;An error occurred. Please contact the administrator. You are not signed up!&quot;);
+<span class="fc" id="L139">		}</span>
+<span class="fc" id="L140">		LOG.debug(&quot;send activation email for user &quot; + user.getUsername() + &quot; to &quot; + StringUtils.join(</span>
+				activationEmailAddresses, ','));
+
+<span class="fc" id="L143">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void activateUser(String activationCode)
+	{
+<span class="fc" id="L149">		User user = dataService.query(USER, User.class)</span>
+<span class="fc" id="L150">							   .eq(ACTIVE, false)</span>
+<span class="fc" id="L151">							   .and()</span>
+<span class="fc" id="L152">							   .eq(ACTIVATIONCODE, activationCode)</span>
+<span class="fc" id="L153">							   .findOne();</span>
+
+<span class="fc bfc" id="L155" title="All 2 branches covered.">		if (user != null)</span>
+		{
+<span class="fc" id="L157">			user.setActive(true);</span>
+<span class="fc" id="L158">			dataService.update(USER, user);</span>
+
+			// send activated email to user
+<span class="fc" id="L161">			SimpleMailMessage mailMessage = new SimpleMailMessage();</span>
+<span class="fc" id="L162">			mailMessage.setTo(user.getEmail());</span>
+<span class="fc" id="L163">			mailMessage.setSubject(&quot;Your registration request for &quot; + appSettings.getTitle());</span>
+<span class="fc" id="L164">			mailMessage.setText(createActivatedEmailText(user, appSettings.getTitle()));</span>
+<span class="fc" id="L165">			mailSender.send(mailMessage);</span>
+<span class="fc" id="L166">		}</span>
+		else
+		{
+<span class="fc" id="L169">			throw new MolgenisUserException(&quot;Invalid activation code or account already activated.&quot;);</span>
+		}
+<span class="fc" id="L171">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void changePassword(String username, String newPassword)
+	{
+<span class="fc" id="L177">		User user = dataService.query(USER, User.class).eq(USERNAME, username).findOne();</span>
+<span class="pc bpc" id="L178" title="1 of 2 branches missed.">		if (user == null)</span>
+		{
+<span class="nc" id="L180">			throw new MolgenisUserException(format(&quot;Unknown user [%s]&quot;, username));</span>
+		}
+
+<span class="fc" id="L183">		user.setPassword(newPassword);</span>
+<span class="fc" id="L184">		user.setChangePassword(false);</span>
+<span class="fc" id="L185">		dataService.update(USER, user);</span>
+
+<span class="fc" id="L187">		LOG.info(&quot;Changed password of user [{}]&quot;, username);</span>
+<span class="fc" id="L188">	}</span>
+
+	@Override
+	@RunAsSystem
+	public void resetPassword(String userEmail)
+	{
+<span class="fc" id="L194">		User user = dataService.query(USER, User.class).eq(EMAIL, userEmail).findOne();</span>
+
+<span class="fc bfc" id="L196" title="All 2 branches covered.">		if (user != null)</span>
+		{
+<span class="fc" id="L198">			String newPassword = idGenerator.generateId(SHORT_SECURE_RANDOM);</span>
+<span class="fc" id="L199">			user.setPassword(newPassword);</span>
+<span class="fc" id="L200">			user.setChangePassword(true);</span>
+<span class="fc" id="L201">			dataService.update(USER, user);</span>
+
+			// send password reseted email to user
+<span class="fc" id="L204">			SimpleMailMessage mailMessage = new SimpleMailMessage();</span>
+<span class="fc" id="L205">			mailMessage.setTo(user.getEmail());</span>
+<span class="fc" id="L206">			mailMessage.setSubject(&quot;Your new password request&quot;);</span>
+<span class="fc" id="L207">			mailMessage.setText(createPasswordResettedEmailText(newPassword));</span>
+<span class="fc" id="L208">			mailSender.send(mailMessage);</span>
+<span class="fc" id="L209">		}</span>
+		else
+		{
+<span class="fc" id="L212">			throw new MolgenisUserException(&quot;Invalid email address.&quot;);</span>
+		}
+<span class="fc" id="L214">	}</span>
+
+	private String createActivationEmailText(User user, URI activationUri)
+	{
+<span class="fc" id="L218">		String strBuilder =</span>
+<span class="fc" id="L219">				&quot;User registration for &quot; + appSettings.getTitle() + '\n' + &quot;User name: &quot; + user.getUsername()</span>
+<span class="fc" id="L220">						+ &quot; Full name: &quot; + user.getFirstName() + ' ' + user.getLastName() + '\n'</span>
+						+ &quot;In order to activate the user visit the following URL:&quot; + '\n' + activationUri + '\n' + '\n';
+<span class="fc" id="L222">		return strBuilder;</span>
+	}
+
+	private String createActivatedEmailText(User user, String appName)
+	{
+<span class="fc" id="L227">		String strBuilder =</span>
+<span class="fc" id="L228">				&quot;Dear &quot; + user.getFirstName() + &quot; &quot; + user.getLastName() + &quot;,\n\n&quot; + &quot;your registration request for &quot;</span>
+						+ appName + &quot; was approved.\n&quot; + &quot;Your account is now active.\n&quot;;
+<span class="fc" id="L230">		return strBuilder;</span>
+	}
+
+	private String createPasswordResettedEmailText(String newPassword)
+	{
+<span class="fc" id="L235">		String strBuilder = &quot;Somebody, probably you, requested a new password for &quot; + appSettings.getTitle() + &quot;.\n&quot;</span>
+				+ &quot;The new password is: &quot; + newPassword + '\n'
+				+ &quot;Note: we strongly recommend you reset your password after log-in!&quot;;
+<span class="fc" id="L238">		return strBuilder;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

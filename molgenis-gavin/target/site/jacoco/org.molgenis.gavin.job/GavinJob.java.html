@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GavinJob.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">gavin</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.gavin.job</a> &gt; <span class="el_source">GavinJob.java</span></div><h1>GavinJob.java</h1><pre class="source lang-java linenums">package org.molgenis.gavin.job;
+
+import com.google.common.collect.Multiset;
+import org.molgenis.core.ui.menu.MenuReaderService;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.gavin.job.input.Parser;
+import org.molgenis.gavin.job.input.model.LineType;
+import org.molgenis.jobs.Progress;
+import org.molgenis.jobs.TransactionalJob;
+import org.springframework.security.core.Authentication;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.io.File;
+import java.util.Arrays;
+
+import static java.io.File.separator;
+import static java.text.MessageFormat.format;
+import static org.molgenis.gavin.controller.GavinController.GAVIN_APP;
+import static org.molgenis.gavin.job.input.model.LineType.*;
+
+public class GavinJob extends TransactionalJob&lt;Void&gt;
+{
+	private final String jobIdentifier;
+	private final MenuReaderService menuReaderService;
+	private final FileStore fileStore;
+
+	private final RepositoryAnnotator cadd;
+	private final RepositoryAnnotator exac;
+	private final RepositoryAnnotator snpeff;
+	private final RepositoryAnnotator gavin;
+
+	private final File inputFile;
+	private final File processedInputFile;
+	private final File errorFile;
+	private final File caddOutputFile;
+	private final File exacOutputFile;
+	private final File snpeffOutputFile;
+	private final File gavinOutputFile;
+
+	private final Parser parser;
+	private final AnnotatorRunner annotatorRunner;
+	private final GavinJobExecution gavinJobExecution;
+
+	GavinJob(Progress progress, TransactionTemplate transactionTemplate, Authentication authentication,
+			String jobIdentifier, FileStore fileStore, MenuReaderService menuReaderService, RepositoryAnnotator cadd,
+			RepositoryAnnotator exac, RepositoryAnnotator snpeff, RepositoryAnnotator gavin, Parser parser,
+			AnnotatorRunner annotatorRunner, GavinJobExecution gavinJobExecution)
+	{
+<span class="fc" id="L51">		super(progress, transactionTemplate, authentication);</span>
+<span class="fc" id="L52">		this.fileStore = fileStore;</span>
+<span class="fc" id="L53">		this.jobIdentifier = jobIdentifier;</span>
+<span class="fc" id="L54">		this.menuReaderService = menuReaderService;</span>
+<span class="fc" id="L55">		this.cadd = cadd;</span>
+<span class="fc" id="L56">		this.exac = exac;</span>
+<span class="fc" id="L57">		this.snpeff = snpeff;</span>
+<span class="fc" id="L58">		this.gavin = gavin;</span>
+<span class="fc" id="L59">		this.annotatorRunner = annotatorRunner;</span>
+<span class="fc" id="L60">		this.parser = parser;</span>
+<span class="fc" id="L61">		this.gavinJobExecution = gavinJobExecution;</span>
+
+<span class="fc" id="L63">		inputFile = getFile(&quot;input&quot;, gavinJobExecution.getInputFileExtension());</span>
+<span class="fc" id="L64">		processedInputFile = getFile(&quot;temp-processed-input&quot;);</span>
+<span class="fc" id="L65">		errorFile = getFile(&quot;error&quot;, &quot;txt&quot;);</span>
+<span class="fc" id="L66">		caddOutputFile = getFile(&quot;temp-cadd&quot;);</span>
+<span class="fc" id="L67">		exacOutputFile = getFile(&quot;temp-exac&quot;);</span>
+<span class="fc" id="L68">		snpeffOutputFile = getFile(&quot;temp-snpeff&quot;);</span>
+<span class="fc" id="L69">		gavinOutputFile = getFile(&quot;gavin-result&quot;);</span>
+<span class="fc" id="L70">	}</span>
+
+	private File getFile(String name)
+	{
+<span class="fc" id="L74">		return getFile(name, &quot;vcf&quot;);</span>
+	}
+
+	private File getFile(String name, String extension)
+	{
+<span class="fc" id="L79">		return fileStore.getFile(</span>
+<span class="fc" id="L80">				format(&quot;{0}{1}{2}{3}{4}.{5}&quot;, GAVIN_APP, separator, jobIdentifier, separator, name, extension));</span>
+	}
+
+	@Override
+	public Void call(Progress progress) throws Exception
+	{
+<span class="fc" id="L86">		progress.setProgressMax(5);</span>
+
+<span class="fc" id="L88">		progress.progress(0, &quot;Preprocessing input file...&quot;);</span>
+<span class="fc" id="L89">		Multiset&lt;LineType&gt; lineTypes = parser.tryTransform(inputFile, processedInputFile, errorFile);</span>
+<span class="fc" id="L90">		progress.status(format(&quot;Parsed input file. Found {0} lines ({1} comments, {2} valid VCF, {3} valid CADD, &quot;</span>
+<span class="fc" id="L91">						+ &quot;{4} errors, {5} indels without CADD score, {6} skipped)&quot;, lineTypes.size(), lineTypes.count(COMMENT),</span>
+<span class="fc" id="L92">				lineTypes.count(VCF), lineTypes.count(CADD), lineTypes.count(ERROR), lineTypes.count(INDEL_NOCADD),</span>
+<span class="fc" id="L93">				lineTypes.count(SKIPPED)));</span>
+<span class="fc" id="L94">		gavinJobExecution.setLineTypes(lineTypes);</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">		if (lineTypes.contains(SKIPPED))</span>
+		{
+<span class="fc" id="L97">			throw new MolgenisDataException(</span>
+<span class="fc" id="L98">					format(&quot;Input file contains too many lines. Maximum is {0}.&quot;, Parser.MAX_LINES));</span>
+		}
+<span class="fc bfc" id="L100" title="All 2 branches covered.">		if (lineTypes.containsAll(Arrays.asList(CADD, VCF)))</span>
+		{
+<span class="fc" id="L102">			throw new MolgenisDataException(</span>
+					&quot;Input file contains mixed line types. Please use one type only, either VCF or CADD.&quot;);
+		}
+
+<span class="fc bfc" id="L106" title="All 4 branches covered.">		if (!lineTypes.contains(CADD) &amp;&amp; !lineTypes.contains(VCF))</span>
+		{
+<span class="fc" id="L108">			throw new MolgenisDataException(&quot;Not a single valid variant line found.&quot;);</span>
+		}
+
+<span class="fc" id="L111">		File exacInputFile = processedInputFile;</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">		if (!lineTypes.contains(CADD))</span>
+		{
+<span class="fc" id="L114">			progress.progress(1, &quot;Annotating with cadd...&quot;);</span>
+<span class="fc" id="L115">			annotatorRunner.runAnnotator(cadd, processedInputFile, caddOutputFile, true);</span>
+<span class="fc" id="L116">			exacInputFile = caddOutputFile;</span>
+		}
+		else
+		{
+<span class="fc" id="L120">			progress.progress(1, &quot;File already annotated by cadd, skipping cadd annotation.&quot;);</span>
+		}
+
+<span class="fc" id="L123">		progress.progress(2, &quot;Annotating with exac...&quot;);</span>
+<span class="fc" id="L124">		annotatorRunner.runAnnotator(exac, exacInputFile, exacOutputFile, true);</span>
+
+<span class="fc" id="L126">		progress.progress(3, &quot;Annotating with snpEff...&quot;);</span>
+<span class="fc" id="L127">		annotatorRunner.runAnnotator(snpeff, exacOutputFile, snpeffOutputFile, false);</span>
+
+<span class="fc" id="L129">		progress.progress(4, &quot;Annotating with gavin...&quot;);</span>
+<span class="fc" id="L130">		annotatorRunner.runAnnotator(gavin, snpeffOutputFile, gavinOutputFile, false);</span>
+
+<span class="fc" id="L132">		progress.progress(5, &quot;Result is ready for download.&quot;);</span>
+<span class="fc" id="L133">		String path = menuReaderService.getMenu().findMenuItemPath(GAVIN_APP);</span>
+		//TODO Filter
+		//TODO write to database
+		//TODO result -&gt; GeneNetwork
+		//TODO VCF pipe aware import
+<span class="fc" id="L138">		progress.setResultUrl(format(&quot;{0}/result/{1}&quot;, path, jobIdentifier));</span>
+
+<span class="fc" id="L140">		return null;</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

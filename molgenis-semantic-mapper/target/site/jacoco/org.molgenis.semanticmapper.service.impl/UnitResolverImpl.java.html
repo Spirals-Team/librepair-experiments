@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UnitResolverImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">semantic-mapper</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.semanticmapper.service.impl</a> &gt; <span class="el_source">UnitResolverImpl.java</span></div><h1>UnitResolverImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.semanticmapper.service.impl;
+
+import com.google.common.collect.Sets;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.lucene.queryparser.classic.QueryParser;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.ontology.core.model.Ontology;
+import org.molgenis.ontology.core.model.OntologyTerm;
+import org.molgenis.ontology.core.service.OntologyService;
+import org.molgenis.semanticmapper.service.UnitResolver;
+import org.molgenis.semanticmapper.utils.UnitHelper;
+import org.molgenis.semanticsearch.string.NGramDistanceAlgorithm;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.measure.quantity.Quantity;
+import javax.measure.unit.Unit;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import static java.util.Objects.requireNonNull;
+
+public class UnitResolverImpl implements UnitResolver
+{
+<span class="fc" id="L31">	private static final Logger LOG = LoggerFactory.getLogger(UnitResolverImpl.class);</span>
+
+	static final String UNIT_ONTOLOGY_IRI = &quot;http://purl.obolibrary.org/obo/uo.owl&quot;;
+
+	private final OntologyService ontologyService;
+
+	public UnitResolverImpl(OntologyService ontologyService)
+<span class="fc" id="L38">	{</span>
+<span class="fc" id="L39">		this.ontologyService = requireNonNull(ontologyService);</span>
+<span class="fc" id="L40">	}</span>
+
+	@Override
+	public Unit&lt;? extends Quantity&gt; resolveUnit(Attribute attr, EntityType entityType)
+	{
+<span class="fc" id="L45">		Set&lt;String&gt; tokens = tokenize(attr.getLabel(), attr.getDescription());</span>
+
+		// Option 1: Check if a term matches a unit
+<span class="fc" id="L48">		Unit&lt;? extends Quantity&gt; unit = null;</span>
+<span class="pc bpc" id="L49" title="1 of 2 branches missed.">		if (!tokens.isEmpty())</span>
+		{
+<span class="fc bfc" id="L51" title="All 2 branches covered.">			for (String term : tokens)</span>
+			{
+				try
+				{
+<span class="fc" id="L55">					unit = Unit.valueOf(term);</span>
+<span class="fc" id="L56">					break;</span>
+				}
+<span class="fc" id="L58">				catch (IllegalArgumentException e)</span>
+				{
+					// noop
+				}
+<span class="fc" id="L62">			}</span>
+
+<span class="fc bfc" id="L64" title="All 2 branches covered.">			if (isUnitEmpty(unit))</span>
+			{
+				// Option 2: Search unit ontology for a match
+<span class="fc" id="L67">				OntologyTerm unitOntologyTerm = resolveUnitOntologyTerm(</span>
+<span class="fc" id="L68">						tokens.stream().map(this::convertNumberToOntologyTermStyle).collect(Collectors.toSet()));</span>
+
+<span class="fc bfc" id="L70" title="All 2 branches covered.">				if (unitOntologyTerm != null)</span>
+				{
+					// try label + synonym labels until hit
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">					for (String synonymLabel : unitOntologyTerm.getSynonyms())</span>
+					{
+						try
+						{
+<span class="fc" id="L77">							unit = Unit.valueOf(synonymLabel);</span>
+<span class="fc" id="L78">							break;</span>
+						}
+<span class="fc" id="L80">						catch (IllegalArgumentException e)</span>
+						{
+							// noop
+						}
+<span class="fc" id="L84">					}</span>
+				}
+			}
+		}
+
+<span class="fc bfc" id="L89" title="All 2 branches covered.">		if (isUnitEmpty(unit))</span>
+		{
+<span class="fc" id="L91">			unit = null;</span>
+		}
+
+<span class="fc" id="L94">		return unit;</span>
+	}
+
+	private OntologyTerm resolveUnitOntologyTerm(Set&lt;String&gt; tokens)
+	{
+		OntologyTerm unitOntologyTerm;
+<span class="fc" id="L100">		Ontology unitOntology = ontologyService.getOntology(UNIT_ONTOLOGY_IRI);</span>
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">		if (unitOntology != null)</span>
+		{
+<span class="pc bpc" id="L103" title="1 of 2 branches missed.">			if (!tokens.isEmpty())</span>
+			{
+<span class="fc" id="L105">				List&lt;String&gt; ontologyIds = Arrays.asList(unitOntology.getId());</span>
+<span class="fc" id="L106">				List&lt;OntologyTerm&gt; ontologyTerms = ontologyService.findExcatOntologyTerms(ontologyIds, tokens,</span>
+						Integer.MAX_VALUE);
+<span class="pc bpc" id="L108" title="1 of 4 branches missed.">				if (ontologyTerms != null &amp;&amp; !ontologyTerms.isEmpty())</span>
+				{
+<span class="pc bpc" id="L110" title="1 of 2 branches missed.">					if (ontologyTerms.size() == 1)</span>
+					{
+<span class="fc" id="L112">						unitOntologyTerm = ontologyTerms.get(0);</span>
+					}
+					else
+					{
+						// multiple unit ontology terms detected, pick first
+<span class="nc" id="L117">						unitOntologyTerm = ontologyTerms.get(0);</span>
+					}
+				}
+				else
+				{
+<span class="fc" id="L122">					unitOntologyTerm = null;</span>
+				}
+<span class="fc" id="L124">			}</span>
+			else
+			{
+<span class="nc" id="L127">				unitOntologyTerm = null;</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L132">			LOG.warn(&quot;Unit resolver is missing required unit ontology [&quot; + UNIT_ONTOLOGY_IRI + &quot;]&quot;);</span>
+<span class="nc" id="L133">			unitOntologyTerm = null;</span>
+		}
+<span class="fc" id="L135">		return unitOntologyTerm;</span>
+	}
+
+	String convertNumberToOntologyTermStyle(String term)
+	{
+<span class="fc" id="L140">		term = UnitHelper.superscriptToNumber(term.replaceAll(&quot;\\^&quot;, StringUtils.EMPTY));</span>
+<span class="fc" id="L141">		Pattern pattern = Pattern.compile(&quot;\\w+(\\d+)&quot;);</span>
+<span class="fc" id="L142">		Matcher matcher = pattern.matcher(term);</span>
+
+<span class="fc bfc" id="L144" title="All 2 branches covered.">		if (matcher.find())</span>
+		{
+<span class="fc" id="L146">			String group = matcher.group(1);</span>
+<span class="fc" id="L147">			String modifiedPart = group.trim();</span>
+<span class="fc" id="L148">			modifiedPart = &quot;^[&quot; + modifiedPart + &quot;]&quot;;</span>
+<span class="fc" id="L149">			term = term.replaceAll(group, modifiedPart);</span>
+		}
+<span class="fc" id="L151">		return QueryParser.escape(term);</span>
+	}
+
+	Set&lt;String&gt; tokenize(String... terms)
+	{
+<span class="fc" id="L156">		Set&lt;String&gt; tokens = new HashSet&lt;&gt;();</span>
+<span class="pc bpc" id="L157" title="2 of 4 branches missed.">		if (terms != null &amp;&amp; terms.length &gt; 0)</span>
+		{
+<span class="fc" id="L159">			Sets.newHashSet(terms)</span>
+<span class="fc" id="L160">				.stream()</span>
+<span class="fc" id="L161">				.filter(StringUtils::isNotBlank)</span>
+<span class="fc" id="L162">				.map(StringUtils::lowerCase)</span>
+<span class="fc" id="L163">				.map(this::replaceIllegalChars)</span>
+<span class="fc" id="L164">				.forEach(term -&gt; tokens.addAll(Sets.newHashSet(term.split(&quot;\\s+&quot;))</span>
+<span class="fc" id="L165">												   .stream()</span>
+<span class="fc" id="L166">												   .filter(this::notPureNumberExpression)</span>
+<span class="fc" id="L167">												   .map(UnitHelper::numberToSuperscript)</span>
+<span class="fc" id="L168">												   .collect(Collectors.toSet())));</span>
+
+<span class="fc" id="L170">			tokens.removeAll(NGramDistanceAlgorithm.STOPWORDSLIST);</span>
+		}
+<span class="fc" id="L172">		return tokens;</span>
+	}
+
+	boolean isUnitEmpty(Unit&lt;? extends Quantity&gt; unit)
+	{
+<span class="fc bfc" id="L177" title="All 4 branches covered.">		return unit == null || StringUtils.isBlank(unit.toString());</span>
+	}
+
+	boolean notPureNumberExpression(String str)
+	{
+<span class="fc bfc" id="L182" title="All 2 branches covered.">		return !str.matches(&quot;\\d+&quot;);</span>
+	}
+
+	String replaceIllegalChars(String term)
+	{
+<span class="fc" id="L187">		return UnitHelper.superscriptToNumber(term).replaceAll(&quot;[^a-zA-Z0-9 /\\^]&quot;, &quot; &quot;);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

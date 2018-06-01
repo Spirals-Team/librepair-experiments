@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SortGenerator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-elasticsearch</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.elasticsearch.generator</a> &gt; <span class="el_source">SortGenerator.java</span></div><h1>SortGenerator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.elasticsearch.generator;
+
+import org.molgenis.data.UnknownAttributeException;
+import org.molgenis.data.elasticsearch.generator.model.Sort;
+import org.molgenis.data.elasticsearch.generator.model.SortDirection;
+import org.molgenis.data.elasticsearch.generator.model.SortOrder;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.util.UnexpectedEnumException;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.elasticsearch.FieldConstants.FIELD_NOT_ANALYZED;
+
+/**
+ * Generates Elasticsearch sorts from MOLGENIS sorts.
+ */
+@Component
+class SortGenerator
+{
+	private final DocumentIdGenerator documentIdGenerator;
+
+	SortGenerator(DocumentIdGenerator documentIdGenerator)
+<span class="fc" id="L30">	{</span>
+<span class="fc" id="L31">		this.documentIdGenerator = requireNonNull(documentIdGenerator);</span>
+<span class="fc" id="L32">	}</span>
+
+	Sort generateSort(org.molgenis.data.Sort sort, EntityType entityType)
+	{
+<span class="fc" id="L36">		Stream&lt;org.molgenis.data.Sort.Order&gt; orderStream = stream(sort.spliterator(), false);</span>
+<span class="fc" id="L37">		List&lt;SortOrder&gt; sortOrders = orderStream.map(order -&gt; this.toSortOrder(order, entityType)).collect(toList());</span>
+<span class="fc" id="L38">		return Sort.create(sortOrders);</span>
+	}
+
+	private SortOrder toSortOrder(org.molgenis.data.Sort.Order order, EntityType entityType)
+	{
+<span class="fc" id="L43">		String attributeName = order.getAttr();</span>
+<span class="pc bpc" id="L44" title="1 of 2 branches missed.">		if (attributeName == null)</span>
+		{
+<span class="nc" id="L46">			throw new IllegalArgumentException(&quot;Sort property is null&quot;);</span>
+		}
+<span class="fc" id="L48">		Attribute sortAttribute = entityType.getAttribute(attributeName);</span>
+<span class="pc bpc" id="L49" title="1 of 2 branches missed.">		if (sortAttribute == null)</span>
+		{
+<span class="nc" id="L51">			throw new UnknownAttributeException(entityType, attributeName);</span>
+		}
+<span class="fc" id="L53">		String sortField = getSortField(sortAttribute);</span>
+<span class="fc" id="L54">		SortDirection sortDirection = getSortDirection(order.getDirection());</span>
+<span class="fc" id="L55">		return SortOrder.create(sortField, sortDirection);</span>
+	}
+
+	private String getSortField(Attribute attr)
+	{
+		String sortField;
+<span class="fc" id="L61">		String fieldName = documentIdGenerator.generateId(attr);</span>
+<span class="fc" id="L62">		AttributeType dataType = attr.getDataType();</span>
+<span class="pc bpc" id="L63" title="3 of 5 branches missed.">		switch (dataType)</span>
+		{
+			case BOOL:
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case INT:
+			case LONG:
+				// use indexed field for sorting
+<span class="fc" id="L72">				sortField = fieldName;</span>
+<span class="fc" id="L73">				break;</span>
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+				// use raw field for sorting
+<span class="fc" id="L82">				sortField = fieldName + '.' + FIELD_NOT_ANALYZED;</span>
+<span class="fc" id="L83">				break;</span>
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case FILE:
+			case MREF:
+			case ONE_TO_MANY:
+			case XREF:
+				// use nested field for sorting
+<span class="nc" id="L91">				String refSortField = getSortField(attr.getRefEntity().getLabelAttribute());</span>
+<span class="nc" id="L92">				sortField = fieldName + '.' + refSortField;</span>
+<span class="nc" id="L93">				break;</span>
+			case COMPOUND:
+<span class="nc" id="L95">				throw new UnsupportedOperationException();</span>
+			default:
+<span class="nc" id="L97">				throw new UnexpectedEnumException(dataType);</span>
+		}
+<span class="fc" id="L99">		return sortField;</span>
+	}
+
+	private SortDirection getSortDirection(org.molgenis.data.Sort.Direction direction)
+	{
+<span class="pc bpc" id="L104" title="1 of 3 branches missed.">		switch (direction)</span>
+		{
+			case ASC:
+<span class="fc" id="L107">				return SortDirection.ASC;</span>
+			case DESC:
+<span class="fc" id="L109">				return SortDirection.DESC;</span>
+			default:
+<span class="nc" id="L111">				throw new UnexpectedEnumException(direction);</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProgressImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jobs</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.jobs</a> &gt; <span class="el_source">ProgressImpl.java</span></div><h1>ProgressImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.jobs;
+
+import org.joda.time.Duration;
+import org.joda.time.Period;
+import org.joda.time.format.PeriodFormatter;
+import org.joda.time.format.PeriodFormatterBuilder;
+import org.molgenis.jobs.model.JobExecution;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.mail.MailSender;
+import org.springframework.mail.SimpleMailMessage;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.jobs.model.JobExecution.Status.*;
+
+/**
+ * Tracks progress and stores it in a {@link JobExecution} entity.
+ * The entity may be a subclass of {@link JobExecution}.
+ */
+public class ProgressImpl implements Progress
+{
+<span class="fc" id="L25">	private static final Logger JOB_EXECUTION_LOG = LoggerFactory.getLogger(JobExecution.class);</span>
+
+	private final JobExecution jobExecution;
+	private final JobExecutionUpdater updater;
+	private final MailSender mailSender;
+
+	public ProgressImpl(JobExecution jobExecution, JobExecutionUpdater updater, MailSender mailSender)
+<span class="fc" id="L32">	{</span>
+<span class="fc" id="L33">		this.jobExecution = requireNonNull(jobExecution);</span>
+<span class="fc" id="L34">		this.mailSender = requireNonNull(mailSender);</span>
+<span class="fc" id="L35">		this.updater = requireNonNull(updater);</span>
+<span class="fc" id="L36">	}</span>
+
+	private void update()
+	{
+<span class="fc" id="L40">		updater.update(jobExecution);</span>
+<span class="fc" id="L41">	}</span>
+
+	@Override
+	public void start()
+	{
+<span class="fc" id="L46">		JobExecutionContext.set(jobExecution);</span>
+<span class="fc" id="L47">		JOB_EXECUTION_LOG.info(&quot;Execution started.&quot;);</span>
+<span class="fc" id="L48">		jobExecution.setStartDate(Instant.now());</span>
+<span class="fc" id="L49">		jobExecution.setStatus(RUNNING);</span>
+<span class="fc" id="L50">		update();</span>
+<span class="fc" id="L51">	}</span>
+
+	@Override
+	public void progress(int progress, String message)
+	{
+<span class="fc" id="L56">		jobExecution.setProgressInt(progress);</span>
+<span class="fc" id="L57">		jobExecution.setProgressMessage(message);</span>
+<span class="fc" id="L58">		JOB_EXECUTION_LOG.debug(&quot;progress ({}, {})&quot;, progress, message);</span>
+<span class="fc" id="L59">		update();</span>
+<span class="fc" id="L60">	}</span>
+
+	@Override
+	public void increment(int amount)
+	{
+<span class="fc" id="L65">		jobExecution.setProgressInt(jobExecution.getProgressInt() + amount);</span>
+<span class="fc" id="L66">		update();</span>
+<span class="fc" id="L67">	}</span>
+
+	@Override
+	public void success()
+	{
+<span class="fc" id="L72">		jobExecution.setEndDate(Instant.now());</span>
+<span class="fc" id="L73">		jobExecution.setStatus(SUCCESS);</span>
+<span class="fc" id="L74">		jobExecution.setProgressInt(jobExecution.getProgressMax());</span>
+<span class="fc" id="L75">		Duration yourDuration = Duration.millis(timeRunning());</span>
+<span class="fc" id="L76">		Period period = yourDuration.toPeriod();</span>
+<span class="fc" id="L77">		PeriodFormatter periodFormatter = new PeriodFormatterBuilder().appendDays()</span>
+<span class="fc" id="L78">																	  .appendSuffix(&quot;d &quot;)</span>
+<span class="fc" id="L79">																	  .appendHours()</span>
+<span class="fc" id="L80">																	  .appendSuffix(&quot;h &quot;)</span>
+<span class="fc" id="L81">																	  .appendMinutes()</span>
+<span class="fc" id="L82">																	  .appendSuffix(&quot;m &quot;)</span>
+<span class="fc" id="L83">																	  .appendSeconds()</span>
+<span class="fc" id="L84">																	  .appendSuffix(&quot;s &quot;)</span>
+<span class="fc" id="L85">																	  .appendMillis()</span>
+<span class="fc" id="L86">																	  .appendSuffix(&quot;ms &quot;)</span>
+<span class="fc" id="L87">																	  .toFormatter();</span>
+<span class="fc" id="L88">		String timeSpent = periodFormatter.print(period);</span>
+<span class="fc" id="L89">		JOB_EXECUTION_LOG.info(&quot;Execution successful. Time spent: {}&quot;, timeSpent);</span>
+<span class="fc" id="L90">		sendEmail(jobExecution.getSuccessEmail(), jobExecution.getType() + &quot; job succeeded.&quot;, jobExecution.getLog());</span>
+<span class="fc" id="L91">		update();</span>
+<span class="fc" id="L92">		JobExecutionContext.unset();</span>
+<span class="fc" id="L93">	}</span>
+
+	@Override
+	public void failed(Exception ex)
+	{
+<span class="fc" id="L98">		JOB_EXECUTION_LOG.error(&quot;Failed. &quot; + ex.getMessage(), ex);</span>
+<span class="fc" id="L99">		jobExecution.setEndDate(Instant.now());</span>
+<span class="fc" id="L100">		jobExecution.setStatus(FAILED);</span>
+<span class="fc" id="L101">		jobExecution.setProgressMessage(ex.getMessage());</span>
+<span class="fc" id="L102">		sendEmail(jobExecution.getFailureEmail(), jobExecution.getType() + &quot; job failed.&quot;, jobExecution.getLog());</span>
+<span class="fc" id="L103">		update();</span>
+<span class="fc" id="L104">		JobExecutionContext.unset();</span>
+<span class="fc" id="L105">	}</span>
+
+	private void sendEmail(String[] to, String subject, String text)
+	{
+<span class="fc bfc" id="L109" title="All 2 branches covered.">		if (to.length &gt; 0)</span>
+		{
+			try
+			{
+<span class="fc" id="L113">				SimpleMailMessage mailMessage = new SimpleMailMessage();</span>
+<span class="fc" id="L114">				mailMessage.setTo(to);</span>
+<span class="fc" id="L115">				mailMessage.setSubject(subject);</span>
+<span class="fc" id="L116">				mailMessage.setText(text);</span>
+<span class="fc" id="L117">				mailSender.send(mailMessage);</span>
+			}
+<span class="fc" id="L119">			catch (RuntimeException e)</span>
+			{
+<span class="fc" id="L121">				jobExecution.setProgressMessage(</span>
+<span class="fc" id="L122">						String.format(&quot;%s (Mail not sent: %s)&quot;, jobExecution.getProgressMessage(), e.getMessage()));</span>
+<span class="fc" id="L123">			}</span>
+		}
+<span class="fc" id="L125">	}</span>
+
+	@Override
+	public void canceled()
+	{
+<span class="fc" id="L130">		JOB_EXECUTION_LOG.warn(&quot;Canceled&quot;);</span>
+<span class="fc" id="L131">		jobExecution.setEndDate(Instant.now());</span>
+<span class="fc" id="L132">		jobExecution.setStatus(CANCELED);</span>
+<span class="fc" id="L133">		sendEmail(jobExecution.getFailureEmail(), jobExecution.getType() + &quot; job failed.&quot;, jobExecution.getLog());</span>
+<span class="fc" id="L134">		update();</span>
+<span class="fc" id="L135">		JobExecutionContext.unset();</span>
+<span class="fc" id="L136">	}</span>
+
+	@Override
+	public Long timeRunning()
+	{
+<span class="fc" id="L141">		Instant startDate = jobExecution.getStartDate();</span>
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">		if (startDate == null)</span>
+		{
+<span class="nc" id="L144">			return null;</span>
+		}
+<span class="fc" id="L146">		return ChronoUnit.MILLIS.between(startDate, Instant.now());</span>
+	}
+
+	@Override
+	public void setProgressMax(int max)
+	{
+<span class="fc" id="L152">		jobExecution.setProgressMax(max);</span>
+<span class="fc" id="L153">		update();</span>
+<span class="fc" id="L154">	}</span>
+
+	@Override
+	public void status(String message)
+	{
+<span class="fc" id="L159">		JOB_EXECUTION_LOG.info(message);</span>
+<span class="fc" id="L160">		jobExecution.setProgressMessage(message);</span>
+<span class="fc" id="L161">		update();</span>
+<span class="fc" id="L162">	}</span>
+
+	@Override
+	public void setResultUrl(String string)
+	{
+<span class="nc" id="L167">		jobExecution.setResultUrl(string);</span>
+<span class="nc" id="L168">	}</span>
+
+	@Override
+	public JobExecution getJobExecution()
+	{
+<span class="nc" id="L173">		return jobExecution;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

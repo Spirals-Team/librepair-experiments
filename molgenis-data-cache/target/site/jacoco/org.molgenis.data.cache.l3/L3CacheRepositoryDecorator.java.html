@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>L3CacheRepositoryDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-cache</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.cache.l3</a> &gt; <span class="el_source">L3CacheRepositoryDecorator.java</span></div><h1>L3CacheRepositoryDecorator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.cache.l3;
+
+import org.molgenis.data.*;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.data.transaction.TransactionInformation;
+import org.slf4j.Logger;
+
+import java.util.List;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.RepositoryCapability.CACHEABLE;
+import static org.slf4j.LoggerFactory.getLogger;
+
+/**
+ * Retrieves identifiers from the {@link L3Cache} based on a {@link Query}
+ * if {@link RepositoryCapability#CACHEABLE}.
+ * &lt;p&gt;
+ * Delegates to the underlying {@link Repository}
+ */
+public class L3CacheRepositoryDecorator extends AbstractRepositoryDecorator&lt;Entity&gt;
+{
+<span class="fc" id="L24">	private static final Logger LOG = getLogger(L3CacheRepositoryDecorator.class);</span>
+
+	private final L3Cache l3Cache;
+	private final boolean cacheable;
+
+	private final TransactionInformation transactionInformation;
+
+	private static final int MAX_PAGE_SIZE = 1000;
+
+	public L3CacheRepositoryDecorator(Repository&lt;Entity&gt; delegateRepository, L3Cache l3Cache,
+			TransactionInformation transactionInformation)
+	{
+<span class="fc" id="L36">		super(delegateRepository);</span>
+<span class="fc" id="L37">		this.l3Cache = requireNonNull(l3Cache);</span>
+<span class="fc" id="L38">		this.cacheable = delegateRepository.getCapabilities().containsAll(newArrayList(CACHEABLE));</span>
+<span class="fc" id="L39">		this.transactionInformation = requireNonNull(transactionInformation);</span>
+<span class="fc" id="L40">	}</span>
+
+	/**
+	 * Retrieves a {@link List} of identifiers from the {@link L3Cache} if the
+	 * {@link Repository} is cacheable and the {@link Query} is
+	 * limited (i.e. contains a pageSize) between 0 and MAX_PAGE_SIZE
+	 *
+	 * @param query The {@link Query}
+	 * @return A stream of {@link Entity}
+	 */
+	@Override
+	public Stream&lt;Entity&gt; findAll(Query&lt;Entity&gt; query)
+	{
+<span class="fc bfc" id="L53" title="All 2 branches covered.">		if (transactionInformation.isRepositoryCompletelyClean(getEntityType()))</span>
+		{
+			// FIXME page size for metadata is always 0, and batching is done by the postgres repository
+			// FIXME Only superusers are able to use the L3 cache for metadata
+<span class="pc bpc" id="L57" title="1 of 6 branches missed.">			if (cacheable &amp;&amp; query.getPageSize() &gt; 0 &amp;&amp; query.getPageSize() &lt;= MAX_PAGE_SIZE)</span>
+			{
+<span class="fc" id="L59">				List&lt;Object&gt; ids = l3Cache.get(delegate(), query);</span>
+<span class="fc" id="L60">				return delegate().findAll(ids.stream(), query.getFetch());</span>
+			}
+		}
+		else
+		{
+<span class="fc" id="L65">			LOG.debug(&quot;Repository is dirty: {}&quot;, getName());</span>
+		}
+<span class="fc" id="L67">		return delegate().findAll(query);</span>
+	}
+
+	/**
+	 * Retrieves a single identifier from the {@link L3Cache} if the
+	 * {@link Repository} is cacheable and hasn't been touched in this transaction.
+	 *
+	 * @param query The {@link Query}
+	 * @return A single {@link Entity} or null if not found
+	 */
+	@Override
+	public Entity findOne(Query&lt;Entity&gt; query)
+	{
+<span class="pc bpc" id="L80" title="1 of 4 branches missed.">		if (transactionInformation.isRepositoryCompletelyClean(getEntityType()) &amp;&amp; cacheable)</span>
+		{
+			// pageSize is irrelevant for findOne, would be a waste to cache them in different entries
+			// sort may affect which of the results is the first result, so cannot ignore that.
+<span class="fc" id="L84">			QueryImpl&lt;Entity&gt; cacheKey = new QueryImpl&lt;&gt;(query).setPageSize(1);</span>
+<span class="fc" id="L85">			List&lt;Object&gt; ids = l3Cache.get(delegate(), cacheKey);</span>
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">			if (ids.isEmpty())</span>
+			{
+<span class="nc" id="L88">				return null;</span>
+			}
+<span class="fc" id="L90">			return delegate().findOneById(ids.get(0), query.getFetch());</span>
+		}
+<span class="fc" id="L92">		return delegate().findOne(query);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

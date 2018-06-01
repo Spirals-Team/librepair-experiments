@@ -1,0 +1,400 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AggregateResponseParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-elasticsearch</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.elasticsearch</a> &gt; <span class="el_source">AggregateResponseParser.java</span></div><h1>AggregateResponseParser.java</h1><pre class="source lang-java linenums">package org.molgenis.data.elasticsearch;
+
+import com.google.common.collect.Iterables;
+import org.elasticsearch.search.aggregations.Aggregation;
+import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.aggregations.bucket.missing.Missing;
+import org.elasticsearch.search.aggregations.bucket.nested.Nested;
+import org.elasticsearch.search.aggregations.bucket.nested.ReverseNested;
+import org.elasticsearch.search.aggregations.bucket.terms.Terms;
+import org.elasticsearch.search.aggregations.metrics.cardinality.Cardinality;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.aggregation.AggregateResult;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.util.EntityUtils;
+
+import java.util.*;
+import java.util.stream.Stream;
+
+<span class="nc" id="L21">class AggregateResponseParser</span>
+{
+	@SuppressWarnings(&quot;unchecked&quot;)
+	AggregateResult parseAggregateResponse(Attribute aggAttr1, Attribute aggAttr2, Attribute aggAttrDistinct,
+			Aggregations aggs, DataService dataService)
+	{
+<span class="nc" id="L27">		Map&lt;Object, Object&gt; aggsMap = parseAggregations(aggAttr1, aggAttr2, aggAttrDistinct, aggs);</span>
+
+		// create labels
+<span class="nc" id="L30">		Map&lt;Object, Integer&gt; xLabelsIdx = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L31" title="All 2 branches missed.">		Map&lt;Object, Integer&gt; yLabelsIdx = aggAttr2 != null ? new HashMap&lt;&gt;() : null;</span>
+<span class="nc bnc" id="L32" title="All 2 branches missed.">		for (Map.Entry&lt;Object, Object&gt; entry : aggsMap.entrySet())</span>
+		{
+<span class="nc" id="L34">			Object xLabel = entry.getKey();</span>
+<span class="nc" id="L35">			xLabelsIdx.put(xLabel, null);</span>
+<span class="nc bnc" id="L36" title="All 2 branches missed.">			if (aggAttr2 != null)</span>
+			{
+<span class="nc" id="L38">				Map&lt;String, Object&gt; subAggsMap = (Map&lt;String, Object&gt;) entry.getValue();</span>
+<span class="nc bnc" id="L39" title="All 2 branches missed.">				for (Map.Entry&lt;String, Object&gt; subEntry : subAggsMap.entrySet())</span>
+<span class="nc" id="L40">					yLabelsIdx.put(subEntry.getKey(), null);</span>
+			}
+<span class="nc" id="L42">		}</span>
+
+<span class="nc" id="L44">		List&lt;Object&gt; xLabels = new ArrayList&lt;&gt;(xLabelsIdx.keySet());</span>
+<span class="nc" id="L45">		xLabels.sort(new AggregateLabelComparable());</span>
+<span class="nc" id="L46">		int nrXLabels = xLabels.size();</span>
+<span class="nc bnc" id="L47" title="All 2 branches missed.">		for (int i = 0; i &lt; nrXLabels; ++i)</span>
+<span class="nc" id="L48">			xLabelsIdx.put(xLabels.get(i), i);</span>
+
+		List&lt;Object&gt; yLabels;
+<span class="nc bnc" id="L51" title="All 2 branches missed.">		if (aggAttr2 != null)</span>
+		{
+<span class="nc" id="L53">			yLabels = new ArrayList&lt;&gt;(yLabelsIdx.keySet());</span>
+<span class="nc" id="L54">			yLabels.sort(new AggregateLabelComparable());</span>
+<span class="nc" id="L55">			int nrYLabels = yLabels.size();</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">			for (int i = 0; i &lt; nrYLabels; ++i)</span>
+<span class="nc" id="L57">				yLabelsIdx.put(yLabels.get(i), i);</span>
+<span class="nc" id="L58">		}</span>
+<span class="nc" id="L59">		else yLabels = Collections.emptyList();</span>
+
+		// create value matrix
+<span class="nc" id="L62">		List&lt;List&lt;Long&gt;&gt; matrix = new ArrayList&lt;&gt;(nrXLabels);</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">		int nrYLabels = aggAttr2 != null ? yLabels.size() : 1;</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">		for (int i = 0; i &lt; nrXLabels; ++i)</span>
+		{
+<span class="nc" id="L66">			List&lt;Long&gt; yValues = new ArrayList&lt;&gt;(nrYLabels);</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">			for (int j = 0; j &lt; nrYLabels; ++j)</span>
+<span class="nc" id="L68">				yValues.add(0L);</span>
+<span class="nc" id="L69">			matrix.add(yValues);</span>
+		}
+
+<span class="nc bnc" id="L72" title="All 2 branches missed.">		for (Map.Entry&lt;Object, Object&gt; entry : aggsMap.entrySet())</span>
+		{
+<span class="nc" id="L74">			Object key = entry.getKey();</span>
+<span class="nc" id="L75">			Integer idx = xLabelsIdx.get(key);</span>
+<span class="nc" id="L76">			List&lt;Long&gt; yValues = matrix.get(idx);</span>
+
+<span class="nc bnc" id="L78" title="All 2 branches missed.">			if (aggAttr2 != null)</span>
+			{
+<span class="nc" id="L80">				Map&lt;Object, Long&gt; subValues = (Map&lt;Object, Long&gt;) entry.getValue();</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">				for (Map.Entry&lt;Object, Long&gt; subEntry : subValues.entrySet())</span>
+				{
+<span class="nc" id="L83">					Object subKey = subEntry.getKey();</span>
+<span class="nc" id="L84">					Integer subIdx = yLabelsIdx.get(subKey);</span>
+<span class="nc" id="L85">					yValues.set(subIdx, subEntry.getValue());</span>
+<span class="nc" id="L86">				}</span>
+<span class="nc" id="L87">			}</span>
+			else
+			{
+<span class="nc" id="L90">				Long count = (Long) entry.getValue();</span>
+<span class="nc" id="L91">				yValues.set(0, count);</span>
+			}
+<span class="nc" id="L93">		}</span>
+
+<span class="nc bnc" id="L95" title="All 2 branches missed.">		if (AggregateUtils.isNestedType(aggAttr1))</span>
+		{
+<span class="nc" id="L97">			convertIdtoLabelLabels(xLabels, aggAttr1.getRefEntity(), dataService);</span>
+		}
+<span class="nc bnc" id="L99" title="All 4 branches missed.">		if (aggAttr2 != null &amp;&amp; AggregateUtils.isNestedType(aggAttr2))</span>
+		{
+<span class="nc" id="L101">			convertIdtoLabelLabels(yLabels, aggAttr2.getRefEntity(), dataService);</span>
+		}
+
+<span class="nc" id="L104">		return new AggregateResult(matrix, xLabels, yLabels);</span>
+	}
+
+	private Map&lt;Object, Object&gt; parseAggregations(Attribute aggAttr1, Attribute aggAttr2, Attribute aggAttrDistinct,
+			Aggregations aggs)
+	{
+<span class="nc" id="L110">		Map&lt;Object, Object&gt; counts = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L112">		boolean isAttr1Nested = AggregateUtils.isNestedType(aggAttr1);</span>
+<span class="nc" id="L113">		boolean isAttr1Nillable = aggAttr1.isNillable();</span>
+
+<span class="nc bnc" id="L115" title="All 2 branches missed.">		if (isAttr1Nested) aggs = removeNesting(aggs);</span>
+<span class="nc" id="L116">		Terms terms = getTermsAggregation(aggs, aggAttr1);</span>
+
+<span class="nc bnc" id="L118" title="All 2 branches missed.">		for (Terms.Bucket bucket : terms.getBuckets())</span>
+		{
+<span class="nc" id="L120">			Object key = bucket.getKey();</span>
+			Object value;
+<span class="nc bnc" id="L122" title="All 2 branches missed.">			if (aggAttr2 != null)</span>
+			{
+<span class="nc" id="L124">				Map&lt;Object, Long&gt; subCounts = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L126">				boolean isAttr2Nested = AggregateUtils.isNestedType(aggAttr2);</span>
+<span class="nc" id="L127">				boolean isAttr2Nillable = aggAttr2.isNillable();</span>
+
+<span class="nc" id="L129">				Aggregations subAggs = bucket.getAggregations();</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">				if (isAttr1Nested) subAggs = removeReverseNesting(subAggs);</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">				if (isAttr2Nested) subAggs = removeNesting(subAggs);</span>
+<span class="nc" id="L132">				Terms subTerms = getTermsAggregation(subAggs, aggAttr2);</span>
+
+<span class="nc bnc" id="L134" title="All 2 branches missed.">				for (Terms.Bucket subBucket : subTerms.getBuckets())</span>
+				{
+<span class="nc" id="L136">					Object subKey = subBucket.getKey();</span>
+					Long subValue;
+
+<span class="nc bnc" id="L139" title="All 2 branches missed.">					if (aggAttrDistinct != null)</span>
+					{
+<span class="nc" id="L141">						boolean isAttrDistinctNested = AggregateUtils.isNestedType(aggAttrDistinct);</span>
+
+<span class="nc" id="L143">						Aggregations distinctAggs = subBucket.getAggregations();</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">						if (isAttr2Nested) distinctAggs = removeReverseNesting(distinctAggs);</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">						if (isAttrDistinctNested) distinctAggs = removeNesting(distinctAggs);</span>
+<span class="nc" id="L146">						Cardinality distinctAgg = getDistinctAggregation(distinctAggs, aggAttrDistinct);</span>
+<span class="nc" id="L147">						subValue = distinctAgg.getValue();</span>
+<span class="nc" id="L148">					}</span>
+					else
+					{
+<span class="nc" id="L151">						subValue = subBucket.getDocCount();</span>
+					}
+
+<span class="nc" id="L154">					subCounts.put(subKey, subValue);</span>
+<span class="nc" id="L155">				}</span>
+
+<span class="nc bnc" id="L157" title="All 2 branches missed.">				if (isAttr2Nillable)</span>
+				{
+<span class="nc" id="L159">					Missing subMissing = getMissingAggregation(subAggs, aggAttr2);</span>
+<span class="nc" id="L160">					String subKey = null;</span>
+					Long subValue;
+
+<span class="nc bnc" id="L163" title="All 2 branches missed.">					if (aggAttrDistinct != null)</span>
+					{
+<span class="nc" id="L165">						boolean isAttrDistinctNested = AggregateUtils.isNestedType(aggAttrDistinct);</span>
+
+<span class="nc" id="L167">						Aggregations subDistinctAggs = subMissing.getAggregations();</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">						if (isAttr2Nested) subDistinctAggs = removeReverseNesting(subDistinctAggs);</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">						if (isAttrDistinctNested) subDistinctAggs = removeNesting(subDistinctAggs);</span>
+<span class="nc" id="L170">						Cardinality distinctAgg = getDistinctAggregation(subDistinctAggs, aggAttrDistinct);</span>
+<span class="nc" id="L171">						subValue = distinctAgg.getValue();</span>
+<span class="nc" id="L172">					}</span>
+					else
+					{
+<span class="nc" id="L175">						subValue = subMissing.getDocCount();</span>
+					}
+<span class="nc" id="L177">					subCounts.put(subKey, subValue);</span>
+				}
+<span class="nc" id="L179">				value = subCounts;</span>
+<span class="nc" id="L180">			}</span>
+			else
+			{
+<span class="nc bnc" id="L183" title="All 2 branches missed.">				if (aggAttrDistinct != null)</span>
+				{
+<span class="nc" id="L185">					boolean isAttrDistinctNested = AggregateUtils.isNestedType(aggAttrDistinct);</span>
+
+<span class="nc" id="L187">					Aggregations distinctAggs = bucket.getAggregations();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">					if (isAttr1Nested) distinctAggs = removeReverseNesting(distinctAggs);</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">					if (isAttrDistinctNested) distinctAggs = removeNesting(distinctAggs);</span>
+<span class="nc" id="L190">					Cardinality distinctAgg = getDistinctAggregation(distinctAggs, aggAttrDistinct);</span>
+<span class="nc" id="L191">					value = distinctAgg.getValue();</span>
+<span class="nc" id="L192">				}</span>
+				else
+				{
+<span class="nc" id="L195">					value = bucket.getDocCount();</span>
+				}
+			}
+<span class="nc" id="L198">			counts.put(key, value);</span>
+<span class="nc" id="L199">		}</span>
+
+<span class="nc bnc" id="L201" title="All 2 branches missed.">		if (isAttr1Nillable)</span>
+		{
+<span class="nc" id="L203">			Missing missing = getMissingAggregation(aggs, aggAttr1);</span>
+<span class="nc" id="L204">			String key = null;</span>
+			Object value;
+<span class="nc bnc" id="L206" title="All 2 branches missed.">			if (aggAttr2 != null)</span>
+			{
+<span class="nc" id="L208">				Map&lt;Object, Long&gt; subCounts = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L210">				boolean isAttr2Nested = AggregateUtils.isNestedType(aggAttr2);</span>
+<span class="nc" id="L211">				boolean isAttr2Nillable = aggAttr2.isNillable();</span>
+
+<span class="nc" id="L213">				Aggregations subAggs = missing.getAggregations();</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">				if (isAttr1Nested) subAggs = removeReverseNesting(subAggs);</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">				if (isAttr2Nested) subAggs = removeNesting(subAggs);</span>
+<span class="nc" id="L216">				Terms subTerms = getTermsAggregation(subAggs, aggAttr2);</span>
+
+<span class="nc bnc" id="L218" title="All 2 branches missed.">				for (Terms.Bucket subBucket : subTerms.getBuckets())</span>
+				{
+<span class="nc" id="L220">					Object subKey = subBucket.getKey();</span>
+					Long subValue;
+
+<span class="nc bnc" id="L223" title="All 2 branches missed.">					if (aggAttrDistinct != null)</span>
+					{
+<span class="nc" id="L225">						boolean isAttrDistinctNested = AggregateUtils.isNestedType(aggAttrDistinct);</span>
+
+<span class="nc" id="L227">						Aggregations distinctAggs = subBucket.getAggregations();</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">						if (isAttr2Nested) distinctAggs = removeReverseNesting(distinctAggs);</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">						if (isAttrDistinctNested) distinctAggs = removeNesting(distinctAggs);</span>
+<span class="nc" id="L230">						Cardinality distinctAgg = getDistinctAggregation(distinctAggs, aggAttrDistinct);</span>
+<span class="nc" id="L231">						subValue = distinctAgg.getValue();</span>
+<span class="nc" id="L232">					}</span>
+					else
+					{
+<span class="nc" id="L235">						subValue = subBucket.getDocCount();</span>
+					}
+
+<span class="nc" id="L238">					subCounts.put(subKey, subValue);</span>
+<span class="nc" id="L239">				}</span>
+
+<span class="nc bnc" id="L241" title="All 2 branches missed.">				if (isAttr2Nillable)</span>
+				{
+<span class="nc" id="L243">					Missing subMissing = getMissingAggregation(subAggs, aggAttr2);</span>
+<span class="nc" id="L244">					String subKey = null;</span>
+					Long subValue;
+
+<span class="nc bnc" id="L247" title="All 2 branches missed.">					if (aggAttrDistinct != null)</span>
+					{
+<span class="nc" id="L249">						boolean isAttrDistinctNested = AggregateUtils.isNestedType(aggAttrDistinct);</span>
+
+<span class="nc" id="L251">						Aggregations subDistinctAggs = subMissing.getAggregations();</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">						if (isAttr2Nested) subDistinctAggs = removeReverseNesting(subDistinctAggs);</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">						if (isAttrDistinctNested) subDistinctAggs = removeNesting(subDistinctAggs);</span>
+<span class="nc" id="L254">						Cardinality distinctAgg = getDistinctAggregation(subDistinctAggs, aggAttrDistinct);</span>
+<span class="nc" id="L255">						subValue = distinctAgg.getValue();</span>
+<span class="nc" id="L256">					}</span>
+					else
+					{
+<span class="nc" id="L259">						subValue = subMissing.getDocCount();</span>
+					}
+<span class="nc" id="L261">					subCounts.put(subKey, subValue);</span>
+				}
+<span class="nc" id="L263">				value = subCounts;</span>
+<span class="nc" id="L264">			}</span>
+			else
+			{
+<span class="nc bnc" id="L267" title="All 2 branches missed.">				if (aggAttrDistinct != null)</span>
+				{
+<span class="nc" id="L269">					boolean isAttrDistinctNested = AggregateUtils.isNestedType(aggAttrDistinct);</span>
+
+<span class="nc" id="L271">					Aggregations distinctAggs = missing.getAggregations();</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">					if (isAttr1Nested) distinctAggs = removeReverseNesting(distinctAggs);</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">					if (isAttrDistinctNested) distinctAggs = removeNesting(distinctAggs);</span>
+<span class="nc" id="L274">					Cardinality distinctAgg = getDistinctAggregation(distinctAggs, aggAttrDistinct);</span>
+<span class="nc" id="L275">					value = distinctAgg.getValue();</span>
+<span class="nc" id="L276">				}</span>
+				else
+				{
+<span class="nc" id="L279">					value = missing.getDocCount();</span>
+				}
+			}
+<span class="nc" id="L282">			counts.put(key, value);</span>
+		}
+<span class="nc" id="L284">		return counts;</span>
+	}
+
+	private Aggregations removeNesting(Aggregations aggs)
+	{
+<span class="nc bnc" id="L289" title="All 2 branches missed.">		if (Iterables.size(aggs) != 1)</span>
+		{
+<span class="nc" id="L291">			throw new RuntimeException(&quot;Invalid number of aggregations&quot;);</span>
+		}
+<span class="nc" id="L293">		Aggregation agg = aggs.iterator().next();</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">		if (!(agg instanceof Nested))</span>
+		{
+<span class="nc" id="L296">			throw new RuntimeException(&quot;Aggregation is not a nested aggregation&quot;);</span>
+		}
+<span class="nc" id="L298">		return ((Nested) agg).getAggregations();</span>
+	}
+
+	private Aggregations removeReverseNesting(Aggregations aggs)
+	{
+<span class="nc bnc" id="L303" title="All 2 branches missed.">		if (Iterables.size(aggs) != 1)</span>
+		{
+<span class="nc" id="L305">			throw new RuntimeException(&quot;Invalid number of aggregations&quot;);</span>
+		}
+<span class="nc" id="L307">		Aggregation agg = aggs.iterator().next();</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">		if (!(agg instanceof ReverseNested))</span>
+		{
+<span class="nc" id="L310">			throw new RuntimeException(&quot;Aggregation is not a reverse nested aggregation&quot;);</span>
+		}
+<span class="nc" id="L312">		return ((ReverseNested) agg).getAggregations();</span>
+	}
+
+	private Terms getTermsAggregation(Aggregations aggs, Attribute attr)
+	{
+<span class="nc" id="L317">		Aggregation agg = aggs.get(attr.getName() + FieldConstants.AGGREGATION_TERMS_POSTFIX);</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">		if (agg == null)</span>
+		{
+<span class="nc" id="L320">			throw new RuntimeException(&quot;Missing terms aggregation&quot;);</span>
+		}
+<span class="nc bnc" id="L322" title="All 2 branches missed.">		if (!(agg instanceof Terms))</span>
+		{
+<span class="nc" id="L324">			throw new RuntimeException(&quot;Aggregation is not a terms aggregation&quot;);</span>
+		}
+<span class="nc" id="L326">		return (Terms) agg;</span>
+	}
+
+	private Missing getMissingAggregation(Aggregations aggs, Attribute attr)
+	{
+<span class="nc" id="L331">		Aggregation agg = aggs.get(attr.getName() + FieldConstants.AGGREGATION_MISSING_POSTFIX);</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">		if (agg == null)</span>
+		{
+<span class="nc" id="L334">			throw new RuntimeException(&quot;Missing missing aggregation&quot;);</span>
+		}
+<span class="nc bnc" id="L336" title="All 2 branches missed.">		if (!(agg instanceof Missing))</span>
+		{
+<span class="nc" id="L338">			throw new RuntimeException(&quot;Aggregation is not a missing aggregation&quot;);</span>
+		}
+<span class="nc" id="L340">		return (Missing) agg;</span>
+	}
+
+	private Cardinality getDistinctAggregation(Aggregations aggs, Attribute attr)
+	{
+<span class="nc" id="L345">		Aggregation agg = aggs.get(attr.getName() + FieldConstants.AGGREGATION_DISTINCT_POSTFIX);</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">		if (agg == null)</span>
+		{
+<span class="nc" id="L348">			throw new RuntimeException(&quot;Missing cardinality aggregation&quot;);</span>
+		}
+<span class="nc bnc" id="L350" title="All 2 branches missed.">		if (!(agg instanceof Cardinality))</span>
+		{
+<span class="nc" id="L352">			throw new RuntimeException(&quot;Aggregation is not a cardinality aggregation&quot;);</span>
+		}
+<span class="nc" id="L354">		return (Cardinality) agg;</span>
+	}
+
+	/**
+	 * Convert matrix labels that contain ids to label attribute values. Keeps in mind that the last label on a axis is
+	 * &quot;Total&quot;.
+	 */
+	private void convertIdtoLabelLabels(List&lt;Object&gt; idLabels, EntityType entityType, DataService dataService)
+	{
+<span class="nc" id="L363">		final int nrLabels = idLabels.size();</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">		if (nrLabels &gt; 0)</span>
+		{
+			// Get entities for ids
+			// Use Iterables.transform to work around List&lt;String&gt; to Iterable&lt;Object&gt; cast error
+<span class="nc" id="L368">			Stream&lt;Object&gt; idLabelsWithoutNull = idLabels.stream()</span>
+<span class="nc" id="L369">														 .filter(Objects::nonNull)</span>
+<span class="nc" id="L370">														 .map(untypedIdLabel -&gt; EntityUtils.getTypedValue(</span>
+<span class="nc" id="L371">																 untypedIdLabel.toString(),</span>
+<span class="nc" id="L372">																 entityType.getIdAttribute()));</span>
+
+			// Map entity ids to labels
+<span class="nc" id="L375">			Map&lt;String, Entity&gt; idToLabelMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L376">			dataService.findAll(entityType.getId(), idLabelsWithoutNull)</span>
+<span class="nc" id="L377">					   .forEach(entity -&gt; idToLabelMap.put(entity.getIdValue().toString(), entity));</span>
+
+<span class="nc bnc" id="L379" title="All 2 branches missed.">			for (int i = 0; i &lt; nrLabels; ++i)</span>
+			{
+<span class="nc" id="L381">				Object id = idLabels.get(i);</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">				if (id != null) // missing value label</span>
+				{
+<span class="nc" id="L384">					idLabels.set(i, idToLabelMap.get(id.toString()));</span>
+				}
+			}
+		}
+<span class="nc" id="L388">	}</span>
+
+	private static class AggregateLabelComparable implements Comparator&lt;Object&gt;
+	{
+		@Override
+		public int compare(Object o1, Object o2)
+		{
+<span class="nc bnc" id="L395" title="All 4 branches missed.">			return o1 == null ? 1 : (</span>
+<span class="nc" id="L396">					o2 == null ? -1 : o1.toString().compareTo(o2.toString())); // FIXME check if this is allowed?</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OntologyImportService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">ontology-core</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.ontology.core.importer</a> &gt; <span class="el_source">OntologyImportService.java</span></div><h1>OntologyImportService.java</h1><pre class="source lang-java linenums">package org.molgenis.ontology.core.importer;
+
+import com.google.common.collect.Lists;
+import org.molgenis.data.*;
+import org.molgenis.data.importer.EntitiesValidationReport;
+import org.molgenis.data.importer.EntitiesValidationReportImpl;
+import org.molgenis.data.importer.EntityImportReport;
+import org.molgenis.data.importer.ImportService;
+import org.molgenis.data.meta.MetaDataService;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.ontology.core.importer.repository.OntologyFileExtensions;
+import org.molgenis.ontology.core.meta.OntologyMetaData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Set;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.util.EntityUtils.asStream;
+import static org.molgenis.ontology.core.meta.OntologyMetaData.ONTOLOGY;
+
+@Service
+public class OntologyImportService implements ImportService
+{
+<span class="nc" id="L31">	private static final Logger LOG = LoggerFactory.getLogger(OntologyImportService.class);</span>
+
+	private final DataService dataService;
+
+	public OntologyImportService(DataService dataService)
+<span class="nc" id="L36">	{</span>
+<span class="nc" id="L37">		this.dataService = requireNonNull(dataService);</span>
+<span class="nc" id="L38">	}</span>
+
+	@Override
+	@Transactional
+	public EntityImportReport doImport(RepositoryCollection source, DatabaseAction databaseAction, String packageId)
+	{
+<span class="nc bnc" id="L44" title="All 2 branches missed.">		if (databaseAction != DatabaseAction.ADD)</span>
+		{
+<span class="nc" id="L46">			throw new IllegalArgumentException(&quot;Only ADD is supported&quot;);</span>
+		}
+
+<span class="nc" id="L49">		EntityImportReport report = new EntityImportReport();</span>
+
+<span class="nc bnc" id="L51" title="All 2 branches missed.">		for (String entityTypeId : source.getEntityTypeIds())</span>
+		{
+<span class="nc" id="L53">			try (Repository&lt;Entity&gt; sourceRepository = source.getRepository(entityTypeId))</span>
+			{
+<span class="nc" id="L55">				Repository&lt;Entity&gt; targetRepository = dataService.getRepository(entityTypeId);</span>
+<span class="nc" id="L56">				Integer count = targetRepository.add(asStream(sourceRepository));</span>
+<span class="nc" id="L57">				report.addEntityCount(entityTypeId, count);</span>
+			}
+<span class="nc" id="L59">			catch (IOException e)</span>
+			{
+<span class="nc" id="L61">				LOG.error(&quot;&quot;, e);</span>
+<span class="nc" id="L62">				throw new MolgenisDataException(e);</span>
+<span class="nc" id="L63">			}</span>
+<span class="nc" id="L64">		}</span>
+<span class="nc" id="L65">		return report;</span>
+	}
+
+	@Override
+	public EntitiesValidationReport validateImport(File file, RepositoryCollection source)
+	{
+<span class="nc" id="L71">		EntitiesValidationReport report = new EntitiesValidationReportImpl();</span>
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">		if (source.getRepository(ONTOLOGY) == null)</span>
+<span class="nc" id="L74">			throw new MolgenisDataException(&quot;Exception Repository [&quot; + ONTOLOGY + &quot;] is missing&quot;);</span>
+
+<span class="nc" id="L76">		boolean ontologyExists = false;</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">		for (Entity ontologyEntity : source.getRepository(ONTOLOGY))</span>
+		{
+<span class="nc" id="L79">			String ontologyIRI = ontologyEntity.getString(OntologyMetaData.ONTOLOGY_IRI);</span>
+<span class="nc" id="L80">			String ontologyName = ontologyEntity.getString(OntologyMetaData.ONTOLOGY_NAME);</span>
+
+<span class="nc" id="L82">			Entity ontologyQueryEntity = dataService.findOne(ONTOLOGY,</span>
+<span class="nc" id="L83">					new QueryImpl&lt;&gt;().eq(OntologyMetaData.ONTOLOGY_IRI, ontologyIRI)</span>
+<span class="nc" id="L84">									 .or()</span>
+<span class="nc" id="L85">									 .eq(OntologyMetaData.ONTOLOGY_NAME, ontologyName));</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">			ontologyExists = ontologyQueryEntity != null;</span>
+<span class="nc" id="L87">		}</span>
+
+<span class="nc bnc" id="L89" title="All 2 branches missed.">		if (ontologyExists) throw new MolgenisDataException(&quot;The ontology you are trying to import already exists&quot;);</span>
+
+<span class="nc bnc" id="L91" title="All 2 branches missed.">		for (String entityTypeId : source.getEntityTypeIds())</span>
+		{
+<span class="nc bnc" id="L93" title="All 2 branches missed.">			report.getSheetsImportable().put(entityTypeId, !ontologyExists);</span>
+<span class="nc" id="L94">		}</span>
+<span class="nc" id="L95">		return report;</span>
+	}
+
+	@Override
+	public boolean canImport(File file, RepositoryCollection source)
+	{
+<span class="nc bnc" id="L101" title="All 2 branches missed.">		for (String extension : OntologyFileExtensions.getOntology())</span>
+		{
+<span class="nc bnc" id="L103" title="All 2 branches missed.">			if (file.getName().toLowerCase().endsWith(extension))</span>
+			{
+<span class="nc" id="L105">				return true;</span>
+			}
+<span class="nc" id="L107">		}</span>
+
+<span class="nc" id="L109">		return false;</span>
+	}
+
+	@Override
+	public int getOrder()
+	{
+<span class="nc" id="L115">		return 10;</span>
+	}
+
+	@Override
+	public List&lt;DatabaseAction&gt; getSupportedDatabaseActions()
+	{
+<span class="nc" id="L121">		return Lists.newArrayList(DatabaseAction.ADD);</span>
+	}
+
+	@Override
+	public boolean getMustChangeEntityName()
+	{
+<span class="nc" id="L127">		return false;</span>
+	}
+
+	@Override
+	public Set&lt;String&gt; getSupportedFileExtensions()
+	{
+<span class="nc" id="L133">		return OntologyFileExtensions.getOntology();</span>
+	}
+
+	@Override
+	public LinkedHashMap&lt;String, Boolean&gt; determineImportableEntities(MetaDataService metaDataService,
+			RepositoryCollection repositoryCollection, String defaultPackage)
+	{
+<span class="nc" id="L140">		return metaDataService.determineImportableEntities(repositoryCollection);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

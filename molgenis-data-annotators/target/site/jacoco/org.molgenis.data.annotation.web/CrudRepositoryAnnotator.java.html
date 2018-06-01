@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CrudRepositoryAnnotator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.web</a> &gt; <span class="el_source">CrudRepositoryAnnotator.java</span></div><h1>CrudRepositoryAnnotator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.web;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.DatabaseAction;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Repository;
+import org.molgenis.data.annotation.core.EffectCreatingAnnotator;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.annotation.core.exception.AnnotationException;
+import org.molgenis.data.annotation.core.exception.UiAnnotationException;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.security.permission.PermissionSystemService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.util.Iterator;
+
+import static java.util.Spliterator.ORDERED;
+import static java.util.Spliterators.spliteratorUnknownSize;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.DatabaseAction.UPDATE;
+import static org.molgenis.data.RepositoryCapability.WRITABLE;
+import static org.molgenis.data.annotation.core.utils.AnnotatorUtils.addAnnotatorMetaDataToRepositories;
+
+@Component
+public class CrudRepositoryAnnotator
+{
+<span class="nc" id="L30">	private static final Logger LOG = LoggerFactory.getLogger(CrudRepositoryAnnotator.class);</span>
+
+	private final DataService dataService;
+	private final PermissionSystemService permissionSystemService;
+	private EntityType targetMetaData;
+	private AttributeFactory attributeFactory;
+
+	public CrudRepositoryAnnotator(DataService dataService, PermissionSystemService permissionSystemService,
+			AttributeFactory attributeFactory)
+<span class="nc" id="L39">	{</span>
+<span class="nc" id="L40">		this.dataService = dataService;</span>
+<span class="nc" id="L41">		this.permissionSystemService = permissionSystemService;</span>
+<span class="nc" id="L42">		this.attributeFactory = attributeFactory;</span>
+<span class="nc" id="L43">	}</span>
+
+	public void annotate(RepositoryAnnotator annotator, Repository&lt;Entity&gt; repository)
+	{
+<span class="nc" id="L47">		annotate(annotator, repository, UPDATE);</span>
+<span class="nc" id="L48">	}</span>
+
+	private void annotate(RepositoryAnnotator annotator, Repository&lt;Entity&gt; repository, DatabaseAction action)
+	{
+<span class="nc bnc" id="L52" title="All 2 branches missed.">		if (!repository.getCapabilities().contains(WRITABLE))</span>
+		{
+<span class="nc" id="L54">			throw new UnsupportedOperationException(&quot;Currently only writable repositories can be annotated&quot;);</span>
+		}
+		try
+		{
+<span class="nc" id="L58">			EntityType entityType = dataService.getMeta().getEntityType(repository.getName());</span>
+
+<span class="nc bnc" id="L60" title="All 2 branches missed.">			if (annotator instanceof EffectCreatingAnnotator)</span>
+			{
+<span class="nc" id="L62">				targetMetaData = ((EffectCreatingAnnotator) annotator).getTargetEntityType(entityType);</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">				if (!dataService.hasRepository(targetMetaData.getId()))</span>
+				{
+					// add new entities to new repo
+<span class="nc" id="L66">					Repository externalRepository = dataService.getMeta().createRepository(targetMetaData);</span>
+<span class="nc" id="L67">					permissionSystemService.giveUserWriteMetaPermissions(targetMetaData);</span>
+<span class="nc" id="L68">					dataService.getMeta().updateEntityType(externalRepository.getEntityType());</span>
+
+<span class="nc" id="L70">					iterateOverEntitiesAndAnnotate(repository, annotator, DatabaseAction.ADD);</span>
+<span class="nc" id="L71">				}</span>
+				else
+				{
+<span class="nc" id="L74">					throw new UnsupportedOperationException(</span>
+<span class="nc" id="L75">							&quot;This entity has already been annotated with &quot; + annotator.getSimpleName());</span>
+				}
+			}
+			else
+			{
+<span class="nc" id="L80">				dataService.getMeta()</span>
+<span class="nc" id="L81">						   .updateEntityType(</span>
+<span class="nc" id="L82">								   addAnnotatorMetaDataToRepositories(entityType, attributeFactory, annotator));</span>
+
+<span class="nc" id="L84">				iterateOverEntitiesAndAnnotate(dataService.getRepository(repository.getName()), annotator, action);</span>
+			}
+		}
+<span class="nc" id="L87">		catch (AnnotationException ae)</span>
+		{
+<span class="nc" id="L89">			deleteResultEntity(annotator, targetMetaData);</span>
+<span class="nc" id="L90">			throw new UiAnnotationException(ae);</span>
+		}
+<span class="nc" id="L92">		catch (Exception e)</span>
+		{
+<span class="nc" id="L94">			deleteResultEntity(annotator, targetMetaData);</span>
+<span class="nc" id="L95">			throw new RuntimeException(e);</span>
+<span class="nc" id="L96">		}</span>
+<span class="nc" id="L97">	}</span>
+
+	private void deleteResultEntity(RepositoryAnnotator annotator, EntityType targetMetaData)
+	{
+		try
+		{
+<span class="nc bnc" id="L103" title="All 4 branches missed.">			if (annotator instanceof EffectCreatingAnnotator &amp;&amp; targetMetaData != null)</span>
+			{
+<span class="nc" id="L105">				dataService.deleteAll(targetMetaData.getId());</span>
+<span class="nc" id="L106">				dataService.getMeta().deleteEntityType(targetMetaData.getId());</span>
+			}
+		}
+<span class="nc" id="L109">		catch (Exception ex)</span>
+		{
+			// log the problem but throw the original exception
+<span class="nc" id="L112">			LOG.error(&quot;Failed to remove result entity: %s&quot;, targetMetaData.getId());</span>
+<span class="nc" id="L113">		}</span>
+<span class="nc" id="L114">	}</span>
+
+	/**
+	 * Iterates over all the entities within a repository and annotates.
+	 */
+	private void iterateOverEntitiesAndAnnotate(Repository&lt;Entity&gt; repository, RepositoryAnnotator annotator,
+			DatabaseAction action)
+	{
+<span class="nc" id="L122">		Iterator&lt;Entity&gt; it = annotator.annotate(repository);</span>
+
+		String entityTypeId;
+<span class="nc bnc" id="L125" title="All 2 branches missed.">		if (annotator instanceof EffectCreatingAnnotator)</span>
+		{
+<span class="nc" id="L127">			entityTypeId = ((EffectCreatingAnnotator) annotator).getTargetEntityType(repository.getEntityType())</span>
+<span class="nc" id="L128">																.getId();</span>
+		}
+		else
+		{
+<span class="nc" id="L132">			entityTypeId = repository.getName();</span>
+		}
+<span class="nc bnc" id="L134" title="All 3 branches missed.">		switch (action)</span>
+		{
+			case UPDATE:
+<span class="nc" id="L137">				dataService.update(entityTypeId, stream(spliteratorUnknownSize(it, ORDERED), false));</span>
+<span class="nc" id="L138">				break;</span>
+			case ADD:
+<span class="nc" id="L140">				dataService.add(entityTypeId, stream(spliteratorUnknownSize(it, ORDERED), false));</span>
+<span class="nc" id="L141">				break;</span>
+			default:
+<span class="nc" id="L143">				throw new UnsupportedOperationException();</span>
+		}
+<span class="nc" id="L145">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

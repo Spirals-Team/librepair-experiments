@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SystemEntityTypeRegistryImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-security</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.security</a> &gt; <span class="el_source">SystemEntityTypeRegistryImpl.java</span></div><h1>SystemEntityTypeRegistryImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.data.security;
+
+import com.google.common.collect.Maps;
+import org.molgenis.data.meta.SystemEntityType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.system.SystemEntityTypeRegistry;
+import org.molgenis.data.security.exception.EntityTypePermissionDeniedException;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.meta.AttributeType.COMPOUND;
+
+@Component
+public class SystemEntityTypeRegistryImpl implements SystemEntityTypeRegistry
+{
+<span class="fc" id="L23">	private static final Logger LOG = LoggerFactory.getLogger(SystemEntityTypeRegistryImpl.class);</span>
+
+	private final Map&lt;String, SystemEntityType&gt; systemEntityTypeMap;
+	private final UserPermissionEvaluator permissionService;
+
+	SystemEntityTypeRegistryImpl(UserPermissionEvaluator permissionService)
+<span class="fc" id="L29">	{</span>
+<span class="fc" id="L30">		this.permissionService = requireNonNull(permissionService);</span>
+<span class="fc" id="L31">		systemEntityTypeMap = Maps.newHashMap();</span>
+<span class="fc" id="L32">	}</span>
+
+	@Override
+	public SystemEntityType getSystemEntityType(String entityTypeId)
+	{
+<span class="fc" id="L37">		SystemEntityType systemEntityType = systemEntityTypeMap.get(entityTypeId);</span>
+<span class="fc bfc" id="L38" title="All 2 branches covered.">		if (systemEntityType != null)</span>
+		{
+<span class="fc" id="L40">			validateReadPermission(systemEntityType);</span>
+		}
+<span class="fc" id="L42">		return systemEntityType;</span>
+	}
+
+	@Override
+	public Stream&lt;SystemEntityType&gt; getSystemEntityTypes()
+	{
+<span class="fc" id="L48">		return systemEntityTypeMap.values().stream().filter(this::isReadAllowed);</span>
+	}
+
+	@Override
+	public boolean hasSystemEntityType(String entityTypeId)
+	{
+<span class="fc" id="L54">		return systemEntityTypeMap.containsKey(entityTypeId);</span>
+	}
+
+	@Override
+	public void addSystemEntityType(SystemEntityType systemEntityType)
+	{
+<span class="fc" id="L60">		String systemEntityTypeName = systemEntityType.getId();</span>
+<span class="fc" id="L61">		LOG.trace(&quot;Registering system entity [{}] ...&quot;, systemEntityTypeName);</span>
+<span class="fc" id="L62">		systemEntityTypeMap.put(systemEntityTypeName, systemEntityType);</span>
+<span class="fc" id="L63">	}</span>
+
+	@Override
+	public boolean hasSystemAttribute(String attrIdentifier)
+	{
+<span class="fc" id="L68">		return systemEntityTypeMap.values()</span>
+<span class="fc" id="L69">								  .stream()</span>
+<span class="fc" id="L70">								  .map(systemEntityType -&gt; getSystemAttribute(systemEntityType, attrIdentifier))</span>
+<span class="fc" id="L71">								  .anyMatch(Objects::nonNull);</span>
+	}
+
+	@Override
+	public Attribute getSystemAttribute(String attrIdentifier)
+	{
+<span class="fc" id="L77">		return systemEntityTypeMap.values().stream().map(systemEntityType -&gt;</span>
+		{
+<span class="fc" id="L79">			Attribute attribute = getSystemAttribute(systemEntityType, attrIdentifier);</span>
+<span class="fc bfc" id="L80" title="All 2 branches covered.">			if (attribute != null)</span>
+			{
+<span class="fc" id="L82">				validateReadPermission(systemEntityType);</span>
+			}
+<span class="fc" id="L84">			return attribute;</span>
+<span class="fc" id="L85">		}).filter(Objects::nonNull).findFirst().orElse(null);</span>
+	}
+
+	private boolean isReadAllowed(SystemEntityType systemEntityType)
+	{
+<span class="fc" id="L90">		return permissionService.hasPermission(new EntityTypeIdentity(systemEntityType.getId()),</span>
+				EntityTypePermission.READ_METADATA);
+	}
+
+	private void validateReadPermission(SystemEntityType systemEntityType)
+	{
+<span class="fc bfc" id="L96" title="All 2 branches covered.">		if (!isReadAllowed(systemEntityType))</span>
+		{
+<span class="fc" id="L98">			throw new EntityTypePermissionDeniedException(EntityTypePermission.READ_METADATA, systemEntityType);</span>
+		}
+<span class="fc" id="L100">	}</span>
+
+	private static Attribute getSystemAttribute(SystemEntityType systemEntityType, String attrIdentifier)
+	{
+<span class="fc" id="L104">		return getSystemAttributeRec(systemEntityType.getAllAttributes(), attrIdentifier);</span>
+	}
+
+	private static Attribute getSystemAttributeRec(Iterable&lt;Attribute&gt; attrs, String attrIdentifier)
+	{
+<span class="fc bfc" id="L109" title="All 2 branches covered.">		for (Attribute attr : attrs)</span>
+		{
+<span class="pc bpc" id="L111" title="1 of 4 branches missed.">			if (attr.getIdentifier() != null &amp;&amp; attr.getIdentifier().equals(attrIdentifier))</span>
+			{
+<span class="fc" id="L113">				return attr;</span>
+			}
+			else
+			{
+<span class="fc bfc" id="L117" title="All 2 branches covered.">				if (attr.getDataType() == COMPOUND)</span>
+				{
+<span class="fc" id="L119">					return getSystemAttributeRec(attr.getChildren(), attrIdentifier);</span>
+				}
+			}
+<span class="fc" id="L122">		}</span>
+<span class="fc" id="L123">		return null;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

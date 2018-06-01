@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExcelRepositoryCollection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-excel</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.excel</a> &gt; <span class="el_source">ExcelRepositoryCollection.java</span></div><h1>ExcelRepositoryCollection.java</h1><pre class="source lang-java linenums">package org.molgenis.data.excel;
+
+import com.google.common.collect.Lists;
+import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisInvalidFormatException;
+import org.molgenis.data.Repository;
+import org.molgenis.data.file.processor.CellProcessor;
+import org.molgenis.data.file.processor.TrimProcessor;
+import org.molgenis.data.file.support.FileRepositoryCollection;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.support.AbstractWritable.AttributeWriteMode;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.io.*;
+import java.util.Iterator;
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * Read an excel file and iterate through the sheets.
+ * &lt;p&gt;
+ * A sheet is exposed as a {@link org.molgenis.data.Repository} with the sheetname as the Repository name
+ */
+public class ExcelRepositoryCollection extends FileRepositoryCollection
+{
+	public static final String NAME = &quot;EXCEL&quot;;
+
+	private final String name;
+	private final Workbook workbook;
+
+	private EntityTypeFactory entityTypeFactory;
+	private AttributeFactory attributeFactory;
+
+	public ExcelRepositoryCollection(File file) throws IOException, MolgenisInvalidFormatException
+	{
+<span class="nc" id="L43">		this(file, new TrimProcessor());</span>
+<span class="nc" id="L44">	}</span>
+
+	public ExcelRepositoryCollection(File file, CellProcessor... cellProcessors)
+			throws IOException, MolgenisInvalidFormatException
+	{
+<span class="nc" id="L49">		this(file.getName(), new FileInputStream(file), cellProcessors);</span>
+<span class="nc" id="L50">	}</span>
+
+	public ExcelRepositoryCollection(String name, InputStream in, CellProcessor... cellProcessors)
+			throws IOException, MolgenisInvalidFormatException
+	{
+<span class="fc" id="L55">		super(ExcelFileExtensions.getExcel(), cellProcessors);</span>
+<span class="fc" id="L56">		this.name = name;</span>
+		try
+		{
+<span class="fc" id="L59">			workbook = WorkbookFactory.create(in);</span>
+		}
+<span class="nc" id="L61">		catch (InvalidFormatException e)</span>
+		{
+<span class="nc" id="L63">			throw new MolgenisInvalidFormatException(e.getMessage());</span>
+<span class="fc" id="L64">		}</span>
+<span class="fc" id="L65">	}</span>
+
+	@Override
+	public void init() throws IOException
+	{
+		// no operation
+<span class="nc" id="L71">	}</span>
+
+	@Override
+	public Iterable&lt;String&gt; getEntityTypeIds()
+	{
+<span class="fc" id="L76">		int count = getNumberOfSheets();</span>
+<span class="fc" id="L77">		List&lt;String&gt; sheetNames = Lists.newArrayListWithCapacity(count);</span>
+
+<span class="fc bfc" id="L79" title="All 2 branches covered.">		for (int i = 0; i &lt; count; i++)</span>
+		{
+<span class="fc" id="L81">			sheetNames.add(getSheetName(i));</span>
+		}
+
+<span class="fc" id="L84">		return sheetNames;</span>
+	}
+
+	@Override
+	public Repository&lt;Entity&gt; getRepository(String name)
+	{
+<span class="fc" id="L90">		Sheet poiSheet = workbook.getSheet(name);</span>
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">		if (poiSheet == null)</span>
+		{
+<span class="nc" id="L93">			return null;</span>
+		}
+
+<span class="fc" id="L96">		return new ExcelRepository(name, poiSheet, entityTypeFactory, attributeFactory, cellProcessors);</span>
+	}
+
+	public int getNumberOfSheets()
+	{
+<span class="fc" id="L101">		return workbook.getNumberOfSheets();</span>
+	}
+
+	public String getSheetName(int i)
+	{
+<span class="fc" id="L106">		return workbook.getSheetName(i);</span>
+	}
+
+	public ExcelRepository getSheet(int i)
+	{
+<span class="nc" id="L111">		Sheet poiSheet = workbook.getSheetAt(i);</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">		if (poiSheet == null)</span>
+		{
+<span class="nc" id="L114">			return null;</span>
+		}
+
+<span class="nc" id="L117">		return new ExcelRepository(name, poiSheet, entityTypeFactory, attributeFactory, cellProcessors);</span>
+	}
+
+	public ExcelSheetWriter createWritable(String entityTypeId, List&lt;Attribute&gt; attributes,
+			AttributeWriteMode attributeWriteMode)
+	{
+<span class="nc" id="L123">		Sheet sheet = workbook.createSheet(entityTypeId);</span>
+<span class="nc" id="L124">		return new ExcelSheetWriter(sheet, attributes, attributeWriteMode, cellProcessors);</span>
+	}
+
+	public ExcelSheetWriter createWritable(String entityTypeId, List&lt;String&gt; attributeNames)
+	{
+<span class="nc bnc" id="L129" title="All 2 branches missed.">		List&lt;Attribute&gt; attributes = attributeNames != null ? attributeNames.stream()</span>
+<span class="nc" id="L130">																			.map(attrName -&gt; attributeFactory.create()</span>
+<span class="nc" id="L131">																											 .setName(</span>
+																													 attrName))
+<span class="nc" id="L133">																			.collect(Collectors.toList()) : null;</span>
+
+<span class="nc" id="L135">		return createWritable(entityTypeId, attributes, AttributeWriteMode.ATTRIBUTE_NAMES);</span>
+	}
+
+	public void save(OutputStream out) throws IOException
+	{
+<span class="nc" id="L140">		workbook.write(out);</span>
+<span class="nc" id="L141">	}</span>
+
+	@Override
+	public String getName()
+	{
+<span class="nc" id="L146">		return NAME;</span>
+	}
+
+	@Override
+	public Iterator&lt;Repository&lt;Entity&gt;&gt; iterator()
+	{
+<span class="nc" id="L152">		return new Iterator&lt;Repository&lt;Entity&gt;&gt;()</span>
+<span class="nc" id="L153">		{</span>
+<span class="nc" id="L154">			Iterator&lt;String&gt; it = getEntityTypeIds().iterator();</span>
+
+			@Override
+			public boolean hasNext()
+			{
+<span class="nc" id="L159">				return it.hasNext();</span>
+			}
+
+			@Override
+			public Repository&lt;Entity&gt; next()
+			{
+<span class="nc" id="L165">				return getRepository(it.next());</span>
+			}
+
+		};
+	}
+
+	@Override
+	public boolean hasRepository(String name)
+	{
+<span class="nc bnc" id="L174" title="All 2 branches missed.">		if (null == name) return false;</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">		for (String s : getEntityTypeIds())</span>
+		{
+<span class="nc bnc" id="L177" title="All 2 branches missed.">			if (s.equals(name)) return true;</span>
+<span class="nc" id="L178">		}</span>
+<span class="nc" id="L179">		return false;</span>
+	}
+
+	@Override
+	public boolean hasRepository(EntityType entityType)
+	{
+<span class="nc" id="L185">		return hasRepository(entityType.getId());</span>
+	}
+
+	@Autowired
+	public void setEntityTypeFactory(EntityTypeFactory entityTypeFactory)
+	{
+<span class="fc" id="L191">		this.entityTypeFactory = entityTypeFactory;</span>
+<span class="fc" id="L192">	}</span>
+
+	@Autowired
+	public void setAttributeFactory(AttributeFactory attributeFactory)
+	{
+<span class="fc" id="L197">		this.attributeFactory = attributeFactory;</span>
+<span class="fc" id="L198">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

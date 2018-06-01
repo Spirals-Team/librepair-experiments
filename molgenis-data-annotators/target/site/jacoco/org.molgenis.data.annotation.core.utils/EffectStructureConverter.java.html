@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EffectStructureConverter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.utils</a> &gt; <span class="el_source">EffectStructureConverter.java</span></div><h1>EffectStructureConverter.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.utils;
+
+import com.google.common.collect.Iterators;
+import com.google.common.collect.Lists;
+import com.google.common.collect.PeekingIterator;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.Entity;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.support.DynamicEntity;
+import org.molgenis.data.vcf.VcfRepository;
+import org.molgenis.data.vcf.utils.VcfUtils;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static org.molgenis.data.meta.AttributeType.*;
+import static org.molgenis.data.vcf.utils.VcfWriterUtils.EFFECT;
+import static org.molgenis.data.vcf.utils.VcfWriterUtils.VARIANT;
+
+/**
+ * This class is used to convert from (MOLGENIS)SnpEff annotated VCF files
+ * to the entity structure expected by Effects annotators (for example GAVIN), and the other way around
+ * &lt;p&gt;
+ * An effect is an entity containing information about the combination of a variant (CHROM POS REF ALT(single allele)) in a specific GENE
+ */
+@Component
+public class EffectStructureConverter
+{
+	private EntityTypeFactory entityTypeFactory;
+	private AttributeFactory attributeFactory;
+
+	public EffectStructureConverter(EntityTypeFactory entityTypeFactory, AttributeFactory attributeFactory)
+<span class="fc" id="L43">	{</span>
+<span class="fc" id="L44">		this.entityTypeFactory = entityTypeFactory;</span>
+<span class="fc" id="L45">		this.attributeFactory = attributeFactory;</span>
+<span class="fc" id="L46">	}</span>
+
+	public Iterator&lt;Entity&gt; createVcfEntityStructure(Iterator&lt;Entity&gt; annotatedRecords)
+	{
+<span class="fc" id="L50">		return new Iterator&lt;Entity&gt;()</span>
+<span class="fc" id="L51">		{</span>
+<span class="fc" id="L52">			final PeekingIterator&lt;Entity&gt; effects = Iterators.peekingIterator(annotatedRecords);</span>
+
+			EntityType vcfVariantEntityType;
+			EntityType effectEntityType;
+
+			private void createResultEntityType(Entity effect, EntityType variantEMD)
+			{
+<span class="pc bpc" id="L59" title="1 of 4 branches missed.">				if (vcfVariantEntityType == null || effectEntityType == null)</span>
+				{
+<span class="fc" id="L61">					effectEntityType = effect.getEntityType();</span>
+<span class="fc" id="L62">					vcfVariantEntityType = EntityType.newInstance(variantEMD);</span>
+<span class="fc" id="L63">					vcfVariantEntityType.addAttribute(</span>
+<span class="fc" id="L64">							attributeFactory.create().setName(EFFECT).setDataType(MREF).setRefEntity(effectEntityType));</span>
+				}
+<span class="fc" id="L66">			}</span>
+
+			@Override
+			public boolean hasNext()
+			{
+<span class="fc" id="L71">				return effects.hasNext();</span>
+			}
+
+			@Override
+			public Entity next()
+			{
+<span class="fc" id="L77">				Entity variant = null;</span>
+				String peekedId;
+<span class="fc" id="L79">				List&lt;Entity&gt; effectsForVariant = Lists.newArrayList();</span>
+<span class="fc bfc" id="L80" title="All 2 branches covered.">				while (effects.hasNext())</span>
+				{
+<span class="fc" id="L82">					peekedId = effects.peek().getEntity(VARIANT).getIdValue().toString();</span>
+<span class="fc bfc" id="L83" title="All 4 branches covered.">					if (variant == null || variant.getIdValue().toString().equals(peekedId))</span>
+					{
+<span class="fc" id="L85">						Entity effect = effects.next();</span>
+<span class="fc" id="L86">						variant = effect.getEntity(VARIANT);</span>
+<span class="fc" id="L87">						effectsForVariant.add(effect);</span>
+<span class="fc" id="L88">					}</span>
+					else
+					{
+<span class="fc" id="L91">						return createVcfEntityStructureForSingleEntity(variant, effectsForVariant);</span>
+					}
+				}
+<span class="fc" id="L94">				return createVcfEntityStructureForSingleEntity(variant, effectsForVariant);</span>
+			}
+
+			private Entity createVcfEntityStructureForSingleEntity(Entity variant, List&lt;Entity&gt; effectsForVariant)
+			{
+<span class="fc" id="L99">				createResultEntityType(effectsForVariant.get(0), variant.getEntityType());</span>
+<span class="fc" id="L100">				Entity newVariant = new DynamicEntity(vcfVariantEntityType);</span>
+<span class="fc" id="L101">				newVariant.set(variant);</span>
+
+<span class="fc bfc" id="L103" title="All 2 branches covered.">				if (effectsForVariant.size() &gt; 1)</span>
+				{
+<span class="fc" id="L105">					newVariant.set(EFFECT, effectsForVariant);</span>
+				}
+				else
+				{
+					// is this an empty effect entity?
+<span class="fc" id="L110">					Entity effectForVariant = effectsForVariant.get(0);</span>
+
+<span class="pc bpc" id="L112" title="1 of 2 branches missed.">					if (!isEmptyEffectEntity(effectForVariant)) newVariant.set(EFFECT, effectsForVariant);</span>
+				}
+<span class="fc" id="L114">				return newVariant;</span>
+			}
+
+			private boolean isEmptyEffectEntity(Entity effectEntity)
+			{
+<span class="fc" id="L119">				boolean isEmpty = true;</span>
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">				for (Attribute effectAttribute : effectEntityType.getAtomicAttributes())</span>
+				{
+					//was an empty effect entity created? this entity can be recoginized by the fact that it only has a filled Id attribute and Variant xref
+<span class="fc bfc" id="L123" title="All 2 branches covered.">					if (effectAttribute.getName().equals(effectEntityType.getIdAttribute().getName()) || effectAttribute</span>
+<span class="fc" id="L124">							.getName()</span>
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">							.equals(VARIANT))</span>
+					{
+					}
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">					else if (effectEntity.get(effectAttribute.getName()) != null)</span>
+					{
+<span class="fc" id="L130">						isEmpty = false;</span>
+<span class="fc" id="L131">						break;</span>
+					}
+<span class="fc" id="L133">				}</span>
+<span class="fc" id="L134">				return isEmpty;</span>
+			}
+		};
+	}
+
+	public Stream&lt;Entity&gt; createVariantEffectStructure(String effectAttributeName, List&lt;Attribute&gt; annotatorAttributes,
+			VcfRepository vcfRepository)
+	{
+<span class="fc" id="L142">		EntityType inputVcfEntityType = vcfRepository.getEntityType();</span>
+<span class="fc" id="L143">		EntityType variantEntityType = removeAttributeAndCreateEntityTypeCopy(</span>
+<span class="fc" id="L144">				vcfRepository.getEntityType().getAttribute(EFFECT), vcfRepository.getEntityType());</span>
+
+<span class="fc" id="L146">		Attribute effectsAttribute = inputVcfEntityType.getAttribute(effectAttributeName);</span>
+<span class="fc" id="L147">		String description = getEffectDescription(effectsAttribute);</span>
+<span class="fc" id="L148">		String[] step1 = description.split(&quot;:&quot;);</span>
+<span class="fc" id="L149">		String effectEntityName = StringUtils.deleteWhitespace(step1[0]);</span>
+<span class="fc" id="L150">		String attributesString = step1[1].replaceAll(&quot;^\\s'|'$&quot;, &quot;&quot;);</span>
+
+<span class="fc" id="L152">		ArrayList&lt;Attribute&gt; effectFieldAttributeList = parseEffectAttributeDescription(attributesString,</span>
+				annotatorAttributes);
+<span class="fc" id="L154">		EntityType effectsEntityType = createEffectsEntityType(effectFieldAttributeList, effectEntityName,</span>
+				annotatorAttributes);
+
+<span class="fc" id="L157">		return StreamSupport.stream(vcfRepository.spliterator(), false)</span>
+<span class="fc" id="L158">							.flatMap(entity -&gt; createVariantEffectStructureForSingleEntity(effectsAttribute,</span>
+									effectFieldAttributeList, effectsEntityType, entity, variantEntityType));
+	}
+
+	private EntityType removeAttributeAndCreateEntityTypeCopy(Attribute attributeToParse, EntityType inputEntityType)
+	{
+<span class="fc" id="L164">		EntityType newMeta = EntityType.newInstance(inputEntityType);</span>
+<span class="fc" id="L165">		newMeta.removeAttribute(attributeToParse);</span>
+<span class="fc" id="L166">		return newMeta;</span>
+	}
+
+	private Stream&lt;Entity&gt; createVariantEffectStructureForSingleEntity(Attribute attributeToParse,
+			ArrayList&lt;Attribute&gt; effectFieldAttributeList, EntityType effectsEntityType, Entity vcfInputEntity,
+			EntityType variantEntityType)
+	{
+<span class="fc" id="L173">		List&lt;Entity&gt; results = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L174">		Entity variantEntity = new DynamicEntity(variantEntityType);</span>
+
+<span class="fc bfc" id="L176" title="All 2 branches covered.">		for (String attr : variantEntity.getAttributeNames())</span>
+		{
+<span class="pc bpc" id="L178" title="1 of 2 branches missed.">			if (vcfInputEntity.getEntityType().getAttribute(attr) != null)</span>
+			{
+<span class="fc" id="L180">				variantEntity.set(attr, vcfInputEntity.get(attr));</span>
+			}
+<span class="fc" id="L182">		}</span>
+
+<span class="fc" id="L184">		List&lt;Entity&gt; result = createEffectsEntitiesForSingleVariant(effectsEntityType, effectFieldAttributeList,</span>
+<span class="fc" id="L185">				vcfInputEntity.getString(attributeToParse.getName()), variantEntity).collect(Collectors.toList());</span>
+<span class="fc" id="L186">		results.addAll(result);</span>
+<span class="fc" id="L187">		return results.stream();</span>
+	}
+
+	//Get the description of the field that needs to be parsed to determine the attributes of the Entity based on the attribute
+	//for example, this line:
+	//##INFO=&lt;ID=EFFECT,Number=.,Type=String,Description=&quot;EFFECT annotations: 'Alt_Allele | Gene_Name | Annotation | Putative_impact | Gene_ID | Feature_type | Feature_ID | Transcript_biotype | Rank_total | HGVS_c | HGVS_p | cDNA_position | CDS_position | Protein_position | Distance_to_feature | Errors'&quot;&gt;
+	public String getEffectDescription(Attribute effectAttributeToParse)
+	{
+<span class="fc" id="L195">		String description = effectAttributeToParse.getDescription();</span>
+<span class="pc bpc" id="L196" title="1 of 2 branches missed.">		if (description.indexOf(':') == -1)</span>
+		{
+<span class="nc" id="L198">			throw new RuntimeException(&quot;Unable to create entitystructure, missing semicolon in description of [&quot;</span>
+<span class="nc" id="L199">					+ effectAttributeToParse.getName() + &quot;]&quot;);</span>
+		}
+<span class="fc" id="L201">		return description;</span>
+	}
+
+	private EntityType createEffectsEntityType(ArrayList&lt;Attribute&gt; effectFieldAttributeList, String effectEntityName,
+			List&lt;Attribute&gt; annotatorAttributes)
+	{
+<span class="fc" id="L207">		EntityType effectsEntityType = entityTypeFactory.create(effectEntityName);</span>
+<span class="fc" id="L208">		effectsEntityType.addAttribute(attributeFactory.create().setName(&quot;identifier&quot;).setAuto(true).setVisible(false),</span>
+				EntityType.AttributeRole.ROLE_ID);
+<span class="fc" id="L210">		effectsEntityType.addAttributes(effectFieldAttributeList);</span>
+
+<span class="fc" id="L212">		addAnnotatorAttributes(annotatorAttributes, effectsEntityType);</span>
+
+<span class="fc" id="L214">		effectsEntityType.addAttribute(attributeFactory.create().setName(VARIANT).setDataType(XREF));</span>
+
+<span class="fc" id="L216">		return effectsEntityType;</span>
+	}
+
+	//if annotator attributes not present add them
+	//check if needed for annotators running on an already annotated file
+	private void addAnnotatorAttributes(List&lt;Attribute&gt; annotatorAttributes, EntityType effectsEntityType)
+	{
+<span class="pc bpc" id="L223" title="1 of 2 branches missed.">		for (Attribute attr : annotatorAttributes)</span>
+		{
+<span class="nc bnc" id="L225" title="All 2 branches missed.">			if (effectsEntityType.getAttribute(attr.getName()) == null)</span>
+			{
+<span class="nc" id="L227">				effectsEntityType.addAttribute(attr);</span>
+			}
+<span class="nc" id="L229">		}</span>
+<span class="fc" id="L230">	}</span>
+
+	//Create a map of attributes based on the pipe separated attribute names in the description
+	private ArrayList&lt;Attribute&gt; parseEffectAttributeDescription(String attributesString,
+			List&lt;Attribute&gt; annotatorAttributes)
+	{
+<span class="fc" id="L236">		String[] attributeStrings = attributesString.replaceAll(&quot;^\\s'|'$&quot;, &quot;&quot;).split(&quot;\\|&quot;);</span>
+<span class="fc" id="L237">		ArrayList&lt;Attribute&gt; attributeList = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L238">		Map&lt;String, Attribute&gt; annotatorAttributeMap = VcfUtils.getAttributesMapFromList(annotatorAttributes);</span>
+<span class="fc bfc" id="L239" title="All 2 branches covered.">		for (String attribute : attributeStrings)</span>
+		{
+<span class="pc bpc" id="L241" title="1 of 2 branches missed.">			AttributeType type = annotatorAttributeMap.containsKey(attribute) ? annotatorAttributeMap.get(attribute)</span>
+<span class="pc" id="L242">																									 .getDataType() : STRING;</span>
+<span class="fc" id="L243">			Attribute attr = attributeFactory.create()</span>
+<span class="fc" id="L244">											 .setName(StringUtils.deleteWhitespace(attribute))</span>
+<span class="fc" id="L245">											 .setDataType(type)</span>
+<span class="fc" id="L246">											 .setLabel(attribute);</span>
+<span class="fc" id="L247">			attributeList.add(attr);</span>
+		}
+<span class="fc" id="L249">		return attributeList;</span>
+	}
+
+	private static Stream&lt;Entity&gt; createEffectsEntitiesForSingleVariant(EntityType effectsEntityType,
+			List&lt;Attribute&gt; effectFieldAttributeList, String descriptionFieldsString, Entity variantEntity)
+	{
+<span class="fc" id="L255">		List&lt;Entity&gt; listOfEffectsEntities = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L256" title="All 2 branches covered.">		if (descriptionFieldsString == null) return listOfEffectsEntities.stream();</span>
+<span class="fc" id="L257">		String[] descriptionFieldValues = descriptionFieldsString.split(&quot;,&quot;);</span>
+
+<span class="fc bfc" id="L259" title="All 2 branches covered.">		for (String descriptionFieldValue : descriptionFieldValues)</span>
+		{
+<span class="fc" id="L261">			String[] descriptionFieldPartValues = descriptionFieldValue.split(&quot;\\|&quot;, -1);</span>
+
+<span class="fc" id="L263">			DynamicEntity singleEffectsEntity = new DynamicEntity(effectsEntityType);</span>
+<span class="fc" id="L264">			int i = 0;</span>
+<span class="fc bfc" id="L265" title="All 2 branches covered.">			for (Attribute attribute : effectFieldAttributeList)</span>
+			{
+<span class="pc bpc" id="L267" title="1 of 2 branches missed.">				if (i &gt; descriptionFieldPartValues.length)</span>
+				{
+<span class="nc" id="L269">					throw new RuntimeException(</span>
+							&quot;Description of the attribute contains more values (pipe separated values) than the actual value&quot;);
+				}
+<span class="fc" id="L272">				singleEffectsEntity.set(attribute.getName(), descriptionFieldPartValues[i]);</span>
+<span class="fc" id="L273">				i++;</span>
+<span class="fc" id="L274">			}</span>
+<span class="fc" id="L275">			singleEffectsEntity.set(VARIANT, variantEntity);</span>
+<span class="fc" id="L276">			listOfEffectsEntities.add(singleEffectsEntity);</span>
+		}
+<span class="fc" id="L278">		return listOfEffectsEntities.stream();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

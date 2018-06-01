@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AnnotatorController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">dataexplorer</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.dataexplorer.controller</a> &gt; <span class="el_source">AnnotatorController.java</span></div><h1>AnnotatorController.java</h1><pre class="source lang-java linenums">package org.molgenis.dataexplorer.controller;
+
+import com.google.common.collect.Lists;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Repository;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.annotation.web.AnnotationService;
+import org.molgenis.data.annotation.web.meta.AnnotationJobExecution;
+import org.molgenis.data.annotation.web.meta.AnnotationJobExecutionFactory;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.EntityTypePermission;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.security.user.UserAccountService;
+import org.molgenis.web.ErrorMessageResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.*;
+
+import javax.servlet.http.HttpServletRequest;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.stream.Collectors;
+
+import static org.molgenis.data.meta.AttributeType.COMPOUND;
+import static org.molgenis.data.meta.model.Package.PACKAGE_SEPARATOR;
+import static org.molgenis.dataexplorer.controller.AnnotatorController.URI;
+import static org.molgenis.settings.SettingsPackage.PACKAGE_SETTINGS;
+
+@Controller
+@RequestMapping(URI)
+public class AnnotatorController
+{
+<span class="nc" id="L40">	private static final Logger LOG = LoggerFactory.getLogger(AnnotatorController.class);</span>
+
+	public static final String URI = &quot;/annotators&quot;;
+	private final DataService dataService;
+	private final AnnotationService annotationService;
+	private final UserPermissionEvaluator permissionService;
+	private final UserAccountService userAccountService;
+	private final AnnotationJobFactory annotationJobFactory;
+	private final ExecutorService taskExecutor;
+	private final AnnotationJobExecutionFactory annotationJobExecutionFactory;
+
+	public AnnotatorController(DataService dataService, AnnotationService annotationService,
+			UserPermissionEvaluator permissionService, UserAccountService userAccountService,
+			AnnotationJobFactory annotationJobFactory, ExecutorService taskExecutor,
+			AnnotationJobExecutionFactory annotationJobExecutionFactory)
+<span class="nc" id="L55">	{</span>
+<span class="nc" id="L56">		this.dataService = dataService;</span>
+<span class="nc" id="L57">		this.annotationService = annotationService;</span>
+<span class="nc" id="L58">		this.permissionService = permissionService;</span>
+<span class="nc" id="L59">		this.userAccountService = userAccountService;</span>
+<span class="nc" id="L60">		this.annotationJobFactory = annotationJobFactory;</span>
+<span class="nc" id="L61">		this.taskExecutor = taskExecutor;</span>
+<span class="nc" id="L62">		this.annotationJobExecutionFactory = annotationJobExecutionFactory;</span>
+<span class="nc" id="L63">	}</span>
+
+	/**
+	 * Gets a map of all available annotators.
+	 *
+	 * @return annotatorMap
+	 */
+	@PostMapping(&quot;/get-available-annotators&quot;)
+	@ResponseBody
+	public Map&lt;String, Map&lt;String, Object&gt;&gt; getMapOfAvailableAnnotators(@RequestBody String dataSetName)
+	{
+<span class="nc" id="L74">		Map&lt;String, Map&lt;String, Object&gt;&gt; annotatorMap = setMapOfAnnotators(dataSetName);</span>
+<span class="nc" id="L75">		return annotatorMap;</span>
+	}
+
+	/**
+	 * Annotates an entity based on selected entity and selected annotators. Creates a copy of the entity dataset if
+	 * option is ticked by the user.
+	 *
+	 * @return repositoryName
+	 */
+	@PostMapping(&quot;/annotate-data&quot;)
+	@ResponseBody
+	public String annotateData(HttpServletRequest request,
+			@RequestParam(value = &quot;annotatorNames&quot;, required = false) String[] annotatorNames,
+			@RequestParam(&quot;dataset-identifier&quot;) String entityTypeId)
+	{
+<span class="nc" id="L90">		Repository&lt;Entity&gt; repository = dataService.getRepository(entityTypeId);</span>
+<span class="nc bnc" id="L91" title="All 4 branches missed.">		if (annotatorNames != null &amp;&amp; repository != null)</span>
+		{
+<span class="nc" id="L93">			scheduleAnnotatorRun(repository.getEntityType().getId(), annotatorNames);</span>
+		}
+<span class="nc" id="L95">		return entityTypeId;</span>
+	}
+
+	public String scheduleAnnotatorRun(String entityTypeId, String[] annotatorNames)
+	{
+<span class="nc" id="L100">		AnnotationJobExecution annotationJobExecution = annotationJobExecutionFactory.create();</span>
+<span class="nc" id="L101">		annotationJobExecution.setUser(userAccountService.getCurrentUser());</span>
+<span class="nc" id="L102">		annotationJobExecution.setTargetName(entityTypeId);</span>
+<span class="nc" id="L103">		annotationJobExecution.setAnnotators(String.join(&quot;,&quot;, (CharSequence[]) annotatorNames));</span>
+<span class="nc" id="L104">		annotationJobExecution.setResultUrl(&quot;/menu/main/dataexplorer?entity=&quot; + entityTypeId);</span>
+<span class="nc" id="L105">		AnnotationJob job = annotationJobFactory.createJob(annotationJobExecution);</span>
+<span class="nc" id="L106">		taskExecutor.submit(job);</span>
+<span class="nc" id="L107">		return annotationJobExecution.getIdentifier();</span>
+	}
+
+	/**
+	 * Sets a map of annotators, whether they can be used by the selected data set.
+	 *
+	 * @return mapOfAnnotators
+	 */
+	private Map&lt;String, Map&lt;String, Object&gt;&gt; setMapOfAnnotators(String dataSetName)
+	{
+<span class="nc" id="L117">		Map&lt;String, Map&lt;String, Object&gt;&gt; mapOfAnnotators = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L119" title="All 2 branches missed.">		if (dataSetName != null)</span>
+		{
+<span class="nc" id="L121">			EntityType entityType = dataService.getEntityType(dataSetName);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">			for (RepositoryAnnotator annotator : annotationService.getAllAnnotators())</span>
+			{
+<span class="nc" id="L124">				List&lt;Attribute&gt; outputAttrs = annotator.getOutputAttributes();</span>
+<span class="nc" id="L125">				outputAttrs = getAtomicAttributesFromList(outputAttrs);</span>
+<span class="nc" id="L126">				Map&lt;String, Object&gt; map = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L127">				map.put(&quot;description&quot;, annotator.getDescription());</span>
+<span class="nc" id="L128">				map.put(&quot;canAnnotate&quot;, annotator.canAnnotate(entityType));</span>
+<span class="nc" id="L129">				map.put(&quot;inputAttributes&quot;, createAttrsResponse(annotator.getRequiredAttributes()));</span>
+<span class="nc" id="L130">				map.put(&quot;inputAttributeTypes&quot;, toMap(annotator.getRequiredAttributes()));</span>
+<span class="nc" id="L131">				map.put(&quot;outputAttributes&quot;, createAttrsResponse(outputAttrs));</span>
+<span class="nc" id="L132">				map.put(&quot;outputAttributeTypes&quot;, toMap(annotator.getOutputAttributes()));</span>
+
+<span class="nc" id="L134">				String settingsEntityName = PACKAGE_SETTINGS + PACKAGE_SEPARATOR + annotator.getInfo().getCode();</span>
+<span class="nc" id="L135">				map.put(&quot;showSettingsButton&quot;,</span>
+<span class="nc" id="L136">						permissionService.hasPermission(new EntityTypeIdentity(settingsEntityName),</span>
+								EntityTypePermission.UPDATE_DATA));
+<span class="nc" id="L138">				mapOfAnnotators.put(annotator.getSimpleName(), map);</span>
+<span class="nc" id="L139">			}</span>
+		}
+<span class="nc" id="L141">		return mapOfAnnotators;</span>
+	}
+
+	private List&lt;Map&lt;String, Object&gt;&gt; createAttrsResponse(List&lt;Attribute&gt; inputMetaData)
+	{
+<span class="nc" id="L146">		return inputMetaData.stream().map(attr -&gt;</span>
+		{
+<span class="nc" id="L148">			Map&lt;String, Object&gt; attrMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L149">			attrMap.put(&quot;name&quot;, attr.getName());</span>
+<span class="nc" id="L150">			attrMap.put(&quot;description&quot;, attr.getDescription());</span>
+<span class="nc" id="L151">			return attrMap;</span>
+<span class="nc" id="L152">		}).collect(Collectors.toList());</span>
+	}
+
+	private List&lt;Attribute&gt; getAtomicAttributesFromList(List&lt;Attribute&gt; outputAttrs)
+	{
+<span class="nc bnc" id="L157" title="All 4 branches missed.">		if (outputAttrs.size() == 1 &amp;&amp; outputAttrs.get(0).getDataType() == COMPOUND)</span>
+		{
+<span class="nc" id="L159">			return getAtomicAttributesFromList(Lists.newArrayList(outputAttrs.get(0).getChildren()));</span>
+		}
+		else
+		{
+<span class="nc" id="L163">			return outputAttrs;</span>
+		}
+	}
+
+	private Map&lt;String, String&gt; toMap(Iterable&lt;Attribute&gt; attrs)
+	{
+<span class="nc" id="L169">		Map&lt;String, String&gt; result = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">		for (Attribute attr : attrs)</span>
+		{
+<span class="nc" id="L172">			result.put(attr.getName(), attr.getDataType().toString());</span>
+<span class="nc" id="L173">		}</span>
+<span class="nc" id="L174">		return result;</span>
+	}
+
+	@ExceptionHandler(RuntimeException.class)
+	@ResponseBody
+	@ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+	public ErrorMessageResponse handleRuntimeException(RuntimeException e)
+	{
+<span class="nc" id="L182">		LOG.error(e.getMessage(), e);</span>
+<span class="nc" id="L183">		return new ErrorMessageResponse(new ErrorMessageResponse.ErrorMessage(</span>
+<span class="nc" id="L184">				&quot;An error occurred. Please contact the administrator.&lt;br /&gt;Message:&quot; + e.getMessage()));</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

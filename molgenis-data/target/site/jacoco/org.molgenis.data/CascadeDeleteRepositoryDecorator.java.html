@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CascadeDeleteRepositoryDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data</a> &gt; <span class="el_source">CascadeDeleteRepositoryDecorator.java</span></div><h1>CascadeDeleteRepositoryDecorator.java</h1><pre class="source lang-java linenums">package org.molgenis.data;
+
+import com.google.common.collect.Iterators;
+import org.molgenis.data.meta.model.Attribute;
+
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.support.EntityTypeUtils.isSingleReferenceType;
+import static org.molgenis.data.util.EntityUtils.asStream;
+
+public class CascadeDeleteRepositoryDecorator extends AbstractRepositoryDecorator&lt;Entity&gt;
+{
+	private static final int BATCH_SIZE = 1000;
+
+	private final DataService dataService;
+
+	public CascadeDeleteRepositoryDecorator(Repository&lt;Entity&gt; delegateRepository, DataService dataService)
+	{
+<span class="fc" id="L20">		super(delegateRepository);</span>
+<span class="fc" id="L21">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L22">	}</span>
+
+	@Override
+	public void delete(Entity entity)
+	{
+<span class="fc bfc" id="L27" title="All 2 branches covered.">		if (hasCascadeDeleteAttributes())</span>
+		{
+<span class="fc" id="L29">			prepareCascadeDeletes(entity);</span>
+<span class="fc" id="L30">			super.delete(entity);</span>
+<span class="fc" id="L31">			handleCascadeDeletes(entity);</span>
+		}
+		else
+		{
+<span class="fc" id="L35">			delegate().delete(entity);</span>
+		}
+<span class="fc" id="L37">	}</span>
+
+	@Override
+	public void deleteById(Object id)
+	{
+<span class="fc bfc" id="L42" title="All 2 branches covered.">		if (hasCascadeDeleteAttributes())</span>
+		{
+<span class="fc" id="L44">			Entity entity = findOneById(id);</span>
+<span class="fc" id="L45">			super.deleteById(id);</span>
+<span class="fc" id="L46">			handleCascadeDeletes(entity);</span>
+<span class="fc" id="L47">		}</span>
+		else
+		{
+<span class="fc" id="L50">			delegate().deleteById(id);</span>
+		}
+<span class="fc" id="L52">	}</span>
+
+	@Override
+	public void deleteAll()
+	{
+<span class="fc bfc" id="L57" title="All 2 branches covered.">		if (hasCascadeDeleteAttributes())</span>
+		{
+<span class="fc" id="L59">			Iterators.partition(query().findAll().iterator(), BATCH_SIZE).forEachRemaining(entitiesBatch -&gt;</span>
+			{
+<span class="fc" id="L61">				super.delete(entitiesBatch.stream());</span>
+<span class="fc" id="L62">				entitiesBatch.forEach(this::handleCascadeDeletes);</span>
+<span class="fc" id="L63">			});</span>
+		}
+		else
+		{
+<span class="fc" id="L67">			delegate().deleteAll();</span>
+		}
+<span class="fc" id="L69">	}</span>
+
+	@Override
+	public void delete(Stream&lt;Entity&gt; entities)
+	{
+<span class="fc bfc" id="L74" title="All 2 branches covered.">		if (hasCascadeDeleteAttributes())</span>
+		{
+<span class="fc" id="L76">			Iterators.partition(entities.iterator(), BATCH_SIZE).forEachRemaining(entitiesBatch -&gt;</span>
+			{
+<span class="fc" id="L78">				entitiesBatch.forEach(this::prepareCascadeDeletes);</span>
+<span class="fc" id="L79">				super.delete(entitiesBatch.stream());</span>
+<span class="fc" id="L80">				entitiesBatch.forEach(this::handleCascadeDeletes);</span>
+<span class="fc" id="L81">			});</span>
+		}
+		else
+		{
+<span class="fc" id="L85">			delegate().delete(entities);</span>
+		}
+<span class="fc" id="L87">	}</span>
+
+	@Override
+	public void deleteAll(Stream&lt;Object&gt; ids)
+	{
+<span class="fc bfc" id="L92" title="All 2 branches covered.">		if (hasCascadeDeleteAttributes())</span>
+		{
+<span class="fc" id="L94">			Iterators.partition(ids.iterator(), BATCH_SIZE).forEachRemaining(idsBatch -&gt;</span>
+			{
+<span class="fc" id="L96">				Stream&lt;Entity&gt; entities = findAll(idsBatch.stream());</span>
+<span class="fc" id="L97">				super.deleteAll(idsBatch.stream());</span>
+<span class="fc" id="L98">				entities.forEach(this::handleCascadeDeletes);</span>
+<span class="fc" id="L99">			});</span>
+		}
+		else
+		{
+<span class="fc" id="L103">			delegate().deleteAll(ids);</span>
+		}
+<span class="fc" id="L105">	}</span>
+
+	/**
+	 * Guarantee that referenced entities for attributes with cascade delete are loaded,
+	 * e.g. in case entity is a lazy or partial entity.
+	 */
+	private void prepareCascadeDeletes(Entity entity)
+	{
+<span class="fc" id="L113">		getCascadeDeleteAttributes().forEach(attr -&gt; entity.get(attr.getName()));</span>
+<span class="fc" id="L114">	}</span>
+
+	private void handleCascadeDeletes(Entity entity)
+	{
+<span class="fc" id="L118">		getCascadeDeleteAttributes().forEach(attr -&gt; handleCascadeDeletes(entity, attr));</span>
+<span class="fc" id="L119">	}</span>
+
+	private void handleCascadeDeletes(Entity entity, Attribute attribute)
+	{
+		Stream&lt;Entity&gt; refEntityStream;
+<span class="fc bfc" id="L124" title="All 2 branches covered.">		if (isSingleReferenceType(attribute))</span>
+		{
+<span class="fc" id="L126">			Entity refEntity = entity.getEntity(attribute.getName());</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">			refEntityStream = refEntity != null ? Stream.of(refEntity) : Stream.empty();</span>
+<span class="fc" id="L128">		}</span>
+		else
+		{
+<span class="fc" id="L131">			Iterable&lt;Entity&gt; entities = entity.getEntities(attribute.getName());</span>
+<span class="fc" id="L132">			refEntityStream = asStream(entities);</span>
+		}
+
+		// delete one-by-one and first check if exists because entities might not exist due to earlier deletes
+<span class="fc" id="L136">		String refEntityTypeName = attribute.getRefEntity().getId();</span>
+<span class="fc" id="L137">		refEntityStream.forEach(refEntity -&gt;</span>
+		{
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">			if (dataService.findOneById(refEntityTypeName, refEntity.getIdValue()) != null)</span>
+			{
+<span class="fc" id="L141">				dataService.delete(refEntityTypeName, refEntity);</span>
+			}
+<span class="fc" id="L143">		});</span>
+<span class="fc" id="L144">	}</span>
+
+	private Stream&lt;Attribute&gt; getCascadeDeleteAttributes()
+	{
+<span class="fc" id="L148">		return asStream(getEntityType().getAtomicAttributes()).filter(</span>
+<span class="pc bpc" id="L149" title="1 of 4 branches missed.">				attribute -&gt; attribute.getCascadeDelete() != null &amp;&amp; attribute.getCascadeDelete());</span>
+	}
+
+	private boolean hasCascadeDeleteAttributes()
+	{
+<span class="fc" id="L154">		return asStream(getEntityType().getAtomicAttributes()).anyMatch(</span>
+<span class="fc bfc" id="L155" title="All 4 branches covered.">				attribute -&gt; attribute.getCascadeDelete() != null &amp;&amp; attribute.getCascadeDelete());</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,871 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QueryGenerator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-elasticsearch</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.elasticsearch.generator</a> &gt; <span class="el_source">QueryGenerator.java</span></div><h1>QueryGenerator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.elasticsearch.generator;
+
+import org.apache.lucene.search.join.ScoreMode;
+import org.elasticsearch.index.query.*;
+import org.molgenis.data.*;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.util.UnexpectedEnumException;
+import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.stream.StreamSupport;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Stream.concat;
+import static java.util.stream.Stream.of;
+import static org.molgenis.data.QueryRule.Operator.LIKE;
+import static org.molgenis.data.elasticsearch.FieldConstants.DEFAULT_ANALYZER;
+import static org.molgenis.data.elasticsearch.FieldConstants.FIELD_NOT_ANALYZED;
+
+/**
+ * Generates Elasticsearch queries from MOLGENIS queries.
+ */
+@Component
+public class QueryGenerator
+{
+	static final String ATTRIBUTE_SEPARATOR = &quot;.&quot;;
+
+	private final DocumentIdGenerator documentIdGenerator;
+
+	public QueryGenerator(DocumentIdGenerator documentIdGenerator)
+<span class="fc" id="L40">	{</span>
+<span class="fc" id="L41">		this.documentIdGenerator = requireNonNull(documentIdGenerator);</span>
+<span class="fc" id="L42">	}</span>
+
+	QueryBuilder createQueryBuilder(Query&lt;Entity&gt; query, EntityType entityType)
+	{
+<span class="fc" id="L46">		return createQueryBuilder(query.getRules(), entityType);</span>
+	}
+
+	public QueryBuilder createQueryBuilder(List&lt;QueryRule&gt; queryRules, EntityType entityType)
+	{
+		QueryBuilder queryBuilder;
+
+<span class="fc" id="L53">		final int nrQueryRules = queryRules.size();</span>
+<span class="fc bfc" id="L54" title="All 2 branches covered.">		if (nrQueryRules == 1)</span>
+		{
+			// simple query consisting of one query clause
+<span class="fc" id="L57">			queryBuilder = createQueryClause(queryRules.get(0), entityType);</span>
+		}
+		else
+		{
+			// boolean query consisting of combination of query clauses
+<span class="fc" id="L62">			QueryRule.Operator occur = null;</span>
+<span class="fc" id="L63">			BoolQueryBuilder boolQuery = QueryBuilders.boolQuery();</span>
+
+<span class="fc bfc" id="L65" title="All 2 branches covered.">			for (int i = 0; i &lt; nrQueryRules; i += 2)</span>
+			{
+<span class="fc" id="L67">				QueryRule queryRule = queryRules.get(i);</span>
+
+				// determine whether this query is a 'not' query
+<span class="fc bfc" id="L70" title="All 2 branches covered.">				if (queryRule.getOperator() == QueryRule.Operator.NOT)</span>
+				{
+<span class="fc" id="L72">					occur = QueryRule.Operator.NOT;</span>
+<span class="fc" id="L73">					queryRule = queryRules.get(i + 1);</span>
+<span class="fc" id="L74">					i += 1;</span>
+				}
+<span class="fc bfc" id="L76" title="All 2 branches covered.">				else if (i + 1 &lt; nrQueryRules)</span>
+				{
+<span class="fc" id="L78">					QueryRule occurQueryRule = queryRules.get(i + 1);</span>
+<span class="fc" id="L79">					QueryRule.Operator occurOperator = occurQueryRule.getOperator();</span>
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">					if (occurOperator == null) throw new MolgenisQueryException(&quot;Missing expected occur operator&quot;);</span>
+
+					//noinspection EnumSwitchStatementWhichMissesCases
+<span class="pc bpc" id="L83" title="1 of 2 branches missed.">					switch (occurOperator)</span>
+					{
+						case AND:
+						case OR:
+<span class="pc bpc" id="L87" title="3 of 4 branches missed.">							if (occur != null &amp;&amp; occurOperator != occur)</span>
+							{
+<span class="nc" id="L89">								throw new MolgenisQueryException(</span>
+										&quot;Mixing query operators not allowed, use nested queries&quot;);
+							}
+<span class="fc" id="L92">							occur = occurOperator;</span>
+<span class="fc" id="L93">							break;</span>
+						default:
+<span class="nc" id="L95">							throw new MolgenisQueryException(</span>
+									&quot;Expected query occur operator instead of [&quot; + occurOperator + &quot;]&quot;);
+					}
+				}
+
+<span class="fc" id="L100">				QueryBuilder queryPartBuilder = createQueryClause(queryRule, entityType);</span>
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">				if (queryPartBuilder == null) continue; // skip SHOULD and DIS_MAX query rules</span>
+
+				// add query part to query
+				//noinspection EnumSwitchStatementWhichMissesCases
+<span class="pc bpc" id="L105" title="1 of 4 branches missed.">				switch (occur)</span>
+				{
+					case AND:
+<span class="fc" id="L108">						boolQuery.must(queryPartBuilder);</span>
+<span class="fc" id="L109">						break;</span>
+					case OR:
+<span class="fc" id="L111">						boolQuery.should(queryPartBuilder).minimumShouldMatch(1);</span>
+<span class="fc" id="L112">						break;</span>
+					case NOT:
+<span class="fc" id="L114">						boolQuery.mustNot(queryPartBuilder);</span>
+<span class="fc" id="L115">						break;</span>
+					default:
+<span class="nc" id="L117">						throw new MolgenisQueryException(&quot;Unknown occurence operator [&quot; + occur + &quot;]&quot;);</span>
+				}
+			}
+<span class="fc" id="L120">			queryBuilder = boolQuery;</span>
+		}
+<span class="fc" id="L122">		return queryBuilder;</span>
+	}
+
+	private QueryBuilder createQueryClause(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L127">		QueryRule.Operator queryOperator = queryRule.getOperator();</span>
+<span class="pc bpc" id="L128" title="6 of 13 branches missed.">		switch (queryOperator)</span>
+		{
+			case DIS_MAX:
+<span class="nc" id="L131">				return createQueryClauseDisMax(queryRule, entityType);</span>
+			case EQUALS:
+<span class="fc" id="L133">				return createQueryClauseEquals(queryRule, entityType);</span>
+			case FUZZY_MATCH:
+<span class="nc" id="L135">				return createQueryClauseFuzzyMatch(queryRule, entityType);</span>
+			case FUZZY_MATCH_NGRAM:
+<span class="nc" id="L137">				return createQueryClauseFuzzyMatchNgram(queryRule, entityType);</span>
+			case GREATER:
+			case GREATER_EQUAL:
+			case LESS:
+			case LESS_EQUAL:
+<span class="fc" id="L142">				return createQueryClauseRangeOpen(queryRule, entityType);</span>
+			case IN:
+<span class="fc" id="L144">				return createQueryClauseIn(queryRule, entityType);</span>
+			case LIKE:
+<span class="fc" id="L146">				return createQueryClauseLike(queryRule, entityType);</span>
+			case NESTED:
+<span class="fc" id="L148">				return createQueryClauseNested(queryRule, entityType);</span>
+			case RANGE:
+<span class="fc" id="L150">				return createQueryClauseRangeClosed(queryRule, entityType);</span>
+			case SEARCH:
+<span class="fc" id="L152">				return createQueryClauseSearch(queryRule, entityType);</span>
+			case SHOULD:
+<span class="nc" id="L154">				return createQueryClauseShould(queryRule, entityType);</span>
+			case AND:
+			case OR:
+			case NOT:
+<span class="nc" id="L158">				throw new MolgenisQueryException(format(&quot;Unexpected query operator [%s]&quot;, queryOperator.toString()));</span>
+			default:
+<span class="nc" id="L160">				throw new UnexpectedEnumException(queryOperator);</span>
+		}
+	}
+
+	private QueryBuilder createQueryClauseDisMax(QueryRule queryRule, EntityType entityType)
+	{
+<span class="nc" id="L166">		DisMaxQueryBuilder disMaxQueryBuilder = QueryBuilders.disMaxQuery();</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">		for (QueryRule nestedQueryRule : queryRule.getNestedRules())</span>
+		{
+<span class="nc" id="L169">			disMaxQueryBuilder.add(createQueryClause(nestedQueryRule, entityType));</span>
+<span class="nc" id="L170">		}</span>
+<span class="nc" id="L171">		disMaxQueryBuilder.tieBreaker((float) 0.0);</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">		if (queryRule.getValue() != null)</span>
+		{
+<span class="nc" id="L174">			disMaxQueryBuilder.boost(Float.parseFloat(queryRule.getValue().toString()));</span>
+		}
+<span class="nc" id="L176">		return disMaxQueryBuilder;</span>
+	}
+
+	private QueryBuilder createQueryClauseEquals(QueryRule queryRule, EntityType entityType)
+	{
+		QueryBuilder queryBuilder;
+<span class="fc bfc" id="L182" title="All 2 branches covered.">		if (queryRule.getValue() != null)</span>
+		{
+<span class="fc" id="L184">			queryBuilder = createQueryClauseEqualsValue(queryRule, entityType);</span>
+		}
+		else
+		{
+<span class="fc" id="L188">			queryBuilder = createQueryClauseEqualsNoValue(queryRule, entityType);</span>
+		}
+<span class="fc" id="L190">		return QueryBuilders.constantScoreQuery(queryBuilder);</span>
+	}
+
+	private QueryBuilder createQueryClauseEqualsValue(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L195">		List&lt;Attribute&gt; attributePath = getAttributePath(queryRule.getField(), entityType);</span>
+<span class="fc" id="L196">		Attribute attr = attributePath.get(attributePath.size() - 1);</span>
+<span class="fc" id="L197">		Object queryValue = getQueryValue(attr, queryRule.getValue());</span>
+
+<span class="fc" id="L199">		String fieldName = getQueryFieldName(attributePath);</span>
+<span class="fc" id="L200">		AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L201" title="2 of 4 branches missed.">		switch (attrType)</span>
+		{
+			case BOOL:
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case INT:
+			case LONG:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc bfc" id="L216" title="All 2 branches covered.">				if (useNotAnalyzedField(attr))</span>
+				{
+<span class="fc" id="L218">					fieldName = fieldName + '.' + FIELD_NOT_ANALYZED;</span>
+				}
+<span class="fc" id="L220">				return nestedQueryBuilder(attributePath, QueryBuilders.termQuery(fieldName, queryValue));</span>
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case XREF:
+			case MREF:
+			case FILE:
+			case ONE_TO_MANY:
+<span class="fc bfc" id="L227" title="All 2 branches covered.">				if (attributePath.size() &gt; 1)</span>
+				{
+<span class="fc" id="L229">					throw new MolgenisQueryException(&quot;Can not filter on references deeper than 1.&quot;);</span>
+				}
+
+<span class="fc" id="L232">				Attribute refIdAttr = attr.getRefEntity().getIdAttribute();</span>
+<span class="fc" id="L233">				List&lt;Attribute&gt; refAttributePath = concat(attributePath.stream(), of(refIdAttr)).collect(toList());</span>
+<span class="fc" id="L234">				String indexFieldName = getQueryFieldName(refAttributePath);</span>
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">				if (useNotAnalyzedField(refIdAttr))</span>
+				{
+<span class="fc" id="L237">					indexFieldName = indexFieldName + '.' + FIELD_NOT_ANALYZED;</span>
+				}
+<span class="fc" id="L239">				return QueryBuilders.nestedQuery(fieldName, QueryBuilders.termQuery(indexFieldName, queryValue),</span>
+						ScoreMode.Avg);
+			case COMPOUND:
+<span class="nc" id="L242">				throw new MolgenisQueryException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+			default:
+<span class="nc" id="L244">				throw new UnexpectedEnumException(attrType);</span>
+		}
+	}
+
+	private QueryBuilder createQueryClauseEqualsNoValue(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L250">		List&lt;Attribute&gt; attributePath = getAttributePath(queryRule.getField(), entityType);</span>
+
+<span class="fc" id="L252">		String fieldName = getQueryFieldName(attributePath);</span>
+<span class="fc" id="L253">		Attribute attr = attributePath.get(0);</span>
+<span class="fc" id="L254">		AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L255" title="1 of 4 branches missed.">		switch (attrType)</span>
+		{
+			case BOOL:
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case INT:
+			case LONG:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L270">				return QueryBuilders.boolQuery().mustNot(QueryBuilders.existsQuery(fieldName));</span>
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case FILE:
+			case MREF:
+			case ONE_TO_MANY:
+			case XREF:
+<span class="pc bpc" id="L277" title="1 of 2 branches missed.">				if (attributePath.size() &gt; 1)</span>
+				{
+<span class="nc" id="L279">					throw new MolgenisQueryException(&quot;Can not filter on references deeper than 1.&quot;);</span>
+				}
+
+<span class="fc" id="L282">				Attribute refIdAttr = attr.getRefEntity().getIdAttribute();</span>
+<span class="fc" id="L283">				List&lt;Attribute&gt; refAttributePath = concat(attributePath.stream(), of(refIdAttr)).collect(toList());</span>
+<span class="fc" id="L284">				String indexFieldName = getQueryFieldName(refAttributePath);</span>
+
+<span class="fc" id="L286">				return QueryBuilders.boolQuery()</span>
+<span class="fc" id="L287">									.mustNot(QueryBuilders.nestedQuery(fieldName,</span>
+<span class="fc" id="L288">											QueryBuilders.existsQuery(indexFieldName), ScoreMode.Avg));</span>
+			case COMPOUND:
+<span class="fc" id="L290">				throw new MolgenisQueryException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+			default:
+<span class="nc" id="L292">				throw new UnexpectedEnumException(attrType);</span>
+		}
+	}
+
+	private QueryBuilder createQueryClauseFuzzyMatch(QueryRule queryRule, EntityType entityType)
+	{
+<span class="nc" id="L298">		String queryField = queryRule.getField();</span>
+<span class="nc" id="L299">		Object queryValue = queryRule.getValue();</span>
+
+		QueryBuilder queryBuilder;
+<span class="nc bnc" id="L302" title="All 2 branches missed.">		if (queryValue == null) throw new MolgenisQueryException(&quot;Query value cannot be null&quot;);</span>
+
+<span class="nc bnc" id="L304" title="All 2 branches missed.">		if (queryField == null)</span>
+		{
+<span class="nc" id="L306">			queryBuilder = QueryBuilders.matchQuery(&quot;_all&quot;, queryValue);</span>
+		}
+		else
+		{
+<span class="nc" id="L310">			Attribute attr = entityType.getAttribute(queryField);</span>
+<span class="nc bnc" id="L311" title="All 2 branches missed.">			if (attr == null)</span>
+			{
+<span class="nc" id="L313">				throw new UnknownAttributeException(entityType, queryField);</span>
+			}
+			// construct query part
+<span class="nc" id="L316">			AttributeType dataType = attr.getDataType();</span>
+<span class="nc bnc" id="L317" title="All 4 branches missed.">			switch (dataType)</span>
+			{
+				case DATE:
+				case DATE_TIME:
+				case DECIMAL:
+				case EMAIL:
+				case ENUM:
+				case HTML:
+				case HYPERLINK:
+				case INT:
+				case LONG:
+				case SCRIPT:
+				case STRING:
+				case TEXT:
+<span class="nc" id="L331">					queryBuilder = QueryBuilders.queryStringQuery(getQueryFieldName(attr) + &quot;:(&quot; + queryValue + &quot;)&quot;);</span>
+<span class="nc" id="L332">					break;</span>
+				case MREF:
+				case XREF:
+				case CATEGORICAL:
+				case CATEGORICAL_MREF:
+				case ONE_TO_MANY:
+				case FILE:
+<span class="nc" id="L339">					queryField =</span>
+<span class="nc" id="L340">							getQueryFieldName(attr) + &quot;.&quot; + getQueryFieldName(attr.getRefEntity().getLabelAttribute());</span>
+<span class="nc" id="L341">					queryBuilder = QueryBuilders.nestedQuery(getQueryFieldName(attr),</span>
+<span class="nc" id="L342">							QueryBuilders.queryStringQuery(queryField + &quot;:(&quot; + queryValue + &quot;)&quot;), ScoreMode.Max);</span>
+<span class="nc" id="L343">					break;</span>
+				case BOOL:
+				case COMPOUND:
+<span class="nc" id="L346">					throw new MolgenisQueryException(</span>
+							&quot;Illegal data type [&quot; + dataType + &quot;] for operator [&quot; + QueryRule.Operator.FUZZY_MATCH
+									+ &quot;]&quot;);
+				default:
+<span class="nc" id="L350">					throw new UnexpectedEnumException(dataType);</span>
+			}
+		}
+<span class="nc" id="L353">		return queryBuilder;</span>
+	}
+
+	private QueryBuilder createQueryClauseFuzzyMatchNgram(QueryRule queryRule, EntityType entityType)
+	{
+<span class="nc" id="L358">		String queryField = queryRule.getField();</span>
+<span class="nc" id="L359">		Object queryValue = queryRule.getValue();</span>
+
+		QueryBuilder queryBuilder;
+<span class="nc bnc" id="L362" title="All 2 branches missed.">		if (queryValue == null) throw new MolgenisQueryException(&quot;Query value cannot be null&quot;);</span>
+
+<span class="nc bnc" id="L364" title="All 2 branches missed.">		if (queryField == null)</span>
+		{
+<span class="nc" id="L366">			queryBuilder = QueryBuilders.matchQuery(&quot;_all&quot;, queryValue);</span>
+		}
+		else
+		{
+<span class="nc" id="L370">			Attribute attr = entityType.getAttribute(queryField);</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">			if (attr == null)</span>
+			{
+<span class="nc" id="L373">				throw new UnknownAttributeException(entityType, queryField);</span>
+			}
+			// construct query part
+<span class="nc" id="L376">			AttributeType dataType = attr.getDataType();</span>
+<span class="nc bnc" id="L377" title="All 3 branches missed.">			switch (dataType)</span>
+			{
+				case DATE:
+				case DATE_TIME:
+				case DECIMAL:
+				case EMAIL:
+				case ENUM:
+				case HTML:
+				case HYPERLINK:
+				case INT:
+				case LONG:
+				case SCRIPT:
+				case STRING:
+				case TEXT:
+<span class="nc" id="L391">					queryField = getQueryFieldName(attr) + &quot;.ngram&quot;;</span>
+<span class="nc" id="L392">					queryBuilder = QueryBuilders.queryStringQuery(queryField + &quot;:(&quot; + queryValue + &quot;)&quot;);</span>
+<span class="nc" id="L393">					break;</span>
+				case MREF:
+				case XREF:
+<span class="nc" id="L396">					queryField =</span>
+<span class="nc" id="L397">							getQueryFieldName(attr) + &quot;.&quot; + getQueryFieldName(attr.getRefEntity().getLabelAttribute())</span>
+									+ &quot;.ngram&quot;;
+<span class="nc" id="L399">					queryBuilder = QueryBuilders.nestedQuery(getQueryFieldName(attr),</span>
+<span class="nc" id="L400">							QueryBuilders.queryStringQuery(queryField + &quot;:(&quot; + queryValue + &quot;)&quot;), ScoreMode.Max);</span>
+<span class="nc" id="L401">					break;</span>
+				default:
+<span class="nc" id="L403">					throw new UnexpectedEnumException(dataType);</span>
+			}
+		}
+<span class="nc" id="L406">		return queryBuilder;</span>
+	}
+
+	private QueryBuilder createQueryClauseIn(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L411">		List&lt;Attribute&gt; attributePath = getAttributePath(queryRule.getField(), entityType);</span>
+<span class="fc" id="L412">		Attribute attr = attributePath.get(attributePath.size() - 1);</span>
+
+<span class="fc" id="L414">		Object queryRuleValue = queryRule.getValue();</span>
+<span class="pc bpc" id="L415" title="1 of 2 branches missed.">		if (queryRuleValue == null)</span>
+		{
+<span class="nc" id="L417">			throw new MolgenisQueryException(&quot;Query value cannot be null&quot;);</span>
+		}
+<span class="pc bpc" id="L419" title="1 of 2 branches missed.">		if (!(queryRuleValue instanceof Iterable&lt;?&gt;))</span>
+		{
+<span class="nc" id="L421">			throw new MolgenisQueryException(</span>
+<span class="nc" id="L422">					&quot;Query value must be a Iterable instead of [&quot; + queryRuleValue.getClass().getSimpleName() + &quot;]&quot;);</span>
+		}
+<span class="fc" id="L424">		Object[] queryValues = StreamSupport.stream(((Iterable&lt;?&gt;) queryRuleValue).spliterator(), false)</span>
+<span class="fc" id="L425">											.map(aQueryRuleValue -&gt; getQueryValue(attr, aQueryRuleValue))</span>
+<span class="fc" id="L426">											.toArray();</span>
+
+		QueryBuilder queryBuilder;
+<span class="fc" id="L429">		String fieldName = getQueryFieldName(attr);</span>
+<span class="fc" id="L430">		AttributeType dataType = attr.getDataType();</span>
+<span class="pc bpc" id="L431" title="2 of 4 branches missed.">		switch (dataType)</span>
+		{
+			case BOOL:
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case INT:
+			case LONG:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc bfc" id="L446" title="All 2 branches covered.">				if (useNotAnalyzedField(attr))</span>
+				{
+<span class="fc" id="L448">					fieldName = fieldName + '.' + FIELD_NOT_ANALYZED;</span>
+				}
+				// note: inFilter expects array, not iterable
+<span class="fc" id="L451">				queryBuilder = QueryBuilders.termsQuery(fieldName, queryValues);</span>
+<span class="fc" id="L452">				queryBuilder = nestedQueryBuilder(attributePath, queryBuilder);</span>
+<span class="fc" id="L453">				break;</span>
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case MREF:
+			case XREF:
+			case FILE:
+			case ONE_TO_MANY:
+<span class="fc bfc" id="L460" title="All 2 branches covered.">				if (attributePath.size() &gt; 1)</span>
+				{
+<span class="fc" id="L462">					throw new UnsupportedOperationException(&quot;Can not filter on references deeper than 1.&quot;);</span>
+				}
+
+<span class="fc" id="L465">				Attribute refIdAttr = attr.getRefEntity().getIdAttribute();</span>
+<span class="fc" id="L466">				List&lt;Attribute&gt; refAttributePath = concat(attributePath.stream(), of(refIdAttr)).collect(toList());</span>
+<span class="fc" id="L467">				String indexFieldName = getQueryFieldName(refAttributePath);</span>
+<span class="pc bpc" id="L468" title="1 of 2 branches missed.">				if (useNotAnalyzedField(refIdAttr))</span>
+				{
+<span class="fc" id="L470">					indexFieldName = indexFieldName + '.' + FIELD_NOT_ANALYZED;</span>
+				}
+<span class="fc" id="L472">				queryBuilder = QueryBuilders.termsQuery(indexFieldName, queryValues);</span>
+<span class="fc" id="L473">				queryBuilder = QueryBuilders.nestedQuery(fieldName, queryBuilder, ScoreMode.Avg);</span>
+<span class="fc" id="L474">				break;</span>
+			case COMPOUND:
+<span class="nc" id="L476">				throw new MolgenisQueryException(</span>
+						&quot;Illegal data type [&quot; + dataType + &quot;] for operator [&quot; + QueryRule.Operator.IN + &quot;]&quot;);
+			default:
+<span class="nc" id="L479">				throw new UnexpectedEnumException(dataType);</span>
+		}
+<span class="fc" id="L481">		return QueryBuilders.constantScoreQuery(queryBuilder);</span>
+	}
+
+	private QueryBuilder createQueryClauseLike(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L486">		List&lt;Attribute&gt; attributePath = getAttributePath(queryRule.getField(), entityType);</span>
+<span class="fc" id="L487">		Attribute attr = attributePath.get(attributePath.size() - 1);</span>
+<span class="fc" id="L488">		Object queryValue = getQueryValue(attr, queryRule.getValue());</span>
+
+<span class="fc" id="L490">		String fieldName = getQueryFieldName(attributePath);</span>
+<span class="fc" id="L491">		AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L492" title="1 of 4 branches missed.">		switch (attrType)</span>
+		{
+			case EMAIL:
+			case ENUM:
+			case HYPERLINK:
+			case STRING:
+<span class="fc" id="L498">				return nestedQueryBuilder(attributePath,</span>
+<span class="fc" id="L499">						QueryBuilders.matchPhrasePrefixQuery(fieldName, queryValue).maxExpansions(50).slop(10)</span>
+<span class="fc" id="L500">									 .analyzer(DEFAULT_ANALYZER));</span>
+			case BOOL:
+			case COMPOUND:
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case INT:
+			case LONG:
+<span class="fc" id="L508">				throw new MolgenisQueryException(format(&quot;Illegal data type [%s] for operator [%s]&quot;, attrType, LIKE));</span>
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case FILE:
+			case HTML: // due to size would result in large amount of ngrams
+			case MREF:
+			case ONE_TO_MANY:
+			case SCRIPT: // due to size would result in large amount of ngrams
+			case TEXT: // due to size would result in large amount of ngrams
+			case XREF:
+<span class="fc" id="L518">				throw new UnsupportedOperationException(</span>
+<span class="fc" id="L519">						format(&quot;Unsupported data type [%s] for operator [%s]&quot;, attrType, LIKE));</span>
+			default:
+<span class="nc" id="L521">				throw new UnexpectedEnumException(attrType);</span>
+		}
+	}
+
+	private QueryBuilder createQueryClauseNested(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L527">		List&lt;QueryRule&gt; nestedQueryRules = queryRule.getNestedRules();</span>
+<span class="pc bpc" id="L528" title="2 of 4 branches missed.">		if (nestedQueryRules == null || nestedQueryRules.isEmpty())</span>
+		{
+<span class="nc" id="L530">			throw new MolgenisQueryException(&quot;Missing nested rules for nested query&quot;);</span>
+		}
+<span class="fc" id="L532">		return createQueryBuilder(nestedQueryRules, entityType);</span>
+	}
+
+	private QueryBuilder createQueryClauseRangeClosed(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L537">		List&lt;Attribute&gt; attributePath = getAttributePath(queryRule.getField(), entityType);</span>
+<span class="fc" id="L538">		Attribute attr = attributePath.get(attributePath.size() - 1);</span>
+<span class="fc" id="L539">		validateNumericalQueryField(attr);</span>
+<span class="fc" id="L540">		String fieldName = getQueryFieldName(attributePath);</span>
+
+<span class="fc" id="L542">		Object queryValue = getQueryValue(attr, queryRule.getValue());</span>
+<span class="pc bpc" id="L543" title="1 of 2 branches missed.">		if (queryValue == null)</span>
+		{
+<span class="nc" id="L545">			throw new MolgenisQueryException(&quot;Query value cannot be null&quot;);</span>
+		}
+<span class="pc bpc" id="L547" title="1 of 2 branches missed.">		if (!(queryValue instanceof Iterable&lt;?&gt;))</span>
+		{
+<span class="nc" id="L549">			throw new MolgenisQueryException(</span>
+<span class="nc" id="L550">					format(&quot;Query value must be a Iterable instead of [%s]&quot;, queryValue.getClass().getSimpleName()));</span>
+		}
+<span class="fc" id="L552">		Iterator&lt;?&gt; queryValuesIterator = ((Iterable&lt;?&gt;) queryValue).iterator();</span>
+<span class="fc" id="L553">		Object queryValueFrom = getQueryValue(attr, queryValuesIterator.next());</span>
+<span class="fc" id="L554">		Object queryValueTo = getQueryValue(attr, queryValuesIterator.next());</span>
+
+<span class="fc" id="L556">		return QueryBuilders.constantScoreQuery(nestedQueryBuilder(attributePath,</span>
+<span class="fc" id="L557">				QueryBuilders.rangeQuery(fieldName).gte(queryValueFrom).lte(queryValueTo)));</span>
+	}
+
+	private QueryBuilder createQueryClauseRangeOpen(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L562">		List&lt;Attribute&gt; attributePath = getAttributePath(queryRule.getField(), entityType);</span>
+<span class="fc" id="L563">		Attribute attr = attributePath.get(attributePath.size() - 1);</span>
+<span class="fc" id="L564">		validateNumericalQueryField(attr);</span>
+<span class="fc" id="L565">		String fieldName = getQueryFieldName(attributePath);</span>
+
+<span class="fc" id="L567">		Object queryValue = getQueryValue(attr, queryRule.getValue());</span>
+<span class="pc bpc" id="L568" title="1 of 2 branches missed.">		if (queryValue == null)</span>
+		{
+<span class="nc" id="L570">			throw new MolgenisQueryException(&quot;Query value cannot be null&quot;);</span>
+		}
+
+<span class="fc" id="L573">		RangeQueryBuilder filterBuilder = QueryBuilders.rangeQuery(fieldName);</span>
+<span class="fc" id="L574">		QueryRule.Operator operator = queryRule.getOperator();</span>
+<span class="pc bpc" id="L575" title="2 of 6 branches missed.">		switch (operator)</span>
+		{
+			case GREATER:
+<span class="fc" id="L578">				filterBuilder = filterBuilder.gt(queryValue);</span>
+<span class="fc" id="L579">				break;</span>
+			case GREATER_EQUAL:
+<span class="fc" id="L581">				filterBuilder = filterBuilder.gte(queryValue);</span>
+<span class="fc" id="L582">				break;</span>
+			case LESS:
+<span class="fc" id="L584">				filterBuilder = filterBuilder.lt(queryValue);</span>
+<span class="fc" id="L585">				break;</span>
+			case LESS_EQUAL:
+<span class="fc" id="L587">				filterBuilder = filterBuilder.lte(queryValue);</span>
+<span class="fc" id="L588">				break;</span>
+			case AND:
+			case DIS_MAX:
+			case EQUALS:
+			case FUZZY_MATCH:
+			case FUZZY_MATCH_NGRAM:
+			case IN:
+			case LIKE:
+			case NESTED:
+			case NOT:
+			case OR:
+			case RANGE:
+			case SEARCH:
+			case SHOULD:
+<span class="nc" id="L602">				throw new MolgenisQueryException(format(&quot;Illegal query rule operator [%s]&quot;, operator.toString()));</span>
+			default:
+<span class="nc" id="L604">				throw new UnexpectedEnumException(operator);</span>
+		}
+
+<span class="fc" id="L607">		return QueryBuilders.constantScoreQuery(nestedQueryBuilder(attributePath, filterBuilder));</span>
+	}
+
+	private QueryBuilder createQueryClauseSearch(QueryRule queryRule, EntityType entityType)
+	{
+<span class="pc bpc" id="L612" title="1 of 2 branches missed.">		if (queryRule.getValue() == null)</span>
+		{
+<span class="nc" id="L614">			throw new MolgenisQueryException(&quot;Query value cannot be null&quot;);</span>
+		}
+
+<span class="fc bfc" id="L617" title="All 2 branches covered.">		if (queryRule.getField() == null)</span>
+		{
+<span class="fc" id="L619">			return createQueryClauseSearchAll(queryRule);</span>
+		}
+		else
+		{
+<span class="fc" id="L623">			return createQueryClauseSearchAttribute(queryRule, entityType);</span>
+		}
+	}
+
+	private QueryBuilder createQueryClauseSearchAll(QueryRule queryRule)
+	{
+<span class="fc" id="L629">		return QueryBuilders.matchPhraseQuery(&quot;_all&quot;, queryRule.getValue()).slop(10);</span>
+	}
+
+	private QueryBuilder createQueryClauseSearchAttribute(QueryRule queryRule, EntityType entityType)
+	{
+<span class="fc" id="L634">		List&lt;Attribute&gt; attributePath = getAttributePath(queryRule.getField(), entityType);</span>
+<span class="fc" id="L635">		Attribute attr = attributePath.get(attributePath.size() - 1);</span>
+<span class="fc" id="L636">		Object queryValue = getQueryValue(attr, queryRule.getValue());</span>
+
+<span class="fc" id="L638">		String fieldName = getQueryFieldName(attributePath);</span>
+<span class="fc" id="L639">		AttributeType dataType = attr.getDataType();</span>
+<span class="pc bpc" id="L640" title="2 of 5 branches missed.">		switch (dataType)</span>
+		{
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case INT:
+			case LONG:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L654">				return nestedQueryBuilder(attributePath, QueryBuilders.matchQuery(fieldName, queryValue));</span>
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+			case XREF:
+			case FILE:
+<span class="fc bfc" id="L661" title="All 2 branches covered.">				if (attributePath.size() &gt; 1)</span>
+				{
+<span class="fc" id="L663">					throw new UnsupportedOperationException(&quot;Can not filter on references deeper than 1.&quot;);</span>
+				}
+<span class="fc" id="L665">				return QueryBuilders.nestedQuery(fieldName,</span>
+<span class="fc" id="L666">						QueryBuilders.matchQuery(fieldName + '.' + &quot;_all&quot;, queryValue), ScoreMode.Avg);</span>
+			case BOOL:
+<span class="fc" id="L668">				throw new MolgenisQueryException(&quot;Cannot execute search query on [&quot; + dataType + &quot;] attribute&quot;);</span>
+			case COMPOUND:
+<span class="nc" id="L670">				throw new MolgenisQueryException(</span>
+						&quot;Illegal data type [&quot; + dataType + &quot;] for operator [&quot; + QueryRule.Operator.SEARCH + &quot;]&quot;);
+			default:
+<span class="nc" id="L673">				throw new UnexpectedEnumException(dataType);</span>
+		}
+	}
+
+	private QueryBuilder createQueryClauseShould(QueryRule queryRule, EntityType entityType)
+	{
+<span class="nc" id="L679">		BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();</span>
+<span class="nc bnc" id="L680" title="All 2 branches missed.">		for (QueryRule subQuery : queryRule.getNestedRules())</span>
+		{
+<span class="nc" id="L682">			boolQueryBuilder.should(createQueryClause(subQuery, entityType));</span>
+<span class="nc" id="L683">		}</span>
+<span class="nc" id="L684">		return boolQueryBuilder;</span>
+	}
+
+	private boolean useNotAnalyzedField(Attribute attr)
+	{
+<span class="fc" id="L689">		AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L690" title="3 of 5 branches missed.">		switch (attrType)</span>
+		{
+			case BOOL:
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case INT:
+			case LONG:
+<span class="fc" id="L698">				return false;</span>
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L706">				return true;</span>
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case XREF:
+			case MREF:
+			case FILE:
+			case ONE_TO_MANY:
+<span class="nc" id="L713">				return useNotAnalyzedField(attr.getRefEntity().getIdAttribute());</span>
+			case COMPOUND:
+<span class="nc" id="L715">				throw new MolgenisQueryException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+			default:
+<span class="nc" id="L717">				throw new UnexpectedEnumException(attrType);</span>
+		}
+	}
+
+	private void validateNumericalQueryField(Attribute attr)
+	{
+<span class="fc" id="L723">		AttributeType dataType = attr.getDataType();</span>
+
+<span class="pc bpc" id="L725" title="1 of 3 branches missed.">		switch (dataType)</span>
+		{
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case INT:
+			case LONG:
+<span class="fc" id="L732">				break;</span>
+			case BOOL:
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case COMPOUND:
+			case EMAIL:
+			case ENUM:
+			case FILE:
+			case HTML:
+			case HYPERLINK:
+			case MREF:
+			case ONE_TO_MANY:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+			case XREF:
+<span class="fc" id="L748">				throw new MolgenisQueryException(&quot;Range query not allowed for type [&quot; + dataType + &quot;]&quot;);</span>
+			default:
+<span class="nc" id="L750">				throw new UnexpectedEnumException(dataType);</span>
+		}
+<span class="fc" id="L752">	}</span>
+
+	private List&lt;Attribute&gt; getAttributePath(String queryRuleField, EntityType entityType)
+	{
+<span class="fc" id="L756">		String[] queryRuleFieldTokens = queryRuleField.split(&quot;\\&quot; + ATTRIBUTE_SEPARATOR);</span>
+<span class="fc" id="L757">		List&lt;Attribute&gt; attributePath = new ArrayList&lt;&gt;(queryRuleFieldTokens.length);</span>
+<span class="fc" id="L758">		EntityType entityTypeAtCurrentDepth = entityType;</span>
+<span class="fc bfc" id="L759" title="All 2 branches covered.">		for (int depth = 0; depth &lt; queryRuleFieldTokens.length; ++depth)</span>
+		{
+<span class="fc" id="L761">			Attribute attribute = entityTypeAtCurrentDepth.getAttribute(queryRuleFieldTokens[depth]);</span>
+<span class="pc bpc" id="L762" title="1 of 2 branches missed.">			if (attribute == null)</span>
+			{
+<span class="nc" id="L764">				throw new UnknownAttributeException(entityTypeAtCurrentDepth, queryRuleFieldTokens[depth]);</span>
+			}
+<span class="fc" id="L766">			attributePath.add(attribute);</span>
+
+<span class="fc bfc" id="L768" title="All 2 branches covered.">			if (depth + 1 &lt; queryRuleFieldTokens.length)</span>
+			{
+<span class="fc" id="L770">				entityTypeAtCurrentDepth = attribute.getRefEntity();</span>
+<span class="pc bpc" id="L771" title="1 of 2 branches missed.">				if (entityTypeAtCurrentDepth == null)</span>
+				{
+<span class="nc" id="L773">					throw new MolgenisQueryException(</span>
+<span class="nc" id="L774">							format(&quot;Invalid query field [%s]: attribute [%s] does not refer to another entity&quot;,</span>
+<span class="nc" id="L775">									queryRuleField, attribute.getName()));</span>
+				}
+			}
+		}
+<span class="fc" id="L779">		return attributePath;</span>
+	}
+
+	/**
+	 * Wraps the query in a nested query when a query is done on a reference entity. Returns the original query when it
+	 * is applied to the current entity.
+	 */
+	private QueryBuilder nestedQueryBuilder(List&lt;Attribute&gt; attributePath, QueryBuilder queryBuilder)
+	{
+<span class="fc bfc" id="L788" title="All 2 branches covered.">		if (attributePath.size() == 1)</span>
+		{
+<span class="fc" id="L790">			return queryBuilder;</span>
+		}
+<span class="pc bpc" id="L792" title="1 of 2 branches missed.">		else if (attributePath.size() == 2)</span>
+		{
+<span class="fc" id="L794">			return QueryBuilders.nestedQuery(getQueryFieldName(attributePath.get(0)), queryBuilder, ScoreMode.Avg);</span>
+		}
+		else
+		{
+<span class="nc" id="L798">			throw new UnsupportedOperationException(&quot;Can not filter on references deeper than 1.&quot;);</span>
+		}
+	}
+
+	private String getQueryFieldName(List&lt;Attribute&gt; attributePath)
+	{
+<span class="fc" id="L804">		return attributePath.stream().map(this::getQueryFieldName).collect(joining(ATTRIBUTE_SEPARATOR));</span>
+	}
+
+	private String getQueryFieldName(Attribute attribute)
+	{
+<span class="fc" id="L809">		return documentIdGenerator.generateId(attribute);</span>
+	}
+
+	private Object getQueryValue(Attribute attribute, Object queryRuleValue)
+	{
+<span class="fc" id="L814">		AttributeType attrType = attribute.getDataType();</span>
+<span class="pc bpc" id="L815" title="1 of 6 branches missed.">		switch (attrType)</span>
+		{
+			case BOOL:
+			case DECIMAL:
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case INT:
+			case LONG:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L828">				return queryRuleValue;</span>
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case FILE:
+			case MREF:
+			case ONE_TO_MANY:
+			case XREF:
+<span class="pc bpc" id="L835" title="1 of 2 branches missed.">				return queryRuleValue instanceof Entity ? ((Entity) queryRuleValue).getIdValue() : queryRuleValue;</span>
+			case DATE:
+<span class="fc bfc" id="L837" title="All 2 branches covered.">				if (queryRuleValue instanceof LocalDate)</span>
+				{
+<span class="fc" id="L839">					return queryRuleValue.toString();</span>
+				}
+<span class="pc bpc" id="L841" title="1 of 2 branches missed.">				else if (queryRuleValue instanceof String)</span>
+				{
+<span class="fc" id="L843">					return queryRuleValue;</span>
+				}
+				else
+				{
+<span class="nc" id="L847">					throw new MolgenisQueryException(format(&quot;Query value must be of type LocalDate instead of [%s]&quot;,</span>
+<span class="nc" id="L848">							queryRuleValue.getClass().getSimpleName()));</span>
+				}
+			case DATE_TIME:
+<span class="fc bfc" id="L851" title="All 2 branches covered.">				if (queryRuleValue instanceof Instant)</span>
+				{
+<span class="fc" id="L853">					return queryRuleValue.toString();</span>
+				}
+<span class="pc bpc" id="L855" title="1 of 2 branches missed.">				else if (queryRuleValue instanceof String)</span>
+				{
+<span class="fc" id="L857">					return queryRuleValue;</span>
+				}
+				else
+				{
+<span class="nc" id="L861">					throw new MolgenisQueryException(format(&quot;Query value must be of type Instant instead of [%s]&quot;,</span>
+<span class="nc" id="L862">							queryRuleValue.getClass().getSimpleName()));</span>
+				}
+			case COMPOUND:
+<span class="fc" id="L865">				throw new MolgenisQueryException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+			default:
+<span class="nc" id="L867">				throw new UnexpectedEnumException(attrType);</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

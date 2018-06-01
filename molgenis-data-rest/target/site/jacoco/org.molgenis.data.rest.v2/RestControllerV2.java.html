@@ -1,0 +1,833 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RestControllerV2.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-rest</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.rest.v2</a> &gt; <span class="el_source">RestControllerV2.java</span></div><h1>RestControllerV2.java</h1><pre class="source lang-java linenums">package org.molgenis.data.rest.v2;
+
+import org.molgenis.data.*;
+import org.molgenis.data.aggregation.AggregateQuery;
+import org.molgenis.data.aggregation.AggregateResult;
+import org.molgenis.data.i18n.LocalizationService;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.rest.EntityPager;
+import org.molgenis.data.rest.service.RestService;
+import org.molgenis.data.rest.util.Href;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.EntityTypePermission;
+import org.molgenis.data.security.exception.EntityTypePermissionDeniedException;
+import org.molgenis.data.security.permission.PermissionSystemService;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.data.support.RepositoryCopier;
+import org.molgenis.data.validation.meta.NameValidator;
+import org.molgenis.i18n.LanguageService;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.util.UnexpectedEnumException;
+import org.molgenis.web.ErrorMessageResponse;
+import org.molgenis.web.ErrorMessageResponse.ErrorMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.i18n.LocaleContextHolder;
+import org.springframework.core.convert.ConversionFailedException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.util.UriComponentsBuilder;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.validation.Valid;
+import java.io.IOException;
+import java.io.StringWriter;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.Lists.transform;
+import static java.lang.String.format;
+import static java.time.ZonedDateTime.now;
+import static java.time.format.FormatStyle.MEDIUM;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+import static org.molgenis.data.rest.v2.AttributeFilterToFetchConverter.createDefaultAttributeFetch;
+import static org.molgenis.data.rest.v2.RestControllerV2.BASE_URI;
+import static org.molgenis.data.util.EntityUtils.getTypedValue;
+import static org.springframework.http.HttpStatus.*;
+import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
+import static org.springframework.http.MediaType.TEXT_PLAIN_VALUE;
+
+@RestController
+@RequestMapping(BASE_URI)
+public class RestControllerV2
+{
+<span class="fc" id="L68">	private static final Logger LOG = LoggerFactory.getLogger(RestControllerV2.class);</span>
+
+	static final int MAX_ENTITIES = 1000;
+
+	public static final String BASE_URI = &quot;/api/v2&quot;;
+	public static final String TIME_PARAM_NAME = &quot;_t&quot;;
+
+	private final DataService dataService;
+	private final RestService restService;
+	private final UserPermissionEvaluator permissionService;
+	private final PermissionSystemService permissionSystemService;
+	private final RepositoryCopier repoCopier;
+	private final LocalizationService localizationService;
+
+	static MolgenisRepositoryCapabilitiesException createNoWriteCapabilitiesOnEntityException(String entityTypeId)
+	{
+<span class="fc" id="L84">		return new MolgenisRepositoryCapabilitiesException(&quot;No write capabilities for entity &quot; + entityTypeId);</span>
+	}
+
+	static DuplicateEntityException createDuplicateEntityException(String entityTypeId)
+	{
+<span class="fc" id="L89">		return new DuplicateEntityException(&quot;Operation failed. Duplicate entity: '&quot; + entityTypeId + &quot;'&quot;);</span>
+	}
+
+	static MolgenisDataAccessException createMolgenisDataAccessExceptionReadOnlyAttribute(String entityTypeId,
+			String attributeName)
+	{
+<span class="fc" id="L95">		return new MolgenisDataAccessException(</span>
+				&quot;Operation failed. Attribute '&quot; + attributeName + &quot;' of entity '&quot; + entityTypeId + &quot;' is readonly&quot;);
+	}
+
+	static MolgenisDataException createMolgenisDataExceptionUnknownIdentifier(int count)
+	{
+<span class="fc" id="L101">		return new MolgenisDataException(&quot;Operation failed. Unknown identifier on index &quot; + count);</span>
+	}
+
+	static MolgenisDataException createMolgenisDataExceptionIdentifierAndValue()
+	{
+<span class="fc" id="L106">		return new MolgenisDataException(&quot;Operation failed. Entities must provide only an identifier and a value&quot;);</span>
+	}
+
+	public RestControllerV2(DataService dataService, UserPermissionEvaluator permissionService, RestService restService,
+			LocalizationService localizationService, PermissionSystemService permissionSystemService,
+			RepositoryCopier repoCopier)
+<span class="fc" id="L112">	{</span>
+<span class="fc" id="L113">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L114">		this.permissionService = requireNonNull(permissionService);</span>
+<span class="fc" id="L115">		this.restService = requireNonNull(restService);</span>
+<span class="fc" id="L116">		this.localizationService = requireNonNull(localizationService);</span>
+<span class="fc" id="L117">		this.permissionSystemService = requireNonNull(permissionSystemService);</span>
+<span class="fc" id="L118">		this.repoCopier = requireNonNull(repoCopier);</span>
+<span class="fc" id="L119">	}</span>
+
+	@Autowired
+	@GetMapping(&quot;/version&quot;)
+	public Map&lt;String, String&gt; getVersion(@Value(&quot;${molgenis.version:@null}&quot;) String molgenisVersion,
+			@Value(&quot;${molgenis.build.date:@null}&quot;) String molgenisBuildDate)
+	{
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">		if (molgenisVersion == null) throw new IllegalArgumentException(&quot;molgenisVersion is null&quot;);</span>
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">		if (molgenisBuildDate == null) throw new IllegalArgumentException(&quot;molgenisBuildDate is null&quot;);</span>
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">		if (molgenisBuildDate.equals(&quot;${maven.build.timestamp}&quot;))</span>
+		{
+<span class="nc" id="L130">			molgenisBuildDate = DateTimeFormatter.ofLocalizedDateTime(MEDIUM).format(now()) + &quot; by IntelliJ&quot;;</span>
+		}
+<span class="fc" id="L132">		Map&lt;String, String&gt; result = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L133">		result.put(&quot;molgenisVersion&quot;, molgenisVersion);</span>
+<span class="fc" id="L134">		result.put(&quot;buildDate&quot;, molgenisBuildDate);</span>
+
+<span class="fc" id="L136">		return result;</span>
+	}
+
+	/**
+	 * Retrieve an entity instance by id, optionally specify which attributes to include in the response.
+	 */
+	@GetMapping(&quot;/{entityTypeId}/{id:.+}&quot;)
+	public Map&lt;String, Object&gt; retrieveEntity(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;id&quot;) String untypedId,
+			@RequestParam(value = &quot;attrs&quot;, required = false) AttributeFilter attributeFilter,
+			@RequestParam(value = &quot;includeCategories&quot;, defaultValue = &quot;false&quot;) boolean includeCategories)
+	{
+<span class="fc" id="L148">		return getEntityResponse(entityTypeId, untypedId, attributeFilter, includeCategories);</span>
+	}
+
+	/**
+	 * Tunnel retrieveEntity through a POST request
+	 */
+	@PostMapping(value = &quot;/{entityTypeId}/{id:.+}&quot;, params = &quot;_method=GET&quot;)
+	public Map&lt;String, Object&gt; retrieveEntityPost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;id&quot;) String untypedId,
+			@RequestParam(value = &quot;attrs&quot;, required = false) AttributeFilter attributeFilter,
+			@RequestParam(value = &quot;includeCategories&quot;, defaultValue = &quot;false&quot;) boolean includeCategories)
+	{
+<span class="nc" id="L160">		return getEntityResponse(entityTypeId, untypedId, attributeFilter, includeCategories);</span>
+	}
+
+	private Map&lt;String, Object&gt; getEntityResponse(String entityTypeId, String untypedId,
+			AttributeFilter attributeFilter, boolean includeCategories)
+	{
+<span class="fc" id="L166">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L167">		Object id = getTypedValue(untypedId, entityType.getIdAttribute());</span>
+
+<span class="fc" id="L169">		Fetch fetch = AttributeFilterToFetchConverter.convert(attributeFilter, entityType,</span>
+<span class="fc" id="L170">				LanguageService.getCurrentUserLanguageCode());</span>
+
+<span class="fc" id="L172">		Entity entity = dataService.findOneById(entityTypeId, id, fetch);</span>
+<span class="pc bpc" id="L173" title="1 of 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="nc" id="L175">			throw new UnknownEntityException(entityType, id);</span>
+		}
+
+<span class="fc" id="L178">		return createEntityResponse(entity, fetch, true, includeCategories);</span>
+	}
+
+	@Transactional
+	@DeleteMapping(&quot;/{entityTypeId:^(?!i18n).+}/{id:.+}&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void deleteEntity(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId, @PathVariable(&quot;id&quot;) String untypedId)
+	{
+<span class="nc" id="L186">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="nc" id="L187">		Object id = getTypedValue(untypedId, entityType.getIdAttribute());</span>
+
+<span class="nc bnc" id="L189" title="All 2 branches missed.">		if (ATTRIBUTE_META_DATA.equals(entityTypeId))</span>
+		{
+<span class="nc" id="L191">			dataService.getMeta().deleteAttributeById(id);</span>
+		}
+		else
+		{
+<span class="nc" id="L195">			dataService.deleteById(entityTypeId, id);</span>
+		}
+<span class="nc" id="L197">	}</span>
+
+	/**
+	 * Delete multiple entities of the given entity type
+	 */
+	@DeleteMapping(&quot;/{entityTypeId}&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void deleteEntityCollection(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@RequestBody @Valid EntityCollectionDeleteRequestV2 request)
+	{
+<span class="fc" id="L207">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L208" title="All 2 branches covered.">		if (entityType.isAbstract())</span>
+		{
+<span class="fc" id="L210">			throw new MolgenisDataException(</span>
+<span class="fc" id="L211">					format(&quot;Cannot delete entities because type [%s] is abstract.&quot;, entityTypeId));</span>
+		}
+<span class="fc" id="L213">		Attribute idAttribute = entityType.getIdAttribute();</span>
+<span class="fc" id="L214">		Stream&lt;Object&gt; typedIds = request.getEntityIds().stream().map(entityId -&gt; getTypedValue(entityId, idAttribute));</span>
+<span class="fc" id="L215">		dataService.deleteAll(entityTypeId, typedIds);</span>
+<span class="fc" id="L216">	}</span>
+
+	/**
+	 * Retrieve an entity collection, optionally specify which attributes to include in the response.
+	 */
+	@GetMapping(&quot;/{entityTypeId}&quot;)
+	public EntityCollectionResponseV2 retrieveEntityCollection(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@Valid EntityCollectionRequestV2 request, HttpServletRequest httpRequest,
+			@RequestParam(value = &quot;includeCategories&quot;, defaultValue = &quot;false&quot;) boolean includeCategories)
+	{
+<span class="fc" id="L226">		return createEntityCollectionResponse(entityTypeId, request, httpRequest, includeCategories);</span>
+	}
+
+	@PostMapping(value = &quot;/{entityTypeId}&quot;, params = &quot;_method=GET&quot;)
+	public EntityCollectionResponseV2 retrieveEntityCollectionPost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@Valid EntityCollectionRequestV2 request, HttpServletRequest httpRequest,
+			@RequestParam(value = &quot;includeCategories&quot;, defaultValue = &quot;false&quot;) boolean includeCategories)
+	{
+<span class="nc" id="L234">		return createEntityCollectionResponse(entityTypeId, request, httpRequest, includeCategories);</span>
+	}
+
+	/**
+	 * Retrieve attribute meta data
+	 */
+	@GetMapping(value = &quot;/{entityTypeId}/meta/{attributeName}&quot;, produces = APPLICATION_JSON_VALUE)
+	public AttributeResponseV2 retrieveEntityAttributeMeta(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;attributeName&quot;) String attributeName)
+	{
+<span class="fc" id="L244">		return createAttributeResponse(entityTypeId, attributeName);</span>
+	}
+
+	@PostMapping(value = &quot;/{entityTypeId}/meta/{attributeName}&quot;, params = &quot;_method=GET&quot;, produces = APPLICATION_JSON_VALUE)
+	public AttributeResponseV2 retrieveEntityAttributeMetaPost(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;attributeName&quot;) String attributeName)
+	{
+<span class="fc" id="L251">		return createAttributeResponse(entityTypeId, attributeName);</span>
+	}
+
+	/**
+	 * Try to create multiple entities in one transaction. If one fails all fails.
+	 *
+	 * @param entityTypeId name of the entity where the entities are going to be added.
+	 * @param request      EntityCollectionCreateRequestV2
+	 * @param response     HttpServletResponse
+	 * @return EntityCollectionCreateResponseBodyV2
+	 */
+	@Transactional
+	@PostMapping(value = &quot;/{entityTypeId}&quot;, produces = APPLICATION_JSON_VALUE)
+	public EntityCollectionBatchCreateResponseBodyV2 createEntities(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@RequestBody @Valid EntityCollectionBatchRequestV2 request, HttpServletResponse response) throws Exception
+	{
+<span class="fc" id="L267">		final EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L268" title="All 2 branches covered.">		if (meta == null)</span>
+		{
+<span class="fc" id="L270">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+
+		try
+		{
+<span class="fc" id="L275">			final List&lt;Entity&gt; entities = request.getEntities()</span>
+<span class="fc" id="L276">												 .stream()</span>
+<span class="fc" id="L277">												 .map(e -&gt; this.restService.toEntity(meta, e))</span>
+<span class="fc" id="L278">												 .collect(toList());</span>
+<span class="fc" id="L279">			final EntityCollectionBatchCreateResponseBodyV2 responseBody = new EntityCollectionBatchCreateResponseBodyV2();</span>
+<span class="fc" id="L280">			final List&lt;String&gt; ids = new ArrayList&lt;&gt;();</span>
+
+			// Add all entities
+<span class="fc bfc" id="L283" title="All 2 branches covered.">			if (ATTRIBUTE_META_DATA.equals(entityTypeId))</span>
+			{
+<span class="fc" id="L285">				entities.stream()</span>
+<span class="fc" id="L286">						.map(attribute -&gt; (Attribute) attribute)</span>
+<span class="fc" id="L287">						.forEach(attribute -&gt; dataService.getMeta().addAttribute(attribute));</span>
+			}
+			else
+			{
+<span class="fc" id="L291">				this.dataService.add(entityTypeId, entities.stream());</span>
+			}
+
+<span class="fc" id="L294">			entities.forEach(entity -&gt;</span>
+			{
+<span class="fc" id="L296">				restService.updateMappedByEntities(entity);</span>
+
+<span class="fc" id="L298">				String id = entity.getIdValue().toString();</span>
+<span class="fc" id="L299">				ids.add(id);</span>
+<span class="fc" id="L300">				responseBody.getResources()</span>
+<span class="fc" id="L301">							.add(new AutoValue_ResourcesResponseV2(</span>
+<span class="fc" id="L302">									Href.concatEntityHref(RestControllerV2.BASE_URI, entityTypeId, id)));</span>
+<span class="fc" id="L303">			});</span>
+
+<span class="fc" id="L305">			responseBody.setLocation(Href.concatEntityCollectionHref(RestControllerV2.BASE_URI, entityTypeId,</span>
+<span class="fc" id="L306">					meta.getIdAttribute().getName(), ids));</span>
+
+<span class="fc" id="L308">			response.setStatus(HttpServletResponse.SC_CREATED);</span>
+<span class="fc" id="L309">			return responseBody;</span>
+		}
+<span class="fc" id="L311">		catch (Exception e)</span>
+		{
+<span class="fc" id="L313">			response.setStatus(HttpServletResponse.SC_NO_CONTENT);</span>
+<span class="fc" id="L314">			throw e;</span>
+		}
+	}
+
+	/**
+	 * Copy an entity.
+	 *
+	 * @param entityTypeId name of the entity that will be copied.
+	 * @param request      CopyEntityRequestV2
+	 * @param response     HttpServletResponse
+	 * @return String name of the new entity
+	 */
+	@Transactional
+	@PostMapping(value = &quot;copy/{entityTypeId}&quot;, produces = APPLICATION_JSON_VALUE)
+	public String copyEntity(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@RequestBody @Valid CopyEntityRequestV2 request, HttpServletResponse response) throws Exception
+	{
+		// No repo
+<span class="fc bfc" id="L332" title="All 2 branches covered.">		if (!dataService.hasRepository(entityTypeId)) throw new UnknownEntityTypeException(entityTypeId);</span>
+
+<span class="fc" id="L334">		Repository&lt;Entity&gt; repositoryToCopyFrom = dataService.getRepository(entityTypeId);</span>
+
+		// Validate the new name
+<span class="fc" id="L337">		NameValidator.validateEntityName(request.getNewEntityName());</span>
+
+		// Check if the entity already exists
+<span class="fc" id="L340">		String newFullName = EntityTypeUtils.buildFullName(repositoryToCopyFrom.getEntityType().getPackage(),</span>
+<span class="fc" id="L341">				request.getNewEntityName());</span>
+<span class="fc bfc" id="L342" title="All 2 branches covered.">		if (dataService.hasRepository(newFullName)) throw createDuplicateEntityException(newFullName);</span>
+
+		// Permission
+<span class="fc" id="L345">		boolean readPermission = permissionService.hasPermission(new EntityTypeIdentity(repositoryToCopyFrom.getName()),</span>
+				EntityTypePermission.READ_DATA);
+<span class="fc bfc" id="L347" title="All 2 branches covered.">		if (!readPermission)</span>
+<span class="fc" id="L348">			throw new EntityTypePermissionDeniedException(EntityTypePermission.READ_DATA, entityTypeId);</span>
+
+		// Capabilities
+<span class="fc" id="L351">		boolean writableCapabilities = dataService.getCapabilities(repositoryToCopyFrom.getName())</span>
+<span class="fc" id="L352">												  .contains(RepositoryCapability.WRITABLE);</span>
+<span class="fc bfc" id="L353" title="All 2 branches covered.">		if (!writableCapabilities) throw createNoWriteCapabilitiesOnEntityException(entityTypeId);</span>
+
+		// Copy
+<span class="fc" id="L356">		Repository&lt;Entity&gt; repository = repoCopier.copyRepository(repositoryToCopyFrom, request.getNewEntityName(),</span>
+<span class="fc" id="L357">				repositoryToCopyFrom.getEntityType().getPackage(), request.getNewEntityName());</span>
+
+		// Retrieve new repo
+<span class="fc" id="L360">		permissionSystemService.giveUserWriteMetaPermissions(repository.getEntityType());</span>
+
+<span class="fc" id="L362">		response.addHeader(&quot;Location&quot;, Href.concatMetaEntityHrefV2(RestControllerV2.BASE_URI, repository.getName()));</span>
+<span class="fc" id="L363">		response.setStatus(HttpServletResponse.SC_CREATED);</span>
+
+<span class="fc" id="L365">		return repository.getName();</span>
+	}
+
+	/**
+	 * Try to update multiple entities in one transaction. If one fails all fails.
+	 *
+	 * @param entityTypeId name of the entity where the entities are going to be added.
+	 * @param request      EntityCollectionCreateRequestV2
+	 * @param response     HttpServletResponse
+	 */
+	@PutMapping(&quot;/{entityTypeId}&quot;)
+	public synchronized void updateEntities(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@RequestBody @Valid EntityCollectionBatchRequestV2 request, HttpServletResponse response) throws Exception
+	{
+<span class="fc" id="L379">		final EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L380" title="All 2 branches covered.">		if (meta == null)</span>
+		{
+<span class="fc" id="L382">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+
+		try
+		{
+<span class="fc" id="L387">			List&lt;Entity&gt; entities = request.getEntities()</span>
+<span class="fc" id="L388">										   .stream()</span>
+<span class="fc" id="L389">										   .map(e -&gt; this.restService.toEntity(meta, e))</span>
+<span class="fc" id="L390">										   .collect(toList());</span>
+
+			// update all entities
+<span class="fc" id="L393">			this.dataService.update(entityTypeId, entities.stream());</span>
+<span class="fc" id="L394">			entities.forEach(entity -&gt; restService.updateMappedByEntities(entity,</span>
+<span class="fc" id="L395">					dataService.findOneById(entityTypeId, entity.getIdValue())));</span>
+<span class="fc" id="L396">			response.setStatus(HttpServletResponse.SC_OK);</span>
+		}
+<span class="fc" id="L398">		catch (Exception e)</span>
+		{
+<span class="fc" id="L400">			response.setStatus(HttpServletResponse.SC_NO_CONTENT);</span>
+<span class="fc" id="L401">			throw e;</span>
+<span class="fc" id="L402">		}</span>
+<span class="fc" id="L403">	}</span>
+
+	/**
+	 * @param entityTypeId  The name of the entity to update
+	 * @param attributeName The name of the attribute to update
+	 * @param request       EntityCollectionBatchRequestV2
+	 * @param response      HttpServletResponse
+	 */
+	@PutMapping(&quot;/{entityTypeId}/{attributeName}&quot;)
+	@ResponseStatus(OK)
+	public synchronized void updateAttribute(@PathVariable(&quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(&quot;attributeName&quot;) String attributeName,
+			@RequestBody @Valid EntityCollectionBatchRequestV2 request, HttpServletResponse response) throws Exception
+	{
+<span class="fc" id="L417">		final EntityType meta = dataService.getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L418" title="All 2 branches covered.">		if (meta == null)</span>
+		{
+<span class="fc" id="L420">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+
+		try
+		{
+<span class="fc" id="L425">			Attribute attr = meta.getAttribute(attributeName);</span>
+<span class="pc bpc" id="L426" title="1 of 2 branches missed.">			if (attr == null)</span>
+			{
+<span class="nc" id="L428">				throw new UnknownAttributeException(meta, attributeName);</span>
+			}
+
+<span class="fc bfc" id="L431" title="All 2 branches covered.">			if (attr.isReadOnly())</span>
+			{
+<span class="fc" id="L433">				throw createMolgenisDataAccessExceptionReadOnlyAttribute(entityTypeId, attributeName);</span>
+			}
+
+<span class="fc" id="L436">			final List&lt;Entity&gt; entities = request.getEntities()</span>
+<span class="fc" id="L437">												 .stream()</span>
+<span class="fc bfc" id="L438" title="All 2 branches covered.">												 .filter(e -&gt; e.size() == 2)</span>
+<span class="fc" id="L439">												 .map(e -&gt; this.restService.toEntity(meta, e))</span>
+<span class="fc" id="L440">												 .collect(toList());</span>
+<span class="fc bfc" id="L441" title="All 2 branches covered.">			if (entities.size() != request.getEntities().size())</span>
+			{
+<span class="fc" id="L443">				throw createMolgenisDataExceptionIdentifierAndValue();</span>
+			}
+
+<span class="fc" id="L446">			final List&lt;Entity&gt; updatedEntities = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L447">			int count = 0;</span>
+<span class="fc bfc" id="L448" title="All 2 branches covered.">			for (Entity entity : entities)</span>
+			{
+<span class="fc" id="L450">				Object id = checkForEntityId(entity, count);</span>
+
+<span class="fc" id="L452">				Entity originalEntity = dataService.findOneById(entityTypeId, id);</span>
+<span class="fc bfc" id="L453" title="All 2 branches covered.">				if (originalEntity == null)</span>
+				{
+<span class="fc" id="L455">					throw new UnknownEntityException(meta, id);</span>
+				}
+
+<span class="fc" id="L458">				Object value = this.restService.toEntityValue(attr, entity.get(attributeName), id);</span>
+<span class="fc" id="L459">				originalEntity.set(attributeName, value);</span>
+<span class="fc" id="L460">				updatedEntities.add(originalEntity);</span>
+<span class="fc" id="L461">				count++;</span>
+<span class="fc" id="L462">			}</span>
+
+			// update all entities
+<span class="fc" id="L465">			this.dataService.update(entityTypeId, updatedEntities.stream());</span>
+<span class="fc" id="L466">			response.setStatus(HttpServletResponse.SC_OK);</span>
+		}
+<span class="fc" id="L468">		catch (Exception e)</span>
+		{
+<span class="fc" id="L470">			response.setStatus(HttpServletResponse.SC_NO_CONTENT);</span>
+<span class="fc" id="L471">			throw e;</span>
+<span class="fc" id="L472">		}</span>
+<span class="fc" id="L473">	}</span>
+
+	/**
+	 * Get all l10n resource strings in the language of the current user
+	 */
+	@GetMapping(value = &quot;/i18n&quot;, produces = APPLICATION_JSON_VALUE)
+	public Map&lt;String, String&gt; getL10nStrings()
+	{
+<span class="nc" id="L481">		Map&lt;String, String&gt; translations = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L483">		ResourceBundle bundle = LanguageService.getBundle();</span>
+<span class="nc bnc" id="L484" title="All 2 branches missed.">		for (String key : localizationService.getAllMessageIds())</span>
+		{
+<span class="nc" id="L486">			translations.put(key, bundle.getString(key));</span>
+<span class="nc" id="L487">		}</span>
+
+<span class="nc" id="L489">		return translations;</span>
+	}
+
+	/**
+	 * Get the localization resource strings for a specific language and namespace.
+	 * Will *not* provide fallback values if the specified language is not available.
+	 */
+	@GetMapping(value = &quot;/i18n/{namespace}/{language}&quot;, produces = APPLICATION_JSON_VALUE + &quot;;charset=UTF-8&quot;)
+	public Map&lt;String, String&gt; getL10nStrings(@PathVariable String namespace, @PathVariable String language)
+	{
+<span class="nc" id="L499">		return localizationService.getMessages(namespace, new Locale(language));</span>
+	}
+
+	/**
+	 * Get a properties file to put on your classpath.
+	 */
+	@GetMapping(value = &quot;/i18n/{namespace}_{language}.properties&quot;, produces = TEXT_PLAIN_VALUE + &quot;;charset=UTF-8 &quot;)
+	public String getL10nProperties(@PathVariable String namespace, @PathVariable String language) throws IOException
+	{
+<span class="nc" id="L508">		language = language.toLowerCase();</span>
+<span class="nc" id="L509">		Properties translations = new Properties();</span>
+<span class="nc" id="L510">		Locale locale = new Locale(language);</span>
+<span class="nc" id="L511">		translations.putAll(localizationService.getMessages(namespace, locale));</span>
+<span class="nc" id="L512">		StringWriter sw = new StringWriter();</span>
+<span class="nc" id="L513">		translations.store(sw, String.format(&quot;%s_%s.properties&quot;, namespace, language));</span>
+<span class="nc" id="L514">		return sw.toString();</span>
+	}
+
+	/**
+	 * Registers missing message IDs.
+	 * Used by XHR backend of i18next.
+	 * User needs permissions on the entity to add the values, otherwise they'll only be logged.
+	 */
+	@PostMapping(&quot;/i18n/{namespace}&quot;)
+	@ResponseStatus(CREATED)
+	public void registerMissingResourceStrings(@PathVariable String namespace, HttpServletRequest request)
+	{
+<span class="nc" id="L526">		Set&lt;String&gt; messageIDs = request.getParameterMap()</span>
+<span class="nc" id="L527">										.entrySet()</span>
+<span class="nc" id="L528">										.stream()</span>
+<span class="nc" id="L529">										.map(Map.Entry::getKey)</span>
+<span class="nc bnc" id="L530" title="All 2 branches missed.">										.filter(id -&gt; !id.equals(TIME_PARAM_NAME))</span>
+<span class="nc" id="L531">										.collect(toSet());</span>
+<span class="nc" id="L532">		localizationService.addMissingMessageIds(namespace, messageIDs);</span>
+<span class="nc" id="L533">	}</span>
+
+	@DeleteMapping(&quot;/i18n/{namespace}&quot;)
+	@ResponseStatus(NO_CONTENT)
+	public void deleteNamespace(@PathVariable String namespace)
+	{
+<span class="nc" id="L539">		localizationService.deleteNamespace(namespace);</span>
+<span class="nc" id="L540">	}</span>
+
+	/**
+	 * Get entity id and perform a check, throwing an MolgenisDataException when necessary
+	 */
+	private static Object checkForEntityId(Entity entity, int count)
+	{
+<span class="fc" id="L547">		Object id = entity.getIdValue();</span>
+<span class="fc bfc" id="L548" title="All 2 branches covered.">		if (null == id)</span>
+		{
+<span class="fc" id="L550">			throw createMolgenisDataExceptionUnknownIdentifier(count);</span>
+		}
+<span class="fc" id="L552">		return id;</span>
+	}
+
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	@ResponseStatus(BAD_REQUEST)
+	public @ResponseBody
+	ErrorMessageResponse handleHttpMessageNotReadableException(HttpMessageNotReadableException exception)
+	{
+<span class="fc" id="L560">		LOG.debug(&quot;Invalid request body.&quot;, exception);</span>
+<span class="fc" id="L561">		return new ErrorMessageResponse(new ErrorMessage(&quot;Invalid request body.&quot;));</span>
+	}
+
+	@ExceptionHandler(MethodArgumentNotValidException.class)
+	@ResponseStatus(BAD_REQUEST)
+	public @ResponseBody
+	ErrorMessageResponse handleMethodArgumentNotValidException(MethodArgumentNotValidException exception)
+	{
+<span class="fc" id="L569">		LOG.info(&quot;Invalid method arguments.&quot;, exception);</span>
+<span class="fc" id="L570">		return new ErrorMessageResponse(transform(exception.getBindingResult().getFieldErrors(),</span>
+<span class="fc" id="L571">				error -&gt; new ErrorMessage(error.getDefaultMessage())));</span>
+	}
+
+	@ExceptionHandler(MolgenisDataException.class)
+	@ResponseStatus(BAD_REQUEST)
+	@ResponseBody
+	public ErrorMessageResponse handleMolgenisDataException(MolgenisDataException e)
+	{
+<span class="fc" id="L579">		LOG.info(&quot;Operation failed.&quot;, e);</span>
+<span class="fc" id="L580">		return new ErrorMessageResponse(new ErrorMessage(e.getMessage()));</span>
+	}
+
+	@ExceptionHandler(MolgenisDataAccessException.class)
+	@ResponseStatus(UNAUTHORIZED)
+	@ResponseBody
+	public ErrorMessageResponse handleMolgenisDataAccessException(MolgenisDataAccessException e)
+	{
+<span class="fc" id="L588">		LOG.debug(&quot;Data access exception occurred.&quot;, e);</span>
+<span class="fc" id="L589">		return new ErrorMessageResponse(new ErrorMessage(e.getMessage()));</span>
+	}
+
+	@ExceptionHandler(ConversionFailedException.class)
+	@ResponseStatus(BAD_REQUEST)
+	@ResponseBody
+	public ErrorMessageResponse handleConversionFailedException(ConversionFailedException e)
+	{
+<span class="nc" id="L597">		LOG.info(&quot;ConversionFailedException occurred&quot;, e);</span>
+<span class="nc" id="L598">		return new ErrorMessageResponse(new ErrorMessage(e.getMessage()));</span>
+	}
+
+	private AttributeResponseV2 createAttributeResponse(String entityTypeId, String attributeName)
+	{
+<span class="fc" id="L603">		EntityType entity = dataService.getEntityType(entityTypeId);</span>
+<span class="pc bpc" id="L604" title="1 of 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="nc" id="L606">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+
+<span class="fc" id="L609">		Attribute attribute = entity.getAttribute(attributeName);</span>
+<span class="pc bpc" id="L610" title="1 of 2 branches missed.">		if (attribute == null)</span>
+		{
+<span class="nc" id="L612">			throw new UnknownAttributeException(entity, attributeName);</span>
+		}
+
+<span class="fc" id="L615">		return new AttributeResponseV2(entityTypeId, entity, attribute, null, permissionService, dataService);</span>
+	}
+
+	private EntityCollectionResponseV2 createEntityCollectionResponse(String entityTypeId,
+			EntityCollectionRequestV2 request, HttpServletRequest httpRequest, boolean includeCategories)
+	{
+<span class="fc" id="L621">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L622" title="All 2 branches covered.">		if (entityType == null)</span>
+		{
+<span class="fc" id="L624">			throw new UnknownEntityTypeException(entityTypeId);</span>
+		}
+
+<span class="pc bpc" id="L627" title="1 of 2 branches missed.">		Query&lt;Entity&gt; q = request.getQ() != null ? request.getQ().createQuery(entityType) : new QueryImpl&lt;&gt;();</span>
+<span class="fc" id="L628">		q.pageSize(request.getNum()).offset(request.getStart()).sort(request.getSort());</span>
+<span class="fc" id="L629">		Fetch fetch = AttributeFilterToFetchConverter.convert(request.getAttrs(), entityType,</span>
+<span class="fc" id="L630">				LocaleContextHolder.getLocale().getLanguage());</span>
+<span class="pc bpc" id="L631" title="1 of 2 branches missed.">		if (fetch != null)</span>
+		{
+<span class="fc" id="L633">			q.fetch(fetch);</span>
+		}
+
+<span class="pc bpc" id="L636" title="1 of 2 branches missed.">		if (request.getAggs() != null)</span>
+		{
+			// return aggregates for aggregate query
+<span class="nc" id="L639">			AggregateQuery aggsQ = request.getAggs().createAggregateQuery(entityType, q);</span>
+<span class="nc" id="L640">			Attribute xAttr = aggsQ.getAttributeX();</span>
+<span class="nc" id="L641">			Attribute yAttr = aggsQ.getAttributeY();</span>
+<span class="nc bnc" id="L642" title="All 4 branches missed.">			if (xAttr == null &amp;&amp; yAttr == null)</span>
+			{
+<span class="nc" id="L644">				throw new MolgenisQueryException(&quot;Aggregate query is missing 'x' or 'y' attribute&quot;);</span>
+			}
+<span class="nc" id="L646">			AggregateResult aggs = dataService.aggregate(entityTypeId, aggsQ);</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">			AttributeResponseV2 xAttrResponse =</span>
+					xAttr != null ? new AttributeResponseV2(entityTypeId, entityType, xAttr, fetch, permissionService,
+							dataService) : null;
+<span class="nc bnc" id="L650" title="All 2 branches missed.">			AttributeResponseV2 yAttrResponse =</span>
+					yAttr != null ? new AttributeResponseV2(entityTypeId, entityType, yAttr, fetch, permissionService,
+							dataService) : null;
+<span class="nc" id="L653">			return new EntityAggregatesResponse(aggs, xAttrResponse, yAttrResponse, BASE_URI + '/' + entityTypeId);</span>
+		}
+		else
+		{
+<span class="fc" id="L657">			Long count = dataService.count(entityTypeId, new QueryImpl&lt;&gt;(q).setOffset(0).setPageSize(0));</span>
+			Iterable&lt;Entity&gt; it;
+<span class="pc bpc" id="L659" title="1 of 4 branches missed.">			if (count &gt; 0 &amp;&amp; q.getPageSize() &gt; 0)</span>
+			{
+<span class="fc" id="L661">				it = () -&gt; dataService.findAll(entityTypeId, q).iterator();</span>
+			}
+			else
+			{
+<span class="fc" id="L665">				it = Collections.emptyList();</span>
+			}
+<span class="fc" id="L667">			EntityPager pager = new EntityPager(request.getStart(), request.getNum(), count, it);</span>
+
+<span class="fc" id="L669">			List&lt;Map&lt;String, Object&gt;&gt; entities = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L670" title="All 2 branches covered.">			for (Entity entity : it)</span>
+			{
+<span class="fc" id="L672">				Map&lt;String, Object&gt; responseData = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L673">				createEntityValuesResponse(entity, fetch, responseData);</span>
+<span class="fc" id="L674">				entities.add(responseData);</span>
+<span class="fc" id="L675">			}</span>
+
+<span class="fc" id="L677">			UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(getFullURL(httpRequest));</span>
+
+<span class="fc" id="L679">			String prevHref = null;</span>
+<span class="pc bpc" id="L680" title="1 of 2 branches missed.">			if (pager.getPrevStart() != null)</span>
+			{
+<span class="nc" id="L682">				builder.replaceQueryParam(&quot;start&quot;, pager.getPrevStart());</span>
+<span class="nc" id="L683">				prevHref = builder.build(false).toUriString();</span>
+			}
+
+<span class="fc" id="L686">			String nextHref = null;</span>
+<span class="fc bfc" id="L687" title="All 2 branches covered.">			if (pager.getNextStart() != null)</span>
+			{
+<span class="fc" id="L689">				builder.replaceQueryParam(&quot;start&quot;, pager.getNextStart());</span>
+<span class="fc" id="L690">				nextHref = builder.build(false).toUriString();</span>
+			}
+
+<span class="fc" id="L693">			return new EntityCollectionResponseV2(pager, entities, fetch, BASE_URI + '/' + entityTypeId, entityType,</span>
+					permissionService, dataService, prevHref, nextHref, includeCategories);
+		}
+	}
+
+	private String getFullURL(HttpServletRequest request)
+	{
+<span class="fc" id="L700">		StringBuffer requestURL = request.getRequestURL();</span>
+<span class="fc" id="L701">		String queryString = request.getQueryString();</span>
+
+<span class="fc bfc" id="L703" title="All 2 branches covered.">		if (queryString == null)</span>
+		{
+<span class="fc" id="L705">			return requestURL.toString();</span>
+		}
+		else
+		{
+<span class="fc" id="L709">			return requestURL.append('?').append(queryString).toString();</span>
+		}
+	}
+
+	private Map&lt;String, Object&gt; createEntityResponse(Entity entity, Fetch fetch, boolean includeMetaData)
+	{
+<span class="fc" id="L715">		return createEntityResponse(entity, fetch, includeMetaData, false);</span>
+	}
+
+	private Map&lt;String, Object&gt; createEntityResponse(Entity entity, Fetch fetch, boolean includeMetaData,
+			boolean includeCategories)
+	{
+<span class="fc" id="L721">		Map&lt;String, Object&gt; responseData = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L722" title="All 2 branches covered.">		if (includeMetaData)</span>
+		{
+<span class="fc" id="L724">			createEntityTypeResponse(entity.getEntityType(), fetch, responseData, includeCategories);</span>
+		}
+<span class="fc" id="L726">		createEntityValuesResponse(entity, fetch, responseData);</span>
+<span class="fc" id="L727">		return responseData;</span>
+	}
+
+	private void createEntityTypeResponse(EntityType entityType, Fetch fetch, Map&lt;String, Object&gt; responseData,
+			boolean includeCategories)
+	{
+<span class="fc" id="L733">		responseData.put(&quot;_meta&quot;,</span>
+				new EntityTypeResponseV2(entityType, fetch, permissionService, dataService, includeCategories));
+<span class="fc" id="L735">	}</span>
+
+	private void createEntityValuesResponse(Entity entity, Fetch fetch, Map&lt;String, Object&gt; responseData)
+	{
+<span class="fc" id="L739">		Iterable&lt;Attribute&gt; attrs = entity.getEntityType().getAtomicAttributes();</span>
+<span class="fc" id="L740">		createEntityValuesResponseRec(entity, attrs, fetch, responseData);</span>
+<span class="fc" id="L741">	}</span>
+
+	private void createEntityValuesResponseRec(Entity entity, Iterable&lt;Attribute&gt; attrs, Fetch fetch,
+			Map&lt;String, Object&gt; responseData)
+	{
+<span class="fc" id="L746">		responseData.put(&quot;_href&quot;, Href.concatEntityHref(BASE_URI, entity.getEntityType().getId(), entity.getIdValue()));</span>
+<span class="fc bfc" id="L747" title="All 2 branches covered.">		for (Attribute attr : attrs) // TODO performance use fetch instead of attrs</span>
+		{
+<span class="fc" id="L749">			String attrName = attr.getName();</span>
+<span class="pc bpc" id="L750" title="1 of 4 branches missed.">			if (fetch == null || fetch.hasField(attr))</span>
+			{
+<span class="fc" id="L752">				AttributeType dataType = attr.getDataType();</span>
+<span class="pc bpc" id="L753" title="2 of 11 branches missed.">				switch (dataType)</span>
+				{
+					case BOOL:
+<span class="fc" id="L756">						responseData.put(attrName, entity.getBoolean(attrName));</span>
+<span class="fc" id="L757">						break;</span>
+					case CATEGORICAL:
+					case XREF:
+					case FILE:
+<span class="fc" id="L761">						Entity refEntity = entity.getEntity(attrName);</span>
+						Map&lt;String, Object&gt; refEntityResponse;
+<span class="fc bfc" id="L763" title="All 2 branches covered.">						if (refEntity != null)</span>
+						{
+<span class="pc bpc" id="L765" title="1 of 2 branches missed.">							Fetch refAttrFetch =</span>
+<span class="pc" id="L766">									fetch != null ? fetch.getFetch(attr) : createDefaultAttributeFetch(attr,</span>
+<span class="nc" id="L767">											LanguageService.getCurrentUserLanguageCode());</span>
+<span class="fc" id="L768">							refEntityResponse = createEntityResponse(refEntity, refAttrFetch, false);</span>
+<span class="fc" id="L769">						}</span>
+						else
+						{
+<span class="fc" id="L772">							refEntityResponse = null;</span>
+						}
+<span class="fc" id="L774">						responseData.put(attrName, refEntityResponse);</span>
+<span class="fc" id="L775">						break;</span>
+					case CATEGORICAL_MREF:
+					case MREF:
+					case ONE_TO_MANY:
+<span class="fc" id="L779">						Iterable&lt;Entity&gt; refEntities = entity.getEntities(attrName);</span>
+						List&lt;Map&lt;String, Object&gt;&gt; refEntityResponses;
+<span class="pc bpc" id="L781" title="1 of 2 branches missed.">						if (refEntities != null)</span>
+						{
+<span class="fc" id="L783">							refEntityResponses = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L784" title="1 of 2 branches missed.">							Fetch refAttrFetch =</span>
+<span class="pc" id="L785">									fetch != null ? fetch.getFetch(attrName) : createDefaultAttributeFetch(attr,</span>
+<span class="nc" id="L786">											LanguageService.getCurrentUserLanguageCode());</span>
+<span class="fc bfc" id="L787" title="All 2 branches covered.">							for (Entity refEntitiesEntity : refEntities)</span>
+							{
+<span class="fc" id="L789">								refEntityResponses.add(createEntityResponse(refEntitiesEntity, refAttrFetch, false));</span>
+<span class="fc" id="L790">							}</span>
+<span class="fc" id="L791">						}</span>
+						else
+						{
+<span class="nc" id="L794">							refEntityResponses = null;</span>
+						}
+<span class="fc" id="L796">						responseData.put(attrName, refEntityResponses);</span>
+<span class="fc" id="L797">						break;</span>
+					case COMPOUND:
+<span class="nc" id="L799">						throw new RuntimeException(&quot;Invalid data type [&quot; + dataType + &quot;]&quot;);</span>
+					case DATE:
+<span class="fc" id="L801">						LocalDate dateValue = entity.getLocalDate(attrName);</span>
+<span class="fc bfc" id="L802" title="All 2 branches covered.">						responseData.put(attrName, dateValue != null ? dateValue.toString() : null);</span>
+<span class="fc" id="L803">						break;</span>
+					case DATE_TIME:
+<span class="fc" id="L805">						Instant dateTimeValue = entity.getInstant(attrName);</span>
+<span class="fc bfc" id="L806" title="All 2 branches covered.">						responseData.put(attrName, dateTimeValue != null ? dateTimeValue.toString() : null);</span>
+<span class="fc" id="L807">						break;</span>
+					case DECIMAL:
+<span class="fc" id="L809">						responseData.put(attrName, entity.getDouble(attrName));</span>
+<span class="fc" id="L810">						break;</span>
+					case EMAIL:
+					case ENUM:
+					case HTML:
+					case HYPERLINK:
+					case SCRIPT:
+					case STRING:
+					case TEXT:
+<span class="fc" id="L818">						responseData.put(attrName, entity.getString(attrName));</span>
+<span class="fc" id="L819">						break;</span>
+					case INT:
+<span class="fc" id="L821">						responseData.put(attrName, entity.getInt(attrName));</span>
+<span class="fc" id="L822">						break;</span>
+					case LONG:
+<span class="fc" id="L824">						responseData.put(attrName, entity.getLong(attrName));</span>
+<span class="fc" id="L825">						break;</span>
+					default:
+<span class="nc" id="L827">						throw new UnexpectedEnumException(dataType);</span>
+				}
+			}
+<span class="fc" id="L830">		}</span>
+<span class="fc" id="L831">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

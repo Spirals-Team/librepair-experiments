@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AnnotationJobFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">dataexplorer</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.dataexplorer.controller</a> &gt; <span class="el_source">AnnotationJobFactory.java</span></div><h1>AnnotationJobFactory.java</h1><pre class="source lang-java linenums">package org.molgenis.dataexplorer.controller;
+
+import com.google.common.collect.Lists;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Repository;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.annotation.core.utils.AnnotatorDependencyOrderResolver;
+import org.molgenis.data.annotation.web.AnnotationService;
+import org.molgenis.data.annotation.web.CrudRepositoryAnnotator;
+import org.molgenis.data.annotation.web.meta.AnnotationJobExecution;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.jobs.JobExecutionUpdater;
+import org.molgenis.jobs.ProgressImpl;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.security.token.RunAsUserTokenFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.mail.MailSender;
+import org.springframework.security.access.intercept.RunAsUserToken;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.Arrays;
+import java.util.List;
+
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.annotation.web.meta.AnnotationJobExecutionMetaData.ANNOTATION_JOB_EXECUTION;
+
+/**
+ * Creates AnnotationJob based on its {@link AnnotationJobExecution}. Is a bean so that it can use {@link Autowired}
+ * services needed to rehydrate the primitive data types. Runs at execution time.
+ */
+@Component
+<span class="nc" id="L36">public class AnnotationJobFactory</span>
+{
+	@Autowired
+	CrudRepositoryAnnotator crudRepositoryAnnotator;
+
+	@Autowired
+	DataService dataService;
+
+	@Autowired
+	private AnnotationService annotationService;
+
+	@Autowired
+	private PlatformTransactionManager transactionManager;
+
+	@Autowired
+	private UserDetailsService userDetailsService;
+
+	@Autowired
+	private JobExecutionUpdater jobExecutionUpdater;
+
+	@Autowired
+	private MailSender mailSender;
+
+	@Autowired
+	private EntityTypeFactory entityTypeFactory;
+
+	@Autowired
+	private RunAsUserTokenFactory runAsUserTokenFactory;
+
+	@RunAsSystem
+	public AnnotationJob createJob(AnnotationJobExecution metaData)
+	{
+<span class="nc" id="L68">		dataService.add(ANNOTATION_JOB_EXECUTION, metaData);</span>
+<span class="nc" id="L69">		String annotatorNames = metaData.getAnnotators();</span>
+<span class="nc" id="L70">		String targetName = metaData.getTargetName();</span>
+<span class="nc" id="L71">		String username = metaData.getUser();</span>
+
+		// create an authentication to run as the user that is listed as the owner of the job
+<span class="nc" id="L74">		RunAsUserToken runAsAuthentication = runAsUserTokenFactory.create(&quot;Job Execution&quot;,</span>
+<span class="nc" id="L75">				userDetailsService.loadUserByUsername(username), null);</span>
+
+<span class="nc" id="L77">		Repository&lt;Entity&gt; repository = dataService.getRepository(targetName);</span>
+<span class="nc" id="L78">		List&lt;RepositoryAnnotator&gt; availableAnnotators = annotationService.getAllAnnotators()</span>
+<span class="nc" id="L79">																		 .stream()</span>
+<span class="nc" id="L80">																		 .filter(RepositoryAnnotator::annotationDataExists)</span>
+<span class="nc" id="L81">																		 .collect(toList());</span>
+<span class="nc" id="L82">		List&lt;RepositoryAnnotator&gt; requestedAnnotators = Arrays.stream(annotatorNames.split(&quot;,&quot;))</span>
+<span class="nc" id="L83">															  .map(annotationService::getAnnotatorByName)</span>
+<span class="nc" id="L84">															  .collect(toList());</span>
+<span class="nc" id="L85">		AnnotatorDependencyOrderResolver resolver = new AnnotatorDependencyOrderResolver();</span>
+<span class="nc" id="L86">		List&lt;RepositoryAnnotator&gt; annotators = Lists.newArrayList(</span>
+<span class="nc" id="L87">				resolver.getAnnotatorSelectionDependencyList(availableAnnotators, requestedAnnotators, repository,</span>
+						entityTypeFactory));
+<span class="nc" id="L89">		return new AnnotationJob(crudRepositoryAnnotator, username, annotators, repository,</span>
+				new ProgressImpl(metaData, jobExecutionUpdater, mailSender), runAsAuthentication,
+				new TransactionTemplate(transactionManager));
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

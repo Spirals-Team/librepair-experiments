@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InformationContentService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">ontology</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.ontology.roc</a> &gt; <span class="el_source">InformationContentService.java</span></div><h1>InformationContentService.java</h1><pre class="source lang-java linenums">package org.molgenis.ontology.roc;
+
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
+import com.google.common.collect.Sets;
+import com.google.common.util.concurrent.UncheckedExecutionException;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.QueryRule;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.ontology.core.meta.OntologyMetaData;
+import org.molgenis.ontology.core.meta.OntologyTermMetaData;
+import org.molgenis.semanticsearch.string.NGramDistanceAlgorithm;
+import org.molgenis.semanticsearch.string.Stemmer;
+
+import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.ontology.core.meta.OntologyMetaData.ONTOLOGY;
+import static org.molgenis.ontology.core.meta.OntologyTermMetaData.ONTOLOGY_TERM;
+
+public class InformationContentService
+{
+	private static final String NON_WORD_SEPARATOR = &quot;[^a-zA-Z0-9]&quot;;
+	private static final String SINGLE_WHITESPACE = &quot; &quot;;
+
+<span class="fc" id="L38">	private final LoadingCache&lt;String, Long&gt; CACHED_TOTAL_WORD_COUNT = CacheBuilder.newBuilder()</span>
+<span class="fc" id="L39">																				   .maximumSize(Integer.MAX_VALUE)</span>
+<span class="fc" id="L40">																				   .expireAfterWrite(1, TimeUnit.DAYS)</span>
+<span class="fc" id="L41">																				   .build(new CacheLoader&lt;String, Long&gt;()</span>
+<span class="fc" id="L42">																				   {</span>
+																					   @Override
+																					   public Long load(
+																							   String ontologyIri)
+																					   {
+<span class="fc" id="L47">																						   Entity ontologyEntity = dataService</span>
+<span class="fc" id="L48">																								   .findOne(ONTOLOGY,</span>
+																										   new QueryImpl&lt;&gt;()
+<span class="fc" id="L50">																												   .eq(OntologyMetaData.ONTOLOGY_IRI,</span>
+																														   ontologyIri));
+<span class="pc bpc" id="L52" title="1 of 2 branches missed.">																						   if (ontologyEntity != null)</span>
+																						   {
+<span class="fc" id="L54">																							   return dataService.count(</span>
+																									   ONTOLOGY_TERM,
+																									   new QueryImpl&lt;&gt;()
+<span class="fc" id="L57">																											   .eq(OntologyTermMetaData.ONTOLOGY,</span>
+																													   ontologyEntity));
+																						   }
+<span class="nc" id="L60">																						   return (long) 0;</span>
+																					   }
+																				   });
+<span class="fc" id="L63">	private final LoadingCache&lt;OntologyWord, Double&gt; CACHED_INVERSE_DOCUMENT_FREQ = CacheBuilder.newBuilder()</span>
+<span class="fc" id="L64">																								.maximumSize(</span>
+																										Integer.MAX_VALUE)
+<span class="fc" id="L66">																								.expireAfterWrite(1,</span>
+																										TimeUnit.DAYS)
+<span class="fc" id="L68">																								.build(new CacheLoader&lt;OntologyWord, Double&gt;()</span>
+<span class="fc" id="L69">																								{</span>
+																									public Double load(
+																											OntologyWord key)
+																											throws
+																											ExecutionException
+																									{
+<span class="fc" id="L75">																										String ontologyIri = key</span>
+<span class="fc" id="L76">																												.getOntologyIri();</span>
+<span class="fc" id="L77">																										Entity ontologyEntity = dataService</span>
+<span class="fc" id="L78">																												.findOne(</span>
+																														ONTOLOGY,
+																														new QueryImpl&lt;&gt;()
+<span class="fc" id="L81">																																.eq(OntologyMetaData.ONTOLOGY_IRI,</span>
+																																		ontologyIri));
+<span class="pc bpc" id="L83" title="1 of 2 branches missed.">																										if (ontologyEntity</span>
+																												!= null)
+																										{
+<span class="fc" id="L86">																											QueryRule queryRule = new QueryRule(</span>
+<span class="fc" id="L87">																													Arrays.asList(</span>
+																															new QueryRule(
+																																	OntologyTermMetaData.ONTOLOGY_TERM_SYNONYM,
+																																	Operator.FUZZY_MATCH,
+<span class="fc" id="L91">																																	key.getWord())));</span>
+<span class="fc" id="L92">																											queryRule.setOperator(</span>
+																													Operator.DIS_MAX);
+<span class="fc" id="L94">																											QueryRule finalQuery = new QueryRule(</span>
+<span class="fc" id="L95">																													Arrays.asList(</span>
+																															new QueryRule(
+																																	OntologyTermMetaData.ONTOLOGY,
+																																	Operator.EQUALS,
+																																	ontologyEntity),
+																															new QueryRule(
+																																	Operator.AND),
+																															queryRule));
+<span class="fc" id="L103">																											long wordCount = dataService</span>
+<span class="fc" id="L104">																													.count(ONTOLOGY_TERM,</span>
+																															new QueryImpl&lt;&gt;(
+																																	finalQuery));
+<span class="fc" id="L107">																											Long total = CACHED_TOTAL_WORD_COUNT</span>
+<span class="fc" id="L108">																													.get(ontologyIri);</span>
+<span class="pc bpc" id="L109" title="1 of 2 branches missed.">																											BigDecimal idfValue = new BigDecimal(</span>
+																													total
+																															== null ? 0 : (
+																															1
+																																	+ Math
+<span class="fc" id="L114">																																	.log((double) total</span>
+																																			/ (
+																																			wordCount
+																																					+ 1))));
+<span class="fc" id="L118">																											return idfValue</span>
+<span class="fc" id="L119">																													.doubleValue();</span>
+																										}
+<span class="nc" id="L121">																										return (double) 0;</span>
+																									}
+																								});
+
+	private final DataService dataService;
+
+	public InformationContentService(DataService dataService)
+<span class="fc" id="L128">	{</span>
+<span class="fc" id="L129">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L130">	}</span>
+
+	public Map&lt;String, Double&gt; redistributedNGramScore(String queryString, String ontologyIri)
+	{
+<span class="fc" id="L134">		Map&lt;String, Double&gt; wordIDFMap = createWordIDF(queryString, ontologyIri);</span>
+<span class="fc" id="L135">		Map&lt;String, Double&gt; wordWeightedSimilarity = new HashMap&lt;&gt;();</span>
+
+<span class="pc bpc" id="L137" title="1 of 2 branches missed.">		if (wordIDFMap.size() &gt; 0)</span>
+		{
+<span class="fc" id="L139">			double averageIDFValue = wordIDFMap.values()</span>
+<span class="fc" id="L140">											   .stream()</span>
+<span class="fc" id="L141">											   .mapToDouble(Double::doubleValue)</span>
+<span class="fc" id="L142">											   .average()</span>
+<span class="fc" id="L143">											   .getAsDouble();</span>
+<span class="fc" id="L144">			double queryStringLength = StringUtils.join(createStemmedWordSet(queryString), SINGLE_WHITESPACE)</span>
+<span class="fc" id="L145">												  .trim()</span>
+<span class="fc" id="L146">												  .length();</span>
+<span class="fc" id="L147">			double totalContribution = 0;</span>
+<span class="fc" id="L148">			double totalDenominator = 0;</span>
+
+<span class="fc bfc" id="L150" title="All 2 branches covered.">			for (Entry&lt;String, Double&gt; entry : wordIDFMap.entrySet())</span>
+			{
+<span class="fc" id="L152">				double diff = entry.getValue() - averageIDFValue;</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">				if (diff &lt; 0)</span>
+				{
+<span class="fc" id="L155">					Double contributedSimilarity =</span>
+<span class="fc" id="L156">							(entry.getKey().length() / queryStringLength * 100) * (diff / averageIDFValue);</span>
+<span class="fc" id="L157">					totalContribution += Math.abs(contributedSimilarity);</span>
+<span class="fc" id="L158">					wordWeightedSimilarity.put(entry.getKey(), contributedSimilarity);</span>
+<span class="fc" id="L159">				}</span>
+				else
+				{
+<span class="fc" id="L162">					totalDenominator += diff;</span>
+				}
+<span class="fc" id="L164">			}</span>
+
+<span class="fc bfc" id="L166" title="All 2 branches covered.">			for (Entry&lt;String, Double&gt; entry : wordIDFMap.entrySet())</span>
+			{
+<span class="fc" id="L168">				double diff = entry.getValue() - averageIDFValue;</span>
+<span class="fc bfc" id="L169" title="All 2 branches covered.">				if (diff &gt; 0)</span>
+				{
+<span class="fc" id="L171">					wordWeightedSimilarity.put(entry.getKey(), ((diff / totalDenominator) * totalContribution));</span>
+				}
+<span class="fc" id="L173">			}</span>
+		}
+<span class="fc" id="L175">		return wordWeightedSimilarity;</span>
+	}
+
+	Map&lt;String, Double&gt; createWordIDF(String queryString, String ontologyIri)
+	{
+<span class="fc" id="L180">		Map&lt;String, Double&gt; wordFreqMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L181">		Set&lt;String&gt; wordsInQueryString = createStemmedWordSet(queryString);</span>
+<span class="fc" id="L182">		wordsInQueryString.stream().forEach(word -&gt;</span>
+		{
+<span class="fc" id="L184">			Double wordIDF = null;</span>
+			try
+			{
+<span class="fc" id="L187">				wordIDF = CACHED_INVERSE_DOCUMENT_FREQ.get(new OntologyWord(ontologyIri, word));</span>
+			}
+<span class="nc" id="L189">			catch (ExecutionException e)</span>
+			{
+<span class="nc" id="L191">				throw new UncheckedExecutionException(e);</span>
+<span class="fc" id="L192">			}</span>
+
+<span class="pc bpc" id="L194" title="2 of 4 branches missed.">			if (wordIDF != null &amp;&amp; wordIDF != 0)</span>
+			{
+<span class="fc" id="L196">				wordFreqMap.put(word, wordIDF);</span>
+			}
+<span class="fc" id="L198">		});</span>
+<span class="fc" id="L199">		return wordFreqMap;</span>
+	}
+
+	public Set&lt;String&gt; createStemmedWordSet(String queryString)
+	{
+<span class="fc" id="L204">		Set&lt;String&gt; uniqueTerms = Sets.newHashSet(queryString.toLowerCase().trim().split(NON_WORD_SEPARATOR))</span>
+<span class="fc" id="L205">									  .stream()</span>
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">									  .filter(term -&gt; !NGramDistanceAlgorithm.STOPWORDSLIST.contains(term))</span>
+<span class="fc" id="L207">									  .map(Stemmer::stem)</span>
+<span class="fc" id="L208">									  .filter(StringUtils::isNotBlank)</span>
+<span class="fc" id="L209">									  .collect(Collectors.toSet());</span>
+<span class="fc" id="L210">		return Sets.newHashSet(uniqueTerms);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GoNLAnnotator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.entity.impl</a> &gt; <span class="el_source">GoNLAnnotator.java</span></div><h1>GoNLAnnotator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.entity.impl;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.annotation.core.entity.AnnotatorConfig;
+import org.molgenis.data.annotation.core.entity.AnnotatorInfo;
+import org.molgenis.data.annotation.core.entity.EntityAnnotator;
+import org.molgenis.data.annotation.core.entity.impl.framework.QueryAnnotatorImpl;
+import org.molgenis.data.annotation.core.entity.impl.framework.RepositoryAnnotatorImpl;
+import org.molgenis.data.annotation.core.query.LocusQueryCreator;
+import org.molgenis.data.annotation.core.resources.MultiResourceConfig;
+import org.molgenis.data.annotation.core.resources.Resource;
+import org.molgenis.data.annotation.core.resources.Resources;
+import org.molgenis.data.annotation.core.resources.impl.MultiFileResource;
+import org.molgenis.data.annotation.core.resources.impl.MultiResourceConfigImpl;
+import org.molgenis.data.annotation.core.resources.impl.RepositoryFactory;
+import org.molgenis.data.annotation.core.resources.impl.tabix.TabixVcfRepositoryFactory;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.vcf.model.VcfAttributes;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static org.molgenis.data.annotation.web.settings.GoNLAnnotatorSettings.Meta.*;
+import static org.molgenis.data.meta.AttributeType.STRING;
+
+@Configuration
+<span class="fc" id="L39">public class GoNLAnnotator implements AnnotatorConfig</span>
+{
+	public static final String NAME = &quot;gonl&quot;;
+
+	public static final String GONL_GENOME_AF = &quot;GoNL_AF&quot;;
+	public static final String GONL_GENOME_GTC = &quot;GoNL_GTC&quot;;
+	public static final String GONL_AF_LABEL = &quot;Genome of the netherlands allele frequency&quot;;
+	public static final String GONL_GTC_LABEL = &quot;Genome of the netherlands Genotype counts frequency&quot;;
+	public static final String INFO_GTC = &quot;GTC&quot;;
+	public static final String INFO_AN = &quot;AN&quot;;
+	public static final String INFO_AC = &quot;AC&quot;;
+
+	public static final String GONL_MULTI_FILE_RESOURCE = &quot;gonlresources&quot;;
+
+	@Autowired
+	private Entity goNLAnnotatorSettings;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private Resources resources;
+
+	@Autowired
+	private VcfAttributes vcfAttributes;
+
+	@Autowired
+	private AttributeFactory attributeFactory;
+
+	@Autowired
+	private EntityTypeFactory entityTypeFactory;
+
+	private RepositoryAnnotatorImpl annotator;
+
+	@Bean
+	public RepositoryAnnotator gonl()
+	{
+<span class="fc" id="L76">		annotator = new RepositoryAnnotatorImpl(NAME);</span>
+<span class="fc" id="L77">		return annotator;</span>
+	}
+
+	@Override
+	public void init()
+	{
+<span class="fc" id="L83">		List&lt;Attribute&gt; attributes = createGoNlOutputAttributes();</span>
+
+<span class="fc" id="L85">		AnnotatorInfo thousandGenomeInfo = AnnotatorInfo.create(AnnotatorInfo.Status.READY,</span>
+				AnnotatorInfo.Type.POPULATION_REFERENCE, NAME,
+				&quot;What genetic variation is to be found in the Dutch indigenous population? &quot;
+						+ &quot;Detailed knowledge about this is not only interesting in itself, &quot;
+						+ &quot;it also helps to extract useful biomedical information from Dutch biobanks. &quot;
+						+ &quot;The Dutch biobank collaboration BBMRI-NL has initiated the extensive Rainbow Project “Genome of the Netherlands” (GoNL) &quot;
+						+ &quot;because it offers unique opportunities for science and for the development of new treatments and diagnostic techniques. &quot;
+						+ &quot;A close-up look at the DNA of 750 Dutch people-250 trio’s of two parents and an adult child-plus a &quot;
+						+ &quot;global genetic profile of large numbers of Dutch will disclose a wealth of new information, new insights, &quot;
+						+ &quot;and possible applications.&quot;, attributes);
+
+<span class="fc" id="L96">		LocusQueryCreator locusQueryCreator = new LocusQueryCreator(vcfAttributes);</span>
+
+<span class="fc" id="L98">		EntityAnnotator entityAnnotator = new QueryAnnotatorImpl(GONL_MULTI_FILE_RESOURCE, thousandGenomeInfo,</span>
+				locusQueryCreator, dataService, resources, (annotationSourceFileName) -&gt;
+		{
+<span class="nc" id="L101">			goNLAnnotatorSettings.set(ROOT_DIRECTORY, annotationSourceFileName);</span>
+<span class="nc" id="L102">			goNLAnnotatorSettings.set(FILEPATTERN, &quot;gonl.chr%s.snps_indels.r5.vcf.gz&quot;);</span>
+<span class="nc" id="L103">			goNLAnnotatorSettings.set(OVERRIDE_CHROMOSOME_FILES, &quot;X:gonl.chrX.release4.gtc.vcf.gz&quot;);</span>
+<span class="nc" id="L104">			goNLAnnotatorSettings.set(CHROMOSOMES, &quot;1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,X&quot;);</span>
+<span class="nc" id="L105">		})</span>
+<span class="fc" id="L106">		{</span>
+			@Override
+			public List&lt;Attribute&gt; createAnnotatorAttributes(AttributeFactory attributeFactory)
+			{
+<span class="nc" id="L110">				return createGoNlOutputAttributes();</span>
+			}
+
+			@Override
+			protected void processQueryResults(Entity entity, Iterable&lt;Entity&gt; annotationSourceEntities,
+					boolean updateMode)
+			{
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">				if (updateMode)</span>
+				{
+<span class="nc" id="L119">					throw new MolgenisDataException(&quot;This annotator/filter does not support updating of values&quot;);</span>
+				}
+
+<span class="fc" id="L122">				List&lt;Entity&gt; refMatches = determineRefMatches(entity, annotationSourceEntities);</span>
+<span class="fc" id="L123">				setGoNLFrequencies(entity, refMatches);</span>
+<span class="fc" id="L124">			}</span>
+		};
+<span class="fc" id="L126">		annotator.init(entityAnnotator);</span>
+
+<span class="fc" id="L128">	}</span>
+
+	private List&lt;Attribute&gt; createGoNlOutputAttributes()
+	{
+<span class="fc" id="L132">		List&lt;Attribute&gt; attributes = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L133">		Attribute goNlAfAttribute = attributeFactory.create()</span>
+<span class="fc" id="L134">													.setName(GONL_GENOME_AF)</span>
+<span class="fc" id="L135">													.setDataType(STRING)</span>
+<span class="fc" id="L136">													.setDescription(</span>
+															&quot;The allele frequency for variants seen in the population used for the GoNL project&quot;)
+<span class="fc" id="L138">													.setLabel(GONL_AF_LABEL);</span>
+
+<span class="fc" id="L140">		Attribute goNlGtcAttribute = attributeFactory.create()</span>
+<span class="fc" id="L141">													 .setName(GONL_GENOME_GTC)</span>
+<span class="fc" id="L142">													 .setDataType(STRING)</span>
+<span class="fc" id="L143">													 .setDescription(</span>
+															 &quot;GenoType Counts. For each ALT allele in the same order as listed = 0/0,0/1,1/1,0/2,1/2,2/2,0/3,1/3,2/3,3/3,etc. Phasing is ignored; hence 1/0, 0|1 and 1|0 are all counted as 0/1. When one or more alleles is not called for a genotype in a specific sample (./., ./0, ./1, ./2, etc.), that sample's genotype is completely discarded for calculating GTC.&quot;)
+<span class="fc" id="L145">													 .setLabel(GONL_GTC_LABEL);</span>
+
+<span class="fc" id="L147">		attributes.add(goNlGtcAttribute);</span>
+<span class="fc" id="L148">		attributes.add(goNlAfAttribute);</span>
+<span class="fc" id="L149">		return attributes;</span>
+	}
+
+	@Bean
+	Resource gonlresources()
+	{
+<span class="fc" id="L155">		MultiResourceConfig goNLConfig = new MultiResourceConfigImpl(CHROMOSOMES, FILEPATTERN, ROOT_DIRECTORY,</span>
+				OVERRIDE_CHROMOSOME_FILES, goNLAnnotatorSettings);
+
+<span class="fc" id="L158">		return new MultiFileResource(GONL_MULTI_FILE_RESOURCE, goNLConfig)</span>
+<span class="fc" id="L159">		{</span>
+			@Override
+			public RepositoryFactory getRepositoryFactory()
+			{
+<span class="fc" id="L163">				return new TabixVcfRepositoryFactory(GONL_MULTI_FILE_RESOURCE, vcfAttributes, entityTypeFactory,</span>
+<span class="fc" id="L164">						attributeFactory);</span>
+			}
+		};
+	}
+
+	private void setGoNLFrequencies(Entity entity, List&lt;Entity&gt; refMatches)
+	{
+<span class="fc" id="L171">		String afs = null;</span>
+<span class="fc" id="L172">		String gtcs = null;</span>
+<span class="pc bpc" id="L173" title="1 of 2 branches missed.">		if (hasAltAttribute(entity))</span>
+		{
+<span class="fc" id="L175">			List&lt;Entity&gt; alleleMatches = computeAlleleMatches(entity, refMatches);</span>
+
+<span class="fc bfc" id="L177" title="All 2 branches covered.">			if (alleleMatches.stream().anyMatch(Objects::nonNull))</span>
+			{
+<span class="fc" id="L179">				afs = alleleMatches.stream()</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">								   .map(gonl -&gt; gonl == null ? &quot;.&quot; : Double.toString(</span>
+<span class="fc" id="L181">										   Double.valueOf(gonl.getString(INFO_AC)) / gonl.getInt(INFO_AN)))</span>
+<span class="fc" id="L182">								   .collect(Collectors.joining(&quot;,&quot;));</span>
+				//update GTC field to separate allele combinations by pipe instead of comma, since we use comma to separate alt allele info
+<span class="fc" id="L184">				gtcs = alleleMatches.stream()</span>
+<span class="fc bfc" id="L185" title="All 2 branches covered.">									.map(gonl -&gt; gonl == null ? &quot;.&quot; : gonl.getString(INFO_GTC).replace(&quot;,&quot;, &quot;|&quot;))</span>
+<span class="fc" id="L186">									.collect(Collectors.joining(&quot;,&quot;));</span>
+			}
+
+		}
+<span class="fc" id="L190">		entity.set(GONL_GENOME_AF, afs);</span>
+<span class="fc" id="L191">		entity.set(GONL_GENOME_GTC, gtcs);</span>
+<span class="fc" id="L192">	}</span>
+
+	private List&lt;Entity&gt; determineRefMatches(Entity entity, Iterable&lt;Entity&gt; annotationSourceEntities)
+	{
+<span class="fc" id="L196">		List&lt;Entity&gt; refMatches = newArrayList();</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">		for (Entity resourceEntity : annotationSourceEntities)</span>
+		{
+			//situation example: input A, GoNL A
+<span class="pc bpc" id="L200" title="1 of 2 branches missed.">			if (refMatches(resourceEntity))</span>
+			{
+<span class="nc" id="L202">				refMatches.add(resourceEntity);</span>
+			}
+			//situation example: input ATC/TTC, GoNL A/T
+			//we then match on A (leaving TC), lengthen the GoNL ref to A+TC, and alt to T+TC
+			//now it has a match to ATC/TTC (as it should, but was not obvious due to notation)
+<span class="pc bpc" id="L207" title="1 of 2 branches missed.">			else if (shouldLengthenGoNLRef(resourceEntity))</span>
+			{
+<span class="nc" id="L209">				lengthenGoNLRef(entity, resourceEntity);</span>
+<span class="nc" id="L210">				refMatches.add(resourceEntity);</span>
+			}
+			//situation example: input T/G, GoNL TCT/GCT
+			//we then match on T (leaving CT), and shorten the GoNL ref to T (-CT), and alt to G (-CT)
+			//now it has a match to T/G (as it should, but was not obvious due to notation)
+<span class="fc bfc" id="L215" title="All 2 branches covered.">			else if (shouldShortenGoNLRef(entity, resourceEntity))</span>
+			{
+<span class="fc" id="L217">				shortenGoNLRef(entity, resourceEntity);</span>
+<span class="fc" id="L218">				refMatches.add(resourceEntity);</span>
+			}
+<span class="fc" id="L220">		}</span>
+<span class="fc" id="L221">		return refMatches;</span>
+	}
+
+	private List&lt;Entity&gt; computeAlleleMatches(Entity entity, List&lt;Entity&gt; refMatches)
+	{
+<span class="fc" id="L226">		List&lt;Entity&gt; alleleMatches = newArrayList();</span>
+<span class="fc bfc" id="L227" title="All 2 branches covered.">		for (String alt : entity.getString(vcfAttributes.getAltAttribute().getName()).split(&quot;,&quot;))</span>
+		{
+<span class="fc" id="L229">			alleleMatches.add(refMatches.stream()</span>
+<span class="fc" id="L230">										.filter(gonl -&gt; (alt).equals(</span>
+<span class="fc" id="L231">												(gonl.getString(vcfAttributes.getAltAttribute().getName()))))</span>
+<span class="fc" id="L232">										.findFirst()</span>
+<span class="fc" id="L233">										.orElse(null));</span>
+		}
+<span class="fc" id="L235">		return alleleMatches;</span>
+	}
+
+	private boolean hasAltAttribute(Entity entity)
+	{
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">		return entity.getString(vcfAttributes.getAltAttribute().getName()) != null;</span>
+	}
+
+	private void shortenGoNLRef(Entity entity, Entity resourceEntity)
+	{
+<span class="fc" id="L245">		int postFixInputLength = resourceEntity.getString(vcfAttributes.getRefAttribute().getName())</span>
+<span class="fc" id="L246">											   .substring(entity.getString(vcfAttributes.getRefAttribute().getName())</span>
+<span class="fc" id="L247">																.length())</span>
+<span class="fc" id="L248">											   .length();</span>
+		//bugfix: matching A/G to ACT/A results in postFixInputLength=2, correctly updating ref from ACT to A,
+		//but then tries to substring the alt allele A to length -1 (1 minus 2) which is not allowed.
+		//added a check to prevent this: alt.length() &gt; postFixInputLength ? trim the alt : change to 'n/a' because we cannot use this alt.
+<span class="fc" id="L252">		resourceEntity.set(vcfAttributes.getRefAttribute().getName(),</span>
+<span class="fc" id="L253">				resourceEntity.getString(vcfAttributes.getRefAttribute().getName())</span>
+<span class="fc" id="L254">							  .substring(0,</span>
+<span class="fc" id="L255">									  (resourceEntity.getString(vcfAttributes.getRefAttribute().getName()).length()</span>
+											  - postFixInputLength)));
+<span class="fc" id="L257">		String newAltString = Arrays.stream(</span>
+<span class="fc" id="L258">				resourceEntity.getString(vcfAttributes.getAltAttribute().getName()).split(&quot;,&quot;))</span>
+<span class="fc bfc" id="L259" title="All 2 branches covered.">									.map(alt -&gt; alt.length() &gt; postFixInputLength ? alt.substring(0,</span>
+<span class="fc" id="L260">											(alt.length() - postFixInputLength)) : &quot;n/a&quot;)</span>
+<span class="fc" id="L261">									.collect(Collectors.joining(&quot;,&quot;));</span>
+<span class="fc" id="L262">		resourceEntity.set(vcfAttributes.getAltAttribute().getName(), newAltString);</span>
+<span class="fc" id="L263">	}</span>
+
+	private boolean shouldShortenGoNLRef(Entity entity, Entity resourceEntity)
+	{
+<span class="fc" id="L267">		return resourceEntity.getString(vcfAttributes.getRefAttribute().getName())</span>
+<span class="fc bfc" id="L268" title="All 2 branches covered.">							 .indexOf(entity.getString(vcfAttributes.getRefAttribute().getName())) == 0;</span>
+	}
+
+	private void lengthenGoNLRef(Entity entity, Entity resourceEntity)
+	{
+<span class="nc" id="L273">		String postFixResource = entity.getString(vcfAttributes.getRefAttribute().getName())</span>
+<span class="nc" id="L274">									   .substring(resourceEntity.getString(vcfAttributes.getRefAttribute().getName())</span>
+<span class="nc" id="L275">																.length());</span>
+<span class="nc" id="L276">		resourceEntity.set(vcfAttributes.getRefAttribute().getName(),</span>
+<span class="nc" id="L277">				resourceEntity.getString(vcfAttributes.getRefAttribute().getName()) + postFixResource);</span>
+<span class="nc" id="L278">		String newAltString = Arrays.stream(</span>
+<span class="nc" id="L279">				resourceEntity.getString(vcfAttributes.getAltAttribute().getName()).split(&quot;,&quot;))</span>
+<span class="nc" id="L280">									.map(alt -&gt; alt + postFixResource)</span>
+<span class="nc" id="L281">									.collect(Collectors.joining(&quot;,&quot;));</span>
+<span class="nc" id="L282">		resourceEntity.set(vcfAttributes.getAltAttribute().getName(), newAltString);</span>
+<span class="nc" id="L283">	}</span>
+
+	private boolean shouldLengthenGoNLRef(Entity resourceEntity)
+	{
+<span class="fc" id="L287">		return vcfAttributes.getRefAttribute()</span>
+<span class="fc" id="L288">							.getName()</span>
+<span class="pc bpc" id="L289" title="1 of 2 branches missed.">							.indexOf(resourceEntity.getString(vcfAttributes.getRefAttribute().getName())) == 0;</span>
+	}
+
+	private boolean refMatches(Entity resourceEntity)
+	{
+<span class="fc" id="L294">		return resourceEntity.get(vcfAttributes.getRefAttribute().getName())</span>
+<span class="fc" id="L295">							 .equals(vcfAttributes.getRefAttribute().getName());</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

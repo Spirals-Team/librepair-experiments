@@ -1,0 +1,1270 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PostgreSqlQueryGenerator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.postgresql</a> &gt; <span class="el_source">PostgreSqlQueryGenerator.java</span></div><h1>PostgreSqlQueryGenerator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.postgresql;
+
+import com.google.common.collect.Lists;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.*;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.AttributeUtils;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.util.UnexpectedEnumException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.text.MessageFormat;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
+
+import static java.lang.String.format;
+import static java.time.ZoneOffset.UTC;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.IntStream.range;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.QueryRule.Operator.*;
+import static org.molgenis.data.meta.AttributeType.*;
+import static org.molgenis.data.postgresql.PostgreSqlNameGenerator.*;
+import static org.molgenis.data.postgresql.PostgreSqlQueryGenerator.ColumnMode.INCLUDE_DEFAULT_CONSTRAINT;
+import static org.molgenis.data.postgresql.PostgreSqlQueryUtils.*;
+import static org.molgenis.data.support.EntityTypeUtils.*;
+
+/**
+ * Utility class that generates the SQL used by {@link PostgreSqlRepository} and {@link PostgreSqlRepositoryCollection}
+ */
+class PostgreSqlQueryGenerator
+{
+<span class="fc" id="L46">	private static final Logger LOG = LoggerFactory.getLogger(PostgreSqlQueryGenerator.class);</span>
+
+	private static final String UNSPECIFIED_ATTRIBUTE_MSG = &quot;Can't use %s without specifying an attribute&quot;;
+
+	static final String ERR_CODE_READONLY_VIOLATION = &quot;23506&quot;;
+
+	private PostgreSqlQueryGenerator()
+	{
+
+	}
+
+	private static String getSqlConstraintPrimaryKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L59">		return &quot;CONSTRAINT &quot; + getPrimaryKeyName(entityType, attr) + &quot; PRIMARY KEY (&quot; + getColumnName(attr) + ')';</span>
+	}
+
+	private static String getSqlForeignKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L64">		StringBuilder strBuilder = new StringBuilder(&quot;CONSTRAINT &quot;).append(getForeignKeyName(entityType, attr))</span>
+<span class="fc" id="L65">																   .append(&quot; FOREIGN KEY (&quot;)</span>
+<span class="fc" id="L66">																   .append(getColumnName(attr))</span>
+<span class="fc" id="L67">																   .append(&quot;) REFERENCES &quot;)</span>
+<span class="fc" id="L68">																   .append(getTableName(attr.getRefEntity()))</span>
+<span class="fc" id="L69">																   .append('(')</span>
+<span class="fc" id="L70">																   .append(getColumnName(</span>
+<span class="fc" id="L71">																		   attr.getRefEntity().getIdAttribute()))</span>
+<span class="fc" id="L72">																   .append(')');</span>
+
+		// for self-referencing data or inversed attributes defer checking constraints until the end of the transaction
+<span class="fc bfc" id="L75" title="All 2 branches covered.">		if (attr.getRefEntity().getId().equals(entityType.getId()))</span>
+		{
+<span class="fc" id="L77">			strBuilder.append(&quot; DEFERRABLE INITIALLY DEFERRED&quot;);</span>
+		}
+
+<span class="fc" id="L80">		return strBuilder.toString();</span>
+	}
+
+	private static String getSqlUniqueKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L85">		return &quot;CONSTRAINT &quot; + getUniqueKeyName(entityType, attr) + &quot; UNIQUE (&quot; + getColumnName(attr) + ')';</span>
+	}
+
+	private static String getSqlCheckConstraint(EntityType entityType, Attribute attr)
+	{
+<span class="fc bfc" id="L90" title="All 2 branches covered.">		if (attr.getDataType() != ENUM)</span>
+		{
+<span class="fc" id="L92">			throw new MolgenisDataException(</span>
+<span class="fc" id="L93">					format(&quot;Check constraint only allowed for attribute type [%s]&quot;, ENUM.toString()));</span>
+		}
+
+<span class="fc" id="L96">		return &quot;CONSTRAINT &quot; + getCheckConstraintName(entityType, attr) + &quot; CHECK (&quot; + getColumnName(attr) + &quot; IN (&quot;</span>
+<span class="fc" id="L97">				+ attr.getEnumOptions().stream().map(enumOption -&gt; '\'' + enumOption + '\'').collect(joining(&quot;,&quot;))</span>
+				+ &quot;))&quot;;
+	}
+
+	static String getSqlCreateForeignKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L103">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; ADD &quot; + getSqlForeignKey(entityType, attr);</span>
+	}
+
+	static String getSqlDropForeignKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L108">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; DROP CONSTRAINT &quot; + getForeignKeyName(entityType, attr);</span>
+	}
+
+	static String getSqlCreateUniqueKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L113">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; ADD &quot; + getSqlUniqueKey(entityType, attr);</span>
+	}
+
+	static String getSqlDropUniqueKey(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L118">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; DROP CONSTRAINT &quot; + getUniqueKeyName(entityType, attr);</span>
+	}
+
+	static String getSqlCreateCheckConstraint(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L123">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; ADD &quot; + getSqlCheckConstraint(entityType, attr);</span>
+	}
+
+	static String getSqlDropCheckConstraint(EntityType entityType, Attribute attr)
+	{
+<span class="fc bfc" id="L128" title="All 2 branches covered.">		if (attr.getDataType() != ENUM)</span>
+		{
+<span class="fc" id="L130">			throw new MolgenisDataException(</span>
+<span class="fc" id="L131">					format(&quot;Check constraint only allowed for attribute type [%s]&quot;, ENUM.toString()));</span>
+		}
+
+<span class="fc" id="L134">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; DROP CONSTRAINT &quot; + getCheckConstraintName(entityType,</span>
+				attr);
+	}
+
+	static String getSqlSetNotNull(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L140">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; ALTER COLUMN &quot; + getColumnName(attr) + &quot; SET NOT NULL&quot;;</span>
+	}
+
+	static String getSqlDropNotNull(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L145">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; ALTER COLUMN &quot; + getColumnName(attr) + &quot; DROP NOT NULL&quot;;</span>
+	}
+
+	static String getSqlSetDataType(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L150">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; ALTER COLUMN &quot; + getColumnName(attr) + &quot; SET DATA TYPE &quot;</span>
+<span class="fc" id="L151">				+ getPostgreSqlType(attr) + &quot; USING &quot; + getColumnName(attr) + &quot;::&quot; + getPostgreSqlType(attr);</span>
+	}
+
+	/**
+	 * Returns SQL string to add a column to an existing table.
+	 *
+	 * @param entityType entity meta data
+	 * @param attr       attribute
+	 * @param columnMode column mode
+	 * @return SQL string
+	 */
+	static String getSqlAddColumn(EntityType entityType, Attribute attr, ColumnMode columnMode)
+	{
+<span class="fc" id="L164">		StringBuilder sql = new StringBuilder(&quot;ALTER TABLE &quot;);</span>
+
+<span class="fc" id="L166">		String columnSql = getSqlColumn(entityType, attr, columnMode);</span>
+<span class="fc" id="L167">		sql.append(getTableName(entityType)).append(&quot; ADD &quot;).append(columnSql);</span>
+
+<span class="fc" id="L169">		List&lt;String&gt; sqlTableConstraints = getSqlTableConstraints(entityType, attr);</span>
+<span class="fc bfc" id="L170" title="All 2 branches covered.">		if (!sqlTableConstraints.isEmpty())</span>
+		{
+<span class="fc" id="L172">			sqlTableConstraints.forEach(sqlTableConstraint -&gt; sql.append(&quot;,ADD &quot;).append(sqlTableConstraint));</span>
+		}
+<span class="fc" id="L174">		return sql.toString();</span>
+	}
+
+	/**
+	 * Returns SQL string to remove the default value from an existing column.
+	 *
+	 * @param entityType entity meta data
+	 * @param attr       attribute
+	 * @return SQL string
+	 */
+	static String getSqlDropColumnDefault(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L186">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; ALTER COLUMN &quot; + getColumnName(attr) + &quot; DROP DEFAULT&quot;;</span>
+	}
+
+	static String getSqlCreateTable(EntityType entityType)
+	{
+<span class="fc" id="L191">		List&lt;Attribute&gt; persistedTableAttrs = getTableAttributes(entityType).collect(toList());</span>
+
+<span class="fc" id="L193">		StringBuilder sql = new StringBuilder(&quot;CREATE TABLE &quot;).append(getTableName(entityType)).append('(');</span>
+
+		// add columns
+<span class="fc bfc" id="L196" title="All 2 branches covered.">		for (Iterator&lt;Attribute&gt; it = persistedTableAttrs.iterator(); it.hasNext(); )</span>
+		{
+<span class="fc" id="L198">			Attribute attr = it.next();</span>
+<span class="fc" id="L199">			sql.append(getSqlColumn(entityType, attr, ColumnMode.EXCLUDE_DEFAULT_CONSTRAINT));</span>
+
+<span class="fc bfc" id="L201" title="All 2 branches covered.">			if (it.hasNext())</span>
+			{
+<span class="fc" id="L203">				sql.append(',');</span>
+			}
+<span class="fc" id="L205">		}</span>
+
+		// add table constraints
+<span class="fc bfc" id="L208" title="All 2 branches covered.">		for (Attribute persistedTableAttr : persistedTableAttrs)</span>
+		{
+<span class="fc" id="L210">			List&lt;String&gt; sqlTableConstraints = getSqlTableConstraints(entityType, persistedTableAttr);</span>
+<span class="fc bfc" id="L211" title="All 2 branches covered.">			if (!sqlTableConstraints.isEmpty())</span>
+			{
+<span class="fc" id="L213">				sqlTableConstraints.forEach(sqlTableConstraint -&gt; sql.append(',').append(sqlTableConstraint));</span>
+			}
+<span class="fc" id="L215">		}</span>
+
+<span class="fc" id="L217">		sql.append(')');</span>
+
+<span class="fc" id="L219">		return sql.toString();</span>
+	}
+
+	static String getSqlCreateFunctionValidateUpdate(EntityType entityType, Collection&lt;Attribute&gt; readonlyTableAttrs)
+	{
+<span class="fc" id="L224">		StringBuilder strBuilder = new StringBuilder(512).append(&quot;CREATE FUNCTION &quot;)</span>
+<span class="fc" id="L225">														 .append(getFunctionValidateUpdateName(entityType))</span>
+<span class="fc" id="L226">														 .append(&quot;() RETURNS TRIGGER AS $$\nBEGIN\n&quot;);</span>
+
+<span class="fc" id="L228">		String tableName = getTableName(entityType);</span>
+<span class="fc" id="L229">		String idColName = getColumnName(entityType.getIdAttribute());</span>
+<span class="fc" id="L230">		readonlyTableAttrs.forEach(attr -&gt;</span>
+		{
+<span class="fc" id="L232">			String colName = getColumnName(attr);</span>
+
+<span class="fc" id="L234">			strBuilder.append(&quot;  IF OLD.&quot;).append(colName).append(&quot; &lt;&gt; NEW.&quot;).append(colName).append(&quot; THEN\n&quot;);</span>
+<span class="fc" id="L235">			strBuilder.append(&quot;    RAISE EXCEPTION 'Updating read-only column &quot;)</span>
+<span class="fc" id="L236">					  .append(colName)</span>
+<span class="fc" id="L237">					  .append(&quot; of table &quot;)</span>
+<span class="fc" id="L238">					  .append(tableName)</span>
+<span class="fc" id="L239">					  .append(&quot; with id [%] is not allowed', OLD.&quot;)</span>
+<span class="fc" id="L240">					  .append(idColName)</span>
+<span class="fc" id="L241">					  .append(&quot; USING ERRCODE = '&quot;)</span>
+<span class="fc" id="L242">					  .append(ERR_CODE_READONLY_VIOLATION)</span>
+<span class="fc" id="L243">					  .append(&quot;';\n&quot;);</span>
+<span class="fc" id="L244">			strBuilder.append(&quot;  END IF;\n&quot;);</span>
+<span class="fc" id="L245">		});</span>
+<span class="fc" id="L246">		strBuilder.append(&quot;  RETURN NEW;\nEND;\n$$ LANGUAGE plpgsql;&quot;);</span>
+
+<span class="fc" id="L248">		return strBuilder.toString();</span>
+	}
+
+	static String getSqlDropFunctionValidateUpdate(EntityType entityType)
+	{
+<span class="fc" id="L253">		return &quot;DROP FUNCTION &quot; + getFunctionValidateUpdateName(entityType) + &quot;();&quot;;</span>
+	}
+
+	static String getSqlCreateUpdateTrigger(EntityType entityType, Collection&lt;Attribute&gt; readonlyTableAttrs)
+	{
+<span class="fc" id="L258">		StringBuilder strBuilder = new StringBuilder(512).append(&quot;CREATE TRIGGER &quot;)</span>
+<span class="fc" id="L259">														 .append(getUpdateTriggerName(entityType))</span>
+<span class="fc" id="L260">														 .append(&quot; AFTER UPDATE ON &quot;)</span>
+<span class="fc" id="L261">														 .append(getTableName(entityType))</span>
+<span class="fc" id="L262">														 .append(&quot; FOR EACH ROW WHEN (&quot;);</span>
+<span class="fc" id="L263">		strBuilder.append(readonlyTableAttrs.stream()</span>
+<span class="fc" id="L264">											.map(attr -&gt; &quot;OLD.&quot; + getColumnName(attr) + &quot; IS DISTINCT FROM NEW.&quot;</span>
+<span class="fc" id="L265">													+ getColumnName(attr))</span>
+<span class="fc" id="L266">											.collect(joining(&quot; OR &quot;)));</span>
+<span class="fc" id="L267">		strBuilder.append(&quot;) EXECUTE PROCEDURE &quot;).append(getFunctionValidateUpdateName(entityType)).append(&quot;();&quot;);</span>
+<span class="fc" id="L268">		return strBuilder.toString();</span>
+	}
+
+	static String getSqlDropUpdateTrigger(EntityType entityType)
+	{
+<span class="fc" id="L273">		return &quot;DROP TRIGGER &quot; + getUpdateTriggerName(entityType) + &quot; ON &quot; + getTableName(entityType);</span>
+	}
+
+	static String getSqlCreateJunctionTable(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L278">		Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="fc" id="L279">		StringBuilder sql = new StringBuilder(&quot;CREATE TABLE &quot;).append(getJunctionTableName(entityType, attr))</span>
+<span class="fc" id="L280">															  .append(&quot; (&quot;)</span>
+<span class="fc" id="L281">															  .append(getJunctionTableOrderColumnName())</span>
+<span class="fc" id="L282">															  .append(&quot; INT,&quot;)</span>
+<span class="fc" id="L283">															  .append(getColumnName(idAttr))</span>
+<span class="fc" id="L284">															  .append(' ')</span>
+<span class="fc" id="L285">															  .append(getPostgreSqlType(idAttr))</span>
+<span class="fc" id="L286">															  .append(&quot; NOT NULL, &quot;)</span>
+<span class="fc" id="L287">															  .append(getColumnName(attr))</span>
+<span class="fc" id="L288">															  .append(' ')</span>
+<span class="fc" id="L289">															  .append(getPostgreSqlType(</span>
+<span class="fc" id="L290">																	  attr.getRefEntity().getIdAttribute()))</span>
+<span class="fc" id="L291">															  .append(&quot; NOT NULL&quot;)</span>
+<span class="fc" id="L292">															  .append(&quot;, FOREIGN KEY (&quot;)</span>
+<span class="fc" id="L293">															  .append(getColumnName(idAttr))</span>
+<span class="fc" id="L294">															  .append(&quot;) REFERENCES &quot;)</span>
+<span class="fc" id="L295">															  .append(getTableName(entityType))</span>
+<span class="fc" id="L296">															  .append('(')</span>
+<span class="fc" id="L297">															  .append(getColumnName(idAttr))</span>
+<span class="fc" id="L298">															  .append(&quot;) ON DELETE CASCADE&quot;);</span>
+
+		// for self-referencing data defer checking constraints until the end of the transaction
+<span class="fc bfc" id="L301" title="All 2 branches covered.">		if (attr.getRefEntity().getId().equals(entityType.getId()))</span>
+		{
+<span class="fc" id="L303">			sql.append(&quot; DEFERRABLE INITIALLY DEFERRED&quot;);</span>
+		}
+
+<span class="pc bpc" id="L306" title="1 of 2 branches missed.">		if (isPersistedInPostgreSql(attr.getRefEntity()))</span>
+		{
+<span class="fc" id="L308">			sql.append(&quot;, FOREIGN KEY (&quot;)</span>
+<span class="fc" id="L309">			   .append(getColumnName(attr))</span>
+<span class="fc" id="L310">			   .append(&quot;) REFERENCES &quot;)</span>
+<span class="fc" id="L311">			   .append(getTableName(attr.getRefEntity()))</span>
+<span class="fc" id="L312">			   .append('(')</span>
+<span class="fc" id="L313">			   .append(getColumnName(attr.getRefEntity().getIdAttribute()))</span>
+<span class="fc" id="L314">			   .append(&quot;)&quot;);</span>
+
+			// for self-referencing data defer checking constraints until the end of the transaction
+<span class="fc bfc" id="L317" title="All 2 branches covered.">			if (attr.getRefEntity().getId().equals(entityType.getId()))</span>
+			{
+<span class="fc" id="L319">				sql.append(&quot; DEFERRABLE INITIALLY DEFERRED&quot;);</span>
+			}
+		}
+
+<span class="fc" id="L323">		AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L324" title="1 of 2 branches missed.">		switch (attrType)</span>
+		{
+			case CATEGORICAL_MREF:
+			case MREF:
+<span class="fc" id="L328">				sql.append(&quot;, UNIQUE (&quot;)</span>
+<span class="fc" id="L329">				   .append(getColumnName(idAttr))</span>
+<span class="fc" id="L330">				   .append(',')</span>
+<span class="fc" id="L331">				   .append(getColumnName(attr))</span>
+<span class="fc" id="L332">				   .append(')');</span>
+<span class="fc" id="L333">				break;</span>
+			default:
+<span class="nc" id="L335">				throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+		}
+<span class="fc" id="L337">		sql.append(&quot;, UNIQUE (&quot;)</span>
+<span class="fc" id="L338">		   .append(getJunctionTableOrderColumnName())</span>
+<span class="fc" id="L339">		   .append(',')</span>
+<span class="fc" id="L340">		   .append(getColumnName(idAttr))</span>
+<span class="fc" id="L341">		   .append(')');</span>
+
+<span class="fc" id="L343">		sql.append(')');</span>
+
+<span class="fc" id="L345">		return sql.toString();</span>
+	}
+
+	static String getSqlCreateJunctionTableIndex(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L350">		Attribute idAttr = entityType.getIdAttribute();</span>
+<span class="fc" id="L351">		String junctionTableName = getJunctionTableName(entityType, attr);</span>
+<span class="fc" id="L352">		String junctionTableIndexName = getJunctionTableIndexName(entityType, attr, idAttr);</span>
+<span class="fc" id="L353">		String idxColumnName = getColumnName(idAttr);</span>
+<span class="fc" id="L354">		return &quot;CREATE INDEX &quot; + junctionTableIndexName + &quot; ON &quot; + junctionTableName + &quot; (&quot; + idxColumnName + ')';</span>
+	}
+
+	static String getSqlDropJunctionTable(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L359">		return getSqlDropTable(getJunctionTableName(entityType, attr));</span>
+	}
+
+	static String getSqlDropTable(EntityType entityType)
+	{
+<span class="fc" id="L364">		return getSqlDropTable(getTableName(entityType));</span>
+	}
+
+	static String getSqlDropColumn(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L369">		return &quot;ALTER TABLE &quot; + getTableName(entityType) + &quot; DROP COLUMN &quot; + getColumnName(attr);</span>
+	}
+
+	static String getSqlInsert(EntityType entityType)
+	{
+<span class="nc" id="L374">		StringBuilder sql = new StringBuilder(&quot;INSERT INTO &quot;).append(getTableName(entityType)).append(&quot; (&quot;);</span>
+<span class="nc" id="L375">		StringBuilder params = new StringBuilder();</span>
+<span class="nc" id="L376">		getTableAttributes(entityType).forEach(attr -&gt;</span>
+		{
+<span class="nc" id="L378">			sql.append(getColumnName(attr)).append(&quot;, &quot;);</span>
+<span class="nc" id="L379">			params.append(&quot;?, &quot;);</span>
+<span class="nc" id="L380">		});</span>
+<span class="nc bnc" id="L381" title="All 4 branches missed.">		if (sql.charAt(sql.length() - 1) == ' ' &amp;&amp; sql.charAt(sql.length() - 2) == ',')</span>
+		{
+<span class="nc" id="L383">			sql.setLength(sql.length() - 2);</span>
+<span class="nc" id="L384">			params.setLength(params.length() - 2);</span>
+		}
+<span class="nc" id="L386">		sql.append(&quot;) VALUES (&quot;).append(params).append(')');</span>
+<span class="nc" id="L387">		return sql.toString();</span>
+	}
+
+	static String getSqlInsertJunction(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L392">		String junctionTableName = getJunctionTableName(entityType, attr);</span>
+<span class="fc" id="L393">		return &quot;INSERT INTO &quot; + junctionTableName + &quot; (&quot; + getJunctionTableOrderColumnName() + ',' + getColumnName(</span>
+<span class="fc" id="L394">				entityType.getIdAttribute()) + ',' + getColumnName(attr) + &quot;) VALUES (?,?,?)&quot;;</span>
+	}
+
+	static String getSqlDeleteAll(EntityType entityType)
+	{
+<span class="nc" id="L399">		return &quot;DELETE FROM &quot; + getTableName(entityType);</span>
+	}
+
+	static String getSqlDelete(EntityType entityType)
+	{
+<span class="nc" id="L404">		return getSqlDelete(getTableName(entityType), entityType.getIdAttribute());</span>
+	}
+
+	static String getSqlDelete(String tableName, Attribute attr)
+	{
+<span class="nc" id="L409">		return &quot;DELETE FROM &quot; + tableName + &quot; WHERE &quot; + getColumnName(attr) + &quot; = ?&quot;;</span>
+	}
+
+	/**
+	 * Returns whether this attribute is stored in the entity table or another table such as a junction table or
+	 * referenced entity table.
+	 *
+	 * @param attr attribute
+	 * @return whether this attribute is stored in another table than the entity table
+	 */
+	private static boolean isPersistedInOtherTable(Attribute attr)
+	{
+<span class="pc bpc" id="L421" title="1 of 4 branches missed.">		boolean bidirectionalOneToMany = attr.getDataType() == ONE_TO_MANY &amp;&amp; attr.isMappedBy();</span>
+<span class="pc bpc" id="L422" title="1 of 4 branches missed.">		return isMultipleReferenceType(attr) || bidirectionalOneToMany;</span>
+	}
+
+	static String getSqlJunctionTableSelect(EntityType entityType, Attribute attr, int numOfIds)
+	{
+<span class="fc" id="L427">		String idColName = getColumnName(entityType.getIdAttribute());</span>
+<span class="fc" id="L428">		String refIdColName = getColumnName(attr);</span>
+
+<span class="fc" id="L430">		return &quot;SELECT &quot; + idColName + &quot;,&quot; + getJunctionTableOrderColumnName() + &quot;,&quot; + refIdColName + &quot; FROM &quot;</span>
+<span class="fc" id="L431">				+ getJunctionTableName(entityType, attr) + &quot; WHERE &quot; + idColName + &quot; in (&quot; + range(0,</span>
+<span class="fc" id="L432">				numOfIds).mapToObj(x -&gt; &quot;?&quot;).collect(joining(&quot;, &quot;)) + &quot;) ORDER BY &quot; + idColName + &quot;,&quot;</span>
+<span class="fc" id="L433">				+ getJunctionTableOrderColumnName();</span>
+	}
+
+	/**
+	 * Determines whether a distinct select is required based on a given query.
+	 *
+	 * @param entityType entity meta data
+	 * @param q          query
+	 * @param &lt;E&gt;        entity type
+	 * @return &lt;code&gt;true&lt;/code&gt; if a distinct select is required for SQL queries based on the given query
+	 * @throws UnknownAttributeException if query field refers to an attribute that does not exist in entity meta
+	 */
+	private static &lt;E extends Entity&gt; boolean isDistinctSelectRequired(EntityType entityType, Query&lt;E&gt; q)
+	{
+<span class="fc" id="L447">		return isDistinctSelectRequiredRec(entityType, q.getRules());</span>
+	}
+
+	private static boolean isDistinctSelectRequiredRec(EntityType entityType, List&lt;QueryRule&gt; queryRules)
+	{
+<span class="fc bfc" id="L452" title="All 2 branches covered.">		if (queryRules.isEmpty())</span>
+		{
+<span class="fc" id="L454">			return false;</span>
+		}
+<span class="fc bfc" id="L456" title="All 2 branches covered.">		for (QueryRule queryRule : queryRules)</span>
+		{
+<span class="pc bpc" id="L458" title="1 of 2 branches missed.">			if (queryRule.getOperator() == NESTED)</span>
+			{
+<span class="nc bnc" id="L460" title="All 2 branches missed.">				if (isDistinctSelectRequiredRec(entityType, queryRule.getNestedRules()))</span>
+				{
+<span class="nc" id="L462">					return true;</span>
+				}
+			}
+			else
+			{
+<span class="fc" id="L467">				String queryRuleField = queryRule.getField();</span>
+<span class="pc bpc" id="L468" title="1 of 2 branches missed.">				if (queryRuleField != null)</span>
+				{
+<span class="fc" id="L470">					String attrName = StringUtils.split(queryRuleField, '.')[0];</span>
+<span class="fc" id="L471">					Attribute attr = entityType.getAttribute(attrName);</span>
+<span class="pc bpc" id="L472" title="1 of 2 branches missed.">					if (attr == null)</span>
+					{
+<span class="nc" id="L474">						throw new UnknownAttributeException(entityType, attrName);</span>
+					}
+<span class="fc bfc" id="L476" title="All 2 branches covered.">					if (isPersistedInOtherTable(attr))</span>
+					{
+<span class="fc" id="L478">						return true;</span>
+					}
+				}
+			}
+<span class="fc" id="L482">		}</span>
+<span class="fc" id="L483">		return false;</span>
+	}
+
+	static &lt;E extends Entity&gt; String getSqlSelect(EntityType entityType, Query&lt;E&gt; q, List&lt;Object&gt; parameters,
+			boolean includeMrefs)
+	{
+<span class="fc" id="L489">		final StringBuilder select = new StringBuilder(&quot;SELECT &quot;);</span>
+<span class="fc bfc" id="L490" title="All 2 branches covered.">		if (isDistinctSelectRequired(entityType, q))</span>
+		{
+<span class="fc" id="L492">			select.append(&quot;DISTINCT &quot;);</span>
+		}
+<span class="fc" id="L494">		final StringBuilder group = new StringBuilder();</span>
+<span class="fc" id="L495">		final AtomicInteger count = new AtomicInteger();</span>
+<span class="fc" id="L496">		final Attribute idAttribute = entityType.getIdAttribute();</span>
+<span class="fc" id="L497">		getPersistedAttributes(entityType).forEach(attr -&gt;</span>
+		{
+<span class="pc bpc" id="L499" title="1 of 6 branches missed.">			if (q.getFetch() == null || q.getFetch().hasField(attr.getName()) || (q.getSort() != null &amp;&amp; q.getSort()</span>
+<span class="pc bpc" id="L500" title="1 of 2 branches missed.">																										  .hasField(</span>
+<span class="fc" id="L501">																												  attr.getName())))</span>
+			{
+<span class="fc bfc" id="L503" title="All 2 branches covered.">				if (count.get() &gt; 0)</span>
+				{
+<span class="fc" id="L505">					select.append(&quot;, &quot;);</span>
+				}
+
+<span class="fc bfc" id="L508" title="All 2 branches covered.">				if (isPersistedInOtherTable(attr))</span>
+				{
+<span class="pc bpc" id="L510" title="5 of 6 branches missed.">					if (includeMrefs || (attr.getDataType() == ONE_TO_MANY &amp;&amp; attr.isMappedBy()))</span>
+					{
+<span class="pc bpc" id="L512" title="1 of 4 branches missed.">						if (attr.getDataType() == ONE_TO_MANY &amp;&amp; attr.isMappedBy())</span>
+						{
+<span class="fc" id="L514">							Attribute refIdAttr = attr.getRefEntity().getIdAttribute();</span>
+<span class="fc" id="L515">							String mrefSelect = &quot;(SELECT array_agg(&quot; + getColumnName(refIdAttr);</span>
+
+<span class="fc" id="L517">							Sort orderBy = attr.getOrderBy();</span>
+<span class="pc bpc" id="L518" title="1 of 2 branches missed.">							if (orderBy == null)</span>
+							{
+<span class="fc" id="L520">								orderBy = new Sort(refIdAttr.getName());</span>
+							}
+
+<span class="fc" id="L523">							mrefSelect +=</span>
+<span class="fc" id="L524">									' ' + getSqlSort(attr.getRefEntity(), new QueryImpl&lt;&gt;().sort(orderBy)) + &quot;) FROM &quot;</span>
+<span class="fc" id="L525">											+ getTableName(attr.getRefEntity()) + &quot; WHERE this.&quot; + getColumnName(</span>
+<span class="fc" id="L526">											idAttribute) + &quot; = &quot; + getTableName(attr.getRefEntity()) + '.'</span>
+<span class="fc" id="L527">											+ getColumnName(attr.getMappedBy()) + &quot;) AS &quot; + getColumnName(attr);</span>
+<span class="fc" id="L528">							select.append(mrefSelect);</span>
+<span class="fc" id="L529">						}</span>
+						else
+						{
+							// TODO retrieve mref values in separate queries to allow specifying limit and offset after nested MOLGENIS queries are implemented as sub-queries instead of query rules
+<span class="fc" id="L533">							String mrefSelect = MessageFormat.format(</span>
+									&quot;(SELECT array_agg(DISTINCT ARRAY[{0}.{1}::TEXT,{0}.{0}::TEXT]) &quot;
+<span class="fc" id="L535">											+ &quot;FROM {2} AS {0} WHERE this.{3} = {0}.{3}) AS {0}&quot;, getColumnName(attr),</span>
+<span class="fc" id="L536">									getJunctionTableOrderColumnName(), getJunctionTableName(entityType, attr),</span>
+<span class="fc" id="L537">									getColumnName(idAttribute));</span>
+<span class="fc" id="L538">							select.append(mrefSelect);</span>
+<span class="fc" id="L539">						}</span>
+					}
+					else
+					{
+<span class="nc" id="L543">						select.append(&quot;NULL AS &quot;).append(getColumnName(attr));</span>
+					}
+				}
+				else
+				{
+<span class="fc" id="L548">					select.append(&quot;this.&quot;).append(getColumnName(attr));</span>
+<span class="fc bfc" id="L549" title="All 2 branches covered.">					if (group.length() &gt; 0)</span>
+					{
+<span class="fc" id="L551">						group.append(&quot;, this.&quot;).append(getColumnName(attr));</span>
+					}
+					else
+					{
+<span class="fc" id="L555">						group.append(&quot;this.&quot;).append(getColumnName(attr));</span>
+					}
+				}
+<span class="fc" id="L558">				count.incrementAndGet();</span>
+			}
+<span class="fc" id="L560">		});</span>
+
+		// from
+<span class="fc" id="L563">		StringBuilder result = new StringBuilder().append(select).append(getSqlFrom(entityType, q));</span>
+		// where
+<span class="fc" id="L565">		String where = getSqlWhere(entityType, q, parameters, new AtomicInteger());</span>
+<span class="fc bfc" id="L566" title="All 2 branches covered.">		if (where.length() &gt; 0)</span>
+		{
+<span class="fc" id="L568">			result.append(&quot; WHERE &quot;).append(where);</span>
+		}
+		// order by
+<span class="fc" id="L571">		result.append(' ').append(getSqlSort(entityType, q));</span>
+
+		// limit
+<span class="fc bfc" id="L574" title="All 2 branches covered.">		if (q.getPageSize() &gt; 0)</span>
+		{
+<span class="fc" id="L576">			result.append(&quot; LIMIT &quot;).append(q.getPageSize());</span>
+		}
+<span class="pc bpc" id="L578" title="1 of 2 branches missed.">		if (q.getOffset() &gt; 0)</span>
+		{
+<span class="nc" id="L580">			result.append(&quot; OFFSET &quot;).append(q.getOffset());</span>
+		}
+
+<span class="fc" id="L583">		return result.toString().trim();</span>
+	}
+
+	static String getSqlUpdate(EntityType entityType)
+	{
+		// use (readonly) identifier
+<span class="fc" id="L589">		Attribute idAttribute = entityType.getIdAttribute();</span>
+
+		// create sql
+<span class="fc" id="L592">		StringBuilder sql = new StringBuilder(&quot;UPDATE &quot;).append(getTableName(entityType)).append(&quot; SET &quot;);</span>
+<span class="fc" id="L593">		getTableAttributes(entityType).forEach(attr -&gt; sql.append(getColumnName(attr)).append(&quot; = ?, &quot;));</span>
+
+<span class="pc bpc" id="L595" title="2 of 4 branches missed.">		if (sql.charAt(sql.length() - 1) == ' ' &amp;&amp; sql.charAt(sql.length() - 2) == ',')</span>
+		{
+<span class="fc" id="L597">			sql.setLength(sql.length() - 2);</span>
+		}
+<span class="fc" id="L599">		sql.append(&quot; WHERE &quot;).append(getColumnName(idAttribute)).append(&quot;= ?&quot;);</span>
+<span class="fc" id="L600">		return sql.toString();</span>
+	}
+
+	/**
+	 * Produces SQL to count the number of entities that match the given query. Ignores query offset and pagesize.
+	 *
+	 * @param q          query
+	 * @param parameters prepared statement parameters
+	 * @return SQL string
+	 */
+	static &lt;E extends Entity&gt; String getSqlCount(EntityType entityType, Query&lt;E&gt; q, List&lt;Object&gt; parameters)
+	{
+<span class="fc" id="L612">		StringBuilder sqlBuilder = new StringBuilder(&quot;SELECT COUNT&quot;);</span>
+<span class="fc" id="L613">		String idAttribute = getColumnName(entityType.getIdAttribute());</span>
+
+<span class="fc" id="L615">		List&lt;QueryRule&gt; queryRules = q.getRules();</span>
+<span class="pc bpc" id="L616" title="2 of 4 branches missed.">		if (queryRules == null || queryRules.isEmpty())</span>
+		{
+<span class="nc" id="L618">			sqlBuilder.append(&quot;(*) FROM &quot;).append(getTableName(entityType));</span>
+		}
+		else
+		{
+<span class="fc" id="L622">			boolean distinctSelectRequired = isDistinctSelectRequired(entityType, q);</span>
+<span class="pc bpc" id="L623" title="1 of 2 branches missed.">			if (distinctSelectRequired)</span>
+			{
+				// distinct count in case query contains one or more rules referring to MREF attributes.
+<span class="fc" id="L626">				sqlBuilder.append(&quot;(DISTINCT this.&quot;).append(idAttribute).append(')');</span>
+			}
+			else
+			{
+<span class="nc" id="L630">				sqlBuilder.append(&quot;(*)&quot;);</span>
+			}
+
+<span class="fc" id="L633">			String from = getSqlFrom(entityType, q);</span>
+<span class="fc" id="L634">			String where = getSqlWhere(entityType, q, parameters, new AtomicInteger());</span>
+<span class="fc" id="L635">			sqlBuilder.append(from).append(&quot; WHERE &quot;).append(where);</span>
+		}
+<span class="fc" id="L637">		return sqlBuilder.toString();</span>
+	}
+
+	private static String getSqlColumn(EntityType entityType, Attribute attr, ColumnMode columnMode)
+	{
+<span class="fc" id="L642">		StringBuilder sqlBuilder = new StringBuilder(getColumnName(attr)).append(' ');</span>
+
+<span class="fc" id="L644">		AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L645" title="1 of 4 branches missed.">		switch (attrType)</span>
+		{
+			case BOOL:
+			case DATE:
+			case DATE_TIME:
+			case DECIMAL:
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case INT:
+			case LONG:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L660">				sqlBuilder.append(getPostgreSqlType(attr));</span>
+<span class="fc" id="L661">				break;</span>
+			case CATEGORICAL:
+			case FILE:
+			case XREF:
+<span class="fc" id="L665">				sqlBuilder.append(getPostgreSqlType(attr.getRefEntity().getIdAttribute()));</span>
+<span class="fc" id="L666">				break;</span>
+			case ONE_TO_MANY:
+			case COMPOUND:
+			case CATEGORICAL_MREF:
+			case MREF:
+<span class="fc" id="L671">				throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+			default:
+<span class="nc" id="L673">				throw new UnexpectedEnumException(attrType);</span>
+		}
+
+<span class="fc" id="L676">		String sqlColumnConstraints = getSqlColumnConstraints(entityType, attr, columnMode);</span>
+<span class="fc bfc" id="L677" title="All 2 branches covered.">		if (!sqlColumnConstraints.isEmpty())</span>
+		{
+<span class="fc" id="L679">			sqlBuilder.append(' ').append(sqlColumnConstraints);</span>
+		}
+<span class="fc" id="L681">		return sqlBuilder.toString();</span>
+	}
+
+<span class="fc" id="L684">	enum ColumnMode</span>
+	{
+<span class="fc" id="L686">		INCLUDE_DEFAULT_CONSTRAINT, EXCLUDE_DEFAULT_CONSTRAINT</span>
+	}
+
+	static boolean generateSqlColumnDefaultConstraint(Attribute attr)
+	{
+<span class="pc bpc" id="L691" title="1 of 4 branches missed.">		return attr.getDefaultValue() != null &amp;&amp; !EntityTypeUtils.isMultipleReferenceType(attr);</span>
+	}
+
+	/**
+	 * Generates column constraint SQL, e.g. 'NOT NULL DEFAULT 123'
+	 *
+	 * @param entityType            entity type
+	 * @param attr                  attribute
+	 * @param columnConstraintsMode whether or not to add default constraint to generated SQL
+	 * @return column constraint SQL
+	 */
+	private static String getSqlColumnConstraints(EntityType entityType, Attribute attr,
+			ColumnMode columnConstraintsMode)
+	{
+<span class="fc" id="L705">		StringBuilder sqlBuilder = new StringBuilder();</span>
+<span class="fc bfc" id="L706" title="All 2 branches covered.">		if (!attr.getName().equals(entityType.getIdAttribute().getName()))</span>
+		{
+<span class="fc bfc" id="L708" title="All 2 branches covered.">			if (!attr.isNillable())</span>
+			{
+<span class="fc" id="L710">				sqlBuilder.append(&quot;NOT NULL&quot;);</span>
+			}
+		}
+<span class="fc bfc" id="L713" title="All 4 branches covered.">		if (columnConstraintsMode == INCLUDE_DEFAULT_CONSTRAINT &amp;&amp; generateSqlColumnDefaultConstraint(attr))</span>
+		{
+<span class="pc bpc" id="L715" title="1 of 2 branches missed.">			if (sqlBuilder.length() &gt; 0)</span>
+			{
+<span class="fc" id="L717">				sqlBuilder.append(' ');</span>
+			}
+<span class="fc" id="L719">			sqlBuilder.append(&quot;DEFAULT &quot;).append(getSqlDefaulValue(attr));</span>
+		}
+<span class="fc" id="L721">		return sqlBuilder.toString();</span>
+	}
+
+	private static String getSqlDefaulValue(Attribute attribute)
+	{
+<span class="fc" id="L726">		return getSqlDefaulValue(attribute, attribute.getDefaultValue());</span>
+	}
+
+	private static String getSqlDefaulValue(Attribute attribute, String defaultValueAsString)
+	{
+		String sqlDefaultValue;
+
+<span class="fc" id="L733">		Object defaultTypedValue = AttributeUtils.getDefaultTypedValue(attribute, defaultValueAsString);</span>
+
+<span class="fc" id="L735">		AttributeType attributeType = attribute.getDataType();</span>
+<span class="pc bpc" id="L736" title="2 of 10 branches missed.">		switch (attributeType)</span>
+		{
+			case BOOL:
+<span class="fc" id="L739">				Boolean booleanDefaultValue = (Boolean) defaultTypedValue;</span>
+<span class="pc bpc" id="L740" title="1 of 2 branches missed.">				sqlDefaultValue = booleanDefaultValue ? &quot;TRUE&quot; : &quot;FALSE&quot;;</span>
+<span class="fc" id="L741">				break;</span>
+			case CATEGORICAL:
+			case FILE:
+			case XREF:
+<span class="fc" id="L745">				Entity refDefaultValue = (Entity) defaultTypedValue;</span>
+<span class="fc" id="L746">				sqlDefaultValue = getSqlDefaulValue(attribute.getRefEntity().getIdAttribute(),</span>
+<span class="fc" id="L747">						refDefaultValue.getIdValue().toString());</span>
+<span class="fc" id="L748">				break;</span>
+			case DATE:
+<span class="fc" id="L750">				LocalDate dateDefaultValue = (LocalDate) defaultTypedValue;</span>
+<span class="fc" id="L751">				sqlDefaultValue = '\'' + dateDefaultValue.toString() + '\'';</span>
+<span class="fc" id="L752">				break;</span>
+			case DATE_TIME:
+<span class="fc" id="L754">				Instant instantDefaultValue = (Instant) defaultTypedValue;</span>
+				// As a workaround for #5674, we don't store milliseconds
+<span class="fc" id="L756">				sqlDefaultValue =</span>
+<span class="fc" id="L757">						'\'' + instantDefaultValue.truncatedTo(ChronoUnit.SECONDS).atOffset(UTC).toString() + '\'';</span>
+<span class="fc" id="L758">				break;</span>
+			case DECIMAL:
+<span class="fc" id="L760">				Double doubleDefaultValue = (Double) defaultTypedValue;</span>
+<span class="fc" id="L761">				sqlDefaultValue = doubleDefaultValue.toString();</span>
+<span class="fc" id="L762">				break;</span>
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L770">				sqlDefaultValue = '\'' + (String) defaultTypedValue + '\'';</span>
+<span class="fc" id="L771">				break;</span>
+			case INT:
+<span class="fc" id="L773">				Integer intDefaultValue = (Integer) defaultTypedValue;</span>
+<span class="fc" id="L774">				sqlDefaultValue = intDefaultValue.toString();</span>
+<span class="fc" id="L775">				break;</span>
+			case LONG:
+<span class="fc" id="L777">				Long longDefaultValue = (Long) defaultTypedValue;</span>
+<span class="fc" id="L778">				sqlDefaultValue = longDefaultValue.toString();</span>
+<span class="fc" id="L779">				break;</span>
+			case CATEGORICAL_MREF:
+			case COMPOUND:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="nc" id="L784">				throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attributeType.toString()));</span>
+			default:
+<span class="nc" id="L786">				throw new UnexpectedEnumException(attributeType);</span>
+		}
+
+<span class="fc" id="L789">		return sqlDefaultValue;</span>
+	}
+
+	private static List&lt;String&gt; getSqlTableConstraints(EntityType entityType, Attribute attr)
+	{
+<span class="fc" id="L794">		List&lt;String&gt; tableConstraints = Lists.newArrayList();</span>
+
+<span class="fc bfc" id="L796" title="All 2 branches covered.">		if (attr.getName().equals(entityType.getIdAttribute().getName()))</span>
+		{
+<span class="fc" id="L798">			tableConstraints.add(getSqlConstraintPrimaryKey(entityType, attr));</span>
+		}
+		else
+		{
+<span class="pc bpc" id="L802" title="1 of 4 branches missed.">			if (isSingleReferenceType(attr) &amp;&amp; isPersistedInPostgreSql(attr.getRefEntity()))</span>
+			{
+<span class="fc" id="L804">				tableConstraints.add(getSqlForeignKey(entityType, attr));</span>
+			}
+<span class="fc bfc" id="L806" title="All 2 branches covered.">			if (attr.isUnique())</span>
+			{
+<span class="fc" id="L808">				tableConstraints.add(getSqlUniqueKey(entityType, attr));</span>
+			}
+<span class="fc bfc" id="L810" title="All 2 branches covered.">			if (attr.getDataType() == ENUM)</span>
+			{
+<span class="fc" id="L812">				tableConstraints.add(getSqlCheckConstraint(entityType, attr));</span>
+			}
+		}
+
+<span class="fc" id="L816">		return tableConstraints;</span>
+	}
+
+	private static String getSqlDropTable(String tableName)
+	{
+<span class="fc" id="L821">		return &quot;DROP TABLE &quot; + tableName;</span>
+	}
+
+	static &lt;E extends Entity&gt; String getSqlWhere(EntityType entityType, Query&lt;E&gt; q, List&lt;Object&gt; parameters,
+			AtomicInteger mrefFilterIndex)
+	{
+<span class="fc" id="L827">		StringBuilder result = new StringBuilder();</span>
+<span class="fc bfc" id="L828" title="All 2 branches covered.">		for (QueryRule r : q.getRules())</span>
+		{
+<span class="fc" id="L830">			Attribute attr = null;</span>
+<span class="fc bfc" id="L831" title="All 2 branches covered.">			if (r.getField() != null)</span>
+			{
+<span class="fc" id="L833">				attr = entityType.getAttribute(r.getField());</span>
+<span class="pc bpc" id="L834" title="1 of 2 branches missed.">				if (attr == null)</span>
+				{
+<span class="nc" id="L836">					throw new MolgenisDataException(format(&quot;Unknown attribute [%s]&quot;, r.getField()));</span>
+				}
+<span class="fc bfc" id="L838" title="All 2 branches covered.">				if (isPersistedInOtherTable(attr))</span>
+				{
+<span class="fc" id="L840">					mrefFilterIndex.incrementAndGet();</span>
+				}
+			}
+
+<span class="fc" id="L844">			StringBuilder predicate = new StringBuilder();</span>
+<span class="fc" id="L845">			Operator operator = r.getOperator();</span>
+<span class="pc bpc" id="L846" title="6 of 11 branches missed.">			switch (operator)</span>
+			{
+				case AND:
+<span class="fc" id="L849">					result.append(&quot; AND &quot;);</span>
+<span class="fc" id="L850">					break;</span>
+				case NESTED:
+<span class="fc" id="L852">					QueryImpl&lt;Entity&gt; nestedQ = new QueryImpl&lt;&gt;(r.getNestedRules());</span>
+<span class="fc" id="L853">					result.append('(')</span>
+<span class="fc" id="L854">						  .append(getSqlWhere(entityType, nestedQ, parameters, mrefFilterIndex))</span>
+<span class="fc" id="L855">						  .append(')');</span>
+<span class="fc" id="L856">					break;</span>
+				case OR:
+<span class="fc" id="L858">					result.append(&quot; OR &quot;);</span>
+<span class="fc" id="L859">					break;</span>
+				case LIKE:
+<span class="nc" id="L861">					requireNonNull(attr, format(UNSPECIFIED_ATTRIBUTE_MSG, LIKE));</span>
+					String columnName;
+<span class="nc bnc" id="L863" title="All 2 branches missed.">					if (isPersistedInOtherTable(attr))</span>
+					{
+<span class="nc" id="L865">						columnName = getFilterColumnName(attr, mrefFilterIndex.get());</span>
+					}
+					else
+					{
+<span class="nc" id="L869">						columnName = &quot;this.&quot; + getColumnName(attr);</span>
+					}
+
+<span class="nc bnc" id="L872" title="All 4 branches missed.">					if (isStringType(attr) || isTextType(attr))</span>
+					{
+<span class="nc" id="L874">						result.append(' ').append(columnName);</span>
+					}
+					else
+					{
+<span class="nc" id="L878">						result.append(&quot; CAST(&quot;).append(columnName).append(&quot; as TEXT)&quot;);</span>
+					}
+
+<span class="nc" id="L881">					result.append(&quot; LIKE ?&quot;);</span>
+<span class="nc" id="L882">					parameters.add(&quot;%&quot; + PostgreSqlUtils.getPostgreSqlQueryValue(r.getValue(), attr) + '%');</span>
+<span class="nc" id="L883">					break;</span>
+				case IN:
+				{
+<span class="fc" id="L886">					requireNonNull(attr, format(UNSPECIFIED_ATTRIBUTE_MSG, IN));</span>
+<span class="fc" id="L887">					Object inValue = r.getValue();</span>
+<span class="pc bpc" id="L888" title="1 of 2 branches missed.">					if (inValue == null)</span>
+					{
+<span class="nc" id="L890">						throw new MolgenisDataException(&quot;Missing value for IN query&quot;);</span>
+					}
+<span class="pc bpc" id="L892" title="1 of 2 branches missed.">					if (!(inValue instanceof Iterable&lt;?&gt;))</span>
+					{
+<span class="nc" id="L894">						throw new MolgenisDataException(format(&quot;IN value is of type [%s] instead of [Iterable]&quot;,</span>
+<span class="nc" id="L895">								inValue.getClass().getSimpleName()));</span>
+					}
+
+<span class="fc" id="L898">					StringBuilder in = new StringBuilder();</span>
+<span class="fc" id="L899">					Attribute inAttr = attr;</span>
+<span class="fc" id="L900">					Stream&lt;Object&gt; postgreSqlIds = stream(((Iterable&lt;?&gt;) inValue).spliterator(), false).map(</span>
+<span class="fc" id="L901">							idValue -&gt; PostgreSqlUtils.getPostgreSqlQueryValue(idValue, inAttr));</span>
+<span class="fc bfc" id="L902" title="All 2 branches covered.">					for (Iterator&lt;Object&gt; it = postgreSqlIds.iterator(); it.hasNext(); )</span>
+					{
+<span class="fc" id="L904">						Object postgreSqlId = it.next();</span>
+<span class="fc" id="L905">						in.append('?');</span>
+<span class="fc bfc" id="L906" title="All 2 branches covered.">						if (it.hasNext())</span>
+						{
+<span class="fc" id="L908">							in.append(',');</span>
+						}
+<span class="fc" id="L910">						parameters.add(postgreSqlId);</span>
+<span class="fc" id="L911">					}</span>
+
+<span class="fc bfc" id="L913" title="All 2 branches covered.">					if (isPersistedInOtherTable(attr))</span>
+					{
+<span class="fc" id="L915">						result.append(getFilterColumnName(attr, mrefFilterIndex.get()));</span>
+					}
+					else
+					{
+<span class="fc" id="L919">						result.append(&quot;this&quot;);</span>
+					}
+
+					Attribute equalsAttr;
+<span class="fc bfc" id="L923" title="All 2 branches covered.">					if (attr.isMappedBy())</span>
+					{
+<span class="fc" id="L925">						equalsAttr = attr.getRefEntity().getIdAttribute();</span>
+					}
+					else
+					{
+<span class="fc" id="L929">						equalsAttr = entityType.getAttribute(r.getField());</span>
+					}
+<span class="fc" id="L931">					result.append('.').append(getColumnName(equalsAttr));</span>
+<span class="fc" id="L932">					result.append(&quot; IN (&quot;).append(in).append(')');</span>
+<span class="fc" id="L933">					break;</span>
+				}
+				case NOT:
+<span class="nc" id="L936">					result.append(&quot; NOT &quot;);</span>
+<span class="nc" id="L937">					break;</span>
+				case RANGE:
+<span class="nc" id="L939">					requireNonNull(attr, format(UNSPECIFIED_ATTRIBUTE_MSG, RANGE));</span>
+<span class="nc" id="L940">					Object range = r.getValue();</span>
+<span class="nc bnc" id="L941" title="All 2 branches missed.">					if (range == null)</span>
+					{
+<span class="nc" id="L943">						throw new MolgenisDataException(&quot;Missing value for RANGE query&quot;);</span>
+					}
+<span class="nc bnc" id="L945" title="All 2 branches missed.">					if (!(range instanceof Iterable&lt;?&gt;))</span>
+					{
+<span class="nc" id="L947">						throw new MolgenisDataException(format(&quot;RANGE value is of type [%s] instead of [Iterable]&quot;,</span>
+<span class="nc" id="L948">								range.getClass().getSimpleName()));</span>
+					}
+<span class="nc" id="L950">					Iterator&lt;?&gt; rangeValues = ((Iterable&lt;?&gt;) range).iterator();</span>
+<span class="nc" id="L951">					parameters.add(rangeValues.next()); // from</span>
+<span class="nc" id="L952">					parameters.add(rangeValues.next()); // to</span>
+
+<span class="nc" id="L954">					StringBuilder column = new StringBuilder();</span>
+<span class="nc bnc" id="L955" title="All 2 branches missed.">					if (isPersistedInOtherTable(attr))</span>
+					{
+<span class="nc" id="L957">						column.append(getFilterColumnName(attr, mrefFilterIndex.get()));</span>
+					}
+					else
+					{
+<span class="nc" id="L961">						column.append(&quot;this&quot;);</span>
+					}
+<span class="nc" id="L963">					column.append('.').append(getColumnName(entityType.getAttribute(r.getField())));</span>
+<span class="nc" id="L964">					predicate.append(column).append(&quot; &gt;= ? AND &quot;).append(column).append(&quot; &lt;= ?&quot;);</span>
+<span class="nc" id="L965">					result.append(predicate);</span>
+<span class="nc" id="L966">					break;</span>
+				case EQUALS:
+<span class="pc bpc" id="L968" title="1 of 2 branches missed.">					if (attr == null)</span>
+					{
+<span class="nc" id="L970">						throw new MolgenisDataException(&quot;Missing attribute field in EQUALS query rule&quot;);</span>
+					}
+
+<span class="pc bpc" id="L973" title="1 of 2 branches missed.">					if (isPersistedInOtherTable(attr))</span>
+					{
+<span class="fc" id="L975">						predicate.append(getFilterColumnName(attr, mrefFilterIndex.get()));</span>
+					}
+					else
+					{
+<span class="nc" id="L979">						predicate.append(&quot;this&quot;);</span>
+					}
+
+					Attribute equalsAttr;
+<span class="fc bfc" id="L983" title="All 2 branches covered.">					if (attr.isMappedBy())</span>
+					{
+<span class="fc" id="L985">						equalsAttr = attr.getRefEntity().getIdAttribute();</span>
+					}
+					else
+					{
+<span class="fc" id="L989">						equalsAttr = entityType.getAttribute(r.getField());</span>
+					}
+<span class="fc" id="L991">					predicate.append('.').append(getColumnName(equalsAttr));</span>
+<span class="pc bpc" id="L992" title="1 of 2 branches missed.">					if (r.getValue() == null)</span>
+					{
+						// expression = null is not valid, use IS NULL
+<span class="nc" id="L995">						predicate.append(&quot; IS NULL &quot;);</span>
+					}
+					else
+					{
+<span class="fc" id="L999">						Object postgreSqlVal = PostgreSqlUtils.getPostgreSqlQueryValue(r.getValue(), attr);</span>
+						//Postgres does not return the rows with an empty value in a boolean field when queried with for example &quot;... NOT abstract = TRUE&quot;
+						//It does however return those rows when queried with &quot;... NOT abstract IS TRUE&quot;
+<span class="pc bpc" id="L1002" title="1 of 2 branches missed.">						if (attr.getDataType() == BOOL)</span>
+						{
+<span class="nc" id="L1004">							Boolean bool = (Boolean) postgreSqlVal;</span>
+							//noinspection ConstantConditions (getPostgreSqlQueryValue() != null if r.getValue() != null)
+<span class="nc bnc" id="L1006" title="All 2 branches missed.">							if (bool) predicate.append(&quot; IS TRUE&quot;);</span>
+<span class="nc" id="L1007">							else predicate.append(&quot; IS FALSE&quot;);</span>
+<span class="nc" id="L1008">						}</span>
+						else
+						{
+<span class="fc" id="L1011">							predicate.append(&quot; =&quot;);</span>
+<span class="fc" id="L1012">							predicate.append(&quot; ? &quot;);</span>
+
+<span class="fc" id="L1014">							parameters.add(postgreSqlVal);</span>
+						}
+					}
+<span class="pc bpc" id="L1017" title="1 of 4 branches missed.">					if (result.length() &gt; 0 &amp;&amp; !result.toString().endsWith(&quot; OR &quot;) &amp;&amp; !result.toString()</span>
+<span class="nc bnc" id="L1018" title="All 2 branches missed.">																							 .endsWith(&quot; AND &quot;)</span>
+<span class="nc bnc" id="L1019" title="All 2 branches missed.">							&amp;&amp; !result.toString().endsWith(&quot; NOT &quot;))</span>
+					{
+<span class="nc" id="L1021">						result.append(&quot; AND &quot;);</span>
+					}
+<span class="fc" id="L1023">					result.append(predicate);</span>
+<span class="fc" id="L1024">					break;</span>
+				case GREATER:
+				case GREATER_EQUAL:
+				case LESS:
+				case LESS_EQUAL:
+<span class="nc" id="L1029">					requireNonNull(attr, format(UNSPECIFIED_ATTRIBUTE_MSG,</span>
+<span class="nc" id="L1030">							format(&quot;%s, %s, %s or %s&quot;, GREATER, GREATER_EQUAL, LESS, LESS_EQUAL)));</span>
+<span class="nc bnc" id="L1031" title="All 2 branches missed.">					if (isPersistedInOtherTable(attr))</span>
+					{
+<span class="nc" id="L1033">						predicate.append(getFilterColumnName(attr, mrefFilterIndex.get()));</span>
+					}
+					else
+					{
+<span class="nc" id="L1037">						predicate.append(&quot;this&quot;);</span>
+					}
+
+<span class="nc" id="L1040">					predicate.append('.').append(getColumnName(entityType.getAttribute(r.getField())));</span>
+<span class="pc bnc" id="L1041" title="All 5 branches missed.">					switch (operator)</span>
+					{
+						case GREATER:
+<span class="nc" id="L1044">							predicate.append(&quot; &gt;&quot;);</span>
+<span class="nc" id="L1045">							break;</span>
+						case GREATER_EQUAL:
+<span class="nc" id="L1047">							predicate.append(&quot; &gt;=&quot;);</span>
+<span class="nc" id="L1048">							break;</span>
+						case LESS:
+<span class="nc" id="L1050">							predicate.append(&quot; &lt;&quot;);</span>
+<span class="nc" id="L1051">							break;</span>
+						case LESS_EQUAL:
+<span class="nc" id="L1053">							predicate.append(&quot; &lt;=&quot;);</span>
+<span class="nc" id="L1054">							break;</span>
+						// $CASES-OMITTED$
+						default:
+<span class="nc" id="L1057">							throw new RuntimeException(format(&quot;Unexpected query operator [%s]&quot;, operator));</span>
+					}
+<span class="nc" id="L1059">					predicate.append(&quot; ? &quot;);</span>
+
+<span class="nc" id="L1061">					parameters.add(PostgreSqlUtils.getPostgreSqlQueryValue(r.getValue(), attr));</span>
+
+<span class="nc bnc" id="L1063" title="All 4 branches missed.">					if (result.length() &gt; 0 &amp;&amp; !result.toString().endsWith(&quot; OR &quot;) &amp;&amp; !result.toString()</span>
+<span class="nc bnc" id="L1064" title="All 2 branches missed.">																							 .endsWith(&quot; AND &quot;)</span>
+<span class="nc bnc" id="L1065" title="All 2 branches missed.">							&amp;&amp; !result.toString().endsWith(&quot; NOT &quot;))</span>
+					{
+<span class="nc" id="L1067">						result.append(&quot; AND &quot;);</span>
+					}
+<span class="nc" id="L1069">					result.append(predicate);</span>
+<span class="nc" id="L1070">					break;</span>
+				case DIS_MAX:
+				case FUZZY_MATCH:
+				case FUZZY_MATCH_NGRAM:
+				case SEARCH:
+				case SHOULD:
+					// PostgreSQL does not support semantic searching and sorting matching rows on relevance.
+<span class="nc" id="L1077">					throw new UnsupportedOperationException(</span>
+<span class="nc" id="L1078">							format(&quot;Query operator [%s] not supported by PostgreSQL repository&quot;, operator.toString()));</span>
+				default:
+<span class="nc" id="L1080">					throw new UnexpectedEnumException(operator);</span>
+			}
+<span class="fc" id="L1082">		}</span>
+
+<span class="fc" id="L1084">		return result.toString().trim();</span>
+	}
+
+	/**
+	 * Package-private for testability
+	 */
+	static &lt;E extends Entity&gt; String getSqlSort(EntityType entityType, Query&lt;E&gt; q)
+	{
+<span class="fc" id="L1092">		StringBuilder sortSql = new StringBuilder();</span>
+
+		// https://www.postgresql.org/docs/9.6/static/queries-limit.html
+		// When using LIMIT, it is important to use an ORDER BY clause that constrains the result rows into a unique order.
+		// Otherwise you will get an unpredictable subset of the query's rows. You might be asking for the tenth through twentieth rows,
+		// but tenth through twentieth in what ordering? The ordering is unknown, unless you specified ORDER BY.
+		Sort sort;
+<span class="fc bfc" id="L1099" title="All 4 branches covered.">		if (q.getSort() != null &amp;&amp; !hasUniqueSortAttribute(entityType, q.getSort()))</span>
+		{
+<span class="fc" id="L1101">			LOG.debug(&quot;Query with sort without unique attribute detected: {}&quot;, q);</span>
+<span class="fc" id="L1102">			sort = new Sort(q.getSort());</span>
+<span class="fc" id="L1103">			sort.on(entityType.getIdAttribute().getName());</span>
+		}
+<span class="fc bfc" id="L1105" title="All 2 branches covered.">		else if (q.getSort() == null)</span>
+		{
+<span class="fc" id="L1107">			LOG.debug(&quot;Query without sort detected: {}&quot;, q);</span>
+<span class="fc" id="L1108">			sort = new Sort(entityType.getIdAttribute().getName());</span>
+		}
+		else
+		{
+<span class="fc" id="L1112">			sort = q.getSort();</span>
+		}
+
+<span class="fc bfc" id="L1115" title="All 2 branches covered.">		for (Sort.Order o : sort)</span>
+		{
+<span class="fc" id="L1117">			Attribute attr = entityType.getAttribute(o.getAttr());</span>
+<span class="fc" id="L1118">			sortSql.append(&quot;, &quot;).append(getColumnName(attr));</span>
+<span class="pc bpc" id="L1119" title="1 of 2 branches missed.">			if (o.getDirection().equals(Sort.Direction.DESC))</span>
+			{
+<span class="nc" id="L1121">				sortSql.append(&quot; DESC&quot;);</span>
+			}
+			else
+			{
+<span class="fc" id="L1125">				sortSql.append(&quot; ASC&quot;);</span>
+			}
+<span class="fc" id="L1127">		}</span>
+
+<span class="pc bpc" id="L1129" title="1 of 2 branches missed.">		if (sortSql.length() &gt; 0)</span>
+		{
+<span class="fc" id="L1131">			sortSql = new StringBuilder(&quot;ORDER BY &quot;).append(sortSql.substring(2));</span>
+		}
+
+<span class="fc" id="L1134">		return sortSql.toString();</span>
+	}
+
+	private static boolean hasUniqueSortAttribute(EntityType entityType, Sort sort)
+	{
+<span class="fc bfc" id="L1139" title="All 2 branches covered.">		for (Sort.Order order : sort)</span>
+		{
+<span class="fc" id="L1141">			String attributeName = order.getAttr();</span>
+<span class="fc" id="L1142">			Attribute attribute = entityType.getAttribute(attributeName);</span>
+<span class="fc bfc" id="L1143" title="All 2 branches covered.">			if (attribute.isUnique())</span>
+			{
+<span class="fc" id="L1145">				return true;</span>
+			}
+<span class="fc" id="L1147">		}</span>
+<span class="fc" id="L1148">		return false;</span>
+	}
+
+	private static &lt;E extends Entity&gt; String getSqlFrom(EntityType entityType, Query&lt;E&gt; q)
+	{
+<span class="fc" id="L1153">		List&lt;Attribute&gt; mrefAttrsInQuery = getJoinQueryAttrs(entityType, q);</span>
+<span class="fc" id="L1154">		StringBuilder from = new StringBuilder(&quot; FROM &quot;).append(getTableName(entityType)).append(&quot; AS this&quot;);</span>
+
+<span class="fc" id="L1156">		Attribute idAttribute = entityType.getIdAttribute();</span>
+
+<span class="fc bfc" id="L1158" title="All 2 branches covered.">		for (int i = 0; i &lt; mrefAttrsInQuery.size(); i++)</span>
+		{
+			// extra join so we can filter on the mrefs
+<span class="fc" id="L1161">			Attribute mrefAttr = mrefAttrsInQuery.get(i);</span>
+
+<span class="pc bpc" id="L1163" title="2 of 4 branches missed.">			if (mrefAttr.getDataType() == ONE_TO_MANY &amp;&amp; mrefAttr.isMappedBy())</span>
+			{
+				// query table of referenced entity
+<span class="fc" id="L1166">				from.append(&quot; LEFT JOIN &quot;)</span>
+<span class="fc" id="L1167">					.append(getTableName(mrefAttr.getRefEntity()))</span>
+<span class="fc" id="L1168">					.append(&quot; AS &quot;)</span>
+<span class="fc" id="L1169">					.append(getFilterColumnName(mrefAttr, i + 1))</span>
+<span class="fc" id="L1170">					.append(&quot; ON (this.&quot;)</span>
+<span class="fc" id="L1171">					.append(getColumnName(idAttribute))</span>
+<span class="fc" id="L1172">					.append(&quot; = &quot;)</span>
+<span class="fc" id="L1173">					.append(getFilterColumnName(mrefAttr, i + 1))</span>
+<span class="fc" id="L1174">					.append('.')</span>
+<span class="fc" id="L1175">					.append(getColumnName(mrefAttr.getMappedBy()))</span>
+<span class="fc" id="L1176">					.append(')');</span>
+			}
+			else
+			{
+				// query junction table
+<span class="nc" id="L1181">				from.append(&quot; LEFT JOIN &quot;)</span>
+<span class="nc" id="L1182">					.append(getJunctionTableName(entityType, mrefAttr))</span>
+<span class="nc" id="L1183">					.append(&quot; AS &quot;)</span>
+<span class="nc" id="L1184">					.append(getFilterColumnName(mrefAttr, i + 1))</span>
+<span class="nc" id="L1185">					.append(&quot; ON (this.&quot;)</span>
+<span class="nc" id="L1186">					.append(getColumnName(idAttribute))</span>
+<span class="nc" id="L1187">					.append(&quot; = &quot;)</span>
+<span class="nc" id="L1188">					.append(getFilterColumnName(mrefAttr, i + 1))</span>
+<span class="nc" id="L1189">					.append('.')</span>
+<span class="nc" id="L1190">					.append(getColumnName(idAttribute))</span>
+<span class="nc" id="L1191">					.append(')');</span>
+			}
+		}
+
+<span class="fc" id="L1195">		return from.toString();</span>
+	}
+
+	private static &lt;E extends Entity&gt; List&lt;Attribute&gt; getJoinQueryAttrs(EntityType entityType, Query&lt;E&gt; q)
+	{
+<span class="fc" id="L1200">		List&lt;Attribute&gt; joinAttrs = Lists.newArrayList();</span>
+<span class="fc" id="L1201">		getJoinQueryAttrsRec(entityType, q.getRules(), joinAttrs);</span>
+<span class="fc" id="L1202">		return joinAttrs;</span>
+	}
+
+	private static void getJoinQueryAttrsRec(EntityType entityType, List&lt;QueryRule&gt; rules, List&lt;Attribute&gt; joinAttrs)
+	{
+<span class="fc bfc" id="L1207" title="All 2 branches covered.">		for (QueryRule rule : rules)</span>
+		{
+<span class="pc bpc" id="L1209" title="1 of 2 branches missed.">			if (rule.getField() != null)</span>
+			{
+<span class="fc" id="L1211">				Attribute attr = entityType.getAttribute(rule.getField());</span>
+<span class="pc bpc" id="L1212" title="1 of 4 branches missed.">				if (attr != null &amp;&amp; isPersistedInOtherTable(attr))</span>
+				{
+<span class="fc" id="L1214">					joinAttrs.add(attr);</span>
+				}
+			}
+
+<span class="pc bpc" id="L1218" title="2 of 4 branches missed.">			if (rule.getNestedRules() != null &amp;&amp; !rule.getNestedRules().isEmpty())</span>
+			{
+<span class="nc" id="L1220">				getJoinQueryAttrsRec(entityType, rule.getNestedRules(), joinAttrs);</span>
+			}
+<span class="fc" id="L1222">		}</span>
+<span class="fc" id="L1223">	}</span>
+
+	private static String getPostgreSqlType(Attribute attr)
+	{
+		while (true)
+		{
+<span class="fc" id="L1229">			AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L1230" title="2 of 11 branches missed.">			switch (attrType)</span>
+			{
+				case BOOL:
+<span class="fc" id="L1233">					return &quot;boolean&quot;;</span>
+				case CATEGORICAL:
+				case XREF:
+				case FILE:
+<span class="fc" id="L1237">					attr = attr.getRefEntity().getIdAttribute();</span>
+<span class="fc" id="L1238">					continue;</span>
+				case DATE:
+<span class="fc" id="L1240">					return &quot;date&quot;;</span>
+				case DATE_TIME:
+<span class="fc" id="L1242">					return &quot;timestamp with time zone&quot;; // this matters when converting from STRING to DATE_TIME!</span>
+				case DECIMAL:
+<span class="fc" id="L1244">					return &quot;double precision&quot;; // alias: float8</span>
+				case EMAIL:
+				case ENUM:
+				case HYPERLINK:
+				case STRING:
+<span class="fc" id="L1249">					return &quot;character varying(255)&quot;; // alias: varchar(255)</span>
+				case HTML:
+				case SCRIPT:
+				case TEXT:
+<span class="fc" id="L1253">					return &quot;text&quot;;</span>
+				case INT:
+<span class="fc" id="L1255">					return &quot;integer&quot;; // alias: int, int4</span>
+				case LONG:
+<span class="fc" id="L1257">					return &quot;bigint&quot;; // alias: int8</span>
+				case CATEGORICAL_MREF:
+				case MREF:
+				case ONE_TO_MANY:
+				case COMPOUND:
+<span class="nc" id="L1262">					throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+				default:
+<span class="nc" id="L1264">					throw new UnexpectedEnumException(attrType);</span>
+			}
+		}
+	}
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

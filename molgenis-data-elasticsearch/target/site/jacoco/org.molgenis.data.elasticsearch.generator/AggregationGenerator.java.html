@@ -1,0 +1,271 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AggregationGenerator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-elasticsearch</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.elasticsearch.generator</a> &gt; <span class="el_source">AggregationGenerator.java</span></div><h1>AggregationGenerator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.elasticsearch.generator;
+
+import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.search.aggregations.AbstractAggregationBuilder;
+import org.elasticsearch.search.aggregations.AggregationBuilder;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.bucket.nested.NestedAggregationBuilder;
+import org.elasticsearch.search.aggregations.bucket.nested.ReverseNestedAggregationBuilder;
+import org.elasticsearch.search.aggregations.metrics.cardinality.CardinalityAggregationBuilder;
+import org.molgenis.data.elasticsearch.AggregateUtils;
+import org.molgenis.data.elasticsearch.FieldConstants;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.util.UnexpectedEnumException;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+
+import static java.lang.Integer.MAX_VALUE;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.support.EntityTypeUtils.isReferenceType;
+
+/**
+ * Generates Elasticsearch aggregation queries from MOLGENIS aggregation queries.
+ */
+@Component
+class AggregationGenerator
+{
+	private static final String AGGREGATION_REVERSE_POSTFIX = &quot;_reverse&quot;;
+	private static final String AGGREGATION_NESTED_POSTFIX = &quot;_nested&quot;;
+
+	private final DocumentIdGenerator documentIdGenerator;
+
+	/**
+	 * http://www.elasticsearch.org/guide/en/elasticsearch/reference/1.x/search-aggregations-metrics-cardinality-aggregation.html
+	 * The precision_threshold options allows to trade memory for accuracy, and defines a unique count below
+	 * which counts are expected to be close to accurate. Above this value, counts might become a bit more
+	 * fuzzy. The maximum supported value is 40000, thresholds above this number will have the same effect as a
+	 * threshold of 40000.
+	 */
+	private static final long PRECISION_THRESHOLD = 40000L;
+
+	AggregationGenerator(DocumentIdGenerator documentIdGenerator)
+<span class="nc" id="L47">	{</span>
+<span class="nc" id="L48">		this.documentIdGenerator = requireNonNull(documentIdGenerator);</span>
+<span class="nc" id="L49">	}</span>
+
+	public void generate(SearchRequestBuilder searchRequestBuilder, Attribute aggAttr1, Attribute aggAttr2,
+			Attribute aggAttrDistinct)
+	{
+<span class="nc" id="L54">		List&lt;AggregationBuilder&gt; aggregationBuilders = createAggregations(aggAttr1, aggAttr2, aggAttrDistinct);</span>
+
+		// collect aggregates
+<span class="nc" id="L57">		searchRequestBuilder.setSize(0);</span>
+
+		// add all aggregations to builder
+<span class="nc bnc" id="L60" title="All 2 branches missed.">		for (AggregationBuilder aggregationBuilder : aggregationBuilders)</span>
+		{
+<span class="nc" id="L62">			searchRequestBuilder.addAggregation(aggregationBuilder);</span>
+<span class="nc" id="L63">		}</span>
+<span class="nc" id="L64">	}</span>
+
+	List&lt;AggregationBuilder&gt; createAggregations(Attribute aggAttr1, Attribute aggAttr2, Attribute aggAttrDistinct)
+	{
+		// validate request
+<span class="nc bnc" id="L69" title="All 2 branches missed.">		if (aggAttr1 == null)</span>
+		{
+<span class="nc" id="L71">			throw new IllegalArgumentException(&quot;Aggregation requires at least one isAggregatable attribute&quot;);</span>
+		}
+<span class="nc bnc" id="L73" title="All 2 branches missed.">		if (!aggAttr1.isAggregatable())</span>
+		{
+<span class="nc" id="L75">			throw new IllegalArgumentException(&quot;Attribute is not isAggregatable [ &quot; + aggAttr1.getName() + &quot;]&quot;);</span>
+		}
+<span class="nc bnc" id="L77" title="All 4 branches missed.">		if (aggAttr2 != null &amp;&amp; !aggAttr2.isAggregatable())</span>
+		{
+<span class="nc" id="L79">			throw new IllegalArgumentException(&quot;Attribute is not isAggregatable [ &quot; + aggAttr2.getName() + &quot;]&quot;);</span>
+		}
+<span class="nc bnc" id="L81" title="All 4 branches missed.">		if (aggAttrDistinct != null &amp;&amp; aggAttrDistinct.isNillable())</span>
+		{
+			// see: https://github.com/molgenis/molgenis/issues/1938
+<span class="nc" id="L84">			throw new IllegalArgumentException(&quot;Distinct isAggregatable attribute cannot be nillable&quot;);</span>
+		}
+<span class="nc" id="L86">		AttributeType dataType1 = aggAttr1.getDataType();</span>
+<span class="nc bnc" id="L87" title="All 4 branches missed.">		if (aggAttr1.isNillable() &amp;&amp; isReferenceType(aggAttr1))</span>
+		{
+			// see: https://github.com/molgenis/molgenis/issues/1937
+<span class="nc" id="L90">			throw new IllegalArgumentException(&quot;Aggregatable attribute of type [&quot; + dataType1 + &quot;] cannot be nillable&quot;);</span>
+		}
+<span class="nc bnc" id="L92" title="All 2 branches missed.">		if (aggAttr2 != null)</span>
+		{
+			// see: https://github.com/molgenis/molgenis/issues/1937
+<span class="nc" id="L95">			AttributeType dataType2 = aggAttr2.getDataType();</span>
+<span class="nc bnc" id="L96" title="All 4 branches missed.">			if (aggAttr2.isNillable() &amp;&amp; isReferenceType(aggAttr2))</span>
+			{
+<span class="nc" id="L98">				throw new IllegalArgumentException(</span>
+						&quot;Aggregatable attribute of type [&quot; + dataType2 + &quot;] cannot be nillable&quot;);
+			}
+		}
+
+<span class="nc" id="L103">		LinkedList&lt;Attribute&gt; aggAttrs = new LinkedList&lt;&gt;();</span>
+<span class="nc" id="L104">		aggAttrs.add(aggAttr1);</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">		if (aggAttr2 != null)</span>
+		{
+<span class="nc" id="L107">			aggAttrs.add(aggAttr2);</span>
+		}
+<span class="nc" id="L109">		return createAggregations(aggAttrs, null, aggAttrDistinct);</span>
+	}
+
+	private List&lt;AggregationBuilder&gt; createAggregations(LinkedList&lt;Attribute&gt; attrs, Attribute parentAttr,
+			Attribute distinctAttr)
+	{
+<span class="nc" id="L115">		Attribute attr = attrs.pop();</span>
+
+<span class="nc" id="L117">		List&lt;AggregationBuilder&gt; aggs = new ArrayList&lt;&gt;();</span>
+
+		// term aggregation
+<span class="nc" id="L120">		String termsAggName = attr.getName() + FieldConstants.AGGREGATION_TERMS_POSTFIX;</span>
+<span class="nc" id="L121">		String termsAggFieldName = getAggregateFieldName(attr);</span>
+<span class="nc" id="L122">		AggregationBuilder termsAgg = AggregationBuilders.terms(termsAggName).size(MAX_VALUE).field(termsAggFieldName);</span>
+<span class="nc" id="L123">		aggs.add(termsAgg);</span>
+
+		// missing term aggregation
+<span class="nc bnc" id="L126" title="All 2 branches missed.">		if (attr.isNillable())</span>
+		{
+<span class="nc" id="L128">			String missingAggName = attr.getName() + FieldConstants.AGGREGATION_MISSING_POSTFIX;</span>
+<span class="nc" id="L129">			String missingAggFieldName = getAggregateFieldName(attr);</span>
+<span class="nc" id="L130">			AggregationBuilder missingTermsAgg = AggregationBuilders.missing(missingAggName).field(missingAggFieldName);</span>
+<span class="nc" id="L131">			aggs.add(missingTermsAgg);</span>
+		}
+
+		// add distinct term aggregations
+<span class="nc bnc" id="L135" title="All 4 branches missed.">		if (attrs.isEmpty() &amp;&amp; distinctAttr != null)</span>
+		{
+<span class="nc" id="L137">			String cardinalityAggName = distinctAttr.getName() + FieldConstants.AGGREGATION_DISTINCT_POSTFIX;</span>
+<span class="nc" id="L138">			String cardinalityAggFieldName = getAggregateFieldName(distinctAttr);</span>
+<span class="nc" id="L139">			CardinalityAggregationBuilder distinctAgg = AggregationBuilders.cardinality(cardinalityAggName)</span>
+<span class="nc" id="L140">																		   .field(cardinalityAggFieldName)</span>
+<span class="nc" id="L141">																		   .precisionThreshold(PRECISION_THRESHOLD);</span>
+
+			// CardinalityBuilder does not implement AggregationBuilder interface, so we need some more code
+			AbstractAggregationBuilder wrappedDistinctAgg;
+<span class="nc bnc" id="L145" title="All 2 branches missed.">			if (AggregateUtils.isNestedType(distinctAttr))</span>
+			{
+<span class="nc" id="L147">				String nestedAggName = distinctAttr.getName() + AGGREGATION_NESTED_POSTFIX;</span>
+<span class="nc" id="L148">				String nestedAggFieldName = getAggregatePathName(distinctAttr);</span>
+<span class="nc" id="L149">				NestedAggregationBuilder nestedBuilder = AggregationBuilders.nested(nestedAggName, nestedAggFieldName);</span>
+<span class="nc" id="L150">				nestedBuilder.subAggregation(distinctAgg);</span>
+
+<span class="nc bnc" id="L152" title="All 2 branches missed.">				if (AggregateUtils.isNestedType(attr))</span>
+				{
+<span class="nc" id="L154">					String reverseAggName = attr.getName() + AggregationGenerator.AGGREGATION_REVERSE_POSTFIX;</span>
+<span class="nc" id="L155">					ReverseNestedAggregationBuilder reverseNestedBuilder = AggregationBuilders.reverseNested(</span>
+							reverseAggName);
+<span class="nc" id="L157">					reverseNestedBuilder.subAggregation(nestedBuilder);</span>
+<span class="nc" id="L158">					wrappedDistinctAgg = reverseNestedBuilder;</span>
+<span class="nc" id="L159">				}</span>
+				else
+				{
+<span class="nc" id="L162">					wrappedDistinctAgg = nestedBuilder;</span>
+				}
+<span class="nc" id="L164">			}</span>
+			else
+			{
+<span class="nc bnc" id="L167" title="All 2 branches missed.">				if (AggregateUtils.isNestedType(attr))</span>
+				{
+<span class="nc" id="L169">					String reverseAggName = attr.getName() + AggregationGenerator.AGGREGATION_REVERSE_POSTFIX;</span>
+<span class="nc" id="L170">					ReverseNestedAggregationBuilder reverseNestedBuilder = AggregationBuilders.reverseNested(</span>
+							reverseAggName);
+<span class="nc" id="L172">					reverseNestedBuilder.subAggregation(distinctAgg);</span>
+<span class="nc" id="L173">					wrappedDistinctAgg = reverseNestedBuilder;</span>
+<span class="nc" id="L174">				}</span>
+				else
+				{
+<span class="nc" id="L177">					wrappedDistinctAgg = distinctAgg;</span>
+				}
+			}
+
+			// add wrapped distinct term aggregation to aggregations
+<span class="nc bnc" id="L182" title="All 2 branches missed.">			for (AggregationBuilder agg : aggs)</span>
+			{
+<span class="nc" id="L184">				agg.subAggregation(wrappedDistinctAgg);</span>
+<span class="nc" id="L185">			}</span>
+		}
+
+		// add sub aggregations
+<span class="nc bnc" id="L189" title="All 2 branches missed.">		if (!attrs.isEmpty())</span>
+		{
+<span class="nc" id="L191">			List&lt;AggregationBuilder&gt; subAggs = createAggregations(attrs, attr, distinctAttr);</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">			for (AggregationBuilder agg : aggs)</span>
+			{
+<span class="nc bnc" id="L194" title="All 2 branches missed.">				for (AggregationBuilder subAgg : subAggs)</span>
+				{
+<span class="nc" id="L196">					agg.subAggregation(subAgg);</span>
+<span class="nc" id="L197">				}</span>
+<span class="nc" id="L198">			}</span>
+		}
+
+		// wrap in nested aggregation is this aggregation is nested
+<span class="nc bnc" id="L202" title="All 2 branches missed.">		if (AggregateUtils.isNestedType(attr))</span>
+		{
+<span class="nc" id="L204">			String nestedAggName = attr.getName() + AGGREGATION_NESTED_POSTFIX;</span>
+<span class="nc" id="L205">			String nestedAggFieldName = getAggregatePathName(attr);</span>
+<span class="nc" id="L206">			NestedAggregationBuilder nestedAgg = AggregationBuilders.nested(nestedAggName, nestedAggFieldName);</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">			for (AggregationBuilder agg : aggs)</span>
+			{
+<span class="nc" id="L209">				nestedAgg.subAggregation(agg);</span>
+<span class="nc" id="L210">			}</span>
+<span class="nc" id="L211">			aggs = Collections.singletonList(nestedAgg);</span>
+		}
+
+		// wrap in reverse nested aggregation if parent aggregation is nested
+<span class="nc bnc" id="L215" title="All 4 branches missed.">		if (parentAttr != null &amp;&amp; AggregateUtils.isNestedType(parentAttr))</span>
+		{
+<span class="nc" id="L217">			String reverseAggName = parentAttr.getName() + AggregationGenerator.AGGREGATION_REVERSE_POSTFIX;</span>
+<span class="nc" id="L218">			ReverseNestedAggregationBuilder reverseNestedAgg = AggregationBuilders.reverseNested(reverseAggName);</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">			for (AggregationBuilder agg : aggs)</span>
+			{
+<span class="nc" id="L221">				reverseNestedAgg.subAggregation(agg);</span>
+<span class="nc" id="L222">			}</span>
+<span class="nc" id="L223">			aggs = Collections.singletonList(reverseNestedAgg);</span>
+		}
+
+<span class="nc" id="L226">		return aggs;</span>
+	}
+
+	private String getAggregatePathName(Attribute attr)
+	{
+<span class="nc" id="L231">		return documentIdGenerator.generateId(attr);</span>
+	}
+
+	private String getAggregateFieldName(Attribute attr)
+	{
+<span class="nc" id="L236">		String fieldName = documentIdGenerator.generateId(attr);</span>
+<span class="nc" id="L237">		AttributeType dataType = attr.getDataType();</span>
+<span class="nc bnc" id="L238" title="All 5 branches missed.">		switch (dataType)</span>
+		{
+			case BOOL:
+			case INT:
+			case LONG:
+			case DECIMAL:
+<span class="nc" id="L244">				return fieldName;</span>
+			case DATE:
+			case DATE_TIME:
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+				// use non-analyzed field
+<span class="nc" id="L255">				return fieldName + '.' + FieldConstants.FIELD_NOT_ANALYZED;</span>
+			case CATEGORICAL:
+			case CATEGORICAL_MREF:
+			case XREF:
+			case MREF:
+			case FILE:
+			case ONE_TO_MANY:
+				// use id attribute of nested field
+<span class="nc" id="L263">				return fieldName + '.' + getAggregateFieldName(attr.getRefEntity().getIdAttribute());</span>
+			case COMPOUND:
+<span class="nc" id="L265">				throw new UnsupportedOperationException();</span>
+			default:
+<span class="nc" id="L267">				throw new UnexpectedEnumException(dataType);</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

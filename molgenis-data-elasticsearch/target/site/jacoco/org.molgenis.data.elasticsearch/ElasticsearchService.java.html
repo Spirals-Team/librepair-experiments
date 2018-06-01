@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ElasticsearchService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-elasticsearch</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.elasticsearch</a> &gt; <span class="el_source">ElasticsearchService.java</span></div><h1>ElasticsearchService.java</h1><pre class="source lang-java linenums">package org.molgenis.data.elasticsearch;
+
+import com.google.common.collect.Iterators;
+import com.google.common.collect.Streams;
+import org.apache.lucene.search.Explanation;
+import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.search.aggregations.AggregationBuilder;
+import org.elasticsearch.search.aggregations.Aggregations;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Query;
+import org.molgenis.data.Repository;
+import org.molgenis.data.aggregation.AggregateQuery;
+import org.molgenis.data.aggregation.AggregateResult;
+import org.molgenis.data.elasticsearch.client.ClientFacade;
+import org.molgenis.data.elasticsearch.client.model.SearchHit;
+import org.molgenis.data.elasticsearch.client.model.SearchHits;
+import org.molgenis.data.elasticsearch.generator.ContentGenerators;
+import org.molgenis.data.elasticsearch.generator.model.*;
+import org.molgenis.data.index.IndexService;
+import org.molgenis.data.index.SearchService;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.EntityType;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.support.EntityTypeUtils.createFetchForReindexing;
+
+/**
+ * Elasticsearch search service that executes all requests using the elasticsearch client facade.
+ */
+@Component
+public class ElasticsearchService implements SearchService, IndexService
+{
+	private static final int BATCH_SIZE = 1000;
+	public static final int MAX_BATCH_SIZE = 10000;
+
+	private final ClientFacade clientFacade;
+	private final ContentGenerators contentGenerators;
+	private final DataService dataService;
+
+	public ElasticsearchService(ClientFacade clientFacade, ContentGenerators contentGenerators, DataService dataService)
+<span class="fc" id="L48">	{</span>
+<span class="fc" id="L49">		this.clientFacade = requireNonNull(clientFacade);</span>
+<span class="fc" id="L50">		this.contentGenerators = requireNonNull(contentGenerators);</span>
+<span class="fc" id="L51">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L52">	}</span>
+
+	@Override
+	public void createIndex(EntityType entityType)
+	{
+<span class="nc" id="L57">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L58">		IndexSettings indexSettings = IndexSettings.create();</span>
+<span class="nc" id="L59">		Mapping mapping = contentGenerators.createMapping(entityType);</span>
+<span class="nc" id="L60">		clientFacade.createIndex(index, indexSettings, Stream.of(mapping));</span>
+<span class="nc" id="L61">	}</span>
+
+	@Override
+	public boolean hasIndex(EntityType entityType)
+	{
+<span class="nc" id="L66">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L67">		return clientFacade.indexesExist(index);</span>
+	}
+
+	@Override
+	public void deleteIndex(EntityType entityType)
+	{
+<span class="nc" id="L73">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L74">		clientFacade.deleteIndex(index);</span>
+<span class="nc" id="L75">	}</span>
+
+	@Override
+	public void rebuildIndex(Repository&lt;? extends Entity&gt; repository)
+	{
+<span class="nc" id="L80">		EntityType entityType = repository.getEntityType();</span>
+
+<span class="nc bnc" id="L82" title="All 2 branches missed.">		if (hasIndex(entityType))</span>
+		{
+<span class="nc" id="L84">			deleteIndex(entityType);</span>
+		}
+
+<span class="nc" id="L87">		createIndex(entityType);</span>
+<span class="nc" id="L88">		repository.forEachBatched(createFetchForReindexing(entityType),</span>
+<span class="nc" id="L89">				entities -&gt; index(entityType, entities.stream()), BATCH_SIZE);</span>
+<span class="nc" id="L90">	}</span>
+
+	@Override
+	public void refreshIndex()
+	{
+<span class="nc" id="L95">		clientFacade.refreshIndexes();</span>
+<span class="nc" id="L96">	}</span>
+
+	@Override
+	public long count(EntityType entityType)
+	{
+<span class="nc" id="L101">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L102">		return clientFacade.getCount(index);</span>
+	}
+
+	@Override
+	public long count(EntityType entityType, Query&lt;Entity&gt; q)
+	{
+<span class="nc" id="L108">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L109">		QueryBuilder queryBuilder = contentGenerators.createQuery(q, entityType);</span>
+<span class="nc" id="L110">		return clientFacade.getCount(queryBuilder, index);</span>
+	}
+
+	@Override
+	public Stream&lt;Object&gt; search(EntityType entityType, Query&lt;Entity&gt; q)
+	{
+<span class="fc" id="L116">		int from = q.getOffset();</span>
+
+<span class="fc" id="L118">		return search(entityType, q, from, q.getPageSize());</span>
+	}
+
+	private Stream&lt;Object&gt; search(EntityType entityType, Query&lt;Entity&gt; q, int offset, int pageSize)
+	{
+<span class="fc" id="L123">		QueryBuilder query = contentGenerators.createQuery(q, entityType);</span>
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">		Sort sort = q.getSort() != null ? contentGenerators.createSorts(q.getSort(), entityType) : null;</span>
+<span class="fc" id="L125">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="fc" id="L126">		Stream&lt;SearchHit&gt; searchHits = Stream.empty();</span>
+
+<span class="fc" id="L128">		boolean done = false;</span>
+		int currentOffset;
+<span class="fc" id="L130">		int i = 0;</span>
+<span class="fc bfc" id="L131" title="All 2 branches covered.">		while (!done)</span>
+		{
+<span class="fc bfc" id="L133" title="All 4 branches covered.">			int batchSize = pageSize &lt; MAX_BATCH_SIZE &amp;&amp; pageSize != 0 ? pageSize : MAX_BATCH_SIZE;</span>
+<span class="fc" id="L134">			currentOffset = offset + (i * MAX_BATCH_SIZE);</span>
+
+<span class="fc" id="L136">			SearchHits currentSearchHits = clientFacade.search(query, currentOffset, batchSize, sort, index);</span>
+<span class="fc" id="L137">			searchHits = Streams.concat(searchHits, currentSearchHits.getHits().stream());</span>
+
+<span class="fc bfc" id="L139" title="All 2 branches covered.">			if (currentSearchHits.getHits().size() &lt; MAX_BATCH_SIZE)</span>
+			{
+<span class="fc" id="L141">				done = true;</span>
+			}
+
+<span class="fc bfc" id="L144" title="All 2 branches covered.">			if (pageSize != 0) pageSize -= MAX_BATCH_SIZE;</span>
+<span class="fc" id="L145">			i++;</span>
+<span class="fc" id="L146">		}</span>
+
+<span class="fc" id="L148">		return toEntityIds(entityType, searchHits.map(SearchHit::getId));</span>
+	}
+
+	private static Stream&lt;Object&gt; toEntityIds(EntityType entityType, Stream&lt;String&gt; documentIdStream)
+	{
+<span class="pc" id="L153">		return documentIdStream.map(documentId -&gt; ElasticsearchService.toEntityId(entityType, documentId));</span>
+	}
+
+	private static Object toEntityId(EntityType entityType, String documentId)
+	{
+<span class="nc" id="L158">		AttributeType attributeType = entityType.getIdAttribute().getDataType();</span>
+<span class="nc bnc" id="L159" title="All 4 branches missed.">		switch (attributeType)</span>
+		{
+			case EMAIL:
+			case HYPERLINK:
+			case STRING:
+<span class="nc" id="L164">				return documentId;</span>
+			case INT:
+<span class="nc" id="L166">				return Integer.parseInt(documentId);</span>
+			case LONG:
+<span class="nc" id="L168">				return Long.parseLong(documentId);</span>
+			default:
+<span class="nc" id="L170">				throw new RuntimeException(format(&quot;Invalid id attribute type '%s'&quot;, attributeType));</span>
+		}
+	}
+
+	@Override
+	public Object searchOne(EntityType entityType, Query&lt;Entity&gt; q)
+	{
+<span class="nc" id="L177">		return search(entityType, q, q.getOffset(), 1).findFirst().orElse(null);</span>
+	}
+
+	@Override
+	public AggregateResult aggregate(final EntityType entityType, AggregateQuery aggregateQuery)
+	{
+<span class="nc" id="L183">		List&lt;AggregationBuilder&gt; aggregationList = contentGenerators.createAggregations(aggregateQuery.getAttributeX(),</span>
+<span class="nc" id="L184">				aggregateQuery.getAttributeY(), aggregateQuery.getAttributeDistinct());</span>
+<span class="nc" id="L185">		QueryBuilder query = contentGenerators.createQuery(aggregateQuery.getQuery(), entityType);</span>
+<span class="nc" id="L186">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L187">		Aggregations aggregations = clientFacade.aggregate(aggregationList, query, index);</span>
+<span class="nc" id="L188">		return new AggregateResponseParser().parseAggregateResponse(aggregateQuery.getAttributeX(),</span>
+<span class="nc" id="L189">				aggregateQuery.getAttributeY(), aggregateQuery.getAttributeDistinct(), aggregations, dataService);</span>
+	}
+
+	public Explanation explain(EntityType entityType, Object entityId, Query&lt;Entity&gt; q)
+	{
+<span class="nc" id="L194">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L195">		Document document = contentGenerators.createDocument(entityId);</span>
+<span class="nc" id="L196">		QueryBuilder query = contentGenerators.createQuery(q, entityType);</span>
+<span class="nc" id="L197">		return clientFacade.explain(SearchHit.create(document.getId(), index.getName()), query);</span>
+	}
+
+	@Override
+	public void index(EntityType entityType, Entity entity)
+	{
+<span class="nc" id="L203">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L204">		Document document = contentGenerators.createDocument(entity);</span>
+<span class="nc" id="L205">		clientFacade.index(index, document);</span>
+<span class="nc" id="L206">	}</span>
+
+	@Override
+	public long index(EntityType entityType, Stream&lt;? extends Entity&gt; entities)
+	{
+<span class="nc" id="L211">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L212">		Stream&lt;DocumentAction&gt; documentActionStream = entities.map(entity -&gt; this.toDocumentAction(index, entity));</span>
+
+<span class="nc" id="L214">		AtomicLong count = new AtomicLong(0L);</span>
+<span class="nc" id="L215">		clientFacade.processDocumentActions(documentActionStream.filter(documentAction -&gt;</span>
+		{
+<span class="nc" id="L217">			count.incrementAndGet();</span>
+<span class="nc" id="L218">			return true;</span>
+		}));
+<span class="nc" id="L220">		return count.get();</span>
+	}
+
+	private DocumentAction toDocumentAction(Index index, Entity entity)
+	{
+<span class="nc" id="L225">		Document document = contentGenerators.createDocument(entity);</span>
+<span class="nc" id="L226">		return DocumentAction.create(index, document, DocumentAction.Operation.INDEX);</span>
+	}
+
+	@Override
+	public void delete(EntityType entityType, Entity entity)
+	{
+<span class="nc" id="L232">		deleteById(entityType, entity.getIdValue());</span>
+<span class="nc" id="L233">	}</span>
+
+	@Override
+	public void deleteById(EntityType entityType, Object entityId)
+	{
+<span class="nc" id="L238">		Index index = contentGenerators.createIndex(entityType);</span>
+<span class="nc" id="L239">		Document document = contentGenerators.createDocument(entityId);</span>
+<span class="nc" id="L240">		clientFacade.deleteById(index, document);</span>
+<span class="nc" id="L241">	}</span>
+
+	@Override
+	public void deleteAll(EntityType entityType, Stream&lt;Object&gt; entityIds)
+	{
+<span class="nc" id="L246">		entityIds.forEach(entityId -&gt; deleteById(entityType, entityId));</span>
+<span class="nc" id="L247">	}</span>
+
+	@Override
+	public void delete(EntityType entityType, Stream&lt;? extends Entity&gt; entities)
+	{
+<span class="nc" id="L252">		Stream&lt;Object&gt; entityIds = entities.map(Entity::getIdValue);</span>
+<span class="nc" id="L253">		Iterators.partition(entityIds.iterator(), BATCH_SIZE)</span>
+<span class="nc" id="L254">				 .forEachRemaining(batchEntityIds -&gt; deleteAll(entityType, batchEntityIds.stream()));</span>
+<span class="nc" id="L255">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

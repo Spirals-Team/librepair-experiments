@@ -1,0 +1,408 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SortaServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">ontology</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.ontology.sorta.service.impl</a> &gt; <span class="el_source">SortaServiceImpl.java</span></div><h1>SortaServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.ontology.sorta.service.impl;
+
+import com.google.common.collect.FluentIterable;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.QueryRule;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.ontology.core.meta.*;
+import org.molgenis.ontology.roc.InformationContentService;
+import org.molgenis.ontology.sorta.bean.OntologyTermHitEntity;
+import org.molgenis.ontology.sorta.meta.OntologyTermHitMetaData;
+import org.molgenis.ontology.sorta.service.SortaService;
+import org.molgenis.semanticsearch.string.NGramDistanceAlgorithm;
+import org.molgenis.semanticsearch.string.Stemmer;
+
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.QueryRule.Operator.*;
+import static org.molgenis.ontology.core.meta.OntologyMetaData.ONTOLOGY;
+import static org.molgenis.ontology.core.meta.OntologyTermDynamicAnnotationMetaData.ONTOLOGY_TERM_DYNAMIC_ANNOTATION;
+import static org.molgenis.ontology.core.meta.OntologyTermMetaData.ONTOLOGY_TERM;
+import static org.molgenis.ontology.sorta.meta.OntologyTermHitMetaData.COMBINED_SCORE;
+import static org.molgenis.ontology.sorta.meta.OntologyTermHitMetaData.SCORE;
+
+public class SortaServiceImpl implements SortaService
+{
+<span class="fc" id="L33">	private static final Set&lt;String&gt; ELASTICSEARCH_RESERVED_WORDS = Sets.newHashSet(&quot;or&quot;, &quot;and&quot;, &quot;if&quot;);</span>
+	private static final String NON_WORD_SEPARATOR = &quot;[^a-zA-Z0-9]&quot;;
+	private static final String ILLEGAL_CHARACTERS_PATTERN = &quot;[^a-zA-Z0-9 ]&quot;;
+	private static final String FUZZY_MATCH_SIMILARITY = &quot;~0.8&quot;;
+	private static final String SINGLE_WHITESPACE = &quot; &quot;;
+	private static final int MAX_NUMBER_MATCHES = 50;
+	private static final int NUMBER_NGRAM_MATCHES = 10;
+
+	// Global fields that are used by other classes
+	public static final String SIGNIFICANT_VALUE = &quot;Significant&quot;;
+<span class="fc" id="L43">	public static final Character DEFAULT_SEPARATOR = ';';</span>
+	public static final String DEFAULT_MATCHING_NAME_FIELD = &quot;Name&quot;;
+	public static final String DEFAULT_MATCHING_SYNONYM_PREFIX_FIELD = &quot;Synonym&quot;;
+	public static final String DEFAULT_MATCHING_IDENTIFIER = &quot;Identifier&quot;;
+
+	private final DataService dataService;
+	private final InformationContentService informationContentService;
+	private final OntologyTermHitMetaData ontologyTermHitMetaData;
+	private final OntologyTermSynonymFactory ontologyTermSynonymFactory;
+
+	public SortaServiceImpl(DataService dataService, InformationContentService informationContentService,
+			OntologyTermHitMetaData ontologyTermHitMetaData, OntologyTermSynonymFactory ontologyTermSynonymFactory)
+<span class="fc" id="L55">	{</span>
+<span class="fc" id="L56">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L57">		this.informationContentService = requireNonNull(informationContentService);</span>
+<span class="fc" id="L58">		this.ontologyTermHitMetaData = requireNonNull(ontologyTermHitMetaData);</span>
+<span class="fc" id="L59">		this.ontologyTermSynonymFactory = requireNonNull(ontologyTermSynonymFactory);</span>
+<span class="fc" id="L60">	}</span>
+
+	@Override
+	public Iterable&lt;Entity&gt; getAllOntologyEntities()
+	{
+<span class="fc" id="L65">		Stream&lt;Entity&gt; findAll = dataService.findAll(ONTOLOGY);</span>
+<span class="fc" id="L66">		return findAll.collect(Collectors.toList());</span>
+	}
+
+	@Override
+	public Entity getOntologyEntity(String ontologyIri)
+	{
+<span class="fc" id="L72">		return dataService.findOne(ONTOLOGY, new QueryImpl&lt;&gt;().eq(OntologyMetaData.ONTOLOGY_IRI, ontologyIri));</span>
+	}
+
+	@Override
+	public Entity getOntologyTermEntity(String ontologyTermIri, String ontologyIri)
+	{
+<span class="fc" id="L78">		Entity ontologyEntity = getOntologyEntity(ontologyIri);</span>
+<span class="pc bpc" id="L79" title="1 of 2 branches missed.">		if (ontologyEntity != null)</span>
+		{
+<span class="fc" id="L81">			return dataService.findOne(ONTOLOGY_TERM,</span>
+<span class="fc" id="L82">					new QueryImpl&lt;&gt;().eq(OntologyTermMetaData.ONTOLOGY_TERM_IRI, ontologyTermIri)</span>
+<span class="fc" id="L83">									 .and()</span>
+<span class="fc" id="L84">									 .eq(OntologyTermMetaData.ONTOLOGY, ontologyEntity));</span>
+		}
+<span class="nc" id="L86">		return null;</span>
+	}
+
+	@Override
+	public Iterable&lt;Entity&gt; findOntologyTermEntities(String ontologyIri, Entity inputEntity)
+	{
+<span class="fc" id="L92">		Entity ontologyEntity = getOntologyEntity(ontologyIri);</span>
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">		if (ontologyEntity == null)</span>
+<span class="nc" id="L94">			throw new IllegalArgumentException(&quot;Ontology IRI &quot; + ontologyIri + &quot; does not exist in the database!&quot;);</span>
+
+		// a list to store most relevant entities
+<span class="fc" id="L97">		List&lt;Entity&gt; relevantEntities = new ArrayList&lt;&gt;();</span>
+		// query rules for ontology anntations, e.g. OMIM:124343
+<span class="fc" id="L99">		List&lt;QueryRule&gt; rulesForOtherFields = new ArrayList&lt;&gt;();</span>
+		// query rules for ontology name and synonyms, e.g. name = proptosis, sysnonym = protruding eye
+<span class="fc" id="L101">		List&lt;QueryRule&gt; rulesForOntologyTermFields = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L103">		List&lt;QueryRule&gt; rulesForOntologyTermFieldsNGram = new ArrayList&lt;&gt;();</span>
+
+<span class="fc bfc" id="L105" title="All 2 branches covered.">		for (String attributeName : inputEntity.getAttributeNames())</span>
+		{
+<span class="pc bpc" id="L107" title="1 of 4 branches missed.">			if (StringUtils.isNotEmpty(inputEntity.getString(attributeName)) &amp;&amp; !attributeName.equalsIgnoreCase(</span>
+					DEFAULT_MATCHING_IDENTIFIER))
+			{
+				// The attribute name is either equal to 'Name' or starts with string 'Synonym'
+<span class="fc bfc" id="L111" title="All 2 branches covered.">				if (isAttrNameValidForLexicalMatch(attributeName))</span>
+				{
+<span class="fc" id="L113">					String stemmedQueryString = stemQuery(inputEntity.getString(attributeName));</span>
+<span class="pc bpc" id="L114" title="1 of 2 branches missed.">					if (StringUtils.isNotEmpty(stemmedQueryString))</span>
+					{
+<span class="fc" id="L116">						rulesForOntologyTermFields.add(</span>
+								new QueryRule(OntologyTermMetaData.ONTOLOGY_TERM_SYNONYM, FUZZY_MATCH,
+<span class="fc" id="L118">										fuzzyMatchQuerySyntax(stemmedQueryString)));</span>
+
+<span class="fc" id="L120">						rulesForOntologyTermFieldsNGram.add(</span>
+								new QueryRule(OntologyTermMetaData.ONTOLOGY_TERM_SYNONYM, FUZZY_MATCH_NGRAM,
+										stemmedQueryString));
+					}
+<span class="fc" id="L124">				}</span>
+				else
+				{
+<span class="fc" id="L127">					QueryRule queryAnnotationName = new QueryRule(OntologyTermDynamicAnnotationMetaData.NAME, EQUALS,</span>
+							attributeName);
+<span class="fc" id="L129">					QueryRule queryAnnotationValue = new QueryRule(OntologyTermDynamicAnnotationMetaData.VALUE, EQUALS,</span>
+<span class="fc" id="L130">							inputEntity.getString(attributeName));</span>
+
+					// ((name=OMIM Operator.AND value=124325) Operator.OR (name=HPO Operator.AND value=hp12435))
+<span class="pc bpc" id="L133" title="1 of 2 branches missed.">					if (!rulesForOtherFields.isEmpty()) rulesForOtherFields.add(new QueryRule(OR));</span>
+<span class="fc" id="L134">					rulesForOtherFields.add(new QueryRule(</span>
+<span class="fc" id="L135">							Arrays.asList(queryAnnotationName, new QueryRule(AND), queryAnnotationValue)));</span>
+				}
+			}
+<span class="fc" id="L138">		}</span>
+
+		// Find the ontology terms that have the same annotations as the input ontology annotations
+<span class="fc bfc" id="L141" title="All 2 branches covered.">		if (!rulesForOtherFields.isEmpty())</span>
+		{
+<span class="fc" id="L143">			annotationMatchOntologyTerms(inputEntity, ontologyEntity, relevantEntities, rulesForOtherFields);</span>
+		}
+
+		// Find the ontology terms based on the lexical similarities
+<span class="pc bpc" id="L147" title="1 of 2 branches missed.">		if (!rulesForOntologyTermFields.isEmpty())</span>
+		{
+<span class="fc" id="L149">			int pageSize = MAX_NUMBER_MATCHES - relevantEntities.size();</span>
+<span class="fc" id="L150">			lexicalMatchOntologyTerms(ontologyIri, inputEntity, ontologyEntity, pageSize, rulesForOntologyTermFields,</span>
+					relevantEntities);
+		}
+
+<span class="pc bpc" id="L154" title="1 of 2 branches missed.">		if (!rulesForOntologyTermFieldsNGram.isEmpty())</span>
+		{
+<span class="fc" id="L156">			lexicalMatchOntologyTerms(ontologyIri, inputEntity, ontologyEntity, NUMBER_NGRAM_MATCHES,</span>
+					rulesForOntologyTermFieldsNGram, relevantEntities);
+		}
+
+<span class="fc" id="L160">		relevantEntities.sort((entity_1, entity_2) -&gt; entity_2.getDouble(COMBINED_SCORE)</span>
+<span class="fc" id="L161">															  .compareTo(entity_1.getDouble(COMBINED_SCORE)));</span>
+
+<span class="fc" id="L163">		return relevantEntities;</span>
+	}
+
+	private void annotationMatchOntologyTerms(Entity inputEntity, Entity ontologyEntity, List&lt;Entity&gt; relevantEntities,
+			List&lt;QueryRule&gt; rulesForOtherFields)
+	{
+<span class="fc" id="L169">		List&lt;Entity&gt; ontologyTermAnnotationEntities = dataService.findAll(ONTOLOGY_TERM_DYNAMIC_ANNOTATION,</span>
+<span class="fc" id="L170">				new QueryImpl&lt;&gt;(rulesForOtherFields).pageSize(Integer.MAX_VALUE)).collect(Collectors.toList());</span>
+
+<span class="pc bpc" id="L172" title="1 of 2 branches missed.">		if (!ontologyTermAnnotationEntities.isEmpty())</span>
+		{
+<span class="fc" id="L174">			List&lt;QueryRule&gt; rules = Arrays.asList(new QueryRule(OntologyTermMetaData.ONTOLOGY, EQUALS, ontologyEntity),</span>
+					new QueryRule(AND), new QueryRule(OntologyTermMetaData.ONTOLOGY_TERM_DYNAMIC_ANNOTATION, IN,
+							ontologyTermAnnotationEntities));
+
+<span class="fc" id="L178">			Stream&lt;Entity&gt; ontologyTermEntities = dataService.findAll(ONTOLOGY_TERM,</span>
+<span class="fc" id="L179">					new QueryImpl&lt;&gt;(rules).pageSize(Integer.MAX_VALUE));</span>
+
+<span class="fc" id="L181">			List&lt;Entity&gt; relevantOntologyTermEntities = ontologyTermEntities.map(</span>
+<span class="fc" id="L182">					ontologyTermEntity -&gt; calculateNGromOTAnnotations(inputEntity, ontologyTermEntity))</span>
+<span class="fc" id="L183">																			.collect(Collectors.toList());</span>
+
+<span class="fc" id="L185">			relevantEntities.addAll(relevantOntologyTermEntities);</span>
+		}
+<span class="fc" id="L187">	}</span>
+
+	private void lexicalMatchOntologyTerms(String ontologyIri, Entity inputEntity, Entity ontologyEntity, int pageSize,
+			List&lt;QueryRule&gt; rulesForOntologyTermFields, List&lt;Entity&gt; relevantEntities)
+	{
+<span class="fc" id="L192">		QueryRule disMaxQueryRule = new QueryRule(rulesForOntologyTermFields);</span>
+<span class="fc" id="L193">		disMaxQueryRule.setOperator(DIS_MAX);</span>
+
+<span class="fc" id="L195">		List&lt;QueryRule&gt; finalQueryRules = Arrays.asList(</span>
+				new QueryRule(OntologyTermMetaData.ONTOLOGY, EQUALS, ontologyEntity), new QueryRule(AND),
+				disMaxQueryRule);
+
+<span class="fc" id="L199">		Stream&lt;Entity&gt; lexicalMatchedOntologyTermEntities = dataService.findAll(ONTOLOGY_TERM,</span>
+<span class="fc" id="L200">				new QueryImpl&lt;&gt;(finalQueryRules).pageSize(pageSize))</span>
+<span class="fc" id="L201">																	   .map(ontologyTerm -&gt; addLexicalScoreToMatchedEntity(</span>
+																			   inputEntity, ontologyTerm,
+																			   ontologyIri)); // TODO use findAll(ONTOLOGY_TERM, ..., OntologyTerm.class)
+
+<span class="fc" id="L205">		lexicalMatchedOntologyTermEntities.forEach(matchedEntity -&gt;</span>
+		{
+<span class="fc bfc" id="L207" title="All 2 branches covered.">			if (!relevantEntities.contains(matchedEntity))</span>
+			{
+<span class="fc" id="L209">				relevantEntities.add(matchedEntity);</span>
+			}
+<span class="fc" id="L211">		});</span>
+<span class="fc" id="L212">	}</span>
+
+	Entity addLexicalScoreToMatchedEntity(Entity inputEntity, Entity ontologyTerm,
+			String ontologyIri) // TODO Change 'Entity ontologyTerm' to 'OntologyTerm ontologyTerm'
+	{
+<span class="fc" id="L217">		double maxNgramScore = 0;</span>
+<span class="fc" id="L218">		double maxNgramIDFScore = 0;</span>
+<span class="fc bfc" id="L219" title="All 2 branches covered.">		for (String inputAttrName : inputEntity.getAttributeNames())</span>
+		{
+<span class="fc" id="L221">			String queryString = inputEntity.getString(inputAttrName);</span>
+<span class="pc bpc" id="L222" title="1 of 4 branches missed.">			if (StringUtils.isNotEmpty(queryString) &amp;&amp; isAttrNameValidForLexicalMatch(inputAttrName))</span>
+			{
+<span class="fc" id="L224">				Entity topMatchedSynonymEntity = findSynonymWithHighestNgramScore(ontologyIri, queryString,</span>
+						ontologyTerm);
+<span class="pc bpc" id="L226" title="1 of 2 branches missed.">				if (maxNgramScore &lt; topMatchedSynonymEntity.getDouble(SCORE))</span>
+				{
+<span class="fc" id="L228">					maxNgramScore = topMatchedSynonymEntity.getDouble(SCORE);</span>
+				}
+<span class="pc bpc" id="L230" title="1 of 2 branches missed.">				if (maxNgramIDFScore &lt; topMatchedSynonymEntity.getDouble(COMBINED_SCORE))</span>
+				{
+<span class="fc" id="L232">					maxNgramIDFScore = topMatchedSynonymEntity.getDouble(COMBINED_SCORE);</span>
+				}
+			}
+<span class="fc" id="L235">		}</span>
+<span class="fc" id="L236">		OntologyTermHitEntity mapEntity = new OntologyTermHitEntity(ontologyTerm, ontologyTermHitMetaData);</span>
+<span class="fc" id="L237">		mapEntity.set(SCORE, maxNgramScore);</span>
+<span class="fc" id="L238">		mapEntity.set(COMBINED_SCORE, maxNgramIDFScore);</span>
+<span class="fc" id="L239">		return mapEntity;</span>
+	}
+
+	/**
+	 * A helper function to check if the ontology term (OT) contains the ontology annotations provided in input. If the
+	 * OT has the same annotation, the OT will be considered as a good match and the similarity scores 100 are allocated
+	 * to the OT
+	 */
+	private Entity calculateNGromOTAnnotations(Entity inputEntity, Entity ontologyTermEntity)
+	{
+<span class="fc" id="L249">		OntologyTermHitEntity mapEntity = new OntologyTermHitEntity(ontologyTermEntity, ontologyTermHitMetaData);</span>
+<span class="pc bpc" id="L250" title="1 of 2 branches missed.">		for (Entity annotationEntity : ontologyTermEntity.getEntities(</span>
+				OntologyTermMetaData.ONTOLOGY_TERM_DYNAMIC_ANNOTATION))
+		{
+<span class="fc" id="L253">			String annotationName = annotationEntity.getString(OntologyTermDynamicAnnotationMetaData.NAME);</span>
+<span class="fc" id="L254">			String annotationValue = annotationEntity.getString(OntologyTermDynamicAnnotationMetaData.VALUE);</span>
+<span class="pc bpc" id="L255" title="1 of 2 branches missed.">			for (String attributeName : inputEntity.getAttributeNames())</span>
+			{
+<span class="pc bpc" id="L257" title="1 of 4 branches missed.">				if (StringUtils.isNotEmpty(inputEntity.getString(attributeName)) &amp;&amp; StringUtils.equalsIgnoreCase(</span>
+<span class="pc bpc" id="L258" title="1 of 2 branches missed.">						attributeName, annotationName) &amp;&amp; StringUtils.equalsIgnoreCase(</span>
+<span class="fc" id="L259">						inputEntity.getString(attributeName), annotationValue))</span>
+				{
+<span class="fc" id="L261">					mapEntity.set(SCORE, 100d);</span>
+<span class="fc" id="L262">					mapEntity.set(COMBINED_SCORE, 100d);</span>
+<span class="fc" id="L263">					return mapEntity;</span>
+				}
+<span class="fc" id="L265">			}</span>
+<span class="nc" id="L266">		}</span>
+<span class="nc" id="L267">		return mapEntity;</span>
+	}
+
+	/**
+	 * A helper function to calculate the best NGram score from a list ontologyTerm synonyms
+	 */
+	private Entity findSynonymWithHighestNgramScore(String ontologyIri, String queryString, Entity ontologyTermEntity)
+	{
+<span class="fc" id="L275">		Iterable&lt;Entity&gt; entities = ontologyTermEntity.getEntities(OntologyTermMetaData.ONTOLOGY_TERM_SYNONYM);</span>
+<span class="pc bpc" id="L276" title="1 of 2 branches missed.">		if (Iterables.size(entities) &gt; 0)</span>
+		{
+<span class="fc" id="L278">			String cleanedQueryString = removeIllegalCharWithSingleWhiteSpace(queryString);</span>
+
+			// Calculate the Ngram silmiarity score for all the synonyms and sort them in descending order
+<span class="fc" id="L281">			List&lt;Entity&gt; synonymEntities = FluentIterable.from(entities).transform(ontologyTermSynonymEntity -&gt;</span>
+			{
+<span class="fc" id="L283">				Entity mapEntity = ontologyTermSynonymFactory.create();</span>
+<span class="fc" id="L284">				mapEntity.set(ontologyTermSynonymEntity);</span>
+<span class="fc" id="L285">				String ontologyTermSynonym = removeIllegalCharWithSingleWhiteSpace(</span>
+<span class="fc" id="L286">						ontologyTermSynonymEntity.getString(OntologyTermSynonymMetaData.ONTOLOGY_TERM_SYNONYM_ATTR));</span>
+<span class="fc" id="L287">				mapEntity.set(SCORE, NGramDistanceAlgorithm.stringMatching(cleanedQueryString, ontologyTermSynonym));</span>
+<span class="fc" id="L288">				return mapEntity;</span>
+<span class="fc" id="L289">			}).toSortedList((entity_1, entity_2) -&gt; entity_2.getDouble(SCORE).compareTo(entity_1.getDouble(SCORE)));</span>
+
+<span class="fc" id="L291">			Entity firstMatchedSynonymEntity = Iterables.getFirst(synonymEntities, ontologyTermSynonymFactory.create());</span>
+<span class="fc" id="L292">			double topNgramScore = firstMatchedSynonymEntity.getDouble(SCORE);</span>
+<span class="fc" id="L293">			String topMatchedSynonym = firstMatchedSynonymEntity.getString(</span>
+					OntologyTermSynonymMetaData.ONTOLOGY_TERM_SYNONYM_ATTR);
+
+			// the algorithm to combine synonyms to re-calculate the similarity scores to deal with the case where the
+			// input query string contains multiple words from different synonyms of the same ontology term. E.g.
+			// query string &quot;propotosis, protruding eyeball, Exophthalmos&quot; contains three synonyms of OT (propotosis),
+			// if it was matched to each of the synonyms, all the similarity score would be fairly low (25%), therefore
+			// need to combine those synonyms to recalculate the similarity score.
+			//
+			// The idea of the algorithm is quite simple, we add up the current synonym (the most) and next synonym (the
+			// second most), if the combined string yields a higher score, the synonyms will be combined together. The
+			// same process is repeated until all the synonyms have been checked
+			// A --&gt; 30%
+			// B --&gt; 25%
+			// C --&gt; 20%
+			//
+			// if(score(a+b, query) &gt; score(a)) combine
+			// else move to next synonym
+<span class="fc bfc" id="L311" title="All 2 branches covered.">			for (Entity nextMatchedSynonymEntity : Iterables.skip(synonymEntities, 1))</span>
+			{
+<span class="fc" id="L313">				String nextMatchedSynonym = nextMatchedSynonymEntity.getString(</span>
+						OntologyTermSynonymMetaData.ONTOLOGY_TERM_SYNONYM_ATTR);
+
+<span class="fc" id="L316">				StringBuilder tempCombinedSynonym = new StringBuilder();</span>
+<span class="fc" id="L317">				tempCombinedSynonym.append(topMatchedSynonym).append(SINGLE_WHITESPACE).append(nextMatchedSynonym);</span>
+
+<span class="fc" id="L319">				double newScore = NGramDistanceAlgorithm.stringMatching(cleanedQueryString,</span>
+<span class="fc" id="L320">						removeIllegalCharWithSingleWhiteSpace(tempCombinedSynonym.toString()));</span>
+
+<span class="pc bpc" id="L322" title="1 of 2 branches missed.">				if (newScore &gt; topNgramScore)</span>
+				{
+<span class="fc" id="L324">					topNgramScore = newScore;</span>
+<span class="fc" id="L325">					topMatchedSynonym = tempCombinedSynonym.toString();</span>
+				}
+<span class="fc" id="L327">			}</span>
+
+<span class="fc" id="L329">			firstMatchedSynonymEntity.set(OntologyTermSynonymMetaData.ONTOLOGY_TERM_SYNONYM_ATTR, topMatchedSynonym);</span>
+<span class="fc" id="L330">			firstMatchedSynonymEntity.set(SCORE, topNgramScore);</span>
+<span class="fc" id="L331">			firstMatchedSynonymEntity.set(COMBINED_SCORE, topNgramScore);</span>
+
+			// The similarity scores are adjusted based on the inverse document frequency of the words.
+			// The idea is that all the words from query string are weighted (important words occur fewer times across
+			// all ontology terms than common words), the final score should be compensated for according to the word
+			// // weight.
+<span class="fc" id="L337">			Map&lt;String, Double&gt; weightedWordSimilarity = informationContentService.redistributedNGramScore(</span>
+					cleanedQueryString, ontologyIri);
+
+<span class="fc" id="L340">			Set&lt;String&gt; synonymStemmedWords = informationContentService.createStemmedWordSet(topMatchedSynonym);</span>
+
+<span class="fc" id="L342">			Set&lt;String&gt; createStemmedWordSet = informationContentService.createStemmedWordSet(cleanedQueryString);</span>
+
+<span class="fc" id="L344">			createStemmedWordSet.stream()</span>
+<span class="pc bnc" id="L345" title="All 2 branches missed.">								.filter(originalWord -&gt; Iterables.contains(synonymStemmedWords, originalWord)</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">										&amp;&amp; weightedWordSimilarity.containsKey(originalWord))</span>
+<span class="pc" id="L347">								.forEach(word -&gt; firstMatchedSynonymEntity.set(COMBINED_SCORE,</span>
+<span class="nc" id="L348">										(firstMatchedSynonymEntity.getDouble(COMBINED_SCORE)</span>
+<span class="nc" id="L349">												+ weightedWordSimilarity.get(word))));</span>
+
+<span class="fc" id="L351">			return firstMatchedSynonymEntity;</span>
+		}
+
+<span class="nc" id="L354">		return null;</span>
+	}
+
+	/**
+	 * A helper function to produce fuzzy match query with 80% similarity in elasticsearch because PorterStem does not
+	 * work in some cases, e.g. the stemming results for placenta and placental are different, therefore would be missed
+	 * by elasticsearch
+	 */
+
+	private String stemQuery(String queryString)
+	{
+<span class="fc" id="L365">		StringBuilder stringBuilder = new StringBuilder();</span>
+<span class="fc" id="L366">		Set&lt;String&gt; uniqueTerms = Sets.newHashSet(queryString.toLowerCase().trim().split(NON_WORD_SEPARATOR));</span>
+<span class="fc" id="L367">		uniqueTerms.removeAll(NGramDistanceAlgorithm.STOPWORDSLIST);</span>
+<span class="fc bfc" id="L368" title="All 2 branches covered.">		for (String word : uniqueTerms)</span>
+		{
+<span class="pc bpc" id="L370" title="1 of 4 branches missed.">			if (StringUtils.isNotEmpty(word.trim()) &amp;&amp; !(ELASTICSEARCH_RESERVED_WORDS.contains(word)))</span>
+			{
+<span class="fc" id="L372">				String afterStem = Stemmer.stem(removeIllegalCharWithEmptyString(word));</span>
+<span class="pc bpc" id="L373" title="1 of 2 branches missed.">				if (StringUtils.isNotEmpty(afterStem))</span>
+				{
+<span class="fc" id="L375">					stringBuilder.append(afterStem).append(SINGLE_WHITESPACE);</span>
+				}
+			}
+<span class="fc" id="L378">		}</span>
+<span class="fc" id="L379">		return stringBuilder.toString().trim();</span>
+	}
+
+	private String fuzzyMatchQuerySyntax(String queryString)
+	{
+<span class="fc" id="L384">		StringBuilder stringBuilder = new StringBuilder();</span>
+<span class="fc bfc" id="L385" title="All 2 branches covered.">		for (String word : queryString.split(SINGLE_WHITESPACE))</span>
+		{
+<span class="fc" id="L387">			stringBuilder.append(word).append(FUZZY_MATCH_SIMILARITY).append(SINGLE_WHITESPACE);</span>
+		}
+<span class="fc" id="L389">		return stringBuilder.toString().trim();</span>
+	}
+
+	private static String removeIllegalCharWithSingleWhiteSpace(String string)
+	{
+<span class="fc" id="L394">		return string.replaceAll(ILLEGAL_CHARACTERS_PATTERN, SINGLE_WHITESPACE);</span>
+	}
+
+	private static String removeIllegalCharWithEmptyString(String string)
+	{
+<span class="fc" id="L399">		return string.replaceAll(ILLEGAL_CHARACTERS_PATTERN, StringUtils.EMPTY);</span>
+	}
+
+	private boolean isAttrNameValidForLexicalMatch(String attr)
+	{
+<span class="pc bpc" id="L404" title="1 of 4 branches missed.">		return StringUtils.equalsIgnoreCase(attr, DEFAULT_MATCHING_NAME_FIELD) || StringUtils.containsIgnoreCase(attr,</span>
+				DEFAULT_MATCHING_SYNONYM_PREFIX_FIELD);
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

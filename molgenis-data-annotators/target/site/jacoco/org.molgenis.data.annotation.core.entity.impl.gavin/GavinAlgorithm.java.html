@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GavinAlgorithm.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.entity.impl.gavin</a> &gt; <span class="el_source">GavinAlgorithm.java</span></div><h1>GavinAlgorithm.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.entity.impl.gavin;
+
+import org.molgenis.data.annotation.core.entity.impl.snpeff.Impact;
+
+import static org.molgenis.data.annotation.core.entity.impl.gavin.Category.*;
+import static org.molgenis.data.annotation.core.entity.impl.gavin.Judgment.Classification.*;
+import static org.molgenis.data.annotation.core.entity.impl.gavin.Judgment.Method.calibrated;
+import static org.molgenis.data.annotation.core.entity.impl.gavin.Judgment.Method.genomewide;
+import static org.molgenis.data.annotation.core.entity.impl.snpeff.Impact.*;
+
+<span class="fc" id="L11">public class GavinAlgorithm</span>
+{
+	public static final String NAME = &quot;GavinAnnotator&quot;;
+
+	public static final double GENOMEWIDE_MAF_THRESHOLD = 0.003456145;
+	public static final int GENOMEWIDE_CADD_THRESHOLD = 15;
+	/**
+	 * Sensitivity is more important than specificity, so we can adjust this parameter to globally adjust the thresholds.
+	 * &lt;ul&gt;
+	 * &lt;li&gt;At a setting of 1, ie. default behaviour, GAVIN is 89% sensitive and 83% specific&lt;/li&gt;
+	 * &lt;li&gt;at a setting of 5, a more sensitive setting, GAVIN is 92% sensitive and 78% specific&lt;/li&gt;
+	 * &lt;/ul&gt;
+	 * Technically we lose more than we gain, but having &gt;90% sensitivity is really important.
+	 * Better to have a few more false positives than to miss a true positive.
+	 */
+	public static final int EXTRA_SENSITIVITY_FACTOR = 5;
+
+	/**
+	 * Classifies a variant using the given GavinThresholds.
+	 *
+	 * @param impact          putative impact of the variant, determined by snpEff
+	 * @param caddScaled      scaled cadd score for the variant
+	 * @param exacMAF         maf of the variant, determined by exac
+	 * @param gene            gene of the variant
+	 * @param gavinThresholds the {@link GavinThresholds} for this gene
+	 * @return the {@link Judgment} of the gavin algorithm
+	 */
+	public Judgment classifyVariant(Impact impact, Double caddScaled, Double exacMAF, String gene,
+			GavinThresholds gavinThresholds)
+	{
+<span class="pc bpc" id="L41" title="1 of 2 branches missed.">		if (gavinThresholds == null)</span>
+		{
+			//if we have no data for this gene, immediately fall back to the genomewide method
+<span class="nc" id="L44">			return genomewideClassifyVariant(impact, caddScaled, exacMAF, gene);</span>
+		}
+
+<span class="fc" id="L47">		gavinThresholds = gavinThresholds.withExtraSensitivity(EXTRA_SENSITIVITY_FACTOR);</span>
+
+		// CADD score based classification, calibrated
+<span class="fc bfc" id="L50" title="All 2 branches covered.">		if (caddScaled != null)</span>
+		{
+<span class="pc bfc" id="L52" title="All 3 branches covered.">			switch (gavinThresholds.getCategory())</span>
+			{
+				case C1:
+				case C2:
+<span class="fc bfc" id="L56" title="All 2 branches covered.">					if (gavinThresholds.isAboveMeanPathogenicCADDScore(caddScaled))</span>
+					{
+<span class="fc" id="L58">						return Judgment.create(Pathogenic, calibrated, gene,</span>
+								&quot;Variant CADD score of &quot; + caddScaled + &quot; is greater than &quot;
+<span class="fc" id="L60">										+ gavinThresholds.getMeanPathogenicCADDScore()</span>
+										+ &quot; in a gene for which CADD scores are informative.&quot;);
+					}
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">					if (gavinThresholds.isBelowMeanPopulationCADDScore(caddScaled))</span>
+					{
+<span class="fc" id="L65">						return Judgment.create(Benign, calibrated, gene,</span>
+								&quot;Variant CADD score of &quot; + caddScaled + &quot; is less than &quot;
+<span class="fc" id="L67">										+ gavinThresholds.getMeanPopulationCADDScore()</span>
+										+ &quot; in a gene for which CADD scores are informative.&quot;);
+					}
+					//this rule does not classify apparently, just continue onto the next rules
+					break;
+				case C3:
+				case C4:
+				case C5:
+<span class="fc bfc" id="L75" title="All 2 branches covered.">					if (gavinThresholds.isAboveSpec95thPerCADDThreshold(caddScaled))</span>
+					{
+<span class="fc" id="L77">						return Judgment.create(Pathogenic, calibrated, gene,</span>
+								&quot;Variant CADD score of &quot; + caddScaled + &quot; is greater than &quot;
+<span class="fc" id="L79">										+ gavinThresholds.getSpec95thPerCADDThreshold() + &quot; for this gene.&quot;);</span>
+					}
+<span class="fc bfc" id="L81" title="All 2 branches covered.">					if (gavinThresholds.isBelowSens95PerCADDThreshold(caddScaled))</span>
+					{
+<span class="fc" id="L83">						return Judgment.create(Benign, calibrated, gene,</span>
+								&quot;Variant CADD score of &quot; + caddScaled + &quot; is less than &quot;
+<span class="fc" id="L85">										+ gavinThresholds.getSens95thPerCADDThreshold() + &quot; for this gene.&quot;);</span>
+					}
+					//this rule does not classify apparently, just continue onto the next rules
+					break;
+			}
+		}
+
+		// MAF-based classification, calibrated
+<span class="fc bfc" id="L93" title="All 2 branches covered.">		if (gavinThresholds.isAbovePathoMAFThreshold(exacMAF))</span>
+
+		{
+<span class="fc" id="L96">			return Judgment.create(Benign, calibrated, gene,</span>
+<span class="fc" id="L97">					&quot;Variant MAF of &quot; + exacMAF + &quot; is greater than &quot; + gavinThresholds.getPathoMAFThreshold() + &quot;.&quot;);</span>
+		}
+
+<span class="fc" id="L100">		String mafReason =</span>
+<span class="fc" id="L101">				&quot;the variant MAF of &quot; + exacMAF + &quot; is less than a MAF of &quot; + gavinThresholds.getPathoMAFThreshold()</span>
+						+ &quot;.&quot;;
+
+		// Impact based classification, calibrated
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">		if (impact != null)</span>
+
+		{
+<span class="pc bpc" id="L108" title="1 of 4 branches missed.">			if (gavinThresholds.getCategory() == I1 &amp;&amp; impact == HIGH)</span>
+			{
+<span class="fc" id="L110">				return Judgment.create(Pathogenic, calibrated, gene,</span>
+						&quot;Variant is of high impact, while there are no known high impact variants in the population. Also, &quot;
+								+ mafReason);
+			}
+<span class="pc bpc" id="L114" title="3 of 6 branches missed.">			if (gavinThresholds.getCategory() == I2 &amp;&amp; (impact == MODERATE || impact == HIGH))</span>
+			{
+<span class="fc" id="L116">				return Judgment.create(Pathogenic, calibrated, gene,</span>
+						&quot;Variant is of high/moderate impact, while there are no known high/moderate impact variants in the population. Also, &quot;
+								+ mafReason);
+			}
+<span class="pc bpc" id="L120" title="7 of 8 branches missed.">			if (gavinThresholds.getCategory() == I3 &amp;&amp; (impact == LOW || impact == MODERATE || impact == HIGH))</span>
+			{
+<span class="nc" id="L122">				return Judgment.create(Pathogenic, calibrated, gene,</span>
+						&quot;Variant is of high/moderate/low impact, while there are no known high/moderate/low impact variants in the population. Also, &quot;
+								+ mafReason);
+			}
+<span class="fc bfc" id="L126" title="All 2 branches covered.">			if (impact == MODIFIER)</span>
+			{
+<span class="fc" id="L128">				return Judgment.create(Benign, calibrated, gene,</span>
+						&quot;Variant is of 'modifier' impact, and therefore unlikely to be pathogenic. However, &quot;
+								+ mafReason);
+			}
+		}
+
+		//if everything so far has failed, we can still fall back to the genome-wide method
+<span class="fc" id="L135">		return genomewideClassifyVariant(impact, caddScaled, exacMAF, gene);</span>
+	}
+
+	/**
+	 * Classifies a variant based on genome-wide thresholds
+	 *
+	 * @param impact     putative impact of the variant, determined by snpEff
+	 * @param caddScaled scaled cadd score for the variant
+	 * @param exacMAF    maf of the variant, determined by exac
+	 * @param gene       gene of the variant
+	 * @return the {@link Judgment} of the gavin algorithm
+	 */
+
+	public Judgment genomewideClassifyVariant(Impact impact, Double caddScaled, Double exacMAF, String gene)
+	{
+<span class="pc bpc" id="L150" title="1 of 2 branches missed.">		exacMAF = exacMAF != null ? exacMAF : 0;</span>
+
+<span class="fc bfc" id="L152" title="All 2 branches covered.">		if (exacMAF &gt; GENOMEWIDE_MAF_THRESHOLD)</span>
+		{
+<span class="fc" id="L154">			return Judgment.create(Benign, genomewide, gene,</span>
+					&quot;Variant MAF of &quot; + exacMAF + &quot; is not rare enough to generally be considered pathogenic.&quot;);
+		}
+<span class="fc bfc" id="L157" title="All 2 branches covered.">		if (impact == MODIFIER)</span>
+		{
+<span class="fc" id="L159">			return Judgment.create(Benign, genomewide, gene,</span>
+					&quot;Variant is of 'modifier' impact, and therefore unlikely to be pathogenic.&quot;);
+		}
+
+<span class="fc bfc" id="L163" title="All 2 branches covered.">		if (caddScaled != null)</span>
+		{
+<span class="fc bfc" id="L165" title="All 2 branches covered.">			if (caddScaled &gt; GENOMEWIDE_CADD_THRESHOLD)</span>
+			{
+<span class="fc" id="L167">				return Judgment.create(Pathogenic, genomewide, gene, &quot;Variant MAF of &quot; + exacMAF</span>
+						+ &quot; is rare enough to be potentially pathogenic and its CADD score of &quot; + caddScaled
+						+ &quot; is greater than a global threshold of &quot; + GENOMEWIDE_CADD_THRESHOLD + &quot;.&quot;);
+			}
+			else
+			{
+<span class="fc" id="L173">				return Judgment.create(Benign, genomewide, gene,</span>
+						&quot;Variant CADD score of &quot; + caddScaled + &quot; is less than a global threshold of &quot;
+								+ GENOMEWIDE_CADD_THRESHOLD + &quot;, although the variant MAF of &quot; + exacMAF
+								+ &quot; is rare enough to be potentially pathogenic.&quot;);
+			}
+		}
+		else
+		{
+<span class="fc" id="L181">			return Judgment.create(VOUS, genomewide, gene,</span>
+					&quot;Unable to classify variant as benign or pathogenic. The combination of &quot; + impact
+							+ &quot; impact, an unknown CADD score and MAF of &quot; + exacMAF + &quot; in &quot; + gene
+							+ &quot; is inconclusive.&quot;);
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

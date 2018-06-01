@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CsvIterator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-csv</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.csv</a> &gt; <span class="el_source">CsvIterator.java</span></div><h1>CsvIterator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.csv;
+
+import au.com.bytecode.opencsv.CSVReader;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.input.BOMInputStream;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.UnknownEntityTypeException;
+import org.molgenis.data.file.processor.AbstractCellProcessor;
+import org.molgenis.data.file.processor.CellProcessor;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.DynamicEntity;
+import org.molgenis.util.CloseableIterator;
+import org.springframework.util.StringUtils;
+
+import java.io.*;
+import java.util.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+
+import static java.lang.String.format;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Arrays.stream;
+import static java.util.stream.Collectors.joining;
+import static org.molgenis.data.csv.CsvRepositoryCollection.MAC_ZIP;
+
+public class CsvIterator implements CloseableIterator&lt;Entity&gt;
+{
+	private final String repositoryName;
+	private final EntityType entityType;
+	private ZipFile zipFile;
+	private CSVReader csvReader;
+	private final List&lt;CellProcessor&gt; cellProcessors;
+	private final Map&lt;String, Integer&gt; colNamesMap; // column names index
+	private Entity next;
+<span class="fc" id="L37">	private boolean getNext = true;</span>
+<span class="fc" id="L38">	private Character separator = null;</span>
+
+	CsvIterator(File file, String repositoryName, List&lt;CellProcessor&gt; cellProcessors, Character separator)
+	{
+<span class="fc" id="L42">		this(file, repositoryName, cellProcessors, separator, null);</span>
+<span class="fc" id="L43">	}</span>
+
+	CsvIterator(File file, String repositoryName, List&lt;CellProcessor&gt; cellProcessors, Character separator,
+			EntityType entityType)
+<span class="fc" id="L47">	{</span>
+<span class="fc" id="L48">		this.repositoryName = repositoryName;</span>
+<span class="fc" id="L49">		this.cellProcessors = cellProcessors;</span>
+<span class="fc" id="L50">		this.separator = separator;</span>
+<span class="fc" id="L51">		this.entityType = entityType;</span>
+
+		try
+		{
+<span class="fc bfc" id="L55" title="All 2 branches covered.">			if (StringUtils.getFilenameExtension(file.getName()).equalsIgnoreCase(&quot;zip&quot;))</span>
+			{
+<span class="fc" id="L57">				zipFile = new ZipFile(file.getAbsolutePath());</span>
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">				for (Enumeration&lt;? extends ZipEntry&gt; e = zipFile.entries(); e.hasMoreElements(); )</span>
+				{
+<span class="fc" id="L60">					ZipEntry entry = e.nextElement();</span>
+<span class="pc bpc" id="L61" title="1 of 4 branches missed.">					if (!entry.getName().contains(MAC_ZIP) &amp;&amp; !entry.isDirectory())</span>
+					{
+<span class="fc" id="L63">						String fileRepositoryName = FilenameUtils.getBaseName(entry.getName());</span>
+<span class="pc bpc" id="L64" title="1 of 2 branches missed.">						if (fileRepositoryName.equalsIgnoreCase(repositoryName))</span>
+						{
+<span class="fc" id="L66">							csvReader = createCSVReader(entry.getName(),</span>
+<span class="fc" id="L67">									removeByteOrderMark(zipFile.getInputStream(entry)));</span>
+<span class="fc" id="L68">							break;</span>
+						}
+					}
+<span class="fc" id="L71">				}</span>
+			}
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">			else if (file.getName().toLowerCase().startsWith(repositoryName.toLowerCase()))</span>
+			{
+<span class="fc" id="L75">				csvReader = createCSVReader(file.getName(), removeByteOrderMark(new FileInputStream(file)));</span>
+			}
+
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">			if (csvReader == null)</span>
+			{
+<span class="nc" id="L80">				throw new UnknownEntityTypeException(entityType.getId());</span>
+			}
+
+<span class="fc" id="L83">			colNamesMap = toColNamesMap(csvReader.readNext());</span>
+		}
+<span class="nc" id="L85">		catch (IOException e)</span>
+		{
+<span class="nc" id="L87">			throw new MolgenisDataException(format(&quot;Exception reading [%s]&quot;, file.getAbsolutePath()), e);</span>
+<span class="fc" id="L88">		}</span>
+<span class="fc" id="L89">	}</span>
+
+	/**
+	 * &lt;p&gt;Convert the inputstreams that can be generated by the CsvIterator and check on BOM-attachements./p&gt;
+	 *
+	 * @param inputStream from zipfile or normal files
+	 * @return inputStream without ByteOrderMark (always)
+	 */
+	private InputStream removeByteOrderMark(InputStream inputStream)
+	{
+<span class="fc" id="L99">		return new BOMInputStream(inputStream, false);</span>
+	}
+
+	Map&lt;String, Integer&gt; getColNamesMap()
+	{
+<span class="fc" id="L104">		return colNamesMap;</span>
+	}
+
+	@Override
+	public boolean hasNext()
+	{
+<span class="fc bfc" id="L110" title="All 2 branches covered.">		boolean next = get() != null;</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">		if (!next)</span>
+		{
+<span class="fc" id="L113">			close();</span>
+		}
+
+<span class="fc" id="L116">		return next;</span>
+	}
+
+	@Override
+	public Entity next()
+	{
+<span class="fc" id="L122">		Entity entity = get();</span>
+<span class="fc" id="L123">		getNext = true;</span>
+<span class="fc" id="L124">		return entity;</span>
+	}
+
+	private Entity get()
+	{
+<span class="fc bfc" id="L129" title="All 2 branches covered.">		if (getNext)</span>
+		{
+			try
+			{
+<span class="fc" id="L133">				String[] values = csvReader.readNext();</span>
+
+<span class="fc bfc" id="L135" title="All 4 branches covered.">				if (values != null &amp;&amp; values.length == colNamesMap.size())</span>
+				{
+<span class="fc" id="L137">					List&lt;String&gt; valueList = Arrays.asList(values);</span>
+<span class="fc bfc" id="L138" title="All 2 branches covered.">					for (int i = 0; i &lt; values.length; ++i)</span>
+					{
+						// subsequent separators indicate
+						// null
+						// values instead of empty strings
+<span class="fc bfc" id="L143" title="All 2 branches covered.">						String value = values[i].isEmpty() ? null : values[i];</span>
+<span class="fc" id="L144">						values[i] = processCell(value, false);</span>
+					}
+
+<span class="fc" id="L147">					next = new DynamicEntity(entityType);</span>
+
+<span class="fc bfc" id="L149" title="All 2 branches covered.">					for (String name : colNamesMap.keySet())</span>
+					{
+<span class="fc" id="L151">						next.set(name, valueList.get(colNamesMap.get(name)));</span>
+<span class="fc" id="L152">					}</span>
+<span class="fc" id="L153">				}</span>
+<span class="pc bpc" id="L154" title="1 of 8 branches missed.">				else if (values != null &amp;&amp; (values.length &gt; 1 || (values.length == 1 &amp;&amp; values[0].length() &gt; 0))</span>
+<span class="pc bpc" id="L155" title="1 of 2 branches missed.">						&amp;&amp; values.length &lt; colNamesMap.size())</span>
+				{
+<span class="fc" id="L157">					throw new MolgenisDataException(</span>
+<span class="fc" id="L158">							format(&quot;Number of values (%d) doesn't match the number of headers (%d): [%s]&quot;,</span>
+<span class="fc" id="L159">									values.length, colNamesMap.size(), stream(values).collect(joining(&quot;,&quot;))));</span>
+				}
+				else
+				{
+<span class="fc" id="L163">					next = null;</span>
+				}
+
+<span class="fc" id="L166">				getNext = false;</span>
+			}
+<span class="nc" id="L168">			catch (IOException e)</span>
+			{
+<span class="nc" id="L170">				throw new MolgenisDataException(format(&quot;Exception reading line of csv file [%s]&quot;, repositoryName), e);</span>
+<span class="fc" id="L171">			}</span>
+		}
+
+<span class="fc" id="L174">		return next;</span>
+	}
+
+	@Override
+	public void remove()
+	{
+<span class="nc" id="L180">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void close()
+	{
+<span class="fc" id="L186">		IOUtils.closeQuietly(csvReader);</span>
+
+<span class="fc bfc" id="L188" title="All 2 branches covered.">		if (zipFile != null)</span>
+		{
+<span class="fc" id="L190">			IOUtils.closeQuietly(zipFile);</span>
+		}
+<span class="fc" id="L192">	}</span>
+
+	private CSVReader createCSVReader(String fileName, InputStream in)
+	{
+<span class="fc" id="L196">		Reader reader = new InputStreamReader(in, UTF_8);</span>
+
+<span class="fc bfc" id="L198" title="All 2 branches covered.">		if (null == separator)</span>
+		{
+<span class="fc bfc" id="L200" title="All 2 branches covered.">			if (fileName.toLowerCase().endsWith('.' + CsvFileExtensions.CSV.toString()) || fileName.toLowerCase()</span>
+<span class="pc bpc" id="L201" title="1 of 2 branches missed.">																								   .endsWith('.'</span>
+																										   + CsvFileExtensions.TXT
+<span class="fc" id="L203">																										   .toString()))</span>
+			{
+<span class="fc" id="L205">				return new CSVReader(reader);</span>
+			}
+
+<span class="pc bpc" id="L208" title="1 of 2 branches missed.">			if (fileName.toLowerCase().endsWith('.' + CsvFileExtensions.TSV.toString()))</span>
+			{
+<span class="fc" id="L210">				return new CSVReader(reader, '\t');</span>
+			}
+
+<span class="nc" id="L213">			throw new MolgenisDataException(format(&quot;Unknown file type: [%s] for csv repository&quot;, fileName));</span>
+		}
+
+<span class="fc" id="L216">		return new CSVReader(reader, this.separator);</span>
+	}
+
+	private Map&lt;String, Integer&gt; toColNamesMap(String[] headers)
+	{
+<span class="pc bpc" id="L221" title="2 of 4 branches missed.">		if ((headers == null) || (headers.length == 0))</span>
+		{
+<span class="nc" id="L223">			return Collections.emptyMap();</span>
+		}
+
+<span class="fc" id="L226">		int capacity = (int) (headers.length / 0.75) + 1;</span>
+<span class="fc" id="L227">		Map&lt;String, Integer&gt; columnIdx = new LinkedHashMap&lt;&gt;(capacity);</span>
+<span class="fc bfc" id="L228" title="All 2 branches covered.">		for (int i = 0; i &lt; headers.length; ++i)</span>
+		{
+<span class="fc" id="L230">			String header = processCell(headers[i], true);</span>
+<span class="fc bfc" id="L231" title="All 2 branches covered.">			if (columnIdx.containsKey(header))</span>
+			{
+<span class="fc" id="L233">				throw new MolgenisDataException(format(&quot;Duplicate column header '%s' not allowed&quot;, header));</span>
+			}
+<span class="fc" id="L235">			columnIdx.put(header, i);</span>
+		}
+
+<span class="fc" id="L238">		return columnIdx;</span>
+	}
+
+	private String processCell(String value, boolean isHeader)
+	{
+<span class="fc" id="L243">		return AbstractCellProcessor.processCell(value, isHeader, cellProcessors);</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

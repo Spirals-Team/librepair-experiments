@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PostgreSqlTransactionManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.postgresql.transaction</a> &gt; <span class="el_source">PostgreSqlTransactionManager.java</span></div><h1>PostgreSqlTransactionManager.java</h1><pre class="source lang-java linenums">package org.molgenis.data.postgresql.transaction;
+
+import org.apache.commons.logging.LogFactory;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.data.transaction.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import javax.sql.DataSource;
+import java.util.ArrayList;
+import java.util.List;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+
+/**
+ * TransactionManager used by Molgenis.
+ * &lt;p&gt;
+ * TransactionListeners can be registered and will be notified on transaction begin, commit and rollback of transactions
+ * that are not readonly.
+ * &lt;p&gt;
+ * Each transaction is given a unique transaction id.
+ */
+@SuppressWarnings(&quot;squid:S1948&quot;) // The transactionmanager will never be serialized
+public class PostgreSqlTransactionManager extends DataSourceTransactionManager implements TransactionManager
+{
+	private static final long serialVersionUID = 1L;
+<span class="fc" id="L34">	private static final Logger LOG = LoggerFactory.getLogger(PostgreSqlTransactionManager.class);</span>
+	private final IdGenerator idGenerator;
+<span class="fc" id="L36">	private final List&lt;TransactionListener&gt; transactionListeners = new ArrayList&lt;&gt;();</span>
+	private final TransactionExceptionTranslatorRegistry transactionExceptionTranslatorRegistry;
+
+	public PostgreSqlTransactionManager(IdGenerator idGenerator, DataSource dataSource,
+			TransactionExceptionTranslatorRegistry transactionExceptionTranslatorRegistry)
+	{
+<span class="fc" id="L42">		super(dataSource);</span>
+<span class="fc" id="L43">		super.logger = LogFactory.getLog(DataSourceTransactionManager.class);</span>
+<span class="fc" id="L44">		setNestedTransactionAllowed(false);</span>
+<span class="fc" id="L45">		this.idGenerator = idGenerator;</span>
+<span class="fc" id="L46">		this.transactionExceptionTranslatorRegistry = requireNonNull(transactionExceptionTranslatorRegistry);</span>
+<span class="fc" id="L47">	}</span>
+
+	@Override
+	public synchronized void addTransactionListener(TransactionListener transactionListener)
+	{
+<span class="nc" id="L52">		transactionListeners.add(transactionListener);</span>
+<span class="nc" id="L53">	}</span>
+
+	@Override
+	protected Object doGetTransaction()
+	{
+<span class="fc" id="L58">		Object dataSourceTransactionManager = super.doGetTransaction();</span>
+
+		String id;
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">		if (TransactionSynchronizationManager.hasResource(TRANSACTION_ID_RESOURCE_NAME))</span>
+		{
+<span class="nc" id="L63">			id = (String) TransactionSynchronizationManager.getResource(TRANSACTION_ID_RESOURCE_NAME);</span>
+		}
+		else
+		{
+<span class="fc" id="L67">			id = idGenerator.generateId().toLowerCase();</span>
+		}
+
+<span class="fc" id="L70">		return new MolgenisTransaction(id, dataSourceTransactionManager);</span>
+	}
+
+	@Override
+	protected void doBegin(Object transaction, TransactionDefinition definition)
+	{
+<span class="nc" id="L76">		MolgenisTransaction molgenisTransaction = (MolgenisTransaction) transaction;</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L79">			LOG.debug(&quot;Start transaction [{}]&quot;, molgenisTransaction.getId());</span>
+		}
+
+<span class="nc" id="L82">		super.doBegin(molgenisTransaction.getDataSourceTransaction(), definition);</span>
+
+<span class="nc bnc" id="L84" title="All 2 branches missed.">		if (!definition.isReadOnly())</span>
+		{
+<span class="nc" id="L86">			TransactionSynchronizationManager.bindResource(TRANSACTION_ID_RESOURCE_NAME, molgenisTransaction.getId());</span>
+<span class="nc" id="L87">			transactionListeners.forEach(j -&gt; j.transactionStarted(molgenisTransaction.getId()));</span>
+		}
+<span class="nc" id="L89">	}</span>
+
+	@Override
+	protected void doCommit(DefaultTransactionStatus status)
+	{
+<span class="nc" id="L94">		MolgenisTransaction transaction = (MolgenisTransaction) status.getTransaction();</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L97">			LOG.debug(&quot;Commit transaction [{}]&quot;, transaction.getId());</span>
+		}
+
+<span class="nc" id="L100">		DefaultTransactionStatus jpaTransactionStatus = new DefaultTransactionStatus(</span>
+<span class="nc" id="L101">				transaction.getDataSourceTransaction(), status.isNewTransaction(), status.isNewSynchronization(),</span>
+<span class="nc" id="L102">				status.isReadOnly(), status.isDebug(), status.getSuspendedResources());</span>
+
+<span class="nc bnc" id="L104" title="All 2 branches missed.">		if (!status.isReadOnly())</span>
+		{
+<span class="nc" id="L106">			transactionListeners.forEach(j -&gt; j.commitTransaction(transaction.getId()));</span>
+		}
+
+		try
+		{
+<span class="nc" id="L111">			super.doCommit(jpaTransactionStatus);</span>
+		}
+<span class="nc" id="L113">		catch (TransactionException e)</span>
+		{
+<span class="nc" id="L115">			throw translateTransactionException(e);</span>
+<span class="nc" id="L116">		}</span>
+
+<span class="nc bnc" id="L118" title="All 2 branches missed.">		if (!status.isReadOnly())</span>
+		{
+<span class="nc" id="L120">			transactionListeners.forEach(j -&gt; j.afterCommitTransaction(transaction.getId()));</span>
+		}
+<span class="nc" id="L122">	}</span>
+
+	@Override
+	protected void doRollback(DefaultTransactionStatus status)
+	{
+<span class="nc" id="L127">		MolgenisTransaction transaction = (MolgenisTransaction) status.getTransaction();</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L130">			LOG.debug(&quot;Rollback transaction [{}]&quot;, transaction.getId());</span>
+		}
+
+<span class="nc" id="L133">		DefaultTransactionStatus jpaTransactionStatus = new DefaultTransactionStatus(</span>
+<span class="nc" id="L134">				transaction.getDataSourceTransaction(), status.isNewTransaction(), status.isNewSynchronization(),</span>
+<span class="nc" id="L135">				status.isReadOnly(), status.isDebug(), status.getSuspendedResources());</span>
+
+<span class="nc bnc" id="L137" title="All 2 branches missed.">		if (!status.isReadOnly())</span>
+		{
+<span class="nc" id="L139">			transactionListeners.forEach(j -&gt; j.rollbackTransaction(transaction.getId()));</span>
+		}
+
+<span class="nc" id="L142">		super.doRollback(jpaTransactionStatus);</span>
+<span class="nc" id="L143">	}</span>
+
+	@Override
+	protected void doSetRollbackOnly(DefaultTransactionStatus status)
+	{
+<span class="nc" id="L148">		MolgenisTransaction transaction = (MolgenisTransaction) status.getTransaction();</span>
+
+<span class="nc" id="L150">		DefaultTransactionStatus jpaTransactionStatus = new DefaultTransactionStatus(</span>
+<span class="nc" id="L151">				transaction.getDataSourceTransaction(), status.isNewTransaction(), status.isNewSynchronization(),</span>
+<span class="nc" id="L152">				status.isReadOnly(), status.isDebug(), status.getSuspendedResources());</span>
+
+<span class="nc" id="L154">		super.doSetRollbackOnly(jpaTransactionStatus);</span>
+<span class="nc" id="L155">	}</span>
+
+	@Override
+	protected boolean isExistingTransaction(Object transaction)
+	{
+<span class="nc" id="L160">		return super.isExistingTransaction(((MolgenisTransaction) transaction).getDataSourceTransaction());</span>
+	}
+
+	@Override
+	protected void doCleanupAfterCompletion(Object transaction)
+	{
+<span class="nc" id="L166">		MolgenisTransaction molgenisTransaction = (MolgenisTransaction) transaction;</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L169">			LOG.debug(&quot;Cleanup transaction [{}]&quot;, molgenisTransaction.getId());</span>
+		}
+
+<span class="nc" id="L172">		super.doCleanupAfterCompletion(molgenisTransaction.getDataSourceTransaction());</span>
+<span class="nc" id="L173">		TransactionSynchronizationManager.unbindResourceIfPossible(TRANSACTION_ID_RESOURCE_NAME);</span>
+
+<span class="nc" id="L175">		transactionListeners.forEach(j -&gt; j.doCleanupAfterCompletion(molgenisTransaction.getId()));</span>
+<span class="nc" id="L176">	}</span>
+
+	@Override
+	protected Object doSuspend(Object transaction)
+	{
+<span class="nc" id="L181">		MolgenisTransaction molgenisTransaction = (MolgenisTransaction) transaction;</span>
+<span class="nc" id="L182">		return super.doSuspend(molgenisTransaction.getDataSourceTransaction());</span>
+	}
+
+	@Override
+	protected void doResume(Object transaction, Object suspendedResources)
+	{
+<span class="nc" id="L188">		MolgenisTransaction molgenisTransaction = (MolgenisTransaction) transaction;</span>
+<span class="nc" id="L189">		super.doResume(molgenisTransaction.getDataSourceTransaction(), suspendedResources);</span>
+<span class="nc" id="L190">	}</span>
+
+	private MolgenisDataException translateTransactionException(TransactionException transactionException)
+	{
+<span class="nc bnc" id="L194" title="All 2 branches missed.">		for (TransactionExceptionTranslator transactionExceptionTranslator : transactionExceptionTranslatorRegistry.getTransactionExceptionTranslators())</span>
+		{
+<span class="nc" id="L196">			MolgenisDataException molgenisDataException = transactionExceptionTranslator.doTranslate(</span>
+					transactionException);
+<span class="nc bnc" id="L198" title="All 2 branches missed.">			if (molgenisDataException != null)</span>
+			{
+<span class="nc" id="L200">				return molgenisDataException;</span>
+			}
+<span class="nc" id="L202">		}</span>
+<span class="nc" id="L203">		throw new IllegalArgumentException(</span>
+<span class="nc" id="L204">				format(&quot;Unexpected exception class [%s]&quot;, transactionException.getClass().getSimpleName()),</span>
+				transactionException);
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

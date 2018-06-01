@@ -1,0 +1,372 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OntologyLoader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">ontology-core</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.ontology.core.utils</a> &gt; <span class="el_source">OntologyLoader.java</span></div><h1>OntologyLoader.java</h1><pre class="source lang-java linenums">package org.molgenis.ontology.core.utils;
+
+import org.apache.commons.lang3.StringUtils;
+import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.io.FileDocumentSource;
+import org.semanticweb.owlapi.model.*;
+import org.semanticweb.owlapi.vocab.OWLRDFVocabulary;
+
+import java.io.File;
+import java.util.*;
+
+public class OntologyLoader
+{
+<span class="nc" id="L14">	private static String DB_ID_PATTERN = &quot;(\\w*):(\\d*)&quot;;</span>
+<span class="nc" id="L15">	private String ontologyIRI = null;</span>
+<span class="nc" id="L16">	private String ontologyName = null;</span>
+<span class="nc" id="L17">	private File ontologyFile = null;</span>
+<span class="nc" id="L18">	private OWLDataFactory factory = null;</span>
+<span class="nc" id="L19">	private OWLOntology ontology = null;</span>
+<span class="nc" id="L20">	private OWLOntologyManager manager = null;</span>
+	private Set&lt;String&gt; synonymsProperties;
+
+	{
+<span class="nc" id="L24">		synonymsProperties = new HashSet&lt;&gt;(Arrays.asList(&quot;http://ncicb.nci.nih.gov/xml/owl/EVS/Thesaurus.owl#FULL_SYN&quot;,</span>
+				&quot;http://ncicb.nci.nih.gov/xml/owl/EVS/Thesaurus.owl#P90&quot;,
+				&quot;http://www.geneontology.org/formats/oboInOwl#hasExactSynonym&quot;,
+				&quot;http://www.ebi.ac.uk/efo/alternative_term&quot;));
+	}
+
+	private Set&lt;String&gt; owlObjectProperties;
+
+	{
+<span class="nc" id="L33">		owlObjectProperties = new HashSet&lt;&gt;(</span>
+<span class="nc" id="L34">				Arrays.asList(&quot;http://ncicb.nci.nih.gov/xml/owl/EVS/Thesaurus.owl#is_associated_with&quot;));</span>
+	}
+
+	private Set&lt;String&gt; ontologyTermDefinitions;
+
+	{
+<span class="nc" id="L40">		ontologyTermDefinitions = new HashSet&lt;&gt;(Arrays.asList(&quot;http://purl.obolibrary.org/obo/&quot;,</span>
+				&quot;http://ncicb.nci.nih.gov/xml/owl/EVS/Thesaurus.owl#DEFINITION&quot;));
+	}
+
+<span class="nc" id="L44">	private Map&lt;String, OWLClass&gt; hashToRetrieveClass = new HashMap&lt;&gt;();</span>
+
+	public OntologyLoader(OWLOntologyManager manager, OWLDataFactory factory)
+<span class="nc" id="L47">	{</span>
+<span class="nc" id="L48">		this.manager = manager;</span>
+<span class="nc" id="L49">		this.factory = factory;</span>
+<span class="nc" id="L50">	}</span>
+
+	public OntologyLoader(String ontologyName, File ontologyFile) throws OWLOntologyCreationException
+<span class="nc" id="L53">	{</span>
+<span class="nc" id="L54">		this.ontologyFile = ontologyFile;</span>
+<span class="nc" id="L55">		this.manager = OWLManager.createOWLOntologyManager();</span>
+<span class="nc" id="L56">		this.factory = manager.getOWLDataFactory();</span>
+<span class="nc" id="L57">		this.ontologyName = ontologyName;</span>
+<span class="nc" id="L58">		this.ontology = loadOwlOntology();</span>
+<span class="nc" id="L59">		this.ontologyIRI = ontology.getOntologyID().getOntologyIRI().toString();</span>
+<span class="nc" id="L60">	}</span>
+
+	private OWLOntology loadOwlOntology() throws OWLOntologyCreationException
+	{
+<span class="nc" id="L64">		FileDocumentSource fileDocumentSource = new FileDocumentSource(ontologyFile);</span>
+		// use silent import handling strategy to enable ontology loading without internet access
+		// see: https://github.com/molgenis/molgenis/issues/5301
+<span class="nc" id="L67">		OWLOntologyLoaderConfiguration owlOntologyLoaderConfiguration = new OWLOntologyLoaderConfiguration().setMissingImportHandlingStrategy(</span>
+				MissingImportHandlingStrategy.SILENT);
+<span class="nc" id="L69">		return manager.loadOntologyFromOntologyDocument(fileDocumentSource, owlOntologyLoaderConfiguration);</span>
+	}
+
+	public void preProcessing()
+	{
+<span class="nc bnc" id="L74" title="All 2 branches missed.">		for (OWLClass cls : ontology.getClassesInSignature())</span>
+		{
+<span class="nc" id="L76">			hashToRetrieveClass.put(getLabel(cls).trim().toLowerCase(), cls);</span>
+<span class="nc" id="L77">		}</span>
+<span class="nc" id="L78">	}</span>
+
+	public Set&lt;OWLAnnotationAssertionAxiom&gt; getAllAnnotationAxiom(OWLClass cls)
+	{
+<span class="nc" id="L82">		Set&lt;OWLAnnotationAssertionAxiom&gt; axioms = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">		for (OWLAnnotation annotation : cls.getAnnotations(ontology))</span>
+		{
+<span class="nc" id="L85">			axioms.add(factory.getOWLAnnotationAssertionAxiom(cls.getIRI(), annotation));</span>
+<span class="nc" id="L86">		}</span>
+<span class="nc" id="L87">		return axioms;</span>
+	}
+
+	public Set&lt;OWLClass&gt; getRootClasses()
+	{
+<span class="nc" id="L92">		Set&lt;OWLClass&gt; listOfTopClasses = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">		for (OWLClass cls : ontology.getClassesInSignature())</span>
+		{
+<span class="nc bnc" id="L95" title="All 2 branches missed.">			if (ontology.getSubClassAxiomsForSubClass(cls).isEmpty() &amp;&amp; ontology.getEquivalentClassesAxioms(cls)</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">																				.isEmpty()) listOfTopClasses.add(cls);</span>
+<span class="nc" id="L97">		}</span>
+<span class="nc" id="L98">		return listOfTopClasses;</span>
+	}
+
+	public OWLClass getTopClass()
+	{
+<span class="nc" id="L103">		return factory.getOWLThing();</span>
+	}
+
+	public List&lt;Set&lt;OWLClass&gt;&gt; getAssociatedClasses(OWLClass cls)
+	{
+<span class="nc" id="L108">		List&lt;Set&lt;OWLClass&gt;&gt; alternativeDefinitions = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">		for (OWLSubClassOfAxiom axiom : ontology.getSubClassAxiomsForSubClass(cls))</span>
+		{
+<span class="nc" id="L111">			Set&lt;OWLClass&gt; associatedTerms = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L112">			OWLClassExpression expression = axiom.getSuperClass();</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">			if (expression.isAnonymous())</span>
+			{
+<span class="nc bnc" id="L115" title="All 2 branches missed.">				for (OWLObjectProperty property : expression.getObjectPropertiesInSignature())</span>
+				{
+<span class="nc bnc" id="L117" title="All 2 branches missed.">					if (owlObjectProperties.contains(property.getIRI().toString()))</span>
+					{
+<span class="nc" id="L119">						associatedTerms.addAll(expression.getClassesInSignature());</span>
+					}
+<span class="nc" id="L121">				}</span>
+			}
+<span class="nc" id="L123">			alternativeDefinitions.add(associatedTerms);</span>
+<span class="nc" id="L124">		}</span>
+<span class="nc" id="L125">		return alternativeDefinitions;</span>
+	}
+
+	public Set&lt;OWLClass&gt; getChildClass(OWLClass cls)
+	{
+<span class="nc" id="L130">		Set&lt;OWLClass&gt; listOfClasses = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">		for (OWLSubClassOfAxiom axiom : ontology.getSubClassAxiomsForSuperClass(cls))</span>
+		{
+<span class="nc" id="L133">			OWLClassExpression expression = axiom.getSubClass();</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">			if (!expression.isAnonymous())</span>
+			{
+<span class="nc" id="L136">				OWLClass asOWLClass = expression.asOWLClass();</span>
+<span class="nc" id="L137">				listOfClasses.add(asOWLClass);</span>
+			}
+<span class="nc" id="L139">		}</span>
+<span class="nc" id="L140">		return listOfClasses;</span>
+	}
+
+	// TODO: what if the ontology terms have multiple IDs?
+	public String getId(OWLClass entity)
+	{
+<span class="nc bnc" id="L146" title="All 2 branches missed.">		for (OWLAnnotationProperty owlObjectProperty : ontology.getAnnotationPropertiesInSignature())</span>
+		{
+<span class="nc bnc" id="L148" title="All 2 branches missed.">			if (ifExistsAnnotation(owlObjectProperty.toString(), &quot;id&quot;))</span>
+			{
+<span class="nc" id="L150">				Set&lt;String&gt; annotation = getAnnotation(entity, owlObjectProperty.getIRI().toString());</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">				if (!annotation.isEmpty())</span>
+				{
+<span class="nc" id="L153">					return annotation.iterator().next();</span>
+				}
+			}
+<span class="nc" id="L156">		}</span>
+<span class="nc" id="L157">		return StringUtils.EMPTY;</span>
+	}
+
+	private boolean ifExistsAnnotation(String propertyUrl, String keyword)
+	{
+<span class="nc" id="L162">		String pattern = &quot;[\\W_]*&quot; + keyword + &quot;[\\W_]*&quot;;</span>
+		// Use # as the separator
+<span class="nc" id="L164">		String[] urlFragments = propertyUrl.split(&quot;[#/]&quot;);</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">		if (urlFragments.length &gt; 1)</span>
+		{
+<span class="nc" id="L167">			String label = urlFragments[urlFragments.length - 1].replaceAll(&quot;[\\W]&quot;, &quot;_&quot;);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">			for (String token : label.split(&quot;_&quot;))</span>
+			{
+<span class="nc bnc" id="L170" title="All 2 branches missed.">				if (token.matches(pattern)) return true;</span>
+			}
+		}
+<span class="nc" id="L173">		return false;</span>
+	}
+
+	public Set&lt;String&gt; getSynonyms(OWLClass cls)
+	{
+<span class="nc" id="L178">		Set&lt;String&gt; listOfSynonyms = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">		for (String eachSynonymProperty : synonymsProperties)</span>
+		{
+<span class="nc" id="L181">			listOfSynonyms.addAll(getAnnotation(cls, eachSynonymProperty));</span>
+<span class="nc" id="L182">		}</span>
+<span class="nc" id="L183">		listOfSynonyms.add(getLabel(cls));</span>
+<span class="nc" id="L184">		return listOfSynonyms;</span>
+	}
+
+	public String getDefinition(OWLClass cls)
+	{
+<span class="nc bnc" id="L189" title="All 2 branches missed.">		for (String definitionProperty : ontologyTermDefinitions)</span>
+		{
+<span class="nc" id="L191">			Set&lt;String&gt; annotation = getAnnotation(cls, definitionProperty);</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">			if (!annotation.isEmpty())</span>
+			{
+<span class="nc" id="L194">				return annotation.iterator().next();</span>
+			}
+<span class="nc" id="L196">		}</span>
+<span class="nc" id="L197">		return StringUtils.EMPTY;</span>
+	}
+
+	public String getLabel(OWLEntity entity)
+	{
+<span class="nc" id="L202">		Set&lt;String&gt; annotation = getAnnotation(entity, OWLRDFVocabulary.RDFS_LABEL.toString());</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">		if (!annotation.isEmpty())</span>
+		{
+<span class="nc" id="L205">			return annotation.iterator().next();</span>
+		}
+		else
+		{
+<span class="nc" id="L209">			return extractOWLClassId(entity);</span>
+		}
+	}
+
+	private Set&lt;String&gt; getAnnotation(OWLEntity entity, String property)
+	{
+<span class="nc" id="L215">		Set&lt;String&gt; annotations = new HashSet&lt;&gt;();</span>
+		try
+		{
+<span class="nc" id="L218">			OWLAnnotationProperty owlAnnotationProperty = factory.getOWLAnnotationProperty(IRI.create(property));</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">			for (OWLAnnotation annotation : entity.getAnnotations(ontology, owlAnnotationProperty))</span>
+			{
+<span class="nc bnc" id="L221" title="All 2 branches missed.">				if (annotation.getValue() instanceof OWLLiteral)</span>
+				{
+<span class="nc" id="L223">					OWLLiteral val = (OWLLiteral) annotation.getValue();</span>
+<span class="nc" id="L224">					annotations.add(val.getLiteral());</span>
+				}
+<span class="nc" id="L226">			}</span>
+		}
+<span class="nc" id="L228">		catch (Exception e)</span>
+		{
+<span class="nc" id="L230">			throw new RuntimeException(&quot;Failed to get label for OWLClass &quot; + entity);</span>
+<span class="nc" id="L231">		}</span>
+<span class="nc" id="L232">		return annotations;</span>
+	}
+
+	public Map&lt;String, Set&lt;String&gt;&gt; getAllDatabaseIds(OWLClass entity)
+	{
+<span class="nc" id="L237">		Map&lt;String, Set&lt;String&gt;&gt; dbAnnotations = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L239" title="All 2 branches missed.">		for (OWLAnnotation annotation : entity.getAnnotations(ontology))</span>
+		{
+<span class="nc bnc" id="L241" title="All 2 branches missed.">			if (annotation.getValue() instanceof OWLLiteral)</span>
+			{
+<span class="nc" id="L243">				OWLLiteral val = (OWLLiteral) annotation.getValue();</span>
+<span class="nc" id="L244">				String value = val.getLiteral();</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">				if (value.matches(DB_ID_PATTERN))</span>
+				{
+<span class="nc" id="L247">					String databaseName = value.replaceAll(DB_ID_PATTERN, &quot;$1&quot;);</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">					if (!dbAnnotations.containsKey(databaseName))</span>
+					{
+<span class="nc" id="L250">						dbAnnotations.put(databaseName, new HashSet&lt;&gt;());</span>
+					}
+<span class="nc" id="L252">					dbAnnotations.get(databaseName).add(value.replaceAll(DB_ID_PATTERN, &quot;$2&quot;));</span>
+				}
+			}
+<span class="nc" id="L255">		}</span>
+<span class="nc" id="L256">		return dbAnnotations;</span>
+	}
+
+	// TODO : FIXME replace the getAllDatabaseIds later on
+	public Set&lt;String&gt; getDatabaseIds(OWLClass entity)
+	{
+<span class="nc" id="L262">		Set&lt;String&gt; dbAnnotations = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">		for (OWLAnnotation annotation : entity.getAnnotations(ontology))</span>
+		{
+<span class="nc bnc" id="L265" title="All 2 branches missed.">			if (annotation.getValue() instanceof OWLLiteral)</span>
+			{
+<span class="nc" id="L267">				OWLLiteral val = (OWLLiteral) annotation.getValue();</span>
+<span class="nc" id="L268">				String value = val.getLiteral();</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">				if (value.matches(DB_ID_PATTERN))</span>
+				{
+<span class="nc" id="L271">					dbAnnotations.add(value);</span>
+				}
+			}
+<span class="nc" id="L274">		}</span>
+<span class="nc" id="L275">		return dbAnnotations;</span>
+	}
+
+	public String getOntologyLabel()
+	{
+<span class="nc" id="L280">		OWLAnnotationProperty labelProperty = factory.getOWLAnnotationProperty(OWLRDFVocabulary.RDFS_LABEL.getIRI());</span>
+<span class="nc" id="L281">		String ontologyLabel = StringUtils.EMPTY;</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">		for (OWLAnnotation annotation : ontology.getAnnotations())</span>
+		{
+<span class="nc bnc" id="L284" title="All 4 branches missed.">			if (annotation.getProperty().equals(labelProperty) &amp;&amp; annotation.getValue() instanceof OWLLiteral)</span>
+			{
+<span class="nc" id="L286">				OWLLiteral val = (OWLLiteral) annotation.getValue();</span>
+<span class="nc" id="L287">				ontologyLabel = val.getLiteral();</span>
+			}
+<span class="nc" id="L289">		}</span>
+<span class="nc" id="L290">		return ontologyLabel;</span>
+	}
+
+	public String extractOWLClassId(OWLEntity cls)
+	{
+<span class="nc" id="L295">		StringBuilder stringBuilder = new StringBuilder();</span>
+<span class="nc" id="L296">		String clsIri = cls.getIRI().toString();</span>
+		// Case where id is separated by #
+<span class="nc" id="L298">		String[] split = null;</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">		if (clsIri.contains(&quot;#&quot;))</span>
+		{
+<span class="nc" id="L301">			split = clsIri.split(&quot;#&quot;);</span>
+		}
+		else
+		{
+<span class="nc" id="L305">			split = clsIri.split(&quot;/&quot;);</span>
+		}
+<span class="nc" id="L307">		stringBuilder.append(split[split.length - 1]);</span>
+<span class="nc" id="L308">		return stringBuilder.toString();</span>
+	}
+
+	public String getOntologyIRI()
+	{
+<span class="nc" id="L313">		return ontologyIRI;</span>
+	}
+
+	public String getOntologyName()
+	{
+<span class="nc" id="L318">		return ontologyName;</span>
+	}
+
+	public String getOntologyFilePath()
+	{
+<span class="nc" id="L323">		return ontologyFile.getAbsolutePath();</span>
+	}
+
+	public Map&lt;String, OWLClass&gt; getHashToRetrieveClass()
+	{
+<span class="nc" id="L328">		return hashToRetrieveClass;</span>
+	}
+
+	public Set&lt;OWLSubClassOfAxiom&gt; getSubClassAxiomsForSuperClass(OWLClass cls)
+	{
+<span class="nc" id="L333">		return ontology.getSubClassAxiomsForSuperClass(cls);</span>
+	}
+
+	public Set&lt;OWLSubClassOfAxiom&gt; getSubClassAxiomsForSubClass(OWLClass cls)
+	{
+<span class="nc" id="L338">		return ontology.getSubClassAxiomsForSubClass(cls);</span>
+	}
+
+	public void addSynonymsProperties(Set&lt;String&gt; synonymsProperties)
+	{
+<span class="nc" id="L343">		this.synonymsProperties.addAll(synonymsProperties);</span>
+<span class="nc" id="L344">	}</span>
+
+	public OWLClass createClass(String iri, Set&lt;OWLClass&gt; rootClasses)
+	{
+<span class="nc" id="L348">		OWLClass owlClass = factory.getOWLClass(IRI.create(iri));</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">		for (OWLClass rootClass : rootClasses)</span>
+		{
+<span class="nc bnc" id="L351" title="All 2 branches missed.">			if (rootClass != owlClass) addClass(rootClass, owlClass);</span>
+<span class="nc" id="L352">		}</span>
+<span class="nc" id="L353">		return owlClass;</span>
+	}
+
+	public void addClass(OWLClass cls, OWLClass parentClass)
+	{
+<span class="nc bnc" id="L358" title="All 2 branches missed.">		if (parentClass == null) parentClass = factory.getOWLThing();</span>
+<span class="nc" id="L359">		manager.applyChange(new AddAxiom(ontology, factory.getOWLSubClassOfAxiom(cls, parentClass)));</span>
+<span class="nc" id="L360">	}</span>
+
+	public long count()
+	{
+<span class="nc" id="L364">		return ontology.getClassesInSignature().size();</span>
+	}
+
+	public Set&lt;OWLClass&gt; getAllclasses()
+	{
+<span class="nc" id="L369">		return ontology.getClassesInSignature();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

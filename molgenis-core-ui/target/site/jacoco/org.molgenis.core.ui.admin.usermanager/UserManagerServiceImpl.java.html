@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UserManagerServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">core-ui</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.core.ui.admin.usermanager</a> &gt; <span class="el_source">UserManagerServiceImpl.java</span></div><h1>UserManagerServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.core.ui.admin.usermanager;
+
+import com.google.common.base.Predicate;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Query;
+import org.molgenis.data.security.auth.*;
+import org.molgenis.data.support.QueryImpl;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.security.auth.GroupMemberMetaData.GROUP_MEMBER;
+import static org.molgenis.data.security.auth.GroupMetaData.GROUP;
+import static org.molgenis.data.security.auth.UserMetaData.USER;
+
+/**
+ * Manage user in groups
+ */
+@Service
+public class UserManagerServiceImpl implements UserManagerService
+{
+	private final DataService dataService;
+	private final GroupMemberFactory groupMemberFactory;
+
+	public UserManagerServiceImpl(DataService dataService, GroupMemberFactory groupMemberFactory)
+<span class="fc" id="L34">	{</span>
+<span class="fc" id="L35">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L36">		this.groupMemberFactory = requireNonNull(groupMemberFactory);</span>
+<span class="fc" id="L37">	}</span>
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	public List&lt;UserViewData&gt; getAllUsers()
+	{
+<span class="fc" id="L44">		Stream&lt;User&gt; users = dataService.findAll(USER, User.class);</span>
+<span class="fc" id="L45">		return this.parseToMolgenisUserViewData(users);</span>
+	}
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	public void setActivationUser(String userId, Boolean active)
+	{
+<span class="nc" id="L53">		User mu = this.dataService.findOneById(USER, userId, User.class);</span>
+<span class="nc" id="L54">		mu.setActive(active);</span>
+<span class="nc" id="L55">		this.dataService.update(USER, mu);</span>
+<span class="nc" id="L56">	}</span>
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	public void setActivationGroup(String groupId, Boolean active)
+	{
+<span class="nc" id="L63">		Group mg = this.dataService.findOneById(GROUP, groupId, Group.class);</span>
+<span class="nc" id="L64">		mg.setActive(active);</span>
+<span class="nc" id="L65">		this.dataService.update(GROUP, mg);</span>
+<span class="nc" id="L66">	}</span>
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	public List&lt;Group&gt; getAllGroups()
+	{
+<span class="fc" id="L73">		return dataService.findAll(GROUP, Group.class).collect(toList());</span>
+	}
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	public List&lt;Group&gt; getGroupsWhereUserIsMember(String userId)
+	{
+<span class="fc" id="L81">		return this.getMolgenisGroups(userId);</span>
+	}
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	public List&lt;UserViewData&gt; getUsersMemberInGroup(String groupId)
+	{
+<span class="fc" id="L89">		return this.parseToMolgenisUserViewData(this.getMolgenisUsers(groupId).stream());</span>
+	}
+
+	private List&lt;Group&gt; getMolgenisGroups(String userId)
+	{
+<span class="fc" id="L94">		final User user = dataService.findOneById(USER, userId, User.class);</span>
+
+<span class="pc bpc" id="L96" title="1 of 2 branches missed.">		if (user == null)</span>
+		{
+<span class="nc" id="L98">			throw new RuntimeException(&quot;unknown user id [&quot; + userId + &quot;]&quot;);</span>
+		}
+
+<span class="fc" id="L101">		final List&lt;GroupMember&gt; groupMembers = dataService.findAll(GROUP_MEMBER,</span>
+<span class="fc" id="L102">				new QueryImpl&lt;GroupMember&gt;().eq(GroupMemberMetaData.USER, user), GroupMember.class).collect(toList());</span>
+
+<span class="fc" id="L104">		return this.getAllMolgenisGroupsFromGroupMembers(groupMembers);</span>
+	}
+
+	private List&lt;User&gt; getMolgenisUsers(final String groupId)
+	{
+<span class="fc" id="L109">		final Group group = dataService.findOneById(GROUP, groupId, Group.class);</span>
+
+<span class="pc bpc" id="L111" title="1 of 2 branches missed.">		if (group == null)</span>
+		{
+<span class="nc" id="L113">			throw new RuntimeException(&quot;unknown user id [&quot; + groupId + &quot;]&quot;);</span>
+		}
+
+<span class="fc" id="L116">		final List&lt;GroupMember&gt; groupMembers = dataService.findAll(GROUP_MEMBER,</span>
+<span class="fc" id="L117">				new QueryImpl&lt;GroupMember&gt;().eq(GroupMemberMetaData.GROUP, group), GroupMember.class).collect(toList());</span>
+
+<span class="fc" id="L119">		return this.getAllMolgenisUsersFromGroupMembers(groupMembers);</span>
+	}
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	public List&lt;Group&gt; getGroupsWhereUserIsNotMember(final String userId)
+	{
+<span class="fc" id="L127">		final User user = dataService.findOneById(USER, userId, User.class);</span>
+
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">		if (user == null)</span>
+		{
+<span class="nc" id="L131">			throw new RuntimeException(&quot;unknown user id [&quot; + userId + &quot;]&quot;);</span>
+		}
+
+<span class="fc" id="L134">		final List&lt;GroupMember&gt; groupMembers = dataService.findAll(GROUP_MEMBER,</span>
+<span class="fc" id="L135">				new QueryImpl&lt;GroupMember&gt;().eq(GroupMemberMetaData.USER, user), GroupMember.class).collect(toList());</span>
+
+<span class="fc" id="L137">		final List&lt;Group&gt; groupsWhereUserIsMember = this.getAllMolgenisGroupsFromGroupMembers(groupMembers);</span>
+
+<span class="fc" id="L139">		Predicate&lt;Group&gt; predicate = new PredicateNotInMolgenisGroupList(groupsWhereUserIsMember);</span>
+<span class="fc" id="L140">		List&lt;Group&gt; groups = this.getAllGroups();</span>
+
+<span class="fc" id="L142">		return Lists.newArrayList(Iterables.filter(groups, predicate));</span>
+	}
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	public void addUserToGroup(String molgenisGroupId, String molgenisUserId)
+	{
+<span class="fc" id="L150">		Group group = dataService.findOneById(GROUP, molgenisGroupId, Group.class);</span>
+<span class="fc" id="L151">		User user = dataService.findOneById(USER, molgenisUserId, User.class);</span>
+
+<span class="fc" id="L153">		GroupMember groupMember = groupMemberFactory.create();</span>
+<span class="fc" id="L154">		groupMember.setGroup(group);</span>
+<span class="fc" id="L155">		groupMember.setUser(user);</span>
+<span class="fc" id="L156">		dataService.add(GROUP_MEMBER, groupMember);</span>
+<span class="fc" id="L157">	}</span>
+
+	@Override
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	public void removeUserFromGroup(String molgenisGroupId, String molgenisUserId)
+	{
+<span class="fc" id="L164">		final User user = dataService.findOneById(USER, molgenisUserId, User.class);</span>
+
+<span class="pc bpc" id="L166" title="1 of 2 branches missed.">		if (user == null)</span>
+		{
+<span class="nc" id="L168">			throw new RuntimeException(&quot;unknown user id [&quot; + molgenisUserId + &quot;]&quot;);</span>
+		}
+
+<span class="fc" id="L171">		final Group group = dataService.findOneById(GROUP, molgenisGroupId, Group.class);</span>
+
+<span class="pc bpc" id="L173" title="1 of 2 branches missed.">		if (group == null)</span>
+		{
+<span class="nc" id="L175">			throw new RuntimeException(&quot;unknown user id [&quot; + molgenisGroupId + &quot;]&quot;);</span>
+		}
+
+<span class="fc" id="L178">		Query&lt;GroupMember&gt; q = new QueryImpl&lt;GroupMember&gt;().eq(GroupMemberMetaData.USER, user)</span>
+<span class="fc" id="L179">														   .and()</span>
+<span class="fc" id="L180">														   .eq(GroupMemberMetaData.GROUP, group);</span>
+
+<span class="fc" id="L182">		final List&lt;GroupMember&gt; groupMembers = dataService.findAll(GROUP_MEMBER, q, GroupMember.class)</span>
+<span class="fc" id="L183">														  .collect(toList());</span>
+
+<span class="pc bpc" id="L185" title="2 of 4 branches missed.">		if (null == groupMembers || groupMembers.isEmpty())</span>
+		{
+<span class="nc" id="L187">			throw new RuntimeException(&quot;molgenis group member is not found&quot;);</span>
+		}
+
+<span class="pc bpc" id="L190" title="1 of 2 branches missed.">		if (groupMembers.size() &gt; 1)</span>
+		{
+<span class="nc" id="L192">			throw new RuntimeException(&quot;there are more than one group member found&quot;);</span>
+		}
+
+<span class="fc" id="L195">		GroupMember groupMember = groupMembers.get(0);</span>
+<span class="fc" id="L196">		dataService.delete(GROUP_MEMBER, groupMember);</span>
+<span class="fc" id="L197">	}</span>
+
+	/**
+	 * Get All the molgenis groups from the list of molgenis group members
+	 *
+	 * @param groupMembers A list of MolgenisGroupMember instances
+	 * @return List&lt;MolgenisGroup&gt;
+	 */
+	private List&lt;Group&gt; getAllMolgenisGroupsFromGroupMembers(final List&lt;GroupMember&gt; groupMembers)
+	{
+<span class="fc" id="L207">		List&lt;Group&gt; groups = new ArrayList&lt;&gt;();</span>
+
+<span class="pc bpc" id="L209" title="2 of 4 branches missed.">		if (groupMembers != null &amp;&amp; !groupMembers.isEmpty())</span>
+		{
+<span class="fc" id="L211">			groups = Lists.transform(groupMembers, GroupMember::getGroup);</span>
+		}
+
+<span class="fc" id="L214">		return groups;</span>
+	}
+
+	/**
+	 * Get All the molgenis users from the list of molgenis group members
+	 *
+	 * @param groupMembers A list of MolgenisGroupMember instances
+	 * @return List&lt;MolgenisUser&gt;
+	 */
+	private List&lt;User&gt; getAllMolgenisUsersFromGroupMembers(final List&lt;GroupMember&gt; groupMembers)
+	{
+<span class="fc" id="L225">		List&lt;User&gt; user = new ArrayList&lt;&gt;();</span>
+
+<span class="pc bpc" id="L227" title="2 of 4 branches missed.">		if (groupMembers != null &amp;&amp; !groupMembers.isEmpty())</span>
+		{
+<span class="fc" id="L229">			user = Lists.transform(groupMembers, GroupMember::getUser);</span>
+		}
+
+<span class="fc" id="L232">		return user;</span>
+	}
+
+	private static class PredicateNotInMolgenisGroupList implements Predicate&lt;Group&gt;
+	{
+		final List&lt;Group&gt; toFilterItemList;
+
+		PredicateNotInMolgenisGroupList(List&lt;Group&gt; notInList)
+<span class="fc" id="L240">		{</span>
+<span class="fc" id="L241">			this.toFilterItemList = notInList;</span>
+<span class="fc" id="L242">		}</span>
+
+		@Override
+		public boolean apply(Group item)
+		{
+<span class="fc" id="L247">			Object id = item.getId();</span>
+<span class="fc bfc" id="L248" title="All 2 branches covered.">			for (Group toFilterItem : toFilterItemList)</span>
+			{
+<span class="fc bfc" id="L250" title="All 2 branches covered.">				if (toFilterItem.getId().equals(id)) return false;</span>
+<span class="fc" id="L251">			}</span>
+<span class="fc" id="L252">			return true;</span>
+		}
+
+	}
+
+	private List&lt;UserViewData&gt; parseToMolgenisUserViewData(Stream&lt;User&gt; users)
+	{
+<span class="fc" id="L259">		return users.map(user -&gt; new UserViewData(user, getMolgenisGroups(user.getId()))).collect(toList());</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

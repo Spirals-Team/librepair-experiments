@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValidationResultWizardPage.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">core-ui</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.core.ui.data.importer.wizard</a> &gt; <span class="el_source">ValidationResultWizardPage.java</span></div><h1>ValidationResultWizardPage.java</h1><pre class="source lang-java linenums">package org.molgenis.core.ui.data.importer.wizard;
+
+import com.google.common.collect.Lists;
+import org.molgenis.core.ui.wizard.AbstractWizardPage;
+import org.molgenis.core.ui.wizard.Wizard;
+import org.molgenis.data.DataService;
+import org.molgenis.data.DatabaseAction;
+import org.molgenis.data.RepositoryCollection;
+import org.molgenis.data.file.FileRepositoryCollectionFactory;
+import org.molgenis.data.importer.*;
+import org.molgenis.data.security.auth.Group;
+import org.molgenis.data.security.user.UserService;
+import org.molgenis.security.core.runas.RunAsSystemAspect;
+import org.molgenis.security.core.utils.SecurityUtils;
+import org.molgenis.security.user.UserAccountService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.BindingResult;
+
+import javax.servlet.http.HttpServletRequest;
+import java.io.IOException;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.security.auth.GroupMetaData.GROUP;
+
+@Component
+<span class="nc" id="L33">public class ValidationResultWizardPage extends AbstractWizardPage</span>
+{
+	private static final long serialVersionUID = 1L;
+<span class="fc" id="L36">	private static final Logger LOG = LoggerFactory.getLogger(ValidationResultWizardPage.class);</span>
+
+<span class="nc" id="L38">	private final ExecutorService asyncImportJobs = Executors.newCachedThreadPool();</span>
+
+	@Autowired
+	private ImportServiceFactory importServiceFactory;
+
+	@Autowired
+	private FileRepositoryCollectionFactory fileRepositoryCollectionFactory;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private ImportRunService importRunService;
+
+	@Autowired
+	UserAccountService userAccountService;
+
+	@Autowired
+	UserService userService;
+
+	private List&lt;Group&gt; groups;
+
+	@Override
+	public String getTitle()
+	{
+<span class="nc" id="L63">		return &quot;Validation&quot;;</span>
+	}
+
+	@Override
+	public String handleRequest(HttpServletRequest request, BindingResult result, Wizard wizard)
+	{
+<span class="nc" id="L69">		ImportWizardUtil.validateImportWizard(wizard);</span>
+<span class="nc" id="L70">		ImportWizard importWizard = (ImportWizard) wizard;</span>
+<span class="nc" id="L71">		String entityImportOption = importWizard.getEntityImportOption();</span>
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">		if (entityImportOption != null)</span>
+		{
+			try
+			{
+				// convert input to database action
+<span class="nc" id="L78">				DatabaseAction entityDbAction = ImportWizardUtil.toDatabaseAction(entityImportOption);</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">				if (entityDbAction == null) throw new IOException(&quot;unknown database action: &quot; + entityImportOption);</span>
+
+<span class="nc" id="L81">				RepositoryCollection repositoryCollection = fileRepositoryCollectionFactory.createFileRepositoryCollection(</span>
+<span class="nc" id="L82">						importWizard.getFile());</span>
+<span class="nc" id="L83">				ImportService importService = importServiceFactory.getImportService(importWizard.getFile(),</span>
+						repositoryCollection);
+
+<span class="nc" id="L86">				synchronized (this)</span>
+				{
+<span class="nc" id="L88">					ImportRun importRun = importRunService.addImportRun(SecurityUtils.getCurrentUsername(), false);</span>
+<span class="nc" id="L89">					((ImportWizard) wizard).setImportRunId(importRun.getId());</span>
+
+<span class="nc" id="L91">					asyncImportJobs.execute(</span>
+<span class="nc" id="L92">							new ImportJob(importService, SecurityContextHolder.getContext(), repositoryCollection,</span>
+<span class="nc" id="L93">									entityDbAction, importRun.getId(), importRunService, request.getSession(),</span>
+<span class="nc" id="L94">									importWizard.getSelectedPackage()));</span>
+<span class="nc" id="L95">				}</span>
+
+			}
+<span class="nc" id="L98">			catch (RuntimeException | IOException e)</span>
+			{
+<span class="nc" id="L100">				ImportWizardUtil.handleException(e, importWizard, result, LOG, entityImportOption);</span>
+<span class="nc" id="L101">			}</span>
+
+		}
+
+		// Convert to list because it's less impossible use in FreeMarker
+<span class="nc bnc" id="L106" title="All 2 branches missed.">		if (!userAccountService.getCurrentUser().isSuperuser())</span>
+		{
+<span class="nc" id="L108">			String username = SecurityUtils.getCurrentUsername();</span>
+<span class="nc" id="L109">			groups = RunAsSystemAspect.runAsSystem(() -&gt; Lists.newArrayList(userService.getUserGroups(username)));</span>
+<span class="nc" id="L110">		}</span>
+		else
+		{
+<span class="nc" id="L113">			groups = dataService.findAll(GROUP, Group.class).collect(toList());</span>
+		}
+
+<span class="nc" id="L116">		((ImportWizard) wizard).setGroups(groups);</span>
+
+<span class="nc" id="L118">		return null;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

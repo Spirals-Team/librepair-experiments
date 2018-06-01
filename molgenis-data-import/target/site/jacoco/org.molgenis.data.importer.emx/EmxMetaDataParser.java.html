@@ -1,0 +1,1423 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EmxMetaDataParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-import</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.importer.emx</a> &gt; <span class="el_source">EmxMetaDataParser.java</span></div><h1>EmxMetaDataParser.java</h1><pre class="source lang-java linenums">package org.molgenis.data.importer.emx;
+
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.*;
+import org.molgenis.data.i18n.model.L10nString;
+import org.molgenis.data.i18n.model.L10nStringFactory;
+import org.molgenis.data.i18n.model.Language;
+import org.molgenis.data.i18n.model.LanguageFactory;
+import org.molgenis.data.importer.EntitiesValidationReport;
+import org.molgenis.data.importer.MetaDataParser;
+import org.molgenis.data.importer.MyEntitiesValidationReport;
+import org.molgenis.data.importer.ParsedMetaData;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.DefaultPackage;
+import org.molgenis.data.meta.EntityTypeDependencyResolver;
+import org.molgenis.data.meta.SystemEntityType;
+import org.molgenis.data.meta.model.*;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.data.util.EntityUtils;
+import org.molgenis.data.validation.meta.AttributeValidator;
+import org.molgenis.data.validation.meta.AttributeValidator.ValidationMode;
+import org.molgenis.data.validation.meta.EntityTypeValidator;
+import org.molgenis.data.validation.meta.TagValidator;
+import org.molgenis.i18n.LanguageService;
+
+import java.util.*;
+
+import static com.google.common.collect.ImmutableMap.builder;
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Maps.newHashMap;
+import static com.google.common.collect.Maps.newLinkedHashMap;
+import static java.lang.Boolean.FALSE;
+import static java.lang.Boolean.TRUE;
+import static java.lang.String.format;
+import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.DataConverter.toList;
+import static org.molgenis.data.file.model.FileMetaMetaData.FILE_META;
+import static org.molgenis.data.i18n.I18nUtils.getLanguageCode;
+import static org.molgenis.data.i18n.I18nUtils.isI18n;
+import static org.molgenis.data.i18n.model.L10nStringMetaData.L10N_STRING;
+import static org.molgenis.data.i18n.model.LanguageMetadata.LANGUAGE;
+import static org.molgenis.data.importer.MyEntitiesValidationReport.AttributeState.*;
+import static org.molgenis.data.meta.AttributeType.*;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.data.meta.model.Package.PACKAGE_SEPARATOR;
+import static org.molgenis.data.meta.model.TagMetadata.TAG;
+import static org.molgenis.data.support.AttributeUtils.isIdAttributeTypeAllowed;
+import static org.molgenis.data.support.EntityTypeUtils.isReferenceType;
+import static org.molgenis.data.support.EntityTypeUtils.isStringType;
+
+/**
+ * Parser for the EMX metadata. This class is stateless, but it passes state between methods using
+ * {@link IntermediateParseResults}.
+ */
+public class EmxMetaDataParser implements MetaDataParser
+{
+	// Table names in the emx file
+	static final String EMX_PACKAGES = &quot;packages&quot;;
+	static final String EMX_ENTITIES = &quot;entities&quot;;
+	static final String EMX_ATTRIBUTES = &quot;attributes&quot;;
+	static final String EMX_TAGS = &quot;tags&quot;;
+	static final String EMX_LANGUAGES = &quot;languages&quot;;
+	static final String EMX_I18NSTRINGS = &quot;i18nstrings&quot;;
+
+	// Column names in the package sheet
+	private static final String EMX_PACKAGE_NAME = &quot;name&quot;;
+	private static final String EMX_PACKAGE_DESCRIPTION = &quot;description&quot;;
+	private static final String EMX_PACKAGE_PARENT = &quot;parent&quot;;
+	private static final String EMX_PACKAGE_TAGS = &quot;tags&quot;;
+	private static final String EMX_PACKAGE_LABEL = &quot;label&quot;;
+
+	// Column names in the entities sheet
+	private static final String EMX_ENTITIES_NAME = &quot;name&quot;;
+	private static final String EMX_ENTITIES_PACKAGE = &quot;package&quot;;
+	private static final String EMX_ENTITIES_LABEL = &quot;label&quot;;
+	private static final String EMX_ENTITIES_DESCRIPTION = &quot;description&quot;;
+	private static final String EMX_ENTITIES_ABSTRACT = &quot;abstract&quot;;
+	private static final String EMX_ENTITIES_EXTENDS = &quot;extends&quot;;
+	private static final String EMX_ENTITIES_BACKEND = &quot;backend&quot;;
+	private static final String EMX_ENTITIES_TAGS = &quot;tags&quot;;
+
+	// Column names in the attributes sheet
+	private static final String EMX_ATTRIBUTES_NAME = &quot;name&quot;;
+	private static final String EMX_ATTRIBUTES_ENTITY = &quot;entity&quot;;
+	private static final String EMX_ATTRIBUTES_REF_ENTITY = &quot;refEntity&quot;;
+	private static final String EMX_ATTRIBUTES_MAPPED_BY = &quot;mappedBy&quot;;
+	private static final String EMX_ATTRIBUTES_DEFAULT_VALUE = &quot;defaultValue&quot;;
+	private static final String EMX_ATTRIBUTES_ID_ATTRIBUTE = &quot;idAttribute&quot;;
+	private static final String EMX_ATTRIBUTES_LOOKUP_ATTRIBUTE = &quot;lookupAttribute&quot;;
+	private static final String EMX_ATTRIBUTES_LABEL_ATTRIBUTE = &quot;labelAttribute&quot;;
+	private static final String EMX_ATTRIBUTES_PART_OF_ATTRIBUTE = &quot;partOfAttribute&quot;;
+	private static final String EMX_ATTRIBUTES_AGGREGATEABLE = &quot;aggregateable&quot;;
+	private static final String EMX_ATTRIBUTES_DATA_TYPE = &quot;dataType&quot;;
+	private static final String EMX_ATTRIBUTES_EXPRESSION = &quot;expression&quot;;
+	private static final String EMX_ATTRIBUTES_NILLABLE = &quot;nillable&quot;;
+	private static final String EMX_ATTRIBUTES_VISIBLE = &quot;visible&quot;;
+	private static final String EMX_ATTRIBUTES_LABEL = &quot;label&quot;;
+	private static final String EMX_ATTRIBUTES_DESCRIPTION = &quot;description&quot;;
+	private static final String EMX_ATTRIBUTES_ENUM_OPTIONS = &quot;enumOptions&quot;;
+	private static final String EMX_ATTRIBUTES_RANGE_MIN = &quot;rangeMin&quot;;
+	private static final String EMX_ATTRIBUTES_RANGE_MAX = &quot;rangeMax&quot;;
+	private static final String EMX_ATTRIBUTES_READ_ONLY = &quot;readOnly&quot;;
+	private static final String EMX_ATTRIBUTES_UNIQUE = &quot;unique&quot;;
+	private static final String EMX_ATTRIBUTES_VALIDATION_EXPRESSION = &quot;validationExpression&quot;;
+	private static final String EMX_ATTRIBUTES_TAGS = &quot;tags&quot;;
+
+	// NOT YET SUPPORTED
+	// private static final String EMX_ATTRIBUTES_AUTO = &quot;auto&quot;;
+	// private static final String EMX_ATTRIBUTES_VISIBLE_EXPRESSION = &quot;visibleExpression&quot;;
+
+	// Column names in the tag sheet
+	static final String EMX_TAG_IDENTIFIER = &quot;identifier&quot;;
+	static final String EMX_TAG_OBJECT_IRI = &quot;objectIRI&quot;;
+	static final String EMX_TAG_LABEL = &quot;label&quot;;
+	static final String EMX_TAG_RELATION_LABEL = &quot;relationLabel&quot;;
+	static final String EMX_TAG_CODE_SYSTEM = &quot;codeSystem&quot;;
+	static final String EMX_TAG_RELATION_IRI = &quot;relationIRI&quot;;
+
+	// Column names in the language sheet
+	private static final String EMX_LANGUAGE_CODE = &quot;code&quot;;
+	private static final String EMX_LANGUAGE_NAME = &quot;name&quot;;
+
+	// Column names in the i18nstring sheet
+	private static final String EMX_I18N_STRING_MSGID = &quot;msgid&quot;;
+	private static final String EMX_I18N_STRING_DESCRIPTION = &quot;description&quot;;
+	private static final String EMX_I18N_STRING_NAMESPACE = &quot;namespace&quot;;
+	private static final String DEFAULT_NAMESPACE = &quot;default&quot;;
+
+<span class="nc" id="L134">	private static final Map&lt;String, String&gt; EMX_NAME_TO_REPO_NAME_MAP = newHashMap();</span>
+
+	static
+	{
+<span class="nc" id="L138">		EMX_NAME_TO_REPO_NAME_MAP.put(EMX_ENTITIES, ENTITY_TYPE_META_DATA);</span>
+<span class="nc" id="L139">		EMX_NAME_TO_REPO_NAME_MAP.put(EMX_PACKAGES, PackageMetadata.PACKAGE);</span>
+<span class="nc" id="L140">		EMX_NAME_TO_REPO_NAME_MAP.put(EMX_TAGS, TAG);</span>
+<span class="nc" id="L141">		EMX_NAME_TO_REPO_NAME_MAP.put(EMX_ATTRIBUTES, ATTRIBUTE_META_DATA);</span>
+<span class="nc" id="L142">		EMX_NAME_TO_REPO_NAME_MAP.put(EMX_LANGUAGES, LANGUAGE);</span>
+<span class="nc" id="L143">		EMX_NAME_TO_REPO_NAME_MAP.put(EMX_I18NSTRINGS, L10N_STRING);</span>
+	}
+
+<span class="nc" id="L146">	private static final List&lt;String&gt; EMX_ENTITIES_ALLOWED_ATTRS = Arrays.asList(EMX_ENTITIES_NAME.toLowerCase(),</span>
+<span class="nc" id="L147">			EMX_ENTITIES_PACKAGE.toLowerCase(), EMX_ENTITIES_LABEL.toLowerCase(), EMX_ENTITIES_DESCRIPTION,</span>
+<span class="nc" id="L148">			EMX_ENTITIES_ABSTRACT.toLowerCase(), EMX_ENTITIES_EXTENDS.toLowerCase(), EMX_ENTITIES_BACKEND.toLowerCase(),</span>
+<span class="nc" id="L149">			EMX_ENTITIES_TAGS.toLowerCase());</span>
+
+<span class="nc" id="L151">	private static final List&lt;String&gt; SUPPORTED_ATTRIBUTE_ATTRIBUTES = Arrays.asList(EMX_ATTRIBUTES_AGGREGATEABLE,</span>
+			EMX_ATTRIBUTES_DATA_TYPE, EMX_ATTRIBUTES_DESCRIPTION, EMX_ATTRIBUTES_ENTITY, EMX_ATTRIBUTES_ENUM_OPTIONS,
+			EMX_ATTRIBUTES_ID_ATTRIBUTE, EMX_ATTRIBUTES_LABEL, EMX_ATTRIBUTES_LABEL_ATTRIBUTE,
+			EMX_ATTRIBUTES_LOOKUP_ATTRIBUTE, EMX_ATTRIBUTES_NAME, EMX_ATTRIBUTES_NILLABLE,
+			EMX_ATTRIBUTES_PART_OF_ATTRIBUTE, EMX_ATTRIBUTES_RANGE_MAX, EMX_ATTRIBUTES_RANGE_MIN,
+			EMX_ATTRIBUTES_READ_ONLY, EMX_ATTRIBUTES_REF_ENTITY, EMX_ATTRIBUTES_MAPPED_BY, EMX_ATTRIBUTES_VISIBLE,
+			EMX_ATTRIBUTES_UNIQUE, EMX_ATTRIBUTES_EXPRESSION, EMX_ATTRIBUTES_VALIDATION_EXPRESSION,
+			EMX_ATTRIBUTES_DEFAULT_VALUE, EMX_ATTRIBUTES_TAGS);
+
+	private static final String AUTO = &quot;auto&quot;;
+
+	private final DataService dataService;
+	private final PackageFactory packageFactory;
+	private final AttributeFactory attrMetaFactory;
+	private final EntityTypeFactory entityTypeFactory;
+	private final TagFactory tagFactory;
+	private final LanguageFactory languageFactory;
+	private final L10nStringFactory l10nStringFactory;
+	private final EntityTypeValidator entityTypeValidator;
+	private final AttributeValidator attributeValidator;
+	private final TagValidator tagValidator;
+	private final EntityTypeDependencyResolver entityTypeDependencyResolver;
+	private final DefaultPackage defaultPackage;
+
+	public EmxMetaDataParser(PackageFactory packageFactory, AttributeFactory attrMetaFactory,
+			EntityTypeFactory entityTypeFactory, EntityTypeDependencyResolver entityTypeDependencyResolver)
+<span class="nc" id="L177">	{</span>
+<span class="nc" id="L178">		this.dataService = null;</span>
+<span class="nc" id="L179">		this.packageFactory = requireNonNull(packageFactory);</span>
+<span class="nc" id="L180">		this.attrMetaFactory = requireNonNull(attrMetaFactory);</span>
+<span class="nc" id="L181">		this.entityTypeFactory = requireNonNull(entityTypeFactory);</span>
+<span class="nc" id="L182">		this.tagFactory = null;</span>
+<span class="nc" id="L183">		this.languageFactory = null;</span>
+<span class="nc" id="L184">		this.l10nStringFactory = null;</span>
+<span class="nc" id="L185">		this.entityTypeValidator = null;</span>
+<span class="nc" id="L186">		this.attributeValidator = null;</span>
+<span class="nc" id="L187">		this.tagValidator = null;</span>
+<span class="nc" id="L188">		this.entityTypeDependencyResolver = requireNonNull(entityTypeDependencyResolver);</span>
+<span class="nc" id="L189">		this.defaultPackage = null;</span>
+<span class="nc" id="L190">	}</span>
+
+	public EmxMetaDataParser(DataService dataService, PackageFactory packageFactory, AttributeFactory attrMetaFactory,
+			EntityTypeFactory entityTypeFactory, TagFactory tagFactory, LanguageFactory languageFactory,
+			L10nStringFactory l10nStringFactory, EntityTypeValidator entityTypeValidator,
+			AttributeValidator attributeValidator, TagValidator tagValidator,
+			EntityTypeDependencyResolver entityTypeDependencyResolver, DefaultPackage defaultPackage)
+<span class="nc" id="L197">	{</span>
+<span class="nc" id="L198">		this.dataService = requireNonNull(dataService);</span>
+<span class="nc" id="L199">		this.packageFactory = requireNonNull(packageFactory);</span>
+<span class="nc" id="L200">		this.attrMetaFactory = requireNonNull(attrMetaFactory);</span>
+<span class="nc" id="L201">		this.entityTypeFactory = requireNonNull(entityTypeFactory);</span>
+<span class="nc" id="L202">		this.tagFactory = requireNonNull(tagFactory);</span>
+<span class="nc" id="L203">		this.languageFactory = requireNonNull(languageFactory);</span>
+<span class="nc" id="L204">		this.l10nStringFactory = requireNonNull(l10nStringFactory);</span>
+<span class="nc" id="L205">		this.entityTypeValidator = requireNonNull(entityTypeValidator);</span>
+<span class="nc" id="L206">		this.attributeValidator = requireNonNull(attributeValidator);</span>
+<span class="nc" id="L207">		this.tagValidator = requireNonNull(tagValidator);</span>
+<span class="nc" id="L208">		this.entityTypeDependencyResolver = requireNonNull(entityTypeDependencyResolver);</span>
+<span class="nc" id="L209">		this.defaultPackage = requireNonNull(defaultPackage);</span>
+<span class="nc" id="L210">	}</span>
+
+	@Override
+	//FIXME The source is parsed twice!!! Once by determineImportableEntities and once by doImport
+	public ParsedMetaData parse(final RepositoryCollection source, String packageId)
+	{
+<span class="nc bnc" id="L216" title="All 2 branches missed.">		if (source.getRepository(EMX_ATTRIBUTES) != null)</span>
+		{
+<span class="nc" id="L218">			IntermediateParseResults intermediateResults = getEntityTypeFromSource(source);</span>
+			List&lt;EntityType&gt; entities;
+<span class="nc bnc" id="L220" title="All 2 branches missed.">			if (packageId == null)</span>
+			{
+<span class="nc" id="L222">				entities = intermediateResults.getEntities();</span>
+			}
+			else
+			{
+<span class="nc" id="L226">				entities = putEntitiesInDefaultPackage(intermediateResults, packageId);</span>
+			}
+
+<span class="nc" id="L229">			return new ParsedMetaData(entityTypeDependencyResolver.resolve(entities), intermediateResults.getPackages(),</span>
+<span class="nc" id="L230">					intermediateResults.getTags(), intermediateResults.getLanguages(),</span>
+<span class="nc" id="L231">					intermediateResults.getL10nStrings());</span>
+		}
+		else
+		{
+<span class="nc bnc" id="L235" title="All 2 branches missed.">			if (dataService != null)</span>
+			{
+<span class="nc" id="L237">				List&lt;EntityType&gt; metadataList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">				for (String emxName : source.getEntityTypeIds())</span>
+				{
+<span class="nc" id="L240">					String repoName = EMX_NAME_TO_REPO_NAME_MAP.get(emxName);</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">					if (repoName == null) repoName = emxName;</span>
+<span class="nc" id="L242">					metadataList.add(dataService.getRepository(repoName).getEntityType());</span>
+<span class="nc" id="L243">				}</span>
+<span class="nc" id="L244">				IntermediateParseResults intermediateResults = parseTagsSheet(source.getRepository(EMX_TAGS));</span>
+<span class="nc" id="L245">				parsePackagesSheet(source.getRepository(EMX_PACKAGES), intermediateResults);</span>
+
+<span class="nc bnc" id="L247" title="All 2 branches missed.">				if (source.hasRepository(EMX_LANGUAGES))</span>
+				{
+<span class="nc" id="L249">					parseLanguages(source.getRepository(EMX_LANGUAGES), intermediateResults);</span>
+				}
+
+<span class="nc bnc" id="L252" title="All 2 branches missed.">				if (source.hasRepository(EMX_I18NSTRINGS))</span>
+				{
+<span class="nc" id="L254">					parseI18nStrings(source.getRepository(EMX_I18NSTRINGS), intermediateResults);</span>
+				}
+
+<span class="nc" id="L257">				return new ParsedMetaData(entityTypeDependencyResolver.resolve(metadataList),</span>
+<span class="nc" id="L258">						intermediateResults.getPackages(), intermediateResults.getTags(),</span>
+<span class="nc" id="L259">						intermediateResults.getLanguages(), intermediateResults.getL10nStrings());</span>
+			}
+			else
+			{
+<span class="nc" id="L263">				throw new UnsupportedOperationException();</span>
+			}
+		}
+	}
+
+	@Override
+	public EntitiesValidationReport validate(RepositoryCollection source)
+	{
+<span class="nc" id="L271">		MyEntitiesValidationReport report = new MyEntitiesValidationReport();</span>
+<span class="nc" id="L272">		Map&lt;String, EntityType&gt; metaDataMap = getEntityTypeMap(dataService, source);</span>
+<span class="nc" id="L273">		return buildValidationReport(source, report, metaDataMap);</span>
+	}
+
+	private ImmutableMap&lt;String, EntityType&gt; getEntityTypeMap(DataService dataService, RepositoryCollection source)
+	{
+		// If there is no attribute sheet, we assume the entity is already known in MOLGENIS
+<span class="nc" id="L279">		Repository attributeSourceRepository = source.getRepository(EMX_ATTRIBUTES);</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">		if (attributeSourceRepository != null) return getEntityTypeFromSource(source).getEntityMap();</span>
+<span class="nc" id="L281">		else return getEntityTypeFromDataService(dataService, source.getEntityTypeIds());</span>
+	}
+
+	private EntitiesValidationReport buildValidationReport(RepositoryCollection source,
+			MyEntitiesValidationReport report, Map&lt;String, EntityType&gt; metaDataMap)
+	{
+<span class="nc" id="L287">		metaDataMap.values().forEach(entityTypeValidator::validate);</span>
+<span class="nc" id="L288">		metaDataMap.values().stream().map(EntityType::getAllAttributes).forEach(attributes -&gt; attributes.forEach(attr -&gt;</span>
+		{
+<span class="nc" id="L290">			attributeValidator.validate(attr, ValidationMode.ADD_SKIP_ENTITY_VALIDATION);</span>
+<span class="nc" id="L291">		}));</span>
+
+		// validate package/entity/attribute tags
+<span class="nc" id="L294">		metaDataMap.values()</span>
+<span class="nc" id="L295">				   .stream()</span>
+<span class="nc" id="L296">				   .map(EntityType::getPackage)</span>
+<span class="nc" id="L297">				   .filter(Objects::nonNull)</span>
+<span class="nc" id="L298">				   .forEach(package_ -&gt; package_.getTags().forEach(tagValidator::validate));</span>
+<span class="nc" id="L299">		metaDataMap.values().forEach(entityType -&gt; entityType.getTags().forEach(tagValidator::validate));</span>
+<span class="nc" id="L300">		metaDataMap.values().stream().map(EntityType::getAllAttributes).forEach(attributes -&gt; attributes.forEach(attr -&gt;</span>
+		{
+<span class="nc" id="L302">			attr.getTags().forEach(tagValidator::validate);</span>
+<span class="nc" id="L303">		}));</span>
+
+<span class="nc" id="L305">		report = generateEntityValidationReport(source, report, metaDataMap);</span>
+
+		// Add entities without data
+<span class="nc bnc" id="L308" title="All 2 branches missed.">		for (String entityTypeId : metaDataMap.keySet())</span>
+		{
+<span class="nc bnc" id="L310" title="All 2 branches missed.">			if (!report.getSheetsImportable().containsKey(entityTypeId)) report.addEntity(entityTypeId, true);</span>
+<span class="nc" id="L311">		}</span>
+<span class="nc" id="L312">		return report;</span>
+	}
+
+	/**
+	 * Parses metadata from a collection of repositories.
+	 *
+	 * @param source the {@link RepositoryCollection} containing the metadata to parse
+	 * @return {@link IntermediateParseResults} containing the parsed metadata
+	 */
+	private IntermediateParseResults getEntityTypeFromSource(RepositoryCollection source)
+	{
+		// TODO: this task is actually a 'merge' instead of 'import'
+		// so we need to consider both new metadata and existing ...
+<span class="nc" id="L325">		IntermediateParseResults intermediateResults = parseTagsSheet(source.getRepository(EMX_TAGS));</span>
+
+<span class="nc" id="L327">		parsePackagesSheet(source.getRepository(EMX_PACKAGES), intermediateResults);</span>
+<span class="nc" id="L328">		parseEntitiesSheet(source.getRepository(EMX_ENTITIES), intermediateResults);</span>
+<span class="nc" id="L329">		parseAttributesSheet(source.getRepository(EMX_ATTRIBUTES), intermediateResults);</span>
+<span class="nc" id="L330">		reiterateToMapRefEntity(source.getRepository(EMX_ATTRIBUTES), intermediateResults);</span>
+
+		// languages tab
+<span class="nc bnc" id="L333" title="All 2 branches missed.">		if (source.hasRepository(EMX_LANGUAGES))</span>
+<span class="nc" id="L334">			parseLanguages(source.getRepository(EMX_LANGUAGES), intermediateResults);</span>
+
+		// i18nstrings tab
+<span class="nc bnc" id="L337" title="All 2 branches missed.">		if (source.hasRepository(EMX_I18NSTRINGS))</span>
+<span class="nc" id="L338">			parseI18nStrings(source.getRepository(EMX_I18NSTRINGS), intermediateResults);</span>
+
+<span class="nc" id="L340">		postProcessMetadata(intermediateResults);</span>
+
+<span class="nc" id="L342">		return intermediateResults;</span>
+	}
+
+	/**
+	 * Post process metadata:
+	 * - Select label attributes that are not defined in EMX
+	 * - Select lookup attributes that are not defined in EMX
+	 *
+	 * @param intermediateResults intermediate parse results
+	 */
+	private static void postProcessMetadata(IntermediateParseResults intermediateResults)
+	{
+<span class="nc" id="L354">		intermediateResults.getEntities().forEach(entityType -&gt;</span>
+		{
+			// in case no label attribute was defined:
+			// try to set own id attribute or another own attribute as label attribute
+<span class="nc bnc" id="L358" title="All 2 branches missed.">			if (entityType.getLabelAttribute() == null)</span>
+			{
+<span class="nc" id="L360">				Attribute ownIdAttr = entityType.getOwnIdAttribute();</span>
+<span class="nc bnc" id="L361" title="All 4 branches missed.">				if (ownIdAttr != null &amp;&amp; ownIdAttr.isVisible())</span>
+				{
+<span class="nc" id="L363">					ownIdAttr.setLabelAttribute(true);</span>
+				}
+				else
+				{
+					// select the first required visible owned attribute as label attribute
+<span class="nc bnc" id="L368" title="All 2 branches missed.">					for (Attribute ownAttr : entityType.getOwnAtomicAttributes())</span>
+					{
+<span class="nc bnc" id="L370" title="All 6 branches missed.">						if (!ownAttr.isNillable() &amp;&amp; ownAttr.isVisible() &amp;&amp; !EntityTypeUtils.isReferenceType(ownAttr))</span>
+						{
+<span class="nc" id="L372">							ownAttr.setLabelAttribute(true);</span>
+<span class="nc" id="L373">							break;</span>
+						}
+<span class="nc" id="L375">					}</span>
+				}
+			}
+
+			// in case no lookup attributes were defined:
+			// try to set own id attribute and own label attribute as lookup attributes
+<span class="nc bnc" id="L381" title="All 2 branches missed.">			if (Iterables.size(entityType.getLookupAttributes()) == 0)</span>
+			{
+<span class="nc" id="L383">				int lookupAttrIdx = 0;</span>
+
+<span class="nc" id="L385">				Attribute ownIdAttr = entityType.getOwnIdAttribute();</span>
+<span class="nc bnc" id="L386" title="All 4 branches missed.">				if (ownIdAttr != null &amp;&amp; ownIdAttr.isVisible())</span>
+				{
+<span class="nc" id="L388">					ownIdAttr.setLookupAttributeIndex(lookupAttrIdx++);</span>
+				}
+
+<span class="nc" id="L391">				Attribute ownLabelAttr = entityType.getOwnLabelAttribute();</span>
+<span class="nc bnc" id="L392" title="All 2 branches missed.">				if (ownLabelAttr != null)</span>
+				{
+<span class="nc bnc" id="L394" title="All 4 branches missed.">					if (ownIdAttr == null || !ownIdAttr.getName().equals(ownLabelAttr.getName()))</span>
+					{
+<span class="nc" id="L396">						ownLabelAttr.setLookupAttributeIndex(lookupAttrIdx);</span>
+					}
+				}
+			}
+<span class="nc" id="L400">		});</span>
+<span class="nc" id="L401">	}</span>
+
+	/**
+	 * Parses all tags defined in the tags repository.
+	 *
+	 * @param tagRepository the {@link Repository} that contains the tags entity
+	 * @return Map mapping tag Identifier to tag {@link Entity}, will be empty if no tags repository was found
+	 */
+	private IntermediateParseResults parseTagsSheet(Repository&lt;Entity&gt; tagRepository)
+	{
+<span class="nc" id="L411">		IntermediateParseResults intermediateParseResults = new IntermediateParseResults(entityTypeFactory,</span>
+				defaultPackage);
+<span class="nc bnc" id="L413" title="All 2 branches missed.">		if (tagRepository != null)</span>
+		{
+<span class="nc bnc" id="L415" title="All 2 branches missed.">			for (Entity tagEntity : tagRepository)</span>
+			{
+<span class="nc" id="L417">				String id = tagEntity.getString(EMX_TAG_IDENTIFIER);</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">				if (id != null)</span>
+				{
+<span class="nc" id="L420">					intermediateParseResults.addTag(id, entityToTag(id, tagEntity));</span>
+				}
+<span class="nc" id="L422">			}</span>
+		}
+<span class="nc" id="L424">		return intermediateParseResults;</span>
+	}
+
+	/**
+	 * Parses the packages sheet
+	 *
+	 * @param repo                {@link Repository} for the packages
+	 * @param intermediateResults {@link IntermediateParseResults} containing the parsed tag entities
+	 */
+	private void parsePackagesSheet(Repository&lt;Entity&gt; repo, IntermediateParseResults intermediateResults)
+	{
+<span class="nc bnc" id="L435" title="All 2 branches missed.">		if (repo == null) return;</span>
+
+		// Collect packages
+<span class="nc" id="L438">		int rowIndex = 1;</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">		for (Entity packageEntity : resolvePackages(repo))</span>
+		{
+<span class="nc" id="L441">			rowIndex++;</span>
+
+			// Package name is required
+<span class="nc" id="L444">			String name = packageEntity.getString(EMX_PACKAGE_NAME);</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">			if (name == null) throw new IllegalArgumentException(&quot;package.name is missing on line &quot; + rowIndex);</span>
+
+<span class="nc" id="L447">			Package package_ = packageFactory.create(name);</span>
+<span class="nc" id="L448">			package_.setDescription(packageEntity.getString(EMX_PACKAGE_DESCRIPTION));</span>
+<span class="nc" id="L449">			String label = packageEntity.getString(EMX_PACKAGE_LABEL);</span>
+<span class="nc bnc" id="L450" title="All 2 branches missed.">			if (label == null)</span>
+			{
+<span class="nc" id="L452">				label = name;</span>
+			}
+<span class="nc" id="L454">			package_.setLabel(label);</span>
+
+			// Set parent package
+<span class="nc" id="L457">			String parentName = packageEntity.getString(EMX_PACKAGE_PARENT);</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">			if (parentName != null)</span>
+			{
+<span class="nc bnc" id="L460" title="All 2 branches missed.">				if (!name.toLowerCase().startsWith(parentName.toLowerCase())) throw new MolgenisDataException(</span>
+						&quot;Inconsistent package structure. Package: '&quot; + name + &quot;', parent: '&quot; + parentName + '\'');
+
+<span class="nc" id="L463">				package_.setParent(intermediateResults.getPackage(parentName));</span>
+			}
+
+			// Set package tags
+<span class="nc" id="L467">			List&lt;String&gt; tagIdentifiers = toList(packageEntity.getString(EMX_PACKAGE_TAGS));</span>
+<span class="nc bnc" id="L468" title="All 4 branches missed.">			if (tagIdentifiers != null &amp;&amp; !tagIdentifiers.isEmpty())</span>
+			{
+<span class="nc" id="L470">				List&lt;Tag&gt; tags = toTags(intermediateResults, tagIdentifiers);</span>
+<span class="nc" id="L471">				package_.setTags(tags);</span>
+			}
+
+			// Add the complete package to the parse results
+<span class="nc" id="L475">			intermediateResults.addPackage(name, package_);</span>
+<span class="nc" id="L476">		}</span>
+<span class="nc" id="L477">	}</span>
+
+	/**
+	 * Convert tag identifiers to tags
+	 */
+	private static List&lt;Tag&gt; toTags(IntermediateParseResults intermediateResults, List&lt;String&gt; tagIdentifiers)
+	{
+<span class="nc bnc" id="L484" title="All 2 branches missed.">		if (tagIdentifiers.isEmpty())</span>
+		{
+<span class="nc" id="L486">			return emptyList();</span>
+		}
+
+<span class="nc" id="L489">		List&lt;Tag&gt; tags = new ArrayList&lt;&gt;(tagIdentifiers.size());</span>
+<span class="nc bnc" id="L490" title="All 2 branches missed.">		for (String tagIdentifier : tagIdentifiers)</span>
+		{
+<span class="nc" id="L492">			Tag tag = intermediateResults.getTag(tagIdentifier);</span>
+<span class="nc bnc" id="L493" title="All 2 branches missed.">			if (tag == null)</span>
+			{
+<span class="nc" id="L495">				throw new IllegalArgumentException(&quot;Unknown tag '&quot; + tagIdentifier + '\'');</span>
+			}
+<span class="nc" id="L497">			tags.add(tag);</span>
+<span class="nc" id="L498">		}</span>
+<span class="nc" id="L499">		return tags;</span>
+	}
+
+	/**
+	 * Transforms an {@link Entity} to a {@link Tag}
+	 */
+	private Tag entityToTag(String id, Entity tagEntity)
+	{
+<span class="nc" id="L507">		Tag tag = tagFactory.create(id);</span>
+<span class="nc" id="L508">		tag.setObjectIri(tagEntity.getString(EMX_TAG_OBJECT_IRI));</span>
+<span class="nc" id="L509">		tag.setLabel(tagEntity.getString(EMX_TAG_LABEL));</span>
+<span class="nc" id="L510">		tag.setRelationLabel(tagEntity.getString(EMX_TAG_RELATION_LABEL));</span>
+<span class="nc" id="L511">		tag.setCodeSystem(tagEntity.getString(EMX_TAG_CODE_SYSTEM));</span>
+<span class="nc" id="L512">		tag.setRelationIri(tagEntity.getString(EMX_TAG_RELATION_IRI));</span>
+
+<span class="nc" id="L514">		return tag;</span>
+	}
+
+	/**
+	 * Load all entities (optional)
+	 *
+	 * @param entitiesRepo        the Repository for the entities
+	 * @param intermediateResults {@link IntermediateParseResults} containing the attributes already parsed
+	 */
+	private void parseEntitiesSheet(Repository&lt;Entity&gt; entitiesRepo, IntermediateParseResults intermediateResults)
+	{
+<span class="nc bnc" id="L525" title="All 2 branches missed.">		if (entitiesRepo != null)</span>
+		{
+<span class="nc bnc" id="L527" title="All 2 branches missed.">			for (Attribute attr : entitiesRepo.getEntityType().getAtomicAttributes())</span>
+			{
+<span class="nc bnc" id="L529" title="All 4 branches missed.">				if (!EMX_ENTITIES_ALLOWED_ATTRS.contains(attr.getName().toLowerCase()) &amp;&amp; !(isI18n(attr.getName()) &amp;&amp; (</span>
+<span class="nc bnc" id="L530" title="All 2 branches missed.">						attr.getName().startsWith(EMX_ENTITIES_DESCRIPTION) || attr.getName()</span>
+<span class="nc bnc" id="L531" title="All 2 branches missed.">																				   .startsWith(EMX_ENTITIES_LABEL))))</span>
+				{
+<span class="nc" id="L533">					throw new IllegalArgumentException(&quot;Unsupported entity metadata: entities.&quot; + attr.getName());</span>
+				}
+<span class="nc" id="L535">			}</span>
+
+<span class="nc" id="L537">			int i = 1;</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">			for (Entity entity : entitiesRepo)</span>
+			{
+<span class="nc" id="L540">				i++;</span>
+<span class="nc" id="L541">				String emxEntityName = entity.getString(EMX_ENTITIES_NAME);</span>
+<span class="nc" id="L542">				String emxEntityPackage = entity.getString(EMX_ENTITIES_PACKAGE);</span>
+<span class="nc" id="L543">				String emxEntityLabel = entity.getString(EMX_ENTITIES_LABEL);</span>
+<span class="nc" id="L544">				String emxEntityDescription = entity.getString(EMX_ENTITIES_DESCRIPTION);</span>
+<span class="nc" id="L545">				String emxEntityAbstract = entity.getString(EMX_ENTITIES_ABSTRACT);</span>
+<span class="nc" id="L546">				String emxEntityExtends = entity.getString(EMX_ENTITIES_EXTENDS);</span>
+<span class="nc" id="L547">				String emxEntityBackend = entity.getString(EMX_ENTITIES_BACKEND);</span>
+<span class="nc" id="L548">				String emxEntityTags = entity.getString(EMX_ENTITIES_TAGS);</span>
+
+				// required
+<span class="nc bnc" id="L551" title="All 2 branches missed.">				if (emxEntityName == null)</span>
+				{
+<span class="nc" id="L553">					throw new IllegalArgumentException(&quot;entity.name is missing on line &quot; + i);</span>
+				}
+
+				String entityTypeId;
+<span class="nc bnc" id="L557" title="All 2 branches missed.">				if (emxEntityPackage != null)</span>
+				{
+<span class="nc" id="L559">					entityTypeId = emxEntityPackage + PACKAGE_SEPARATOR + emxEntityName;</span>
+				}
+				else
+				{
+<span class="nc" id="L563">					entityTypeId = emxEntityName;</span>
+				}
+
+<span class="nc" id="L566">				EntityType entityType = intermediateResults.getEntityType(entityTypeId);</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">				if (entityType == null)</span>
+				{
+<span class="nc" id="L569">					entityType = intermediateResults.addEntityType(entityTypeId);</span>
+				}
+
+<span class="nc bnc" id="L572" title="All 2 branches missed.">				if (dataService != null)</span>
+				{
+<span class="nc bnc" id="L574" title="All 2 branches missed.">					if (emxEntityBackend != null)</span>
+					{
+<span class="nc bnc" id="L576" title="All 2 branches missed.">						if (dataService.getMeta().getBackend(emxEntityBackend) == null)</span>
+						{
+<span class="nc" id="L578">							throw new MolgenisDataException(&quot;Unknown backend '&quot; + emxEntityBackend + '\'');</span>
+						}
+					}
+					else
+					{
+<span class="nc" id="L583">						emxEntityBackend = dataService.getMeta().getDefaultBackend().getName();</span>
+					}
+<span class="nc" id="L585">					entityType.setBackend(emxEntityBackend);</span>
+				}
+
+<span class="nc bnc" id="L588" title="All 2 branches missed.">				if (emxEntityPackage != null)</span>
+				{
+<span class="nc" id="L590">					Package p = intermediateResults.getPackage(emxEntityPackage);</span>
+<span class="nc bnc" id="L591" title="All 2 branches missed.">					if (p == null)</span>
+					{
+<span class="nc" id="L593">						throw new MolgenisDataException(</span>
+								&quot;Unknown package: '&quot; + emxEntityPackage + &quot;' for entity '&quot; + emxEntityName
+										+ &quot;'. Please specify the package on the &quot; + EMX_PACKAGES
+										+ &quot; sheet and use the fully qualified package and entity names.&quot;);
+					}
+<span class="nc" id="L598">					entityType.setPackage(p);</span>
+				}
+
+<span class="nc bnc" id="L601" title="All 2 branches missed.">				if (emxEntityLabel == null)</span>
+				{
+<span class="nc" id="L603">					emxEntityLabel = emxEntityName;</span>
+				}
+<span class="nc" id="L605">				entityType.setLabel(emxEntityLabel);</span>
+
+<span class="nc" id="L607">				entityType.setDescription(emxEntityDescription);</span>
+
+<span class="nc bnc" id="L609" title="All 2 branches missed.">				for (String attributeName : entity.getAttributeNames())</span>
+				{
+<span class="nc bnc" id="L611" title="All 2 branches missed.">					if (isI18n(attributeName))</span>
+					{
+<span class="nc bnc" id="L613" title="All 2 branches missed.">						if (attributeName.startsWith(EMX_ENTITIES_DESCRIPTION))</span>
+						{
+<span class="nc" id="L615">							String description = entity.getString(attributeName);</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">							if (description != null)</span>
+							{
+<span class="nc" id="L618">								String languageCode = getLanguageCode(attributeName);</span>
+<span class="nc" id="L619">								entityType.setDescription(languageCode, description);</span>
+							}
+<span class="nc" id="L621">						}</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">						else if (attributeName.startsWith(EMX_ENTITIES_LABEL))</span>
+						{
+<span class="nc" id="L624">							String label = entity.getString(attributeName);</span>
+<span class="nc bnc" id="L625" title="All 2 branches missed.">							if (label != null)</span>
+							{
+<span class="nc" id="L627">								String languageCode = getLanguageCode(attributeName);</span>
+<span class="nc" id="L628">								entityType.setLabel(languageCode, label);</span>
+							}
+						}
+					}
+<span class="nc" id="L632">				}</span>
+
+<span class="nc bnc" id="L634" title="All 2 branches missed.">				if (emxEntityAbstract != null)</span>
+				{
+<span class="nc" id="L636">					entityType.setAbstract(parseBoolean(emxEntityAbstract, i, EMX_ENTITIES_ABSTRACT));</span>
+				}
+
+<span class="nc bnc" id="L639" title="All 2 branches missed.">				if (emxEntityExtends != null)</span>
+				{
+<span class="nc" id="L641">					EntityType extendsEntityType = null;</span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">					if (intermediateResults.knowsEntity(emxEntityExtends))</span>
+					{
+<span class="nc" id="L644">						extendsEntityType = intermediateResults.getEntityType(emxEntityExtends);</span>
+					}
+					else
+					{
+<span class="nc bnc" id="L648" title="All 2 branches missed.">						if (dataService != null)</span>
+						{
+<span class="nc" id="L650">							extendsEntityType = dataService.getMeta().getEntityType(emxEntityExtends);</span>
+						}
+					}
+
+<span class="nc bnc" id="L654" title="All 2 branches missed.">					if (extendsEntityType == null)</span>
+					{
+<span class="nc" id="L656">						throw new MolgenisDataException(</span>
+								&quot;Missing super entity &quot; + emxEntityExtends + &quot; for entity &quot; + emxEntityName
+										+ &quot; on line &quot; + i);
+					}
+
+<span class="nc" id="L661">					entityType.setExtends(extendsEntityType);</span>
+				}
+
+<span class="nc" id="L664">				List&lt;String&gt; tagIdentifiers = toList(emxEntityTags);</span>
+<span class="nc bnc" id="L665" title="All 4 branches missed.">				if (tagIdentifiers != null &amp;&amp; !tagIdentifiers.isEmpty())</span>
+				{
+<span class="nc" id="L667">					entityType.setTags(toTags(intermediateResults, tagIdentifiers));</span>
+				}
+<span class="nc" id="L669">			}</span>
+		}
+<span class="nc" id="L671">	}</span>
+
+	/**
+	 * Resolves package fullNames by looping through all the packages and their parents
+	 */
+	private static List&lt;Entity&gt; resolvePackages(Repository&lt;Entity&gt; packageRepo)
+	{
+<span class="nc" id="L678">		List&lt;Entity&gt; resolved = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L679" title="All 4 branches missed.">		if ((packageRepo == null) || Iterables.isEmpty(packageRepo)) return resolved;</span>
+
+<span class="nc" id="L681">		List&lt;Entity&gt; unresolved = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L682">		Map&lt;String, Entity&gt; resolvedByName = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L684" title="All 2 branches missed.">		for (Entity pack : packageRepo)</span>
+		{
+<span class="nc" id="L686">			String name = pack.getString(EMX_PACKAGE_NAME);</span>
+<span class="nc" id="L687">			String parentName = pack.getString(EMX_PACKAGE_PARENT);</span>
+
+<span class="nc bnc" id="L689" title="All 2 branches missed.">			if (parentName == null)</span>
+			{
+<span class="nc" id="L691">				resolved.add(pack);</span>
+<span class="nc" id="L692">				resolvedByName.put(name, pack);</span>
+			}
+			else
+			{
+<span class="nc" id="L696">				unresolved.add(pack);</span>
+			}
+<span class="nc" id="L698">		}</span>
+
+<span class="nc bnc" id="L700" title="All 2 branches missed.">		if (resolved.isEmpty()) throw new IllegalArgumentException(</span>
+				&quot;Missing root package. There must be at least one package without a parent.&quot;);
+
+<span class="nc" id="L703">		List&lt;Entity&gt; ready = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L704" title="All 2 branches missed.">		while (!unresolved.isEmpty())</span>
+		{
+<span class="nc bnc" id="L706" title="All 2 branches missed.">			for (Entity pack : unresolved)</span>
+			{
+<span class="nc" id="L708">				Entity parent = resolvedByName.get(pack.getString(EMX_PACKAGE_PARENT));</span>
+<span class="nc bnc" id="L709" title="All 2 branches missed.">				if (parent != null)</span>
+				{
+<span class="nc" id="L711">					String name = pack.getString(EMX_PACKAGE_NAME);</span>
+<span class="nc" id="L712">					ready.add(pack);</span>
+<span class="nc" id="L713">					resolvedByName.put(name, pack);</span>
+				}
+<span class="nc" id="L715">			}</span>
+
+<span class="nc bnc" id="L717" title="All 2 branches missed.">			if (ready.isEmpty())</span>
+<span class="nc" id="L718">				throw new IllegalArgumentException(&quot;Could not resolve packages. Is there a circular reference?&quot;);</span>
+<span class="nc" id="L719">			resolved.addAll(ready);</span>
+<span class="nc" id="L720">			unresolved.removeAll(ready);</span>
+<span class="nc" id="L721">			ready.clear();</span>
+		}
+
+<span class="nc" id="L724">		return resolved;</span>
+	}
+
+	/**
+	 * Load all attributes from the source repository and add it to the {@link IntermediateParseResults}.
+	 *
+	 * @param attributesRepo      Repository for the attributes
+	 * @param intermediateResults {@link IntermediateParseResults} with the tags already parsed
+	 */
+	private void parseAttributesSheet(Repository&lt;Entity&gt; attributesRepo, IntermediateParseResults intermediateResults)
+	{
+<span class="nc bnc" id="L735" title="All 2 branches missed.">		for (Attribute attr : attributesRepo.getEntityType().getAtomicAttributes())</span>
+		{
+<span class="nc bnc" id="L737" title="All 4 branches missed.">			if (!SUPPORTED_ATTRIBUTE_ATTRIBUTES.contains(attr.getName()) &amp;&amp; !((isI18n(attr.getName()) &amp;&amp; (</span>
+<span class="nc bnc" id="L738" title="All 2 branches missed.">					attr.getName().startsWith(EMX_ATTRIBUTES_LABEL) || attr.getName()</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">																		   .startsWith(EMX_ATTRIBUTES_DESCRIPTION)))))</span>
+			{
+				// check if casing mismatch
+<span class="nc" id="L742">				SUPPORTED_ATTRIBUTE_ATTRIBUTES.forEach(emxAttrMetaAttr -&gt;</span>
+				{
+<span class="nc bnc" id="L744" title="All 2 branches missed.">					if (emxAttrMetaAttr.equalsIgnoreCase(attr.getName()))</span>
+					{
+<span class="nc" id="L746">						throw new IllegalArgumentException(</span>
+<span class="nc" id="L747">								format(&quot;Unsupported attribute metadata: attributes.%s, did you mean attributes.%s?&quot;,</span>
+<span class="nc" id="L748">										attr.getName(), emxAttrMetaAttr));</span>
+					}
+<span class="nc" id="L750">				});</span>
+<span class="nc" id="L751">				throw new IllegalArgumentException(&quot;Unsupported attribute metadata: attributes.&quot; + attr.getName());</span>
+			}
+<span class="nc" id="L753">		}</span>
+
+<span class="nc" id="L755">		Map&lt;String, Map&lt;String, EmxAttribute&gt;&gt; attributesMap = newLinkedHashMap();</span>
+
+		// 1st pass: create attribute stubs
+<span class="nc" id="L758">		int rowIndex = 1;// Header</span>
+<span class="nc bnc" id="L759" title="All 2 branches missed.">		for (Entity attributeEntity : attributesRepo)</span>
+		{
+<span class="nc" id="L761">			rowIndex++;</span>
+
+<span class="nc" id="L763">			String attributeName = attributeEntity.getString(EMX_ATTRIBUTES_NAME);</span>
+<span class="nc bnc" id="L764" title="All 2 branches missed.">			if (attributeName == null)</span>
+<span class="nc" id="L765">				throw new IllegalArgumentException(format(&quot;attributes.name is missing on line [%d]&quot;, rowIndex));</span>
+
+<span class="nc" id="L767">			String entityTypeId = attributeEntity.getString(EMX_ATTRIBUTES_ENTITY);</span>
+<span class="nc bnc" id="L768" title="All 2 branches missed.">			if (entityTypeId == null) throw new IllegalArgumentException(</span>
+<span class="nc" id="L769">					format(&quot;attributes.entity is missing for attribute named: %s on line [%d]&quot;, attributeName,</span>
+<span class="nc" id="L770">							rowIndex));</span>
+
+			// create attribute
+<span class="nc" id="L773">			Attribute attribute = attrMetaFactory.create().setName(attributeName);</span>
+
+<span class="nc" id="L775">			Map&lt;String, EmxAttribute&gt; entitiesMap = attributesMap.computeIfAbsent(entityTypeId,</span>
+<span class="nc" id="L776">					k -&gt; newLinkedHashMap());</span>
+
+<span class="nc bnc" id="L778" title="All 2 branches missed.">			if (entitiesMap.containsKey(attributeName))</span>
+			{
+<span class="nc" id="L780">				throw new MolgenisDataException(</span>
+<span class="nc" id="L781">						format(&quot;Duplicate attribute name [%s] for entity type [%s]&quot;, attributeName, entityTypeId));</span>
+			}
+
+<span class="nc" id="L784">			entitiesMap.put(attributeName, new EmxAttribute(attribute));</span>
+<span class="nc" id="L785">		}</span>
+
+		// 2nd pass: set all properties on attribute stubs except for attribute relations
+<span class="nc" id="L788">		rowIndex = 1;// Header</span>
+<span class="nc bnc" id="L789" title="All 2 branches missed.">		for (Entity emxAttrEntity : attributesRepo)</span>
+		{
+<span class="nc" id="L791">			rowIndex++;</span>
+
+<span class="nc" id="L793">			String emxEntityName = emxAttrEntity.getString(EMX_ATTRIBUTES_ENTITY);</span>
+<span class="nc" id="L794">			Map&lt;String, EmxAttribute&gt; entityMap = attributesMap.get(emxEntityName);</span>
+
+			// If an entity is defined in the attribute sheet only,
+			// make sure to create EntityType and set the backend
+<span class="nc" id="L798">			EntityType md = intermediateResults.getEntityType(emxEntityName);</span>
+<span class="nc bnc" id="L799" title="All 2 branches missed.">			if (md == null)</span>
+			{
+<span class="nc" id="L801">				md = intermediateResults.addEntityType(emxEntityName);</span>
+<span class="nc bnc" id="L802" title="All 2 branches missed.">				if (dataService != null) md.setBackend(dataService.getMeta().getDefaultBackend().getName());</span>
+			}
+
+<span class="nc" id="L805">			String emxName = emxAttrEntity.getString(EMX_ATTRIBUTES_NAME);</span>
+<span class="nc" id="L806">			EmxAttribute emxAttr = entityMap.get(emxName);</span>
+<span class="nc" id="L807">			Attribute attr = emxAttr.getAttr();</span>
+
+<span class="nc" id="L809">			String emxDataType = emxAttrEntity.getString(EMX_ATTRIBUTES_DATA_TYPE);</span>
+<span class="nc" id="L810">			String emxRefEntity = emxAttrEntity.getString(EMX_ATTRIBUTES_REF_ENTITY);</span>
+
+<span class="nc bnc" id="L812" title="All 2 branches missed.">			if (emxDataType != null)</span>
+			{
+<span class="nc" id="L814">				AttributeType type = toEnum(emxDataType);</span>
+<span class="nc bnc" id="L815" title="All 2 branches missed.">				if (type == null)</span>
+				{
+<span class="nc" id="L817">					throw new IllegalArgumentException(</span>
+							&quot;attributes.dataType error on line &quot; + rowIndex + &quot;: &quot; + emxDataType
+									+ &quot; unknown data type&quot;);
+				}
+<span class="nc" id="L821">				attr.setDataType(type);</span>
+<span class="nc" id="L822">			}</span>
+			else
+			{
+<span class="nc" id="L825">				attr.setDataType(STRING);</span>
+			}
+
+<span class="nc" id="L828">			String emxAttrNillable = emxAttrEntity.getString(EMX_ATTRIBUTES_NILLABLE);</span>
+<span class="nc" id="L829">			String emxIdAttrValue = emxAttrEntity.getString(EMX_ATTRIBUTES_ID_ATTRIBUTE);</span>
+<span class="nc" id="L830">			String emxAttrVisible = emxAttrEntity.getString(EMX_ATTRIBUTES_VISIBLE);</span>
+<span class="nc" id="L831">			String emxAggregatable = emxAttrEntity.getString(EMX_ATTRIBUTES_AGGREGATEABLE);</span>
+<span class="nc" id="L832">			String emxIsLookupAttr = emxAttrEntity.getString(EMX_ATTRIBUTES_LOOKUP_ATTRIBUTE);</span>
+<span class="nc" id="L833">			String emxIsLabelAttr = emxAttrEntity.getString(EMX_ATTRIBUTES_LABEL_ATTRIBUTE);</span>
+<span class="nc" id="L834">			String emxReadOnly = emxAttrEntity.getString(EMX_ATTRIBUTES_READ_ONLY);</span>
+<span class="nc" id="L835">			String emxUnique = emxAttrEntity.getString(EMX_ATTRIBUTES_UNIQUE);</span>
+<span class="nc" id="L836">			String expression = emxAttrEntity.getString(EMX_ATTRIBUTES_EXPRESSION);</span>
+<span class="nc" id="L837">			String validationExpression = emxAttrEntity.getString(EMX_ATTRIBUTES_VALIDATION_EXPRESSION);</span>
+<span class="nc" id="L838">			String defaultValue = emxAttrEntity.getString(EMX_ATTRIBUTES_DEFAULT_VALUE);</span>
+<span class="nc" id="L839">			Object emxAttrTags = emxAttrEntity.get(EMX_ENTITIES_TAGS);</span>
+
+<span class="nc" id="L841">			List&lt;String&gt; tagIdentifiers = toList(emxAttrTags);</span>
+<span class="nc bnc" id="L842" title="All 4 branches missed.">			if (tagIdentifiers != null &amp;&amp; !tagIdentifiers.isEmpty())</span>
+			{
+<span class="nc" id="L844">				attr.setTags(toTags(intermediateResults, tagIdentifiers));</span>
+			}
+
+<span class="nc bnc" id="L847" title="All 2 branches missed.">			if (emxAttrNillable != null)</span>
+			{
+<span class="nc bnc" id="L849" title="All 4 branches missed.">				if (emxAttrNillable.equalsIgnoreCase(&quot;true&quot;) || emxAttrNillable.equalsIgnoreCase(&quot;false&quot;))</span>
+				{
+<span class="nc" id="L851">					attr.setNillable(parseBoolean(emxAttrNillable, rowIndex, EMX_ATTRIBUTES_NILLABLE));</span>
+				}
+				else
+				{
+<span class="nc" id="L855">					attr.setNullableExpression(emxAttrNillable);</span>
+				}
+			}
+<span class="nc bnc" id="L858" title="All 2 branches missed.">			if (emxIdAttrValue != null)</span>
+			{
+<span class="nc bnc" id="L860" title="All 4 branches missed.">				if (!emxIdAttrValue.equalsIgnoreCase(&quot;true&quot;) &amp;&amp; !emxIdAttrValue.equalsIgnoreCase(&quot;false&quot;)</span>
+<span class="nc bnc" id="L861" title="All 2 branches missed.">						&amp;&amp; !emxIdAttrValue.equalsIgnoreCase(AUTO))</span>
+				{
+<span class="nc" id="L863">					throw new IllegalArgumentException(</span>
+<span class="nc" id="L864">							format(&quot;Attributes error on line [%d]. Illegal idAttribute value. Allowed values are 'TRUE', 'FALSE' or 'AUTO'&quot;,</span>
+<span class="nc" id="L865">									rowIndex));</span>
+				}
+<span class="nc bnc" id="L867" title="All 2 branches missed.">				if (emxIdAttrValue.equalsIgnoreCase(&quot;true&quot;))</span>
+				{
+<span class="nc bnc" id="L869" title="All 2 branches missed.">					if (!isIdAttributeTypeAllowed(attr))</span>
+					{
+<span class="nc" id="L871">						throw new MolgenisDataException(&quot;Identifier is of type [&quot; + attr.getDataType()</span>
+								+ &quot;]. Id attributes can only be of type 'STRING', 'INT' or 'LONG'&quot;);
+					}
+				}
+
+<span class="nc" id="L876">				attr.setAuto(emxIdAttrValue.equalsIgnoreCase(AUTO));</span>
+<span class="nc bnc" id="L877" title="All 2 branches missed.">				if (!attr.isAuto())</span>
+<span class="nc" id="L878">					emxAttr.setIdAttr(parseBoolean(emxIdAttrValue, rowIndex, EMX_ATTRIBUTES_ID_ATTRIBUTE));</span>
+<span class="nc" id="L879">				else emxAttr.setIdAttr(true); // If it is auto, set idAttr to true</span>
+			}
+
+<span class="nc bnc" id="L882" title="All 4 branches missed.">			if (attr.isAuto() &amp;&amp; !isStringType(attr))</span>
+			{
+<span class="nc" id="L884">				throw new IllegalArgumentException(</span>
+<span class="nc" id="L885">						format(&quot;Attributes error on line [%d]. Auto attributes can only be of data type 'string'&quot;,</span>
+<span class="nc" id="L886">								rowIndex));</span>
+			}
+<span class="nc bnc" id="L888" title="All 2 branches missed.">			if (emxAttrVisible != null)</span>
+			{
+<span class="nc bnc" id="L890" title="All 4 branches missed.">				if (emxAttrVisible.equalsIgnoreCase(&quot;true&quot;) || emxAttrVisible.equalsIgnoreCase(&quot;false&quot;))</span>
+				{
+<span class="nc" id="L892">					attr.setVisible(parseBoolean(emxAttrVisible, rowIndex, EMX_ATTRIBUTES_VISIBLE));</span>
+				}
+				else
+				{
+<span class="nc" id="L896">					attr.setVisibleExpression(emxAttrVisible);</span>
+				}
+			}
+<span class="nc bnc" id="L899" title="All 2 branches missed.">			if (emxAggregatable != null)</span>
+<span class="nc" id="L900">				attr.setAggregatable(parseBoolean(emxAggregatable, rowIndex, EMX_ATTRIBUTES_AGGREGATEABLE));</span>
+<span class="nc bnc" id="L901" title="All 2 branches missed.">			if (emxReadOnly != null) attr.setReadOnly(parseBoolean(emxReadOnly, rowIndex, EMX_ATTRIBUTES_READ_ONLY));</span>
+<span class="nc bnc" id="L902" title="All 2 branches missed.">			if (emxUnique != null) attr.setUnique(parseBoolean(emxUnique, rowIndex, EMX_ATTRIBUTES_UNIQUE));</span>
+<span class="nc bnc" id="L903" title="All 2 branches missed.">			if (expression != null) attr.setExpression(expression);</span>
+<span class="nc bnc" id="L904" title="All 2 branches missed.">			if (validationExpression != null) attr.setValidationExpression(validationExpression);</span>
+<span class="nc bnc" id="L905" title="All 2 branches missed.">			if (defaultValue != null) attr.setDefaultValue(defaultValue);</span>
+<span class="nc bnc" id="L906" title="All 2 branches missed.">			if (emxIsLookupAttr != null)</span>
+			{
+<span class="nc" id="L908">				boolean isLookAttr = parseBoolean(emxIsLookupAttr, rowIndex, EMX_ATTRIBUTES_LOOKUP_ATTRIBUTE);</span>
+<span class="nc bnc" id="L909" title="All 4 branches missed.">				if (isLookAttr &amp;&amp; isReferenceType(attr))</span>
+				{
+<span class="nc" id="L911">					throw new IllegalArgumentException(</span>
+<span class="nc" id="L912">							format(&quot;attributes.lookupAttribute error on line [%d] (%s.%s) lookupAttribute cannot be of type %s&quot;,</span>
+<span class="nc" id="L913">									rowIndex, emxEntityName, emxName, attr.getDataType().toString()));</span>
+				}
+
+<span class="nc" id="L916">				emxAttr.setLookupAttr(isLookAttr);</span>
+			}
+
+<span class="nc bnc" id="L919" title="All 2 branches missed.">			if (emxIsLabelAttr != null)</span>
+			{
+<span class="nc" id="L921">				boolean isLabelAttr = parseBoolean(emxIsLabelAttr, rowIndex, EMX_ATTRIBUTES_LABEL_ATTRIBUTE);</span>
+<span class="nc bnc" id="L922" title="All 4 branches missed.">				if (isLabelAttr &amp;&amp; isReferenceType(attr))</span>
+				{
+<span class="nc" id="L924">					throw new IllegalArgumentException(</span>
+<span class="nc" id="L925">							format(&quot;attributes.labelAttribute error on line [%d] (%s.%s): labelAttribute cannot be of type %s&quot;,</span>
+<span class="nc" id="L926">									rowIndex, emxEntityName, emxName, attr.getDataType().toString()));</span>
+				}
+
+<span class="nc" id="L929">				emxAttr.setLabelAttr(isLabelAttr);</span>
+			}
+
+<span class="nc" id="L932">			attr.setLabel(emxAttrEntity.getString(EMX_ATTRIBUTES_LABEL));</span>
+
+<span class="nc bnc" id="L934" title="All 2 branches missed.">			for (String attrName : emxAttrEntity.getAttributeNames())</span>
+			{
+<span class="nc bnc" id="L936" title="All 2 branches missed.">				if (isI18n(attrName))</span>
+				{
+<span class="nc bnc" id="L938" title="All 2 branches missed.">					if (attrName.startsWith(EMX_ATTRIBUTES_LABEL))</span>
+					{
+<span class="nc" id="L940">						String label = emxAttrEntity.getString(attrName);</span>
+<span class="nc bnc" id="L941" title="All 2 branches missed.">						if (label != null)</span>
+						{
+<span class="nc" id="L943">							String languageCode = getLanguageCode(attrName);</span>
+<span class="nc" id="L944">							attr.setLabel(languageCode, label);</span>
+						}
+<span class="nc" id="L946">					}</span>
+<span class="nc bnc" id="L947" title="All 2 branches missed.">					else if (attrName.startsWith(EMX_ATTRIBUTES_DESCRIPTION))</span>
+					{
+<span class="nc" id="L949">						String description = emxAttrEntity.getString(attrName);</span>
+<span class="nc bnc" id="L950" title="All 2 branches missed.">						if (description != null)</span>
+						{
+<span class="nc" id="L952">							String languageCode = getLanguageCode(attrName);</span>
+<span class="nc" id="L953">							attr.setDescription(languageCode, description);</span>
+						}
+					}
+				}
+<span class="nc" id="L957">			}</span>
+
+<span class="nc" id="L959">			attr.setDescription(emxAttrEntity.getString(EMX_ATTRIBUTES_DESCRIPTION));</span>
+
+<span class="nc bnc" id="L961" title="All 2 branches missed.">			if (attr.getDataType() == ENUM)</span>
+			{
+<span class="nc" id="L963">				List&lt;String&gt; enumOptions = DataConverter.toList(emxAttrEntity.get(EMX_ATTRIBUTES_ENUM_OPTIONS));</span>
+<span class="nc bnc" id="L964" title="All 4 branches missed.">				if (enumOptions == null || enumOptions.isEmpty())</span>
+				{
+<span class="nc" id="L966">					throw new IllegalArgumentException(</span>
+<span class="nc" id="L967">							format(&quot;Missing enum options for attribute [%s] of entity [%s]&quot;, attr.getName(),</span>
+									emxEntityName));
+				}
+<span class="nc" id="L970">				attr.setEnumOptions(enumOptions);</span>
+			}
+
+<span class="nc bnc" id="L973" title="All 2 branches missed.">			if (attr.getDataType() != FILE)</span>
+			{
+				// Only if an attribute is not of type file we apply the normal reference rules
+<span class="nc bnc" id="L976" title="All 4 branches missed.">				if (isReferenceType(attr) &amp;&amp; StringUtils.isEmpty(emxRefEntity))</span>
+				{
+<span class="nc" id="L978">					throw new IllegalArgumentException(</span>
+<span class="nc" id="L979">							format(&quot;Missing refEntity on line [%d] (%s.%s)&quot;, rowIndex, emxEntityName, emxName));</span>
+				}
+			}
+
+<span class="nc bnc" id="L983" title="All 6 branches missed.">			if (isReferenceType(attr) &amp;&amp; attr.isNillable() &amp;&amp; attr.isAggregatable())</span>
+			{
+<span class="nc" id="L985">				throw new IllegalArgumentException(</span>
+<span class="nc" id="L986">						format(&quot;attributes.isAggregatable error on line [%d] (%s.%s): isAggregatable nillable attribute cannot be of type %s&quot;,</span>
+<span class="nc" id="L987">								rowIndex, emxEntityName, emxName, attr.getDataType().toString()));</span>
+			}
+
+<span class="nc" id="L990">			String emxRangeMin = emxAttrEntity.getString(EMX_ATTRIBUTES_RANGE_MIN);</span>
+			Long rangeMin;
+<span class="nc bnc" id="L992" title="All 2 branches missed.">			if (emxRangeMin != null)</span>
+			{
+				try
+				{
+<span class="nc" id="L996">					rangeMin = Long.valueOf(emxRangeMin);</span>
+				}
+<span class="nc" id="L998">				catch (NumberFormatException e)</span>
+				{
+<span class="nc" id="L1000">					throw new MolgenisDataException(</span>
+<span class="nc" id="L1001">							format(&quot;Invalid range rangeMin [%s] value for attribute [%s] of entity [%s], should be a long&quot;,</span>
+									emxRangeMin, emxName, emxEntityName));
+<span class="nc" id="L1003">				}</span>
+			}
+			else
+			{
+<span class="nc" id="L1007">				rangeMin = null;</span>
+			}
+
+<span class="nc" id="L1010">			String emxRangeMax = emxAttrEntity.getString(EMX_ATTRIBUTES_RANGE_MAX);</span>
+			Long rangeMax;
+<span class="nc bnc" id="L1012" title="All 2 branches missed.">			if (emxRangeMax != null)</span>
+			{
+				try
+				{
+<span class="nc" id="L1016">					rangeMax = Long.valueOf(emxRangeMax);</span>
+				}
+<span class="nc" id="L1018">				catch (NumberFormatException e)</span>
+				{
+<span class="nc" id="L1020">					throw new MolgenisDataException(</span>
+<span class="nc" id="L1021">							format(&quot;Invalid range rangeMax [%s] value for attribute [%s] of entity [%s], should be a long&quot;,</span>
+									emxRangeMax, emxName, emxEntityName));
+<span class="nc" id="L1023">				}</span>
+			}
+			else
+			{
+<span class="nc" id="L1027">				rangeMax = null;</span>
+			}
+
+<span class="nc bnc" id="L1030" title="All 4 branches missed.">			if (rangeMin != null || rangeMax != null)</span>
+			{
+<span class="nc" id="L1032">				attr.setRange(new Range(rangeMin, rangeMax));</span>
+			}
+<span class="nc" id="L1034">		}</span>
+
+		// 3rd pass: validate and create attribute relationships
+<span class="nc" id="L1037">		Map&lt;String, Set&lt;String&gt;&gt; rootAttributes = newLinkedHashMap();</span>
+<span class="nc" id="L1038">		rowIndex = 1;// Header</span>
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">		for (Entity attributeEntity : attributesRepo)</span>
+
+		{
+<span class="nc" id="L1042">			rowIndex++;</span>
+
+<span class="nc" id="L1044">			String entityTypeId = attributeEntity.getString(EMX_ATTRIBUTES_ENTITY);</span>
+<span class="nc" id="L1045">			Map&lt;String, EmxAttribute&gt; entityMap = attributesMap.get(entityTypeId);</span>
+
+<span class="nc" id="L1047">			String attributeName = attributeEntity.getString(EMX_ATTRIBUTES_NAME);</span>
+<span class="nc" id="L1048">			Attribute attribute = entityMap.get(attributeName).getAttr();</span>
+
+			// bootstrap attribute parent-children relations for compound attributes
+<span class="nc" id="L1051">			String partOfAttribute = attributeEntity.getString(EMX_ATTRIBUTES_PART_OF_ATTRIBUTE);</span>
+<span class="nc bnc" id="L1052" title="All 4 branches missed.">			if (partOfAttribute != null &amp;&amp; !partOfAttribute.isEmpty())</span>
+			{
+<span class="nc" id="L1054">				EmxAttribute emxCompoundAttribute = entityMap.get(partOfAttribute);</span>
+<span class="nc bnc" id="L1055" title="All 2 branches missed.">				if (emxCompoundAttribute == null)</span>
+				{
+<span class="nc" id="L1057">					throw new IllegalArgumentException(</span>
+							&quot;partOfAttribute [&quot; + partOfAttribute + &quot;] of attribute [&quot; + attributeName + &quot;] of entity [&quot;
+									+ entityTypeId + &quot;] must refer to an existing compound attribute on line &quot;
+									+ rowIndex);
+				}
+<span class="nc" id="L1062">				Attribute compoundAttribute = emxCompoundAttribute.getAttr();</span>
+
+<span class="nc bnc" id="L1064" title="All 2 branches missed.">				if (compoundAttribute.getDataType() != COMPOUND)</span>
+				{
+<span class="nc" id="L1066">					throw new IllegalArgumentException(</span>
+							&quot;partOfAttribute [&quot; + partOfAttribute + &quot;] of attribute [&quot; + attributeName + &quot;] of entity [&quot;
+									+ entityTypeId + &quot;] must refer to a attribute of type [&quot; + COMPOUND + &quot;] on line &quot;
+									+ rowIndex);
+				}
+
+<span class="nc bnc" id="L1072" title="All 2 branches missed.">				if (attributeName.equals(partOfAttribute))</span>
+				{
+<span class="nc" id="L1074">					throw new IllegalArgumentException(</span>
+							&quot;partOfAttribute [&quot; + partOfAttribute + &quot;] of attribute [&quot; + attributeName + &quot;] of entity [&quot;
+									+ entityTypeId + &quot;] cannot refer to itself on line &quot; + rowIndex);
+				}
+<span class="nc" id="L1078">				attribute.setParent(compoundAttribute);</span>
+			}
+
+<span class="nc" id="L1081">			Set&lt;String&gt; entityRootAttributes = rootAttributes.computeIfAbsent(entityTypeId, k -&gt; new LinkedHashSet&lt;&gt;());</span>
+<span class="nc" id="L1082">			entityRootAttributes.add(attributeName);</span>
+<span class="nc" id="L1083">		}</span>
+
+		// store attributes with entities
+<span class="nc bnc" id="L1086" title="All 2 branches missed.">		for (Map.Entry&lt;String, Map&lt;String, EmxAttribute&gt;&gt; entry : attributesMap.entrySet())</span>
+
+		{
+<span class="nc" id="L1089">			String entityTypeId = entry.getKey();</span>
+<span class="nc" id="L1090">			Map&lt;String, EmxAttribute&gt; attributes = entry.getValue();</span>
+
+<span class="nc" id="L1092">			List&lt;EmxAttribute&gt; editableEntityType = newArrayList();</span>
+			// add root attributes to entity
+<span class="nc" id="L1094">			Set&lt;String&gt; entityAttributeNames = rootAttributes.get(entityTypeId);</span>
+<span class="nc bnc" id="L1095" title="All 2 branches missed.">			if (entityAttributeNames != null)</span>
+			{
+<span class="nc bnc" id="L1097" title="All 2 branches missed.">				for (EmxAttribute attribute : attributes.values())</span>
+				{
+<span class="nc bnc" id="L1099" title="All 2 branches missed.">					if (entityAttributeNames.contains(attribute.getAttr().getName()))</span>
+					{
+<span class="nc" id="L1101">						editableEntityType.add(attribute);</span>
+					}
+<span class="nc" id="L1103">				}</span>
+			}
+
+<span class="nc" id="L1106">			intermediateResults.addAttributes(entityTypeId, editableEntityType);</span>
+<span class="nc" id="L1107">		}</span>
+<span class="nc" id="L1108">	}</span>
+
+	/**
+	 * re-iterate to map the mrefs/xref refEntity (or give error if not found)
+	 *
+	 * @param attributeRepo       the attributes {@link Repository}
+	 * @param intermediateResults {@link ParsedMetaData} to add the ref entities to
+	 */
+	private void reiterateToMapRefEntity(Repository&lt;Entity&gt; attributeRepo, IntermediateParseResults intermediateResults)
+	{
+<span class="nc" id="L1118">		int rowIndex = 1;</span>
+<span class="nc bnc" id="L1119" title="All 2 branches missed.">		for (Entity attribute : attributeRepo)</span>
+		{
+<span class="nc" id="L1121">			final String entityTypeId = attribute.getString(EMX_ATTRIBUTES_ENTITY);</span>
+<span class="nc" id="L1122">			final String attributeName = attribute.getString(EMX_ATTRIBUTES_NAME);</span>
+<span class="nc" id="L1123">			final String refEntityName = (String) attribute.get(EMX_ATTRIBUTES_REF_ENTITY);</span>
+<span class="nc" id="L1124">			final String mappedByAttrName = (String) attribute.get(EMX_ATTRIBUTES_MAPPED_BY);</span>
+<span class="nc" id="L1125">			EntityType EntityType = intermediateResults.getEntityType(entityTypeId);</span>
+<span class="nc" id="L1126">			Attribute Attribute = EntityType.getAttribute(attributeName);</span>
+
+<span class="nc bnc" id="L1128" title="All 2 branches missed.">			if (Attribute.getDataType().equals(FILE))</span>
+			{
+				// If attribute is of type file, set refEntity to file meta and continue to the next attribute
+<span class="nc" id="L1131">				requireNonNull(dataService, format(&quot;Can't set %s if dataService is null&quot;, FILE_META));</span>
+<span class="nc" id="L1132">				Attribute.setRefEntity(dataService.getEntityType(FILE_META));</span>
+<span class="nc" id="L1133">				continue;</span>
+			}
+
+<span class="nc" id="L1136">			rowIndex++;</span>
+<span class="nc bnc" id="L1137" title="All 2 branches missed.">			if (refEntityName != null)</span>
+			{
+<span class="nc bnc" id="L1139" title="All 2 branches missed.">				if (dataService != null)</span>
+				{
+					EntityType refEntityType;
+<span class="nc bnc" id="L1142" title="All 2 branches missed.">					if (intermediateResults.knowsEntity(refEntityName))</span>
+					{
+<span class="nc" id="L1144">						refEntityType = intermediateResults.getEntityType(refEntityName);</span>
+					}
+					else
+					{
+<span class="nc" id="L1148">						refEntityType = dataService.getEntityType(refEntityName);</span>
+<span class="nc bnc" id="L1149" title="All 2 branches missed.">						if (refEntityType == null)</span>
+						{
+<span class="nc" id="L1151">							throw new IllegalArgumentException(</span>
+									&quot;attributes.refEntity error on line &quot; + rowIndex + &quot;: &quot; + refEntityName
+											+ &quot; unknown&quot;);
+						}
+					}
+<span class="nc" id="L1156">					Attribute.setRefEntity(refEntityType);</span>
+
+<span class="nc bnc" id="L1158" title="All 2 branches missed.">					if (mappedByAttrName != null)</span>
+					{
+<span class="nc" id="L1160">						Attribute mappedByAttr = refEntityType.getAttribute(mappedByAttrName);</span>
+<span class="nc bnc" id="L1161" title="All 2 branches missed.">						if (mappedByAttr == null)</span>
+						{
+<span class="nc" id="L1163">							throw new IllegalArgumentException(</span>
+									&quot;attributes.mappedBy error on line &quot; + rowIndex + &quot;: &quot; + mappedByAttrName
+											+ &quot; unknown&quot;);
+						}
+<span class="nc" id="L1167">						Attribute.setMappedBy(mappedByAttr);</span>
+					}
+<span class="nc" id="L1169">				}</span>
+				else
+				{
+<span class="nc" id="L1172">					Attribute.setRefEntity(intermediateResults.getEntityType(refEntityName));</span>
+				}
+			}
+<span class="nc" id="L1175">		}</span>
+<span class="nc" id="L1176">	}</span>
+
+	/**
+	 * Put the entities that are not in a package in the selected package
+	 */
+	private List&lt;EntityType&gt; putEntitiesInDefaultPackage(IntermediateParseResults intermediateResults,
+			String defaultPackageId)
+	{
+<span class="nc" id="L1184">		Package p = getPackage(intermediateResults, defaultPackageId);</span>
+<span class="nc bnc" id="L1185" title="All 4 branches missed.">		if (p == null &amp;&amp; dataService != null)</span>
+		{
+<span class="nc" id="L1187">			throw new IllegalArgumentException(format(&quot;Unknown package [%s]&quot;, defaultPackageId));</span>
+		}
+
+<span class="nc" id="L1190">		List&lt;EntityType&gt; entities = newArrayList();</span>
+<span class="nc bnc" id="L1191" title="All 2 branches missed.">		for (EntityType entityType : intermediateResults.getEntities())</span>
+		{
+<span class="nc bnc" id="L1193" title="All 2 branches missed.">			if (entityType.getPackage() == null)</span>
+			{
+<span class="nc" id="L1195">				entityType.setPackage(p);</span>
+			}
+<span class="nc" id="L1197">			entities.add(entityType);</span>
+<span class="nc" id="L1198">		}</span>
+<span class="nc" id="L1199">		return entities;</span>
+	}
+
+	/**
+	 * Retrieves a {@link Package} by name from parsed data or existing data.
+	 *
+	 * @param intermediateResults parsed data
+	 * @param packageId           package name
+	 * @return package or &lt;code&gt;null&lt;/code&gt; if no package with the given name exists in parsed or existing data
+	 */
+	private Package getPackage(IntermediateParseResults intermediateResults, String packageId)
+	{
+<span class="nc" id="L1211">		Package package_ = intermediateResults.getPackage(packageId);</span>
+<span class="nc bnc" id="L1212" title="All 4 branches missed.">		if (package_ == null &amp;&amp; dataService != null)</span>
+		{
+<span class="nc" id="L1214">			package_ = dataService.findOneById(PackageMetadata.PACKAGE, packageId, Package.class);</span>
+		}
+<span class="nc" id="L1216">		return package_;</span>
+	}
+
+	private static ImmutableMap&lt;String, EntityType&gt; getEntityTypeFromDataService(DataService dataService,
+			Iterable&lt;String&gt; emxEntityNames)
+	{
+<span class="nc" id="L1222">		ImmutableMap.Builder&lt;String, EntityType&gt; builder = builder();</span>
+<span class="nc" id="L1223">		emxEntityNames.forEach(emxName -&gt;</span>
+		{
+<span class="nc" id="L1225">			String repoName = EMX_NAME_TO_REPO_NAME_MAP.get(emxName);</span>
+<span class="nc bnc" id="L1226" title="All 2 branches missed.">			if (repoName == null) repoName = emxName;</span>
+<span class="nc" id="L1227">			builder.put(emxName, dataService.getRepository(repoName).getEntityType());</span>
+<span class="nc" id="L1228">		});</span>
+<span class="nc" id="L1229">		return builder.build();</span>
+	}
+
+	/**
+	 * Throws Exception if an import is trying to update metadata of a system entity
+	 */
+	public static void scanMetaDataForSystemEntityType(Map&lt;String, EntityType&gt; allEntityTypeMap,
+			Iterable&lt;EntityType&gt; existingMetaData)
+	{
+<span class="nc" id="L1238">		existingMetaData.forEach(emd -&gt;</span>
+		{
+<span class="nc bnc" id="L1240" title="All 2 branches missed.">			if (!allEntityTypeMap.containsKey(emd.getId())) allEntityTypeMap.put(emd.getId(), emd);</span>
+<span class="nc bnc" id="L1241" title="All 4 branches missed.">			else if ((!EntityUtils.equals(emd, allEntityTypeMap.get(emd.getId()))) &amp;&amp; emd instanceof SystemEntityType)</span>
+			{
+<span class="nc" id="L1243">				throw new MolgenisDataException(</span>
+						&quot;SystemEntityType in the database conflicts with the metadata for this import&quot;);
+			}
+<span class="nc" id="L1246">		});</span>
+<span class="nc" id="L1247">	}</span>
+
+	/**
+	 * Validates whether an EMX value for a boolean attribute is valid and returns the parsed boolean value.
+	 *
+	 * @param booleanString boolean string
+	 * @param rowIndex      row index
+	 * @param columnName    column name
+	 * @return true or false
+	 * @throws IllegalArgumentException if the given boolean string value is not one of [true, false] (case insensitive)
+	 */
+	private static boolean parseBoolean(String booleanString, int rowIndex, String columnName)
+	{
+<span class="nc bnc" id="L1260" title="All 2 branches missed.">		if (booleanString.equalsIgnoreCase(TRUE.toString())) return true;</span>
+<span class="nc bnc" id="L1261" title="All 2 branches missed.">		else if (booleanString.equalsIgnoreCase(FALSE.toString())) return false;</span>
+<span class="nc" id="L1262">		else throw new IllegalArgumentException(</span>
+<span class="nc" id="L1263">					format(&quot;attributes.[%s] error on line [%d]: Invalid value [%s] (expected true or false)&quot;,</span>
+<span class="nc" id="L1264">							columnName, rowIndex, booleanString));</span>
+	}
+
+	private void parseLanguages(Repository&lt;Entity&gt; emxLanguageRepo, IntermediateParseResults intermediateParseResults)
+	{
+<span class="nc" id="L1269">		emxLanguageRepo.forEach(emxLanguageEntity -&gt;</span>
+		{
+<span class="nc" id="L1271">			Language language = toLanguage(emxLanguageEntity);</span>
+<span class="nc" id="L1272">			intermediateParseResults.addLanguage(language);</span>
+<span class="nc" id="L1273">		});</span>
+<span class="nc" id="L1274">	}</span>
+
+	/**
+	 * Creates a language entity from a EMX entity describing a language
+	 *
+	 * @param emxLanguageEntity EMX language entity
+	 * @return language entity
+	 */
+	private Language toLanguage(Entity emxLanguageEntity)
+	{
+<span class="nc" id="L1284">		Language language = languageFactory.create();</span>
+<span class="nc" id="L1285">		language.setCode(emxLanguageEntity.getString(EMX_LANGUAGE_CODE));</span>
+<span class="nc" id="L1286">		language.setName(emxLanguageEntity.getString(EMX_LANGUAGE_NAME));</span>
+<span class="nc" id="L1287">		return language;</span>
+	}
+
+	private void parseI18nStrings(Repository&lt;Entity&gt; emxI18nStringRepo,
+			IntermediateParseResults intermediateParseResults)
+	{
+<span class="nc" id="L1293">		emxI18nStringRepo.forEach(emxI18nStringEntity -&gt;</span>
+		{
+<span class="nc" id="L1295">			L10nString l10nString = toL10nString(emxI18nStringEntity);</span>
+<span class="nc" id="L1296">			intermediateParseResults.addL10nString(l10nString);</span>
+<span class="nc" id="L1297">		});</span>
+
+<span class="nc" id="L1299">	}</span>
+
+	private L10nString toL10nString(Entity emxI18nStringEntity)
+	{
+<span class="nc" id="L1303">		L10nString l10nString = l10nStringFactory.create();</span>
+<span class="nc" id="L1304">		l10nString.setMessageID(emxI18nStringEntity.getString(EMX_I18N_STRING_MSGID));</span>
+<span class="nc" id="L1305">		l10nString.setDescription(emxI18nStringEntity.getString(EMX_I18N_STRING_DESCRIPTION));</span>
+<span class="nc" id="L1306">		String namespace = emxI18nStringEntity.getString(EMX_I18N_STRING_NAMESPACE);</span>
+<span class="nc bnc" id="L1307" title="All 2 branches missed.">		if (namespace == null)</span>
+		{
+<span class="nc" id="L1309">			namespace = DEFAULT_NAMESPACE;</span>
+		}
+<span class="nc" id="L1311">		l10nString.setNamespace(namespace);</span>
+
+<span class="nc" id="L1313">		LanguageService.getLanguageCodes().forEach(lang -&gt; l10nString.set(lang, emxI18nStringEntity.getString(lang)));</span>
+<span class="nc" id="L1314">		return l10nString;</span>
+	}
+
+	/**
+	 * Goes through all the sheets in the source EMX and creates an {@link MyEntitiesValidationReport}
+	 */
+	private MyEntitiesValidationReport generateEntityValidationReport(RepositoryCollection source,
+			MyEntitiesValidationReport report, Map&lt;String, EntityType&gt; metaDataMap)
+	{
+<span class="nc bnc" id="L1323" title="All 2 branches missed.">		for (String sheet : source.getEntityTypeIds())</span>
+		{
+<span class="nc bnc" id="L1325" title="All 2 branches missed.">			if (EMX_PACKAGES.equals(sheet))</span>
+			{
+<span class="nc" id="L1327">				IntermediateParseResults parseResult = parseTagsSheet(source.getRepository(EMX_TAGS));</span>
+<span class="nc" id="L1328">				parsePackagesSheet(source.getRepository(sheet), parseResult);</span>
+<span class="nc" id="L1329">				parseResult.getPackages().keySet().forEach(report::addPackage);</span>
+<span class="nc" id="L1330">			}</span>
+<span class="nc bnc" id="L1331" title="All 6 branches missed.">			else if (!EMX_ENTITIES.equals(sheet) &amp;&amp; !EMX_ATTRIBUTES.equals(sheet) &amp;&amp; !EMX_TAGS.equals(sheet)</span>
+<span class="nc bnc" id="L1332" title="All 4 branches missed.">					&amp;&amp; !EMX_LANGUAGES.equals(sheet) &amp;&amp; !EMX_I18NSTRINGS.equals(sheet))</span>
+			{
+				// check if sheet is known
+<span class="nc" id="L1335">				report = report.addEntity(sheet, metaDataMap.containsKey(sheet));</span>
+
+				// check the fields
+<span class="nc" id="L1338">				Repository&lt;Entity&gt; sourceRepository = source.getRepository(sheet);</span>
+<span class="nc" id="L1339">				EntityType target = metaDataMap.get(sheet);</span>
+
+<span class="nc bnc" id="L1341" title="All 2 branches missed.">				if (target != null)</span>
+				{
+<span class="nc bnc" id="L1343" title="All 2 branches missed.">					for (Attribute att : sourceRepository.getEntityType().getAttributes())</span>
+					{
+<span class="nc" id="L1345">						Attribute attribute = target.getAttribute(att.getName());</span>
+
+						// Bi-directional one-to-many attributes mapped by another attribute can only be imported
+						// through the owning side: one-to-many attribute 'books' of entity 'author' mapped by attribute
+						//  'author' of entity 'book' cannot be imported, only the owning attribute 'book' can be
+						// imported.
+<span class="nc bnc" id="L1351" title="All 4 branches missed.">						boolean known = attribute != null &amp;&amp; attribute.getExpression() == null &amp;&amp; !(</span>
+<span class="nc bnc" id="L1352" title="All 4 branches missed.">								attribute.getDataType() == ONE_TO_MANY &amp;&amp; attribute.isMappedBy());</span>
+<span class="nc bnc" id="L1353" title="All 2 branches missed.">						report = report.addAttribute(att.getName(), known ? IMPORTABLE : UNKNOWN);</span>
+<span class="nc" id="L1354">					}</span>
+<span class="nc bnc" id="L1355" title="All 2 branches missed.">					for (Attribute att : target.getAttributes())</span>
+					{
+						// See comment above regarding import of bi-directional one-to-many data
+<span class="nc bnc" id="L1358" title="All 6 branches missed.">						if (att.getDataType() != COMPOUND &amp;&amp; !(att.getDataType() == ONE_TO_MANY &amp;&amp; att.isMappedBy()))</span>
+						{
+<span class="nc bnc" id="L1360" title="All 4 branches missed.">							if (!att.isAuto() &amp;&amp; att.getExpression() == null &amp;&amp; !report.getFieldsImportable()</span>
+<span class="nc" id="L1361">																					   .get(sheet)</span>
+<span class="nc bnc" id="L1362" title="All 2 branches missed.">																					   .contains(att.getName()))</span>
+							{
+<span class="nc bnc" id="L1364" title="All 4 branches missed.">								boolean required = !att.isNillable() &amp;&amp; !att.isAuto();</span>
+<span class="nc bnc" id="L1365" title="All 2 branches missed.">								report = report.addAttribute(att.getName(), required ? REQUIRED : AVAILABLE);</span>
+							}
+						}
+<span class="nc" id="L1368">					}</span>
+				}
+			}
+<span class="nc" id="L1371">		}</span>
+<span class="nc" id="L1372">		return report;</span>
+	}
+
+	static class EmxAttribute
+	{
+		private final Attribute attr;
+		private boolean idAttr;
+		private boolean labelAttr;
+		private boolean lookupAttr;
+
+		public EmxAttribute(Attribute attr)
+<span class="nc" id="L1383">		{</span>
+<span class="nc" id="L1384">			this.attr = requireNonNull(attr);</span>
+<span class="nc" id="L1385">		}</span>
+
+		public Attribute getAttr()
+		{
+<span class="nc" id="L1389">			return attr;</span>
+		}
+
+		public boolean isIdAttr()
+		{
+<span class="nc" id="L1394">			return idAttr;</span>
+		}
+
+		public void setIdAttr(boolean idAttr)
+		{
+<span class="nc" id="L1399">			this.idAttr = idAttr;</span>
+<span class="nc" id="L1400">		}</span>
+
+		public boolean isLabelAttr()
+		{
+<span class="nc" id="L1404">			return labelAttr;</span>
+		}
+
+		public void setLabelAttr(boolean labelAttr)
+		{
+<span class="nc" id="L1409">			this.labelAttr = labelAttr;</span>
+<span class="nc" id="L1410">		}</span>
+
+		public boolean isLookupAttr()
+		{
+<span class="nc" id="L1414">			return lookupAttr;</span>
+		}
+
+		public void setLookupAttr(boolean lookupAttr)
+		{
+<span class="nc" id="L1419">			this.lookupAttr = lookupAttr;</span>
+<span class="nc" id="L1420">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

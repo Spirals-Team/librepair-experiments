@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OntologyTermFrequencyServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">ontology-core</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.ontology.core.ic</a> &gt; <span class="el_source">OntologyTermFrequencyServiceImpl.java</span></div><h1>OntologyTermFrequencyServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.ontology.core.ic;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.support.DynamicEntity;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.ontology.core.meta.OntologyTermSynonymMetaData;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.springframework.scheduling.annotation.Async;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.molgenis.ontology.core.ic.TermFrequencyMetaData.*;
+import static org.molgenis.ontology.core.meta.OntologyTermSynonymMetaData.ONTOLOGY_TERM_SYNONYM;
+import static org.molgenis.util.ApplicationContextProvider.getApplicationContext;
+
+public class OntologyTermFrequencyServiceImpl implements TermFrequencyService
+{
+	private final static int BATCH_SIZE = 10000;
+<span class="nc" id="L21">	private final PubMedTermFrequencyService pubMedTermFrequencyService = new PubMedTermFrequencyService();</span>
+	private final DataService dataService;
+
+	public OntologyTermFrequencyServiceImpl(DataService dataService)
+<span class="nc" id="L25">	{</span>
+<span class="nc bnc" id="L26" title="All 2 branches missed.">		if (dataService == null) throw new IllegalArgumentException(&quot;dataService is null&quot;);</span>
+<span class="nc" id="L27">		this.dataService = dataService;</span>
+<span class="nc" id="L28">	}</span>
+
+	@Override
+	public Double getTermFrequency(String term)
+	{
+<span class="nc" id="L33">		Entity entity = getTermFrequencyEntity(term);</span>
+<span class="nc bnc" id="L34" title="All 2 branches missed.">		if (entity == null) return null;</span>
+<span class="nc" id="L35">		else return entity.getDouble(FREQUENCY);</span>
+	}
+
+	@Override
+	public Integer getTermOccurrence(String term)
+	{
+<span class="nc" id="L41">		Entity entity = getTermFrequencyEntity(term);</span>
+<span class="nc bnc" id="L42" title="All 2 branches missed.">		if (entity == null) return null;</span>
+<span class="nc" id="L43">		else return entity.getInt(OCCURRENCE);</span>
+	}
+
+	private Entity getTermFrequencyEntity(String term)
+	{
+<span class="nc" id="L48">		Entity entity = dataService.findOne(TERM_FREQUENCY, new QueryImpl&lt;&gt;().eq(TERM, term));</span>
+<span class="nc bnc" id="L49" title="All 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="nc" id="L51">			entity = addEntry(term, pubMedTermFrequencyService.getTermFrequency(term), dataService);</span>
+		}
+<span class="nc" id="L53">		return entity;</span>
+	}
+
+	private Entity addEntry(String term, PubMedTFEntity pubMedTFEntity, DataService dataService)
+	{
+<span class="nc bnc" id="L58" title="All 2 branches missed.">		if (pubMedTFEntity == null) return null;</span>
+
+		// FIXME remove reference to getApplicationContext
+<span class="nc" id="L61">		TermFrequencyMetaData termFrequencyEntityType = getApplicationContext().getBean(TermFrequencyMetaData.class);</span>
+<span class="nc" id="L62">		Entity entity = new DynamicEntity(termFrequencyEntityType);</span>
+<span class="nc" id="L63">		entity.set(TERM, term);</span>
+<span class="nc" id="L64">		entity.set(FREQUENCY, pubMedTFEntity.getFrequency());</span>
+<span class="nc" id="L65">		entity.set(OCCURRENCE, pubMedTFEntity.getOccurrence());</span>
+<span class="nc" id="L66">		dataService.add(TERM_FREQUENCY, entity);</span>
+<span class="nc" id="L67">		return entity;</span>
+	}
+
+	@Override
+	@Async
+	@RunAsSystem
+	public void updateTermFrequency()
+	{
+		// Remove all the existing term frequency records
+<span class="nc" id="L76">		dataService.deleteAll(TERM_FREQUENCY);</span>
+
+<span class="nc" id="L78">		List&lt;Entity&gt; entitiesToAdd = new ArrayList&lt;&gt;();</span>
+		// Create new term frequency records
+<span class="nc" id="L80">		dataService.findAll(ONTOLOGY_TERM_SYNONYM).forEach(entity -&gt;</span>
+		{
+<span class="nc" id="L82">			String ontologyTermSynonym = entity.getString(OntologyTermSynonymMetaData.ONTOLOGY_TERM_SYNONYM_ATTR);</span>
+<span class="nc" id="L83">			PubMedTFEntity pubMedTFEntity = pubMedTermFrequencyService.getTermFrequency(ontologyTermSynonym);</span>
+
+<span class="nc bnc" id="L85" title="All 2 branches missed.">			if (pubMedTFEntity != null)</span>
+			{
+				// FIXME remove reference to getApplicationContext
+<span class="nc" id="L88">				TermFrequencyMetaData termFrequencyEntityType = getApplicationContext().getBean(</span>
+						TermFrequencyMetaData.class);
+<span class="nc" id="L90">				Entity mapEntity = new DynamicEntity(termFrequencyEntityType);</span>
+<span class="nc" id="L91">				mapEntity.set(TERM, ontologyTermSynonym);</span>
+<span class="nc" id="L92">				mapEntity.set(FREQUENCY, pubMedTFEntity.getFrequency());</span>
+<span class="nc" id="L93">				mapEntity.set(OCCURRENCE, pubMedTFEntity.getOccurrence());</span>
+<span class="nc" id="L94">				entitiesToAdd.add(mapEntity);</span>
+
+<span class="nc bnc" id="L96" title="All 2 branches missed.">				if (entitiesToAdd.size() &gt; BATCH_SIZE)</span>
+				{
+<span class="nc" id="L98">					dataService.add(TERM_FREQUENCY, entitiesToAdd.stream());</span>
+<span class="nc" id="L99">					entitiesToAdd.clear();</span>
+				}
+			}
+<span class="nc" id="L102">		});</span>
+
+<span class="nc bnc" id="L104" title="All 2 branches missed.">		if (!entitiesToAdd.isEmpty())</span>
+		{
+<span class="nc" id="L106">			dataService.add(TERM_FREQUENCY, entitiesToAdd.stream());</span>
+		}
+<span class="nc" id="L108">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

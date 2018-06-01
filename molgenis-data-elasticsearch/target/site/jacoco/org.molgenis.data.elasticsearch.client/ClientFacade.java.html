@@ -1,0 +1,733 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClientFacade.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-elasticsearch</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.elasticsearch.client</a> &gt; <span class="el_source">ClientFacade.java</span></div><h1>ClientFacade.java</h1><pre class="source lang-java linenums">package org.molgenis.data.elasticsearch.client;
+
+import org.apache.lucene.search.Explanation;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ResourceAlreadyExistsException;
+import org.elasticsearch.ResourceNotFoundException;
+import org.elasticsearch.action.DocWriteRequest;
+import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.admin.indices.create.CreateIndexRequestBuilder;
+import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
+import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequestBuilder;
+import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequestBuilder;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
+import org.elasticsearch.action.admin.indices.refresh.RefreshRequestBuilder;
+import org.elasticsearch.action.admin.indices.refresh.RefreshResponse;
+import org.elasticsearch.action.bulk.BulkProcessor;
+import org.elasticsearch.action.delete.DeleteRequestBuilder;
+import org.elasticsearch.action.delete.DeleteResponse;
+import org.elasticsearch.action.explain.ExplainRequestBuilder;
+import org.elasticsearch.action.explain.ExplainResponse;
+import org.elasticsearch.action.index.IndexRequestBuilder;
+import org.elasticsearch.action.index.IndexResponse;
+import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.search.ShardSearchFailure;
+import org.elasticsearch.action.support.replication.ReplicationResponse;
+import org.elasticsearch.client.Client;
+import org.elasticsearch.client.Requests;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.search.aggregations.AggregationBuilder;
+import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.sort.SortBuilder;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.MolgenisQueryException;
+import org.molgenis.data.elasticsearch.client.model.SearchHit;
+import org.molgenis.data.elasticsearch.client.model.SearchHits;
+import org.molgenis.data.elasticsearch.generator.model.*;
+import org.molgenis.data.index.exception.IndexAlreadyExistsException;
+import org.molgenis.data.index.exception.IndexException;
+import org.molgenis.data.index.exception.UnknownIndexException;
+import org.molgenis.util.UnexpectedEnumException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
+
+import static java.lang.String.format;
+import static java.util.Arrays.stream;
+import static java.util.Collections.singletonList;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.*;
+import static org.elasticsearch.action.DocWriteRequest.OpType.INDEX;
+import static org.molgenis.data.elasticsearch.ElasticsearchService.MAX_BATCH_SIZE;
+
+/**
+ * Elasticsearch client facade:
+ * - Provides simplified interface to Elasticsearch transport client
+ * - Reduces Elasticsearch transport client dependencies
+ * - Translates Elasticsearch transport client exceptions to MOLGENIS indexing exceptions
+ * - Logs requests and responses
+ */
+public class ClientFacade implements Closeable
+{
+<span class="fc" id="L73">	private static final Logger LOG = LoggerFactory.getLogger(ClientFacade.class);</span>
+
+	private final Client client;
+	private final SettingsContentBuilder settingsBuilder;
+	private final MappingContentBuilder mappingSourceBuilder;
+	private final SortContentBuilder sortContentBuilder;
+	private final BulkProcessorFactory bulkProcessorFactory;
+
+	public ClientFacade(Client client)
+<span class="fc" id="L82">	{</span>
+<span class="fc" id="L83">		this.client = requireNonNull(client);</span>
+<span class="fc" id="L84">		this.settingsBuilder = new SettingsContentBuilder();</span>
+<span class="fc" id="L85">		this.mappingSourceBuilder = new MappingContentBuilder();</span>
+<span class="fc" id="L86">		this.sortContentBuilder = new SortContentBuilder();</span>
+<span class="fc" id="L87">		this.bulkProcessorFactory = new BulkProcessorFactory();</span>
+<span class="fc" id="L88">	}</span>
+
+	public void createIndex(Index index, IndexSettings indexSettings, Stream&lt;Mapping&gt; mappingStream)
+	{
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="fc" id="L94">			LOG.trace(&quot;Creating index '{}' ...&quot;, index.getName());</span>
+		}
+
+<span class="fc" id="L97">		CreateIndexRequestBuilder createIndexRequest = createIndexRequest(index, indexSettings, mappingStream);</span>
+
+		CreateIndexResponse createIndexResponse;
+		try
+		{
+<span class="fc" id="L102">			createIndexResponse = createIndexRequest.get();</span>
+		}
+<span class="fc" id="L104">		catch (ResourceAlreadyExistsException e)</span>
+		{
+<span class="fc" id="L106">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L107">			throw new IndexAlreadyExistsException(index.getName());</span>
+		}
+<span class="fc" id="L109">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L111">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L112">			throw new IndexException(format(&quot;Error creating index '%s'.&quot;, index.getName()));</span>
+<span class="fc" id="L113">		}</span>
+
+		// 'acknowledged' indicates whether the index was successfully created in the cluster before the request timeout
+<span class="pc bpc" id="L116" title="1 of 2 branches missed.">		if (!createIndexResponse.isAcknowledged())</span>
+		{
+<span class="fc" id="L118">			LOG.warn(&quot;Index '{}' creation possibly failed (acknowledged=false)&quot;, index.getName());</span>
+		}
+		// 'shards_acknowledged' indicates whether the requisite number of shard copies were started for each shard in the index before timing out
+<span class="pc bpc" id="L121" title="1 of 2 branches missed.">		if (!createIndexResponse.isShardsAcked())</span>
+		{
+<span class="fc" id="L123">			LOG.warn(&quot;Index '{}' creation possibly failed (shards_acknowledged=false)&quot;, index.getName());</span>
+		}
+
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="fc" id="L128">			LOG.debug(&quot;Created index '{}'.&quot;, index.getName());</span>
+		}
+<span class="fc" id="L130">	}</span>
+
+	private CreateIndexRequestBuilder createIndexRequest(Index index, IndexSettings indexSettings,
+			Stream&lt;Mapping&gt; mappingStream)
+	{
+<span class="fc" id="L135">		XContentBuilder settings = settingsBuilder.createSettings(indexSettings);</span>
+<span class="fc" id="L136">		Map&lt;String, XContentBuilder&gt; mappings = mappingStream.collect(</span>
+<span class="fc" id="L137">				toMap(Mapping::getType, mappingSourceBuilder::createMapping, (u, v) -&gt;</span>
+				{
+<span class="nc" id="L139">					throw new IllegalStateException(String.format(&quot;Duplicate key %s&quot;, u));</span>
+				}, LinkedHashMap::new));
+
+<span class="fc" id="L142">		CreateIndexRequestBuilder createIndexRequest = client.admin().indices().prepareCreate(index.getName());</span>
+<span class="fc" id="L143">		createIndexRequest.setSettings(settings);</span>
+<span class="fc" id="L144">		mappings.forEach(createIndexRequest::addMapping);</span>
+<span class="fc" id="L145">		return createIndexRequest;</span>
+	}
+
+	public boolean indexesExist(Index index)
+	{
+<span class="nc" id="L150">		return indexesExist(singletonList(index));</span>
+	}
+
+	private boolean indexesExist(List&lt;Index&gt; indexes)
+	{
+<span class="pc bpc" id="L155" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="fc" id="L157">			LOG.trace(&quot;Determining index(es) '{}' existence ...&quot;, toString(indexes));</span>
+		}
+
+<span class="fc" id="L160">		String[] indexNames = toIndexNames(indexes);</span>
+<span class="fc" id="L161">		IndicesExistsRequestBuilder indicesExistsRequest = client.admin().indices().prepareExists(indexNames);</span>
+
+		IndicesExistsResponse indicesExistsResponse;
+		try
+		{
+<span class="nc" id="L166">			indicesExistsResponse = indicesExistsRequest.get();</span>
+		}
+<span class="fc" id="L168">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L170">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L171">			throw new IndexException(format(&quot;Error determining index(es) '%s' existence.&quot;, toString(indexes)));</span>
+<span class="nc" id="L172">		}</span>
+
+<span class="nc" id="L174">		boolean exists = indicesExistsResponse.isExists();</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L177">			LOG.debug(&quot;Determined index(es) '{}' existence: {}.&quot;, toString(indexes), exists);</span>
+		}
+<span class="nc" id="L179">		return exists;</span>
+	}
+
+	public void deleteIndex(Index index)
+	{
+<span class="nc" id="L184">		deleteIndexes(singletonList(index));</span>
+<span class="nc" id="L185">	}</span>
+
+	private void deleteIndexes(List&lt;Index&gt; indexes)
+	{
+<span class="pc bpc" id="L189" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="fc" id="L191">			LOG.trace(&quot;Deleting index(es) '{}' ...&quot;, toString(indexes));</span>
+		}
+
+<span class="fc" id="L194">		String[] indexNames = toIndexNames(indexes);</span>
+<span class="fc" id="L195">		DeleteIndexRequestBuilder deleteIndexRequest = client.admin().indices().prepareDelete(indexNames);</span>
+
+		DeleteIndexResponse deleteIndexResponse;
+		try
+		{
+<span class="fc" id="L200">			deleteIndexResponse = deleteIndexRequest.get();</span>
+		}
+<span class="nc" id="L202">		catch (ResourceNotFoundException e)</span>
+		{
+<span class="nc" id="L204">			LOG.debug(&quot;&quot;, e);</span>
+<span class="nc" id="L205">			throw new UnknownIndexException(toString(indexes));</span>
+		}
+<span class="fc" id="L207">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L209">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L210">			throw new IndexException(format(&quot;Error deleting index(es) '%s'.&quot;, toString(indexes)));</span>
+<span class="fc" id="L211">		}</span>
+
+<span class="pc bpc" id="L213" title="1 of 2 branches missed.">		if (!deleteIndexResponse.isAcknowledged())</span>
+		{
+<span class="fc" id="L215">			throw new IndexException(format(&quot;Error deleting index(es) '%s'.&quot;, toString(indexes)));</span>
+		}
+<span class="nc bnc" id="L217" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L219">			LOG.debug(&quot;Deleted index(es) '{}'.&quot;, toString(indexes));</span>
+		}
+<span class="nc" id="L221">	}</span>
+
+	public void refreshIndexes()
+	{
+<span class="nc" id="L225">		refreshIndexes(singletonList(Index.create(&quot;_all&quot;)));</span>
+<span class="nc" id="L226">	}</span>
+
+	private void refreshIndexes(List&lt;Index&gt; indexes)
+	{
+<span class="pc bpc" id="L230" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="fc" id="L232">			LOG.trace(&quot;Refreshing index(es) '{}' ...&quot;, toString(indexes));</span>
+		}
+
+<span class="fc" id="L235">		String[] indexNames = toIndexNames(indexes);</span>
+<span class="fc" id="L236">		RefreshRequestBuilder refreshRequest = client.admin().indices().prepareRefresh(indexNames);</span>
+
+		RefreshResponse refreshResponse;
+		try
+		{
+<span class="fc" id="L241">			refreshResponse = refreshRequest.get();</span>
+		}
+<span class="fc" id="L243">		catch (ResourceNotFoundException e)</span>
+		{
+<span class="fc" id="L245">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L246">			throw new UnknownIndexException(toIndexNames(indexes));</span>
+		}
+<span class="fc" id="L248">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L250">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L251">			throw new IndexException(format(&quot;Error refreshing index(es) '%s'.&quot;, toString(indexes)));</span>
+<span class="fc" id="L252">		}</span>
+
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">		if (refreshResponse.getFailedShards() &gt; 0)</span>
+		{
+<span class="fc" id="L256">			LOG.error(stream(refreshResponse.getShardFailures()).map(ShardOperationFailedException::toString)</span>
+<span class="fc" id="L257">																.collect(joining(&quot;\n&quot;)));</span>
+<span class="fc" id="L258">			throw new IndexException(format(&quot;Error refreshing index(es) '%s'.&quot;, toString(indexes)));</span>
+		}
+
+<span class="nc bnc" id="L261" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L263">			LOG.debug(&quot;Refreshed index(es) '{}'&quot;, toString(indexes));</span>
+		}
+<span class="nc" id="L265">	}</span>
+
+	public long getCount(Index index)
+	{
+<span class="nc" id="L269">		return getCount(singletonList(index));</span>
+	}
+
+	private long getCount(List&lt;Index&gt; indexes)
+	{
+<span class="nc" id="L274">		return getCount(null, indexes);</span>
+	}
+
+	public long getCount(QueryBuilder query, Index index)
+	{
+<span class="nc" id="L279">		return getCount(query, singletonList(index));</span>
+	}
+
+	private long getCount(QueryBuilder query, List&lt;Index&gt; indexes)
+	{
+<span class="pc bpc" id="L284" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="pc bpc" id="L286" title="1 of 2 branches missed.">			if (query != null)</span>
+			{
+<span class="nc" id="L288">				LOG.trace(&quot;Counting docs in index(es) '{}' with query '{}' ...&quot;, toString(indexes), query);</span>
+			}
+			else
+			{
+<span class="fc" id="L292">				LOG.trace(&quot;Counting docs in index(es) '{}' ...&quot;, toString(indexes));</span>
+			}
+		}
+
+<span class="fc" id="L296">		SearchRequestBuilder searchRequest = createSearchRequest(query, null, 0, null, null, indexes);</span>
+
+		SearchResponse searchResponse;
+		try
+		{
+<span class="fc" id="L301">			searchResponse = searchRequest.get();</span>
+		}
+<span class="fc" id="L303">		catch (ResourceNotFoundException e)</span>
+		{
+<span class="fc" id="L305">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L306">			throw new UnknownIndexException(toIndexNames(indexes));</span>
+		}
+<span class="fc" id="L308">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L310">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L311">			throw new IndexException(format(&quot;Error counting docs in index(es) '%s'.&quot;, toString(indexes)));</span>
+<span class="fc" id="L312">		}</span>
+
+<span class="fc bfc" id="L314" title="All 2 branches covered.">		if (searchResponse.getFailedShards() &gt; 0)</span>
+		{
+<span class="fc" id="L316">			LOG.error(</span>
+<span class="fc" id="L317">					stream(searchResponse.getShardFailures()).map(ShardSearchFailure::toString).collect(joining(&quot;\n&quot;)));</span>
+<span class="fc" id="L318">			throw new IndexException(format(&quot;Error counting docs in index(es) '%s'.&quot;, toString(indexes)));</span>
+		}
+<span class="pc bpc" id="L320" title="1 of 2 branches missed.">		if (searchResponse.isTimedOut())</span>
+		{
+<span class="fc" id="L322">			throw new IndexException(format(&quot;Timeout while counting docs in index(es) '%s'.&quot;, toString(indexes)));</span>
+		}
+
+<span class="nc" id="L325">		long totalHits = searchResponse.getHits().getTotalHits();</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc bnc" id="L328" title="All 2 branches missed.">			if (query != null)</span>
+			{
+<span class="nc" id="L330">				LOG.debug(&quot;Counted {} docs in index(es) '{}' with query '{}' in {}ms.&quot;, totalHits, toString(indexes),</span>
+<span class="nc" id="L331">						query, searchResponse.getTookInMillis());</span>
+			}
+			else
+			{
+<span class="nc" id="L335">				LOG.debug(&quot;Counted {} docs in index(es) '{}' in {}ms.&quot;, totalHits, toString(indexes),</span>
+<span class="nc" id="L336">						searchResponse.getTookInMillis());</span>
+			}
+		}
+<span class="nc" id="L339">		return totalHits;</span>
+	}
+
+	public SearchHits search(QueryBuilder query, int from, int size, List&lt;Index&gt; indexes)
+	{
+<span class="nc" id="L344">		return search(query, from, size, null, indexes);</span>
+	}
+
+	public SearchHits search(QueryBuilder query, int from, int size, Sort sort, Index index)
+	{
+<span class="nc" id="L349">		return search(query, from, size, sort, singletonList(index));</span>
+	}
+
+	private SearchHits search(QueryBuilder query, int from, int size, Sort sort, List&lt;Index&gt; indexes)
+	{
+<span class="pc bpc" id="L354" title="1 of 2 branches missed.">		if (size &gt; 10000)</span>
+		{
+<span class="nc" id="L356">			throw new MolgenisQueryException(</span>
+<span class="nc" id="L357">					String.format(&quot;Batch size of %s exceeds the maximum batch size of %s for search queries&quot;, size,</span>
+<span class="nc" id="L358">							MAX_BATCH_SIZE));</span>
+		}
+
+<span class="pc bpc" id="L361" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="pc bpc" id="L363" title="1 of 2 branches missed.">			if (sort != null)</span>
+			{
+<span class="nc" id="L365">				LOG.trace(&quot;Searching docs [{}-{}] in index(es) '{}' with query '{}' sorted by '{}' ...&quot;, from,</span>
+<span class="nc" id="L366">						from + size, toString(indexes), query, sort);</span>
+			}
+			else
+			{
+<span class="fc" id="L370">				LOG.trace(&quot;Searching docs [{}-{}] in index(es) '{}' with query '{}' ...&quot;, from, from + size,</span>
+<span class="fc" id="L371">						toString(indexes), query);</span>
+			}
+		}
+
+<span class="fc" id="L375">		SearchRequestBuilder searchRequest = createSearchRequest(query, from, size, sort, null, indexes);</span>
+
+		SearchResponse searchResponse;
+		try
+		{
+<span class="fc" id="L380">			searchResponse = searchRequest.get();</span>
+		}
+<span class="fc" id="L382">		catch (ResourceNotFoundException e)</span>
+		{
+<span class="fc" id="L384">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L385">			throw new UnknownIndexException(toIndexNames(indexes));</span>
+		}
+<span class="fc" id="L387">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L389">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L390">			throw new IndexException(</span>
+<span class="fc" id="L391">					format(&quot;Error searching docs in index(es) '%s' with query '%s'.&quot;, toString(indexes), query));</span>
+<span class="fc" id="L392">		}</span>
+<span class="fc bfc" id="L393" title="All 2 branches covered.">		if (searchResponse.getFailedShards() &gt; 0)</span>
+		{
+<span class="fc" id="L395">			LOG.error(</span>
+<span class="fc" id="L396">					stream(searchResponse.getShardFailures()).map(ShardSearchFailure::toString).collect(joining(&quot;\n&quot;)));</span>
+<span class="fc" id="L397">			throw new IndexException(</span>
+<span class="fc" id="L398">					format(&quot;Error searching docs in index(es) '%s' with query '%s'.&quot;, toString(indexes), query));</span>
+		}
+<span class="pc bpc" id="L400" title="1 of 2 branches missed.">		if (searchResponse.isTimedOut())</span>
+		{
+<span class="fc" id="L402">			throw new IndexException(</span>
+<span class="fc" id="L403">					format(&quot;Timeout searching counting docs in index(es) '%s'  with query '%s'.&quot;, toString(indexes),</span>
+							query));
+		}
+
+<span class="nc bnc" id="L407" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc bnc" id="L409" title="All 2 branches missed.">			if (sort != null)</span>
+			{
+<span class="nc" id="L411">				LOG.debug(&quot;Searched {} docs in index(es) '{}' with query '{}' sorted by '{}' in {}ms.&quot;,</span>
+<span class="nc" id="L412">						searchResponse.getHits().getTotalHits(), toString(indexes), query, sort,</span>
+<span class="nc" id="L413">						searchResponse.getTookInMillis());</span>
+			}
+			else
+			{
+<span class="nc" id="L417">				LOG.debug(&quot;Searched {} docs in index(es) '{}' with query '{}' in {}ms.&quot;,</span>
+<span class="nc" id="L418">						searchResponse.getHits().getTotalHits(), toString(indexes), query,</span>
+<span class="nc" id="L419">						searchResponse.getTookInMillis());</span>
+			}
+		}
+<span class="nc" id="L422">		return createSearchResponse(searchResponse);</span>
+	}
+
+	private SearchRequestBuilder createSearchRequest(QueryBuilder query, Integer from, Integer size, Sort sort,
+			List&lt;AggregationBuilder&gt; aggregations, List&lt;Index&gt; indexes)
+	{
+<span class="fc" id="L428">		String[] indexNames = toIndexNames(indexes);</span>
+<span class="fc" id="L429">		SearchRequestBuilder searchRequest = client.prepareSearch(indexNames);</span>
+<span class="fc bfc" id="L430" title="All 2 branches covered.">		if (query != null)</span>
+		{
+<span class="fc" id="L432">			searchRequest.setQuery(query);</span>
+		}
+<span class="fc bfc" id="L434" title="All 2 branches covered.">		if (from != null)</span>
+		{
+<span class="fc" id="L436">			searchRequest.setFrom(from);</span>
+		}
+<span class="pc bpc" id="L438" title="1 of 2 branches missed.">		if (size != null)</span>
+		{
+<span class="fc" id="L440">			searchRequest.setSize(size);</span>
+		}
+<span class="pc bpc" id="L442" title="1 of 2 branches missed.">		if (sort != null)</span>
+		{
+<span class="nc" id="L444">			List&lt;SortBuilder&gt; sorts = sortContentBuilder.createSorts(sort);</span>
+<span class="nc" id="L445">			sorts.forEach(searchRequest::addSort);</span>
+		}
+<span class="fc bfc" id="L447" title="All 2 branches covered.">		if (aggregations != null)</span>
+		{
+<span class="fc" id="L449">			aggregations.forEach(searchRequest::addAggregation);</span>
+		}
+<span class="fc" id="L451">		return searchRequest;</span>
+	}
+
+	private SearchHits createSearchResponse(SearchResponse searchResponse)
+	{
+<span class="nc" id="L456">		org.elasticsearch.search.SearchHits searchHits = searchResponse.getHits();</span>
+<span class="nc" id="L457">		List&lt;SearchHit&gt; searchHitList = stream(searchHits.getHits()).map(</span>
+<span class="nc" id="L458">				hit -&gt; SearchHit.create(hit.getId(), hit.getIndex())).collect(toList());</span>
+<span class="nc" id="L459">		return SearchHits.create(searchHits.getTotalHits(), searchHitList);</span>
+	}
+
+	public Aggregations aggregate(List&lt;AggregationBuilder&gt; aggregations, QueryBuilder query, Index index)
+	{
+<span class="nc" id="L464">		return aggregate(aggregations, query, singletonList(index));</span>
+	}
+
+	private Aggregations aggregate(List&lt;AggregationBuilder&gt; aggregations, QueryBuilder query, List&lt;Index&gt; indexes)
+	{
+<span class="pc bpc" id="L469" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="pc bpc" id="L471" title="1 of 2 branches missed.">			if (query != null)</span>
+			{
+<span class="fc" id="L473">				LOG.trace(&quot;Aggregating docs in index(es) '{}' with aggregations '{}' and query '{}' ...&quot;,</span>
+<span class="fc" id="L474">						toString(indexes), aggregations, query);</span>
+			}
+			else
+			{
+<span class="nc" id="L478">				LOG.trace(&quot;Aggregating docs in index(es) '{}' with aggregations '{}' ...&quot;, toString(indexes),</span>
+						aggregations);
+			}
+		}
+
+<span class="fc" id="L483">		SearchRequestBuilder searchRequest = createSearchRequest(query, null, 0, null, aggregations, indexes);</span>
+		SearchResponse searchResponse;
+		try
+		{
+<span class="fc" id="L487">			searchResponse = searchRequest.get();</span>
+		}
+<span class="fc" id="L489">		catch (ResourceNotFoundException e)</span>
+		{
+<span class="fc" id="L491">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L492">			throw new UnknownIndexException(toIndexNames(indexes));</span>
+		}
+<span class="fc" id="L494">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L496">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L497">			throw new IndexException(format(&quot;Error aggregating docs in index(es) '%s'.&quot;, toString(indexes)));</span>
+<span class="fc" id="L498">		}</span>
+<span class="fc bfc" id="L499" title="All 2 branches covered.">		if (searchResponse.getFailedShards() &gt; 0)</span>
+		{
+<span class="fc" id="L501">			LOG.error(</span>
+<span class="fc" id="L502">					stream(searchResponse.getShardFailures()).map(ShardSearchFailure::toString).collect(joining(&quot;\n&quot;)));</span>
+<span class="fc" id="L503">			throw new IndexException(format(&quot;Error aggregating docs in index(es) '%s'.&quot;, toString(indexes)));</span>
+		}
+<span class="pc bpc" id="L505" title="1 of 2 branches missed.">		if (searchResponse.isTimedOut())</span>
+		{
+<span class="fc" id="L507">			throw new IndexException(format(&quot;Timeout aggregating docs in index(es) '%s'.&quot;, toString(indexes)));</span>
+		}
+
+<span class="nc bnc" id="L510" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc bnc" id="L512" title="All 2 branches missed.">			if (query != null)</span>
+			{
+<span class="nc" id="L514">				LOG.debug(&quot;Aggregated docs in index(es) '{}' with aggregations '{}' and query '{}' in {}ms.&quot;,</span>
+<span class="nc" id="L515">						toString(indexes), aggregations, query, searchResponse.getTookInMillis());</span>
+			}
+			else
+			{
+<span class="nc" id="L519">				LOG.debug(&quot;Aggregated docs in index(es) '{}' with aggregations '{}' in {}ms.&quot;, toString(indexes),</span>
+<span class="nc" id="L520">						aggregations, searchResponse.getTookInMillis());</span>
+			}
+		}
+<span class="nc" id="L523">		return searchResponse.getAggregations();</span>
+	}
+
+	public Explanation explain(SearchHit searchHit, QueryBuilder query)
+	{
+<span class="pc bpc" id="L528" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="fc" id="L530">			LOG.trace(&quot;Explaining doc with id '{}' in index '{}' for query '{}' ...&quot;, searchHit.getId(),</span>
+<span class="fc" id="L531">					searchHit.getIndex(), query);</span>
+		}
+
+<span class="fc" id="L534">		String indexName = searchHit.getIndex();</span>
+		//FIXME: ClientFacade shouldn't assume that typename equals typename
+<span class="fc" id="L536">		ExplainRequestBuilder explainRequestBuilder = client.prepareExplain(indexName, indexName, searchHit.getId())</span>
+<span class="fc" id="L537">															.setQuery(query);</span>
+		ExplainResponse explainResponse;
+		try
+		{
+<span class="nc" id="L541">			explainResponse = explainRequestBuilder.get();</span>
+		}
+<span class="fc" id="L543">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L545">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L546">			throw new IndexException(</span>
+<span class="fc" id="L547">					format(&quot;Error explaining doc with id '%s' in index '%s' for query '%s'.&quot;, searchHit.getId(),</span>
+<span class="fc" id="L548">							searchHit.getIndex(), query));</span>
+<span class="nc" id="L549">		}</span>
+
+<span class="nc bnc" id="L551" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L553">			LOG.debug(&quot;Explained doc with id '{}' in index '{}' for query.&quot;, searchHit.getId(), searchHit.getIndex(),</span>
+					query);
+		}
+<span class="nc" id="L556">		return explainResponse.getExplanation();</span>
+	}
+
+	public void index(Index index, Document document)
+	{
+<span class="pc bpc" id="L561" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="fc" id="L563">			LOG.trace(&quot;Indexing doc with id '{}' in index '{}' ...&quot;, document.getId(), index.getName());</span>
+		}
+
+<span class="fc" id="L566">		String indexName = index.getName();</span>
+<span class="fc" id="L567">		String documentId = document.getId();</span>
+<span class="fc" id="L568">		XContentBuilder source = document.getContent();</span>
+<span class="fc" id="L569">		IndexRequestBuilder indexRequest = client.prepareIndex()</span>
+<span class="fc" id="L570">												 .setIndex(indexName)</span>
+<span class="fc" id="L571">												 .setType(indexName)</span>
+<span class="fc" id="L572">												 .setId(documentId)</span>
+<span class="fc" id="L573">												 .setSource(source);</span>
+
+		IndexResponse indexResponse;
+		try
+		{
+<span class="fc" id="L578">			indexResponse = indexRequest.get();</span>
+		}
+<span class="fc" id="L580">		catch (ResourceNotFoundException e)</span>
+		{
+<span class="fc" id="L582">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L583">			throw new UnknownIndexException(index.getName());</span>
+		}
+<span class="fc" id="L585">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L587">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L588">			throw new IndexException(format(&quot;Error indexing doc with id '%s' in index '%s'.&quot;, documentId, indexName));</span>
+<span class="fc" id="L589">		}</span>
+
+		//TODO: Is it good enough if at least one shard succeeds? Shouldn't we at least log something if failures &gt; 0?
+<span class="pc bpc" id="L592" title="1 of 2 branches missed.">		if (indexResponse.getShardInfo().getSuccessful() == 0)</span>
+		{
+<span class="fc" id="L594">			LOG.error(Arrays.stream(indexResponse.getShardInfo().getFailures())</span>
+							//FIXME: logs Object.toString()
+<span class="fc" id="L596">							.map(ReplicationResponse.ShardInfo.Failure::toString).collect(joining(&quot;\n&quot;)));</span>
+<span class="fc" id="L597">			throw new IndexException(format(&quot;Error indexing doc with id '%s' in index '%s'.&quot;, documentId, indexName));</span>
+		}
+
+<span class="nc bnc" id="L600" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L602">			LOG.debug(&quot;Indexed doc with id '{}' in index '{}'.&quot;, documentId, indexName);</span>
+		}
+<span class="nc" id="L604">	}</span>
+
+	public void deleteById(Index index, Document document)
+	{
+<span class="pc bpc" id="L608" title="1 of 2 branches missed.">		if (LOG.isTraceEnabled())</span>
+		{
+<span class="fc" id="L610">			LOG.trace(&quot;Deleting doc with id '{}' in index '{}' ...&quot;, document.getId(), index.getName());</span>
+		}
+
+<span class="fc" id="L613">		String indexName = index.getName();</span>
+<span class="fc" id="L614">		String documentId = document.getId();</span>
+<span class="fc" id="L615">		DeleteRequestBuilder deleteRequest = client.prepareDelete()</span>
+<span class="fc" id="L616">												   .setIndex(indexName)</span>
+<span class="fc" id="L617">												   .setType(indexName)</span>
+<span class="fc" id="L618">												   .setId(documentId);</span>
+
+		DeleteResponse deleteResponse;
+		try
+		{
+<span class="nc" id="L623">			deleteResponse = deleteRequest.get();</span>
+		}
+<span class="fc" id="L625">		catch (ResourceNotFoundException e)</span>
+		{
+<span class="fc" id="L627">			LOG.error(&quot;&quot;, e);</span>
+<span class="fc" id="L628">			throw new UnknownIndexException(index.getName());</span>
+		}
+<span class="fc" id="L630">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L632">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L633">			throw new IndexException(format(&quot;Error deleting doc with id '%s' in index '%s'.&quot;, documentId, indexName));</span>
+<span class="nc" id="L634">		}</span>
+
+		//TODO: Check why not check shardinfo?
+
+<span class="nc bnc" id="L638" title="All 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L640">			LOG.debug(&quot;Deleted doc with id '{}' in index '{}' and status '{}'&quot;, documentId, indexName,</span>
+<span class="nc" id="L641">					deleteResponse.getResult());</span>
+		}
+<span class="nc" id="L643">	}</span>
+
+	public void processDocumentActions(Stream&lt;DocumentAction&gt; documentActions)
+	{
+<span class="nc" id="L647">		LOG.trace(&quot;Processing document actions ...&quot;);</span>
+<span class="nc" id="L648">		BulkProcessor bulkProcessor = bulkProcessorFactory.create(client);</span>
+		try
+		{
+<span class="nc" id="L651">			documentActions.forEachOrdered(documentAction -&gt;</span>
+			{
+<span class="nc" id="L653">				DocWriteRequest docWriteRequest = toDocWriteRequest(documentAction);</span>
+<span class="nc" id="L654">				bulkProcessor.add(docWriteRequest);</span>
+<span class="nc" id="L655">			});</span>
+		}
+		finally
+		{
+<span class="nc" id="L659">			waitForCompletion(bulkProcessor);</span>
+<span class="nc" id="L660">			LOG.debug(&quot;Processed document actions.&quot;);</span>
+		}
+<span class="nc" id="L662">	}</span>
+
+	private DocWriteRequest toDocWriteRequest(DocumentAction documentAction)
+	{
+<span class="nc" id="L666">		String indexName = documentAction.getIndex().getName();</span>
+<span class="nc" id="L667">		String documentId = documentAction.getDocument().getId();</span>
+
+		DocWriteRequest docWriteRequest;
+<span class="nc bnc" id="L670" title="All 3 branches missed.">		switch (documentAction.getOperation())</span>
+		{
+			case INDEX:
+<span class="nc" id="L673">				XContentBuilder source = documentAction.getDocument().getContent();</span>
+<span class="nc bnc" id="L674" title="All 2 branches missed.">				if (source == null)</span>
+				{
+<span class="nc" id="L676">					throw new IndexException(format(&quot;Document action is missing document source '%s'&quot;, documentAction));</span>
+				}
+<span class="nc" id="L678">				docWriteRequest = Requests.indexRequest(indexName)</span>
+<span class="nc" id="L679">										  .type(indexName)</span>
+<span class="nc" id="L680">										  .id(documentId)</span>
+<span class="nc" id="L681">										  .source(source)</span>
+<span class="nc" id="L682">										  .opType(INDEX);</span>
+<span class="nc" id="L683">				break;</span>
+			case DELETE:
+<span class="nc" id="L685">				docWriteRequest = Requests.deleteRequest(indexName).type(indexName).id(documentId);</span>
+<span class="nc" id="L686">				break;</span>
+			default:
+<span class="nc" id="L688">				throw new UnexpectedEnumException(documentAction.getOperation());</span>
+		}
+<span class="nc" id="L690">		return docWriteRequest;</span>
+	}
+
+	private void waitForCompletion(BulkProcessor bulkProcessor)
+	{
+		try
+		{
+<span class="nc" id="L697">			boolean isCompleted = bulkProcessor.awaitClose(Long.MAX_VALUE, TimeUnit.NANOSECONDS);</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">			if (!isCompleted)</span>
+			{
+<span class="nc" id="L700">				throw new MolgenisDataException(&quot;Failed to complete bulk request within the given time&quot;);</span>
+			}
+		}
+<span class="nc" id="L703">		catch (InterruptedException e)</span>
+		{
+<span class="nc" id="L705">			Thread.currentThread().interrupt();</span>
+<span class="nc" id="L706">			throw new RuntimeException(e);</span>
+<span class="nc" id="L707">		}</span>
+<span class="nc" id="L708">	}</span>
+
+	private String[] toIndexNames(List&lt;Index&gt; indexes)
+	{
+<span class="fc" id="L712">		return indexes.stream().map(Index::getName).toArray(String[]::new);</span>
+	}
+
+	private String toString(List&lt;Index&gt; indexes)
+	{
+<span class="fc" id="L717">		return indexes.stream().map(Index::getName).collect(joining(&quot;, &quot;));</span>
+	}
+
+	@Override
+	public void close() throws IOException
+	{
+		try
+		{
+<span class="nc" id="L725">			client.close();</span>
+		}
+<span class="fc" id="L727">		catch (ElasticsearchException e)</span>
+		{
+<span class="fc" id="L729">			LOG.error(&quot;Error closing Elasticsearch client&quot;, e);</span>
+<span class="nc" id="L730">		}</span>
+<span class="fc" id="L731">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

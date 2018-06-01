@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GavinController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">gavin</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.gavin.controller</a> &gt; <span class="el_source">GavinController.java</span></div><h1>GavinController.java</h1><pre class="source lang-java linenums">package org.molgenis.gavin.controller;
+
+import org.molgenis.core.ui.controller.AbstractStaticContentController;
+import org.molgenis.core.ui.menu.MenuReaderService;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.gavin.job.GavinJob;
+import org.molgenis.gavin.job.GavinJobExecution;
+import org.molgenis.gavin.job.GavinJobFactory;
+import org.molgenis.gavin.job.JobNotFoundException;
+import org.molgenis.gavin.job.meta.GavinJobExecutionFactory;
+import org.molgenis.security.user.UserAccountService;
+import org.molgenis.web.ErrorMessageResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+
+import static java.io.File.separator;
+import static java.text.MessageFormat.format;
+import static java.time.ZonedDateTime.now;
+import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static org.molgenis.data.populate.IdGenerator.Strategy.SECURE_RANDOM;
+import static org.molgenis.gavin.controller.GavinController.URI;
+import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
+import static org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE;
+
+@Controller
+@RequestMapping(URI)
+@EnableScheduling
+public class GavinController extends AbstractStaticContentController
+{
+<span class="fc" id="L52">	private static final Logger LOG = LoggerFactory.getLogger(GavinController.class);</span>
+
+	public static final String GAVIN_APP = &quot;gavin-app&quot;;
+	static final String URI = PLUGIN_URI_PREFIX + GAVIN_APP;
+	public static final String TSV_GZ = &quot;tsv.gz&quot;;
+	public static final String TSV = &quot;tsv&quot;;
+	public static final String GZ = &quot;gz&quot;;
+
+	private final ExecutorService executorService;
+	private final GavinJobFactory gavinJobFactory;
+	private final GavinJobExecutionFactory gavinJobExecutionFactory;
+	private final FileStore fileStore;
+	private final UserAccountService userAccountService;
+	private final IdGenerator idGenerator;
+	private final MenuReaderService menuReaderService;
+
+	public GavinController(@Qualifier(&quot;gavinExecutors&quot;) ExecutorService executorService,
+			GavinJobFactory gavinJobFactory, GavinJobExecutionFactory gavinJobExecutionFactory, FileStore fileStore,
+			UserAccountService userAccountService, MenuReaderService menuReaderService, IdGenerator idGenerator)
+	{
+<span class="fc" id="L72">		super(GAVIN_APP, URI);</span>
+<span class="fc" id="L73">		this.executorService = requireNonNull(executorService);</span>
+<span class="fc" id="L74">		this.gavinJobFactory = requireNonNull(gavinJobFactory);</span>
+<span class="fc" id="L75">		this.gavinJobExecutionFactory = requireNonNull(gavinJobExecutionFactory);</span>
+<span class="fc" id="L76">		this.fileStore = requireNonNull(fileStore);</span>
+<span class="fc" id="L77">		this.userAccountService = requireNonNull(userAccountService);</span>
+<span class="fc" id="L78">		this.menuReaderService = requireNonNull(menuReaderService);</span>
+<span class="fc" id="L79">		this.idGenerator = requireNonNull(idGenerator);</span>
+<span class="fc" id="L80">	}</span>
+
+	/**
+	 * Shows the gavin page.
+	 * This page shows the configuration wheels if the annotation resources are not yet properly configured.
+	 * If the annotation resources are fine, it shows the upload control.
+	 *
+	 * @return the view name
+	 */
+	@GetMapping
+	public String init(Model model)
+	{
+<span class="fc" id="L92">		super.init(model);</span>
+<span class="fc" id="L93">		List&lt;String&gt; annotatorsWithMissingResources = gavinJobFactory.getAnnotatorsWithMissingResources();</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">		if (!annotatorsWithMissingResources.isEmpty())</span>
+		{
+<span class="fc" id="L96">			model.addAttribute(&quot;annotatorsWithMissingResources&quot;, annotatorsWithMissingResources);</span>
+		}
+<span class="fc" id="L98">		return &quot;view-gavin&quot;;</span>
+	}
+
+	/**
+	 * Starts a job to annotate a VCF file
+	 *
+	 * @param inputFile    the uploaded input file
+	 * @param entityTypeId the name of the file
+	 * @return the ID of the created {@link GavinJobExecution}
+	 * @throws IOException if interaction with the file store fails
+	 */
+	@PostMapping(&quot;/annotate-file&quot;)
+	public ResponseEntity&lt;String&gt; annotateFile(@RequestParam(value = &quot;file&quot;) MultipartFile inputFile,
+			@RequestParam String entityTypeId) throws IOException
+	{
+<span class="fc" id="L113">		String extension = TSV;</span>
+<span class="pc bpc" id="L114" title="1 of 2 branches missed.">		if (inputFile.getOriginalFilename().endsWith(GZ))</span>
+		{
+<span class="nc" id="L116">			extension = TSV_GZ;</span>
+		}
+
+<span class="fc" id="L119">		final GavinJobExecution gavinJobExecution = gavinJobExecutionFactory.create(</span>
+<span class="fc" id="L120">				idGenerator.generateId(SECURE_RANDOM));</span>
+<span class="fc" id="L121">		gavinJobExecution.setFilename(entityTypeId);</span>
+<span class="fc" id="L122">		gavinJobExecution.setUser(userAccountService.getCurrentUser().getUsername());</span>
+<span class="fc" id="L123">		gavinJobExecution.setInputFileExtension(extension);</span>
+<span class="fc" id="L124">		final GavinJob gavinJob = gavinJobFactory.createJob(gavinJobExecution);</span>
+
+<span class="fc" id="L126">		final String gavinJobIdentifier = gavinJobExecution.getIdentifier();</span>
+<span class="fc" id="L127">		fileStore.createDirectory(GAVIN_APP);</span>
+<span class="fc" id="L128">		final String jobDir = format(&quot;{0}{1}{2}&quot;, GAVIN_APP, separator, gavinJobIdentifier);</span>
+<span class="fc" id="L129">		fileStore.createDirectory(jobDir);</span>
+
+<span class="fc" id="L131">		final String fileName = format(&quot;{0}{1}input.{2}&quot;, jobDir, separator, extension);</span>
+<span class="fc" id="L132">		fileStore.writeToFile(inputFile.getInputStream(), fileName);</span>
+
+<span class="fc" id="L134">		executorService.submit(gavinJob);</span>
+
+<span class="fc" id="L136">		String location = &quot;/plugin/gavin-app/job/&quot; + gavinJobIdentifier;</span>
+<span class="fc" id="L137">		return ResponseEntity.created(java.net.URI.create(location)).body(location);</span>
+	}
+
+	/**
+	 * Retrieves {@link GavinJobExecution} job.
+	 * May be called by anyone who has the identifier.
+	 *
+	 * @param jobIdentifier identifier of the annotation job
+	 * @return GavinJobExecution, or null if no GavinJobExecution exists with this ID.
+	 */
+	@GetMapping(value = &quot;/job/{jobIdentifier}&quot;, produces = APPLICATION_JSON_VALUE)
+	public @ResponseBody
+	GavinJobExecution getGavinJobExecution(@PathVariable(value = &quot;jobIdentifier&quot;) String jobIdentifier)
+			throws JobNotFoundException
+	{
+<span class="nc" id="L152">		return gavinJobFactory.findGavinJobExecution(jobIdentifier);</span>
+	}
+
+	/**
+	 * Shows result page for a job. The job may still be running.
+	 *
+	 * @param jobIdentifier identifier of the annotation job
+	 * @return {@link FileSystemResource} with the annotated file
+	 */
+	@GetMapping(&quot;/result/{jobIdentifier}&quot;)
+	public String result(@PathVariable(value = &quot;jobIdentifier&quot;) String jobIdentifier, Model model,
+			HttpServletRequest request) throws JobNotFoundException
+	{
+<span class="nc" id="L165">		model.addAttribute(&quot;jobExecution&quot;, gavinJobFactory.findGavinJobExecution(jobIdentifier));</span>
+<span class="nc" id="L166">		model.addAttribute(&quot;downloadFileExists&quot;, getDownloadFileForJob(jobIdentifier).exists());</span>
+<span class="nc" id="L167">		model.addAttribute(&quot;errorFileExists&quot;, getErrorFileForJob(jobIdentifier).exists());</span>
+<span class="nc" id="L168">		model.addAttribute(&quot;pageUrl&quot;, getPageUrl(jobIdentifier, request));</span>
+<span class="nc" id="L169">		return &quot;view-gavin-result&quot;;</span>
+	}
+
+	private String getPageUrl(String jobIdentifier, HttpServletRequest request)
+	{
+		String host;
+<span class="nc bnc" id="L175" title="All 2 branches missed.">		if (StringUtils.isEmpty(request.getHeader(&quot;X-Forwarded-Host&quot;)))</span>
+		{
+<span class="nc" id="L177">			host = request.getScheme() + &quot;://&quot; + request.getServerName() + &quot;:&quot; + request.getLocalPort();</span>
+		}
+		else
+		{
+<span class="nc" id="L181">			host = request.getScheme() + &quot;://&quot; + request.getHeader(&quot;X-Forwarded-Host&quot;);</span>
+		}
+<span class="nc" id="L183">		return format(&quot;{0}{1}/result/{2}&quot;, host, menuReaderService.getMenu().findMenuItemPath(GAVIN_APP),</span>
+				jobIdentifier);
+	}
+
+	/**
+	 * Downloads the result of a gavin annotation job.
+	 *
+	 * @param response      {@link HttpServletResponse} to write the Content-Disposition header to with the filename
+	 * @param jobIdentifier GAVIN_APP of the annotation job
+	 * @return {@link FileSystemResource} with the annotated file
+	 */
+	@GetMapping(value = &quot;/download/{jobIdentifier}&quot;, produces = APPLICATION_OCTET_STREAM_VALUE)
+	@ResponseBody
+	public FileSystemResource download(HttpServletResponse response,
+			@PathVariable(value = &quot;jobIdentifier&quot;) String jobIdentifier)
+			throws FileNotFoundException, JobNotFoundException
+	{
+<span class="fc" id="L200">		GavinJobExecution jobExecution = gavinJobFactory.findGavinJobExecution(jobIdentifier);</span>
+<span class="fc" id="L201">		File file = getDownloadFileForJob(jobIdentifier);</span>
+<span class="fc bfc" id="L202" title="All 2 branches covered.">		if (!file.exists())</span>
+		{
+<span class="fc" id="L204">			LOG.warn(&quot;No result file found for job {}&quot;, jobIdentifier);</span>
+<span class="fc" id="L205">			throw new FileNotFoundException(&quot;No result file found for this job. Results are removed every night.&quot;);</span>
+		}
+<span class="fc" id="L207">		response.setHeader(&quot;Content-Disposition&quot;,</span>
+<span class="fc" id="L208">				format(&quot;inline; filename=\&quot;{0}-gavin.vcf\&quot;&quot;, jobExecution.getFilename()));</span>
+<span class="fc" id="L209">		return new FileSystemResource(file);</span>
+	}
+
+	private File getDownloadFileForJob(String jobIdentifier)
+	{
+<span class="fc" id="L214">		return fileStore.getFile(GAVIN_APP + separator + jobIdentifier + separator + &quot;gavin-result.vcf&quot;);</span>
+	}
+
+	private File getErrorFileForJob(String jobIdentifier)
+	{
+<span class="nc" id="L219">		return fileStore.getFile(GAVIN_APP + separator + jobIdentifier + separator + &quot;error.txt&quot;);</span>
+	}
+
+	/**
+	 * Downloads the error report of a gavin annotation job.
+	 *
+	 * @param response      {@link HttpServletResponse} to write the Content-Disposition header to with the filename
+	 * @param jobIdentifier GAVIN_APP of the annotation job
+	 * @return {@link FileSystemResource} with the annotated file
+	 */
+	@GetMapping(value = &quot;/error/{jobIdentifier}&quot;, produces = APPLICATION_OCTET_STREAM_VALUE)
+	@ResponseBody
+	public Resource downloadErrorReport(HttpServletResponse response,
+			@PathVariable(value = &quot;jobIdentifier&quot;) String jobIdentifier)
+			throws FileNotFoundException, JobNotFoundException
+	{
+<span class="nc" id="L235">		GavinJobExecution jobExecution = gavinJobFactory.findGavinJobExecution(jobIdentifier);</span>
+<span class="nc" id="L236">		response.setHeader(&quot;Content-Disposition&quot;,</span>
+<span class="nc" id="L237">				format(&quot;inline; filename=\&quot;{0}-error.txt\&quot;&quot;, jobExecution.getFilename()));</span>
+<span class="nc" id="L238">		final File file = getErrorFileForJob(jobIdentifier);</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">		if (!file.exists())</span>
+		{
+<span class="nc" id="L241">			LOG.warn(&quot;No error file found for job {}&quot;, jobIdentifier);</span>
+<span class="nc" id="L242">			throw new FileNotFoundException(&quot;No error report found for this job. Results are removed every night.&quot;);</span>
+		}
+<span class="nc" id="L244">		return new FileSystemResource(file);</span>
+	}
+
+	@ExceptionHandler(value = FileNotFoundException.class)
+	public void handleFileNotFound(FileNotFoundException ex, HttpServletResponse res) throws IOException
+	{
+<span class="nc" id="L250">		res.sendError(404, ex.getMessage());</span>
+<span class="nc" id="L251">	}</span>
+
+	@ExceptionHandler(value = JobNotFoundException.class)
+	public void handleJobNotFound(JobNotFoundException ex, HttpServletResponse res) throws IOException
+	{
+<span class="nc" id="L256">		res.sendError(404, ex.getMessage());</span>
+<span class="nc" id="L257">	}</span>
+
+	@ExceptionHandler(RuntimeException.class)
+	@ResponseBody
+	@ResponseStatus(HttpStatus.BAD_REQUEST)
+	public ErrorMessageResponse handleRuntimeException(RuntimeException e)
+	{
+<span class="nc" id="L264">		LOG.warn(e.getMessage(), e);</span>
+<span class="nc" id="L265">		return new ErrorMessageResponse(new ErrorMessageResponse.ErrorMessage(e.getMessage()));</span>
+	}
+
+	/**
+	 * Removes old files in the gavin working directory from the file store.
+	 */
+	@Scheduled(cron = &quot;0 0 * * * *&quot;)
+	public void cleanUp()
+	{
+<span class="fc" id="L274">		LOG.debug(&quot;Clean up old jobs in the file store...&quot;);</span>
+		try
+		{
+<span class="fc" id="L277">			final File[] oldFiles = fileStore.getFile(GAVIN_APP)</span>
+<span class="pc bpc" id="L278" title="1 of 2 branches missed.">											 .listFiles(file -&gt; file.isDirectory()</span>
+<span class="fc" id="L279">													 &amp;&amp; MILLISECONDS.toSeconds(file.lastModified()) &lt; now().minusHours(</span>
+<span class="fc bfc" id="L280" title="All 2 branches covered.">													 24).toEpochSecond());</span>
+<span class="pc bpc" id="L281" title="1 of 2 branches missed.">			if (oldFiles != null)</span>
+			{
+<span class="fc bfc" id="L283" title="All 2 branches covered.">				for (File file : oldFiles)</span>
+				{
+<span class="fc" id="L285">					LOG.info(&quot;Deleting job directory {}&quot;, file.getName());</span>
+<span class="fc" id="L286">					fileStore.deleteDirectory(GAVIN_APP + separator + file.getName());</span>
+				}
+			}
+<span class="fc" id="L289">			LOG.debug(&quot;Done.&quot;);</span>
+		}
+<span class="nc" id="L291">		catch (IOException e)</span>
+		{
+<span class="nc" id="L293">			LOG.error(&quot;Failed to clean up working directory&quot;, e);</span>
+<span class="fc" id="L294">		}</span>
+<span class="fc" id="L295">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

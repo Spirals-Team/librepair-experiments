@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GenomeBrowserService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">genomebrowser</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.genomebrowser.service</a> &gt; <span class="el_source">GenomeBrowserService.java</span></div><h1>GenomeBrowserService.java</h1><pre class="source lang-java linenums">package org.molgenis.genomebrowser.service;
+
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import org.json.JSONObject;
+import org.molgenis.data.DataService;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.EntityTypePermission;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.genomebrowser.GenomeBrowserTrack;
+import org.molgenis.genomebrowser.meta.GenomeBrowserAttributes;
+import org.molgenis.genomebrowser.meta.GenomeBrowserAttributesMetadata;
+import org.molgenis.genomebrowser.meta.GenomeBrowserSettings;
+import org.molgenis.genomebrowser.meta.GenomeBrowserSettingsMetadata;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.springframework.stereotype.Component;
+
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.genomebrowser.meta.GenomeBrowserAttributesMetadata.GENOMEBROWSERATTRIBUTES;
+import static org.molgenis.genomebrowser.meta.GenomeBrowserSettingsMetadata.GENOMEBROWSERSETTINGS;
+
+/**
+ * Service implements genomeBrowser specific business logic.
+ */
+@Component
+public class GenomeBrowserService
+{
+	private final DataService dataService;
+	private final UserPermissionEvaluator userPermissionEvaluator;
+
+	public GenomeBrowserService(DataService dataService, UserPermissionEvaluator userPermissionEvaluator)
+<span class="fc" id="L37">	{</span>
+<span class="fc" id="L38">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L39">		this.userPermissionEvaluator = requireNonNull(userPermissionEvaluator);</span>
+<span class="fc" id="L40">	}</span>
+
+	public Map&lt;String, GenomeBrowserTrack&gt; getGenomeBrowserTracks(EntityType entityType)
+	{
+<span class="nc bnc" id="L44" title="All 2 branches missed.">		return hasPermission() ? getGenomeBrowserTracks(entityType,</span>
+<span class="nc" id="L45">				getDefaultGenomeBrowserAttributes().collect(Collectors.toList())) : Collections.emptyMap();</span>
+	}
+
+	/**
+	 * Get readable genome entities
+	 */
+	public List&lt;JSONObject&gt; getTracksJson(Map&lt;String, GenomeBrowserTrack&gt; entityTracks)
+	{
+<span class="nc" id="L53">		List&lt;JSONObject&gt; results = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L54" title="All 2 branches missed.">		if (hasPermission())</span>
+		{
+<span class="nc" id="L56">			Map&lt;String, GenomeBrowserTrack&gt; allTracks = new HashMap&lt;&gt;(entityTracks);</span>
+<span class="nc bnc" id="L57" title="All 2 branches missed.">			for (GenomeBrowserTrack track : entityTracks.values())</span>
+			{
+<span class="nc" id="L59">				allTracks.putAll(getReferenceTracks(track));</span>
+<span class="nc" id="L60">			}</span>
+<span class="nc" id="L61">			results = allTracks.values().stream().map(GenomeBrowserTrack::toTrackJson).collect(Collectors.toList());</span>
+		}
+<span class="nc" id="L63">		return results;</span>
+	}
+
+	private Map&lt;String, GenomeBrowserTrack&gt; getGenomeBrowserTracks(EntityType entityType,
+			List&lt;GenomeBrowserAttributes&gt; defaultGenomeBrowserAttributes)
+	{
+<span class="fc" id="L69">		Map&lt;String, GenomeBrowserTrack&gt; settings = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L70">		dataService.findAll(GENOMEBROWSERSETTINGS,</span>
+<span class="fc" id="L71">				new QueryImpl&lt;GenomeBrowserSettings&gt;().eq(GenomeBrowserSettingsMetadata.ENTITY,</span>
+<span class="fc" id="L72">						entityType.getIdValue()), GenomeBrowserSettings.class)</span>
+<span class="pc" id="L73">				   .forEach(referenceSettings -&gt; settings.put(referenceSettings.getIdentifier(),</span>
+<span class="nc" id="L74">						   GenomeBrowserTrack.create(referenceSettings)));</span>
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">		if (settings.isEmpty())</span>
+		{
+			//if not check if attrs match any default config
+<span class="fc" id="L78">			Collections.sort(defaultGenomeBrowserAttributes);</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">			for (GenomeBrowserAttributes genomeBrowserAttributes : defaultGenomeBrowserAttributes)</span>
+			{
+<span class="fc" id="L81">				List&lt;String&gt; attributeNames = Lists.newArrayList(entityType.getAttributeNames());</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">				if (areAllAttributeAvailable(genomeBrowserAttributes, attributeNames))</span>
+				{
+<span class="fc" id="L84">					GenomeBrowserTrack genomeBrowserTrack = getDefaultGenomeBrowserSettingsEntity(entityType,</span>
+							genomeBrowserAttributes);
+<span class="fc" id="L86">					settings.put(genomeBrowserTrack.getId(), genomeBrowserTrack);</span>
+<span class="fc" id="L87">					break;</span>
+				}
+<span class="fc" id="L89">			}</span>
+		}
+<span class="fc" id="L91">		return settings;</span>
+	}
+
+	Map&lt;String, GenomeBrowserTrack&gt; getReferenceTracks(GenomeBrowserTrack settings)
+	{
+<span class="fc" id="L96">		Map&lt;String, GenomeBrowserTrack&gt; result = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L97" title="All 4 branches covered.">		if (hasPermission() &amp;&amp; settings.getMolgenisReferenceMode() != GenomeBrowserSettings.MolgenisReferenceMode.NONE)</span>
+		{
+<span class="fc bfc" id="L99" title="All 2 branches covered.">			if (settings.getMolgenisReferenceMode() == GenomeBrowserSettings.MolgenisReferenceMode.CONFIGURED)</span>
+			{
+				//Cannot be null due to nullableExpression on MolgenisReferenceTracks in GenomeBrowserSettingsMetadata
+				//noinspection ConstantConditions
+<span class="fc" id="L103">				settings.getMolgenisReferenceTracks()</span>
+<span class="fc" id="L104">						.forEach(referenceTrack -&gt; result.put(referenceTrack.getId(), referenceTrack));</span>
+			}
+			else
+			{//Mode == ALL
+				//TODO Improve performance by rewriting to query that returns all genomic entities instead of retrieving all entities and determining which one is genomic
+<span class="fc" id="L109">				List&lt;GenomeBrowserAttributes&gt; defaultGenomeBrowserAttributes = getDefaultGenomeBrowserAttributes().collect(</span>
+<span class="fc" id="L110">						Collectors.toList());</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">				for (EntityType entityType : dataService.getMeta().getEntityTypes().collect(Collectors.toList()))</span>
+				{
+<span class="pc bpc" id="L113" title="2 of 4 branches missed.">					if (!entityType.isAbstract() &amp;&amp; !entityType.equals(settings.getEntity()))</span>
+					{
+<span class="fc" id="L115">						getGenomeBrowserTracks(entityType, defaultGenomeBrowserAttributes).values()</span>
+<span class="fc" id="L116">																						  .forEach(</span>
+																								  referenceSettings -&gt; result
+<span class="fc" id="L118">																										  .put(referenceSettings</span>
+<span class="fc" id="L119">																														  .getId(),</span>
+																												  referenceSettings));
+					}
+<span class="fc" id="L122">				}</span>
+			}
+		}
+<span class="fc" id="L125">		return result;</span>
+	}
+
+	private boolean hasPermission()
+	{
+<span class="fc bfc" id="L130" title="All 2 branches covered.">		return userPermissionEvaluator.hasPermission(new EntityTypeIdentity(GENOMEBROWSERSETTINGS),</span>
+<span class="pc bpc" id="L131" title="1 of 2 branches missed.">				EntityTypePermission.READ_DATA) &amp;&amp; userPermissionEvaluator.hasPermission(</span>
+				new EntityTypeIdentity(GENOMEBROWSERATTRIBUTES), EntityTypePermission.READ_DATA);
+	}
+
+	private Stream&lt;GenomeBrowserAttributes&gt; getDefaultGenomeBrowserAttributes()
+	{
+<span class="fc" id="L137">		return dataService.findAll(GenomeBrowserAttributesMetadata.GENOMEBROWSERATTRIBUTES,</span>
+<span class="fc" id="L138">				new QueryImpl&lt;GenomeBrowserAttributes&gt;().eq(GenomeBrowserAttributesMetadata.DEFAULT, true),</span>
+				GenomeBrowserAttributes.class);
+	}
+
+	private boolean isAttributeAvailable(String attributeName, Iterable&lt;String&gt; attributeNames)
+	{
+<span class="fc bfc" id="L144" title="All 4 branches covered.">		return (attributeName == null || Iterables.contains(attributeNames, attributeName));</span>
+	}
+
+	private boolean areAllAttributeAvailable(GenomeBrowserAttributes genomeBrowserAttributes,
+			Iterable&lt;String&gt; attributeNames)
+	{
+<span class="pc bpc" id="L150" title="1 of 4 branches missed.">		return isAttributeAvailable(genomeBrowserAttributes.getChrom(), attributeNames) &amp;&amp; isAttributeAvailable(</span>
+<span class="fc bfc" id="L151" title="All 2 branches covered.">				genomeBrowserAttributes.getPos(), attributeNames) &amp;&amp; isAttributeAvailable(</span>
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">				genomeBrowserAttributes.getAlt(), attributeNames) &amp;&amp; isAttributeAvailable(</span>
+<span class="pc bpc" id="L153" title="1 of 2 branches missed.">				genomeBrowserAttributes.getRef(), attributeNames) &amp;&amp; isAttributeAvailable(</span>
+<span class="fc" id="L154">				genomeBrowserAttributes.getStop(), attributeNames);</span>
+	}
+
+	private GenomeBrowserTrack getDefaultGenomeBrowserSettingsEntity(EntityType entityType,
+			GenomeBrowserAttributes attrs)
+	{
+<span class="fc" id="L160">		return GenomeBrowserTrack.create(entityType.getIdValue().toString(), entityType.getLabel(),</span>
+<span class="fc" id="L161">				entityType.getLabelAttribute().getName(), entityType, GenomeBrowserSettings.TrackType.VARIANT,</span>
+<span class="fc" id="L162">				Collections.emptyList(), GenomeBrowserSettings.MolgenisReferenceMode.ALL, attrs, null, null, null,</span>
+				null);
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

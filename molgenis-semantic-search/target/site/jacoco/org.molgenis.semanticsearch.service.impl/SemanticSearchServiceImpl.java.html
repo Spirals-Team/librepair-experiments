@@ -1,0 +1,384 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SemanticSearchServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">semantic-search</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.semanticsearch.service.impl</a> &gt; <span class="el_source">SemanticSearchServiceImpl.java</span></div><h1>SemanticSearchServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.semanticsearch.service.impl;
+
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import com.google.common.collect.FluentIterable;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Ordering;
+import com.google.common.collect.Sets;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.lucene.queryparser.classic.QueryParser;
+import org.apache.lucene.search.Explanation;
+import org.apache.lucene.search.spell.StringDistance;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Query;
+import org.molgenis.data.QueryRule;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.meta.MetaDataService;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeMetadata;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.ontology.core.model.Ontology;
+import org.molgenis.ontology.core.model.OntologyTerm;
+import org.molgenis.ontology.core.service.OntologyService;
+import org.molgenis.semanticsearch.explain.bean.ExplainedAttribute;
+import org.molgenis.semanticsearch.explain.bean.ExplainedQueryString;
+import org.molgenis.semanticsearch.explain.service.ElasticSearchExplainService;
+import org.molgenis.semanticsearch.semantic.Hit;
+import org.molgenis.semanticsearch.service.SemanticSearchService;
+import org.molgenis.semanticsearch.string.NGramDistanceAlgorithm;
+import org.molgenis.semanticsearch.string.Stemmer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+
+public class SemanticSearchServiceImpl implements SemanticSearchService
+{
+<span class="fc" id="L46">	private static final Logger LOG = LoggerFactory.getLogger(SemanticSearchServiceImpl.class);</span>
+
+	private final DataService dataService;
+	private final OntologyService ontologyService;
+	private final MetaDataService metaDataService;
+	private final SemanticSearchServiceHelper semanticSearchServiceHelper;
+	private final ElasticSearchExplainService elasticSearchExplainService;
+
+	private static final int MAX_NUM_TAGS = 100;
+	private static final float CUTOFF = 0.4f;
+<span class="fc" id="L56">	private Splitter termSplitter = Splitter.onPattern(&quot;[^\\p{IsAlphabetic}]+&quot;);</span>
+<span class="fc" id="L57">	private Joiner termJoiner = Joiner.on(' ');</span>
+	private static final String UNIT_ONTOLOGY_IRI = &quot;http://purl.obolibrary.org/obo/uo.owl&quot;;
+
+	// We only explain the top 10 suggested attributes because beyond that the attributes are not high quliaty anymore
+	private static final int MAX_NUMBER_EXPLAINED_ATTRIBUTES = 10;
+
+	public SemanticSearchServiceImpl(DataService dataService, OntologyService ontologyService,
+			MetaDataService metaDataService, SemanticSearchServiceHelper semanticSearchServiceHelper,
+			ElasticSearchExplainService elasticSearchExplainService)
+<span class="fc" id="L66">	{</span>
+<span class="fc" id="L67">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L68">		this.ontologyService = requireNonNull(ontologyService);</span>
+<span class="fc" id="L69">		this.metaDataService = requireNonNull(metaDataService);</span>
+<span class="fc" id="L70">		this.semanticSearchServiceHelper = requireNonNull(semanticSearchServiceHelper);</span>
+<span class="fc" id="L71">		this.elasticSearchExplainService = requireNonNull(elasticSearchExplainService);</span>
+<span class="fc" id="L72">	}</span>
+
+	@Override
+	public Map&lt;Attribute, ExplainedAttribute&gt; findAttributes(EntityType sourceEntityType, Set&lt;String&gt; queryTerms,
+			Collection&lt;OntologyTerm&gt; ontologyTerms)
+	{
+<span class="fc" id="L78">		Iterable&lt;String&gt; attributeIdentifiers = semanticSearchServiceHelper.getAttributeIdentifiers(sourceEntityType);</span>
+
+<span class="fc" id="L80">		QueryRule disMaxQueryRule = semanticSearchServiceHelper.createDisMaxQueryRuleForAttribute(queryTerms,</span>
+				ontologyTerms);
+
+<span class="fc" id="L83">		List&lt;QueryRule&gt; finalQueryRules = Lists.newArrayList(</span>
+				new QueryRule(AttributeMetadata.ID, Operator.IN, attributeIdentifiers));
+
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">		if (disMaxQueryRule.getNestedRules().size() &gt; 0)</span>
+		{
+<span class="fc" id="L88">			finalQueryRules.addAll(Arrays.asList(new QueryRule(Operator.AND), disMaxQueryRule));</span>
+		}
+
+<span class="fc" id="L91">		Stream&lt;Entity&gt; attributeEntities = dataService.findAll(ATTRIBUTE_META_DATA, new QueryImpl&lt;&gt;(finalQueryRules));</span>
+
+<span class="fc" id="L93">		Map&lt;String, String&gt; collectExpanedQueryMap = semanticSearchServiceHelper.collectExpandedQueryMap(queryTerms,</span>
+				ontologyTerms);
+
+		// Because the explain-API can be computationally expensive we limit the explanation to the top 10 attributes
+<span class="fc" id="L97">		Map&lt;Attribute, ExplainedAttribute&gt; explainedAttributes = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L98">		AtomicInteger count = new AtomicInteger(0);</span>
+<span class="fc" id="L99">		attributeEntities.forEach(attributeEntity -&gt;</span>
+		{
+<span class="fc" id="L101">			Attribute attribute = sourceEntityType.getAttribute(attributeEntity.getString(AttributeMetadata.NAME));</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">			if (count.get() &lt; MAX_NUMBER_EXPLAINED_ATTRIBUTES)</span>
+			{
+<span class="fc" id="L104">				Set&lt;ExplainedQueryString&gt; explanations = convertAttributeToExplainedAttribute(attribute,</span>
+						collectExpanedQueryMap, new QueryImpl&lt;&gt;(finalQueryRules));
+
+<span class="fc" id="L107">				boolean singleMatchHighQuality = isSingleMatchHighQuality(queryTerms,</span>
+<span class="fc" id="L108">						Sets.newHashSet(collectExpanedQueryMap.values()), explanations);</span>
+
+<span class="fc" id="L110">				explainedAttributes.put(attribute,</span>
+<span class="fc" id="L111">						ExplainedAttribute.create(attribute, explanations, singleMatchHighQuality));</span>
+<span class="fc" id="L112">			}</span>
+			else
+			{
+<span class="nc" id="L115">				explainedAttributes.put(attribute, ExplainedAttribute.create(attribute));</span>
+			}
+<span class="fc" id="L117">			count.incrementAndGet();</span>
+<span class="fc" id="L118">		});</span>
+
+<span class="fc" id="L120">		return explainedAttributes;</span>
+	}
+
+	boolean isSingleMatchHighQuality(Collection&lt;String&gt; queryTerms, Collection&lt;String&gt; ontologyTermQueries,
+			Iterable&lt;ExplainedQueryString&gt; explanations)
+	{
+<span class="fc" id="L126">		Map&lt;String, Double&gt; matchedTags = new HashMap&lt;&gt;();</span>
+
+<span class="fc bfc" id="L128" title="All 2 branches covered.">		for (ExplainedQueryString explanation : explanations)</span>
+		{
+<span class="fc" id="L130">			matchedTags.put(explanation.getTagName().toLowerCase(), explanation.getScore());</span>
+<span class="fc" id="L131">		}</span>
+
+<span class="fc" id="L133">		ontologyTermQueries.removeAll(queryTerms);</span>
+
+<span class="pc bpc" id="L135" title="2 of 4 branches missed.">		if (!queryTerms.isEmpty() &amp;&amp; queryTerms.stream().anyMatch(token -&gt; isGoodMatch(matchedTags, token)))</span>
+<span class="nc" id="L136">			return true;</span>
+
+<span class="fc bfc" id="L138" title="All 2 branches covered.">		if (!ontologyTermQueries.isEmpty() &amp;&amp; ontologyTermQueries.stream()</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">																 .allMatch(token -&gt; isGoodMatch(matchedTags, token)))</span>
+<span class="fc" id="L140">			return true;</span>
+
+<span class="fc" id="L142">		return false;</span>
+	}
+
+	boolean isGoodMatch(Map&lt;String, Double&gt; matchedTags, String label)
+	{
+<span class="fc" id="L147">		label = label.toLowerCase();</span>
+<span class="fc bfc" id="L148" title="All 4 branches covered.">		return matchedTags.containsKey(label) &amp;&amp; matchedTags.get(label).intValue() == 100 || Sets.newHashSet(</span>
+<span class="fc" id="L149">				label.split(&quot; &quot;))</span>
+<span class="fc" id="L150">																								 .stream()</span>
+<span class="fc bfc" id="L151" title="All 2 branches covered.">																								 .allMatch(</span>
+<span class="fc" id="L152">																										 word -&gt; matchedTags</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">																												 .containsKey(</span>
+																														 word)
+																												 &amp;&amp;
+																												 matchedTags
+<span class="fc" id="L157">																														 .get(word)</span>
+<span class="fc bfc" id="L158" title="All 2 branches covered.">																														 .intValue()</span>
+																														 == 100);
+	}
+
+	@Override
+	public Map&lt;Attribute, ExplainedAttribute&gt; decisionTreeToFindRelevantAttributes(EntityType sourceEntityType,
+			Attribute targetAttribute, Collection&lt;OntologyTerm&gt; ontologyTermsFromTags, Set&lt;String&gt; searchTerms)
+	{
+<span class="nc" id="L166">		Set&lt;String&gt; queryTerms = createLexicalSearchQueryTerms(targetAttribute, searchTerms);</span>
+
+<span class="nc" id="L168">		Collection&lt;OntologyTerm&gt; ontologyTerms = ontologyTermsFromTags;</span>
+
+<span class="nc bnc" id="L170" title="All 4 branches missed.">		if (null != searchTerms &amp;&amp; !searchTerms.isEmpty())</span>
+		{
+<span class="nc" id="L172">			Set&lt;String&gt; escapedSearchTerms = searchTerms.stream()</span>
+<span class="nc" id="L173">														.filter(StringUtils::isNotBlank)</span>
+<span class="nc" id="L174">														.map(QueryParser::escape)</span>
+<span class="nc" id="L175">														.collect(Collectors.toSet());</span>
+<span class="nc" id="L176">			ontologyTerms = ontologyService.findExcatOntologyTerms(ontologyService.getAllOntologiesIds(),</span>
+					escapedSearchTerms, MAX_NUM_TAGS);
+<span class="nc" id="L178">		}</span>
+<span class="nc bnc" id="L179" title="All 4 branches missed.">		else if (null == ontologyTerms || ontologyTerms.isEmpty())</span>
+		{
+<span class="nc" id="L181">			List&lt;String&gt; allOntologiesIds = ontologyService.getAllOntologiesIds();</span>
+<span class="nc" id="L182">			Ontology unitOntology = ontologyService.getOntology(UNIT_ONTOLOGY_IRI);</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">			if (unitOntology != null)</span>
+			{
+<span class="nc" id="L185">				allOntologiesIds.remove(unitOntology.getId());</span>
+			}
+<span class="nc" id="L187">			Hit&lt;OntologyTerm&gt; ontologyTermHit = findTags(targetAttribute, allOntologiesIds);</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">			ontologyTerms =</span>
+<span class="nc" id="L189">					ontologyTermHit != null ? Arrays.asList(ontologyTermHit.getResult()) : Collections.emptyList();</span>
+		}
+
+<span class="nc" id="L192">		return findAttributes(sourceEntityType, queryTerms, ontologyTerms);</span>
+	}
+
+	/**
+	 * A helper function to create a list of queryTerms based on the information from the targetAttribute as well as
+	 * user defined searchTerms. If the user defined searchTerms exist, the targetAttribute information will not be
+	 * used.
+	 *
+	 * @return list of queryTerms
+	 */
+	public Set&lt;String&gt; createLexicalSearchQueryTerms(Attribute targetAttribute, Set&lt;String&gt; searchTerms)
+	{
+<span class="nc" id="L204">		Set&lt;String&gt; queryTerms = new HashSet&lt;&gt;();</span>
+
+<span class="nc bnc" id="L206" title="All 4 branches missed.">		if (searchTerms != null &amp;&amp; !searchTerms.isEmpty())</span>
+		{
+<span class="nc" id="L208">			queryTerms.addAll(searchTerms);</span>
+		}
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">		if (queryTerms.isEmpty())</span>
+		{
+<span class="nc bnc" id="L213" title="All 2 branches missed.">			if (StringUtils.isNotBlank(targetAttribute.getLabel()))</span>
+			{
+<span class="nc" id="L215">				queryTerms.add(targetAttribute.getLabel());</span>
+			}
+
+<span class="nc bnc" id="L218" title="All 2 branches missed.">			if (StringUtils.isNotBlank(targetAttribute.getDescription()))</span>
+			{
+<span class="nc" id="L220">				queryTerms.add(targetAttribute.getDescription());</span>
+			}
+		}
+
+<span class="nc" id="L224">		return queryTerms;</span>
+	}
+
+	/**
+	 * A helper function to explain each of the matched attributes returned by the explain-API
+	 *
+	 * @param attribute               The attribute found
+	 * @param collectExpandedQueryMap ?
+	 * @param query                   the query used to find the attribute
+	 * @return Set of explained query strings
+	 */
+	public Set&lt;ExplainedQueryString&gt; convertAttributeToExplainedAttribute(Attribute attribute,
+			Map&lt;String, String&gt; collectExpandedQueryMap, Query&lt;Entity&gt; query)
+	{
+<span class="fc" id="L238">		EntityType attributeMetaData = dataService.getEntityType(ATTRIBUTE_META_DATA);</span>
+<span class="fc" id="L239">		String attributeID = attribute.getIdentifier();</span>
+<span class="fc" id="L240">		Explanation explanation = elasticSearchExplainService.explain(query, attributeMetaData, attributeID);</span>
+<span class="fc" id="L241">		return elasticSearchExplainService.findQueriesFromExplanation(collectExpandedQueryMap, explanation);</span>
+	}
+
+	@Override
+	public Map&lt;Attribute, Hit&lt;OntologyTerm&gt;&gt; findTags(String entity, List&lt;String&gt; ontologyIds)
+	{
+<span class="nc" id="L247">		Map&lt;Attribute, Hit&lt;OntologyTerm&gt;&gt; result = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L248">		EntityType emd = metaDataService.getEntityType(entity);</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">		for (Attribute amd : emd.getAtomicAttributes())</span>
+		{
+<span class="nc" id="L251">			Hit&lt;OntologyTerm&gt; tag = findTags(amd, ontologyIds);</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">			if (tag != null)</span>
+			{
+<span class="nc" id="L254">				result.put(amd, tag);</span>
+			}
+<span class="nc" id="L256">		}</span>
+<span class="nc" id="L257">		return result;</span>
+	}
+
+	@Override
+	public Hit&lt;OntologyTerm&gt; findTags(Attribute attribute, List&lt;String&gt; ontologyIds)
+	{
+<span class="pc bpc" id="L263" title="1 of 2 branches missed.">		String description = attribute.getDescription() == null ? attribute.getLabel() : attribute.getDescription();</span>
+<span class="fc" id="L264">		Set&lt;String&gt; searchTerms = splitIntoTerms(description);</span>
+<span class="fc" id="L265">		Stemmer stemmer = new Stemmer();</span>
+
+<span class="pc bpc" id="L267" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L269">			LOG.debug(&quot;findOntologyTerms({},{},{})&quot;, ontologyIds, searchTerms, MAX_NUM_TAGS);</span>
+		}
+
+<span class="fc" id="L272">		List&lt;OntologyTerm&gt; candidates = ontologyService.findOntologyTerms(ontologyIds, searchTerms, MAX_NUM_TAGS);</span>
+
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L276">			LOG.debug(&quot;Candidates: {}&quot;, candidates);</span>
+		}
+
+<span class="fc" id="L279">		List&lt;Hit&lt;OntologyTerm&gt;&gt; hits = candidates.stream()</span>
+<span class="fc" id="L280">												 .filter(ontologyTerm -&gt; filterOntologyTerm(</span>
+<span class="fc" id="L281">														 splitIntoTerms(Stemmer.stemAndJoin(searchTerms)), ontologyTerm,</span>
+														 stemmer))
+<span class="fc" id="L283">												 .map(ontolgoyTerm -&gt; Hit.create(ontolgoyTerm,</span>
+<span class="fc" id="L284">														 bestMatchingSynonym(ontolgoyTerm, searchTerms).getScore()))</span>
+<span class="fc" id="L285">												 .sorted(Ordering.natural().reverse())</span>
+<span class="fc" id="L286">												 .collect(Collectors.toList());</span>
+
+<span class="pc bpc" id="L288" title="1 of 2 branches missed.">		if (LOG.isDebugEnabled())</span>
+		{
+<span class="nc" id="L290">			LOG.debug(&quot;Hits: {}&quot;, hits);</span>
+		}
+
+<span class="fc" id="L293">		Hit&lt;OntologyTerm&gt; result = null;</span>
+<span class="fc" id="L294">		String bestMatchingSynonym = null;</span>
+<span class="fc bfc" id="L295" title="All 2 branches covered.">		for (Hit&lt;OntologyTerm&gt; hit : hits)</span>
+		{
+<span class="fc" id="L297">			String bestMatchingSynonymForHit = bestMatchingSynonym(hit.getResult(), searchTerms).getResult();</span>
+<span class="pc bpc" id="L298" title="1 of 2 branches missed.">			if (result == null)</span>
+			{
+<span class="fc" id="L300">				result = hit;</span>
+<span class="fc" id="L301">				bestMatchingSynonym = bestMatchingSynonymForHit;</span>
+			}
+			else
+			{
+<span class="nc" id="L305">				Set&lt;String&gt; jointTerms = Sets.union(splitIntoTerms(bestMatchingSynonym),</span>
+<span class="nc" id="L306">						splitIntoTerms(bestMatchingSynonymForHit));</span>
+<span class="nc" id="L307">				String joinedSynonyms = termJoiner.join(jointTerms);</span>
+<span class="nc" id="L308">				Hit&lt;OntologyTerm&gt; joinedHit = Hit.create(OntologyTerm.and(result.getResult(), hit.getResult()),</span>
+<span class="nc" id="L309">						distanceFrom(joinedSynonyms, searchTerms, stemmer));</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">				if (joinedHit.compareTo(result) &gt; 0)</span>
+				{
+<span class="nc" id="L312">					result = joinedHit;</span>
+<span class="nc" id="L313">					bestMatchingSynonym = bestMatchingSynonym + &quot; &quot; + bestMatchingSynonymForHit;</span>
+				}
+			}
+
+<span class="pc bpc" id="L317" title="1 of 2 branches missed.">			if (LOG.isDebugEnabled())</span>
+			{
+<span class="nc" id="L319">				LOG.debug(&quot;result: {}&quot;, result);</span>
+			}
+<span class="fc" id="L321">		}</span>
+<span class="pc bpc" id="L322" title="1 of 4 branches missed.">		if (result != null &amp;&amp; result.getScore() &gt;= CUTOFF)</span>
+		{
+<span class="pc bpc" id="L324" title="1 of 2 branches missed.">			if (LOG.isDebugEnabled())</span>
+			{
+<span class="nc" id="L326">				LOG.debug(&quot;Tag {} with {}&quot;, attribute, result);</span>
+			}
+<span class="fc" id="L328">			return result;</span>
+		}
+<span class="fc" id="L330">		return null;</span>
+	}
+
+	private boolean filterOntologyTerm(Set&lt;String&gt; keywordsFromAttribute, OntologyTerm ontologyTerm, Stemmer stemmer)
+	{
+<span class="fc" id="L335">		Set&lt;String&gt; ontologyTermSynonyms = semanticSearchServiceHelper.getOtLabelAndSynonyms(ontologyTerm);</span>
+
+<span class="fc bfc" id="L337" title="All 2 branches covered.">		for (String synonym : ontologyTermSynonyms)</span>
+		{
+<span class="fc" id="L339">			Set&lt;String&gt; splitIntoTerms = splitIntoTerms(Stemmer.stemAndJoin(splitIntoTerms(synonym)));</span>
+<span class="pc bpc" id="L340" title="1 of 4 branches missed.">			if (!splitIntoTerms.isEmpty() &amp;&amp; keywordsFromAttribute.containsAll(splitIntoTerms)) return true;</span>
+<span class="fc" id="L341">		}</span>
+
+<span class="fc" id="L343">		return false;</span>
+	}
+
+	/**
+	 * Computes the best matching synonym which is closest to a set of search terms.&lt;br/&gt;
+	 * Will stem the {@link OntologyTerm} 's synonyms and the search terms, and then compute the maximum
+	 * {@link StringDistance} between them. 0 means disjunct, 1 means identical
+	 *
+	 * @param ontologyTerm the {@link OntologyTerm}
+	 * @param searchTerms  the search terms
+	 * @return the maximum {@link StringDistance} between the ontologyterm and the search terms
+	 */
+	public Hit&lt;String&gt; bestMatchingSynonym(OntologyTerm ontologyTerm, Set&lt;String&gt; searchTerms)
+	{
+<span class="fc" id="L357">		Stemmer stemmer = new Stemmer();</span>
+<span class="fc" id="L358">		Optional&lt;Hit&lt;String&gt;&gt; bestSynonym = ontologyTerm.getSynonyms()</span>
+<span class="fc" id="L359">														.stream()</span>
+<span class="fc" id="L360">														.map(synonym -&gt; Hit.create(synonym,</span>
+<span class="fc" id="L361">																distanceFrom(synonym, searchTerms, stemmer)))</span>
+<span class="fc" id="L362">														.max(Comparator.naturalOrder());</span>
+<span class="fc" id="L363">		return bestSynonym.get();</span>
+	}
+
+	float distanceFrom(String synonym, Set&lt;String&gt; searchTerms, Stemmer stemmer)
+	{
+<span class="fc" id="L368">		String s1 = Stemmer.stemAndJoin(splitIntoTerms(synonym));</span>
+<span class="fc" id="L369">		String s2 = Stemmer.stemAndJoin(searchTerms);</span>
+<span class="fc" id="L370">		float distance = (float) NGramDistanceAlgorithm.stringMatching(s1, s2) / 100;</span>
+<span class="fc" id="L371">		LOG.debug(&quot;Similarity between: {} and {} is {}&quot;, s1, s2, distance);</span>
+<span class="fc" id="L372">		return distance;</span>
+	}
+
+	private Set&lt;String&gt; splitIntoTerms(String description)
+	{
+<span class="fc" id="L377">		return FluentIterable.from(termSplitter.split(description))</span>
+<span class="fc" id="L378">							 .transform(String::toLowerCase)</span>
+<span class="fc bfc" id="L379" title="All 2 branches covered.">							 .filter(w -&gt; !NGramDistanceAlgorithm.STOPWORDSLIST.contains(w))</span>
+<span class="fc" id="L380">							 .filter(StringUtils::isNotEmpty)</span>
+<span class="fc" id="L381">							 .toSet();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AppManagerServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">app-manager</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.app.manager.service.impl</a> &gt; <span class="el_source">AppManagerServiceImpl.java</span></div><h1>AppManagerServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.app.manager.service.impl;
+
+import com.google.common.collect.Maps;
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
+import net.lingala.zip4j.core.ZipFile;
+import net.lingala.zip4j.exception.ZipException;
+import org.apache.commons.io.IOUtils;
+import org.molgenis.app.manager.exception.*;
+import org.molgenis.app.manager.meta.App;
+import org.molgenis.app.manager.meta.AppFactory;
+import org.molgenis.app.manager.meta.AppMetadata;
+import org.molgenis.app.manager.model.AppConfig;
+import org.molgenis.app.manager.model.AppResponse;
+import org.molgenis.app.manager.service.AppManagerService;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Query;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.data.plugin.model.Plugin;
+import org.molgenis.data.plugin.model.PluginFactory;
+import org.molgenis.data.plugin.model.PluginMetadata;
+import org.molgenis.data.support.QueryImpl;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.List;
+import java.util.Map;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.apache.commons.io.FileUtils.deleteDirectory;
+
+@Service
+public class AppManagerServiceImpl implements AppManagerService
+{
+	private static final String ZIP_INDEX_FILE = &quot;index.html&quot;;
+	private static final String ZIP_CONFIG_FILE = &quot;config.json&quot;;
+
+	private static final String APP_PLUGIN_ROOT = &quot;app/&quot;;
+
+	private final AppFactory appFactory;
+	private final DataService dataService;
+	private final FileStore fileStore;
+	private final Gson gson;
+	private final PluginFactory pluginFactory;
+
+	public AppManagerServiceImpl(AppFactory appFactory, DataService dataService, FileStore fileStore, Gson gson,
+			PluginFactory pluginFactory)
+<span class="fc" id="L55">	{</span>
+<span class="fc" id="L56">		this.appFactory = requireNonNull(appFactory);</span>
+<span class="fc" id="L57">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L58">		this.fileStore = requireNonNull(fileStore);</span>
+<span class="fc" id="L59">		this.gson = requireNonNull(gson);</span>
+<span class="fc" id="L60">		this.pluginFactory = requireNonNull(pluginFactory);</span>
+<span class="fc" id="L61">	}</span>
+
+	@Override
+	public List&lt;AppResponse&gt; getApps()
+	{
+<span class="fc" id="L66">		return dataService.findAll(AppMetadata.APP, App.class).map(AppResponse::create).collect(toList());</span>
+	}
+
+	@Override
+	public AppResponse getAppByUri(String uri)
+	{
+<span class="fc" id="L72">		Query&lt;App&gt; query = QueryImpl.EQ(AppMetadata.URI, uri);</span>
+<span class="fc" id="L73">		App app = dataService.findOne(AppMetadata.APP, query, App.class);</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">		if(app == null) {</span>
+<span class="fc" id="L75">			throw new AppForURIDoesNotExistException(uri);</span>
+		}
+<span class="fc" id="L77">		return AppResponse.create(app);</span>
+	}
+
+	@Override
+	@Transactional
+	public void activateApp(String id)
+	{
+		// Set app to active
+<span class="fc" id="L85">		App app = getAppById(id);</span>
+<span class="fc" id="L86">		app.setActive(true);</span>
+<span class="fc" id="L87">		dataService.update(AppMetadata.APP, app);</span>
+
+		// Add plugin to plugin table to enable permissions and menu management
+<span class="fc" id="L90">		String pluginId = generatePluginId(app);</span>
+<span class="fc" id="L91">		Plugin plugin = pluginFactory.create(pluginId);</span>
+<span class="fc" id="L92">		plugin.setLabel(app.getLabel());</span>
+<span class="fc" id="L93">		plugin.setDescription(app.getDescription());</span>
+<span class="fc" id="L94">		dataService.add(PluginMetadata.PLUGIN, plugin);</span>
+<span class="fc" id="L95">	}</span>
+
+	@Override
+	@Transactional
+	public void deactivateApp(String id)
+	{
+<span class="fc" id="L101">		App app = getAppById(id);</span>
+<span class="fc" id="L102">		app.setActive(false);</span>
+<span class="fc" id="L103">		dataService.update(AppMetadata.APP, app);</span>
+
+<span class="fc" id="L105">		String pluginId = generatePluginId(app);</span>
+<span class="fc" id="L106">		dataService.deleteById(PluginMetadata.PLUGIN, pluginId);</span>
+
+		// TODO remove from menu JSON?
+<span class="fc" id="L109">	}</span>
+
+	@Override
+	@Transactional
+	public void deleteApp(String id) throws IOException
+	{
+<span class="fc" id="L115">		App app = getAppById(id);</span>
+<span class="fc" id="L116">		deleteDirectory(new File(app.getResourceFolder()));</span>
+<span class="fc" id="L117">		dataService.deleteById(AppMetadata.APP, id);</span>
+<span class="fc" id="L118">	}</span>
+
+	@Override
+	@Transactional
+	public void uploadApp(InputStream zipData, String zipFileName, String formFieldName) throws IOException, ZipException
+	{
+<span class="fc" id="L124">		String appArchiveName = &quot;zip_file_&quot; + zipFileName;</span>
+<span class="fc" id="L125">		ZipFile appArchive = new ZipFile(fileStore.store(zipData, appArchiveName));</span>
+
+<span class="fc bfc" id="L127" title="All 2 branches covered.">		if (!appArchive.isValidZipFile())</span>
+		{
+<span class="fc" id="L129">			fileStore.delete(appArchiveName);</span>
+<span class="fc" id="L130">			throw new InvalidAppArchiveException(formFieldName);</span>
+		}
+
+<span class="fc" id="L133">		String appDirectoryName = fileStore.getStorageDir() + File.separator + zipFileName;</span>
+<span class="fc" id="L134">		appArchive.extractAll(appDirectoryName);</span>
+<span class="fc" id="L135">		fileStore.delete(appArchiveName);</span>
+
+<span class="fc" id="L137">		List&lt;String&gt; missingRequiredFilesList = buildMissingRequiredFiles(appDirectoryName);</span>
+<span class="fc bfc" id="L138" title="All 2 branches covered.">		if (!missingRequiredFilesList.isEmpty())</span>
+		{
+<span class="fc" id="L140">			fileStore.deleteDirectory(appDirectoryName);</span>
+<span class="fc" id="L141">			throw new AppArchiveMissingFilesException(missingRequiredFilesList);</span>
+		}
+
+
+<span class="fc" id="L145">		File indexFile = new File(appDirectoryName + File.separator + ZIP_INDEX_FILE);</span>
+<span class="fc" id="L146">		File configFile = new File(appDirectoryName + File.separator + ZIP_CONFIG_FILE);</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">		if (!isConfigContentValidJson(configFile))</span>
+		{
+<span class="fc" id="L149">			fileStore.deleteDirectory(appDirectoryName);</span>
+<span class="fc" id="L150">			throw new InvalidAppConfigException();</span>
+		}
+
+<span class="fc" id="L153">		AppConfig appConfig = gson.fromJson(utf8Encodedfiletostring(configFile), AppConfig.class);</span>
+<span class="fc" id="L154">		List&lt;String&gt; missingAppConfigParams = buildMissingConfigParams(appConfig);</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">		if (!missingAppConfigParams.isEmpty())</span>
+		{
+<span class="fc" id="L157">			fileStore.deleteDirectory(appDirectoryName);</span>
+<span class="fc" id="L158">			throw new AppConfigMissingParametersException(missingAppConfigParams);</span>
+		}
+
+		// If provided config does not include runtimeOptions, set an empty map
+<span class="fc" id="L162">		Map&lt;String, Object&gt; runtimeOptions = appConfig.getRuntimeOptions();</span>
+<span class="fc bfc" id="L163" title="All 2 branches covered.">		if (runtimeOptions == null)</span>
+		{
+<span class="fc" id="L165">			runtimeOptions = Maps.newHashMap();</span>
+		}
+
+<span class="fc" id="L168">		App newApp = appFactory.create();</span>
+<span class="fc" id="L169">		newApp.setLabel(appConfig.getLabel());</span>
+<span class="fc" id="L170">		newApp.setDescription(appConfig.getDescription());</span>
+<span class="fc" id="L171">		newApp.setAppVersion(appConfig.getVersion());</span>
+<span class="fc" id="L172">		newApp.setApiDependency(appConfig.getApiDependency());</span>
+<span class="fc" id="L173">		newApp.setTemplateContent(utf8Encodedfiletostring(indexFile));</span>
+<span class="fc" id="L174">		newApp.setActive(false);</span>
+<span class="fc" id="L175">		newApp.setIncludeMenuAndFooter(appConfig.getIncludeMenuAndFooter());</span>
+<span class="fc" id="L176">		newApp.setResourceFolder(appDirectoryName);</span>
+<span class="fc" id="L177">		newApp.setAppConfig(gson.toJson(runtimeOptions));</span>
+<span class="fc" id="L178">		newApp.setUri(appConfig.getUri());</span>
+
+<span class="fc" id="L180">		dataService.add(AppMetadata.APP, newApp);</span>
+<span class="fc" id="L181">	}</span>
+
+	private String generatePluginId(App app)
+	{
+<span class="fc" id="L185">		String pluginId = APP_PLUGIN_ROOT + app.getUri();</span>
+<span class="pc bpc" id="L186" title="1 of 2 branches missed.">		if (!pluginId.endsWith(&quot;/&quot;))</span>
+		{
+<span class="fc" id="L188">			pluginId = pluginId + &quot;/&quot;;</span>
+		}
+<span class="fc" id="L190">		return pluginId;</span>
+	}
+
+	private App getAppById(String id)
+	{
+<span class="fc" id="L195">		App app = dataService.findOneById(AppMetadata.APP, id, App.class);</span>
+<span class="fc bfc" id="L196" title="All 2 branches covered.">		if (app == null)</span>
+		{
+<span class="fc" id="L198">			throw new AppForIDDoesNotExistException(id);</span>
+		}
+<span class="fc" id="L200">		return app;</span>
+	}
+
+	private boolean isConfigContentValidJson(File configFile)
+	{
+<span class="fc" id="L205">		String fileContents = utf8Encodedfiletostring(configFile);</span>
+		try
+		{
+<span class="fc" id="L208">			gson.fromJson(fileContents, AppConfig.class);</span>
+		}
+<span class="fc" id="L210">		catch (JsonSyntaxException e)</span>
+		{
+<span class="fc" id="L212">			return false;</span>
+<span class="fc" id="L213">		}</span>
+<span class="fc" id="L214">		return true;</span>
+	}
+
+	private String utf8Encodedfiletostring(File file)
+	{
+<span class="fc" id="L219">		try (FileInputStream fileInputStream = new FileInputStream(file))</span>
+		{
+<span class="fc" id="L221">			return IOUtils.toString(fileInputStream, UTF_8);</span>
+		}
+<span class="nc" id="L223">		catch (IOException e)</span>
+		{
+<span class="nc" id="L225">			throw new InvalidAppConfigException();</span>
+		}
+	}
+
+	private List&lt;String&gt; buildMissingRequiredFiles(String appDirectoryName)
+	{
+<span class="fc" id="L231">		List&lt;String&gt; missingFromArchive = newArrayList();</span>
+
+<span class="fc" id="L233">		File indexFile = new File(appDirectoryName + File.separator + ZIP_INDEX_FILE);</span>
+<span class="fc bfc" id="L234" title="All 2 branches covered.">		if (!indexFile.exists())</span>
+		{
+<span class="fc" id="L236">			missingFromArchive.add(ZIP_INDEX_FILE);</span>
+		}
+
+<span class="fc" id="L239">		File configFile = new File(appDirectoryName + File.separator + ZIP_CONFIG_FILE);</span>
+<span class="fc bfc" id="L240" title="All 2 branches covered.">		if (!configFile.exists())</span>
+		{
+<span class="fc" id="L242">			missingFromArchive.add(ZIP_CONFIG_FILE);</span>
+		}
+
+<span class="fc" id="L245">		return missingFromArchive;</span>
+	}
+
+	private List&lt;String&gt; buildMissingConfigParams(AppConfig appConfig)
+	{
+<span class="fc" id="L250">		List&lt;String&gt; missingConfigParameters = newArrayList();</span>
+
+<span class="fc bfc" id="L252" title="All 2 branches covered.">		if (appConfig.getLabel() == null)</span>
+		{
+<span class="fc" id="L254">			missingConfigParameters.add(&quot;label&quot;);</span>
+		}
+
+<span class="fc bfc" id="L257" title="All 2 branches covered.">		if (appConfig.getDescription() == null)</span>
+		{
+<span class="fc" id="L259">			missingConfigParameters.add(&quot;description&quot;);</span>
+		}
+
+<span class="fc bfc" id="L262" title="All 2 branches covered.">		if (appConfig.getIncludeMenuAndFooter() == null)</span>
+		{
+<span class="fc" id="L264">			missingConfigParameters.add(&quot;includeMenuAndFooter&quot;);</span>
+		}
+
+<span class="fc bfc" id="L267" title="All 2 branches covered.">		if (appConfig.getUri() == null)</span>
+		{
+<span class="fc" id="L269">			missingConfigParameters.add(&quot;uri&quot;);</span>
+		}
+
+<span class="fc bfc" id="L272" title="All 2 branches covered.">		if (appConfig.getVersion() == null)</span>
+		{
+<span class="fc" id="L274">			missingConfigParameters.add(&quot;version&quot;);</span>
+		}
+
+<span class="fc" id="L277">		return missingConfigParameters;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

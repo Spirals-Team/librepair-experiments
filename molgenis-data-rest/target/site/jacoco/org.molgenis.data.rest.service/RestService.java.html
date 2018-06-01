@@ -1,0 +1,599 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RestService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-rest</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.rest.service</a> &gt; <span class="el_source">RestService.java</span></div><h1>RestService.java</h1><pre class="source lang-java linenums">package org.molgenis.data.rest.service;
+
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.EntityManager;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.data.file.model.FileMeta;
+import org.molgenis.data.file.model.FileMetaFactory;
+import org.molgenis.data.file.util.FileDownloadControllerUtils;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.util.UnexpectedEnumException;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import org.springframework.web.util.UriComponents;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import java.io.IOException;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Stream;
+
+import static java.lang.String.format;
+import static java.util.Arrays.asList;
+import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.EntityManager.CreationMode.POPULATE;
+import static org.molgenis.data.file.model.FileMetaMetaData.FILENAME;
+import static org.molgenis.data.file.model.FileMetaMetaData.FILE_META;
+import static org.molgenis.data.meta.AttributeType.ONE_TO_MANY;
+import static org.molgenis.data.util.MolgenisDateFormat.*;
+
+@Service
+public class RestService
+{
+	private final DataService dataService;
+	private final IdGenerator idGenerator;
+	private final FileStore fileStore;
+	private final FileMetaFactory fileMetaFactory;
+	private final EntityManager entityManager;
+	private final ServletUriComponentsBuilderFactory servletUriComponentsBuilderFactory;
+
+	public RestService(DataService dataService, IdGenerator idGenerator, FileStore fileStore,
+			FileMetaFactory fileMetaFactory, EntityManager entityManager,
+			ServletUriComponentsBuilderFactory servletUriComponentsBuilderFactory)
+<span class="fc" id="L59">	{</span>
+<span class="fc" id="L60">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L61">		this.idGenerator = requireNonNull(idGenerator);</span>
+<span class="fc" id="L62">		this.fileStore = requireNonNull(fileStore);</span>
+<span class="fc" id="L63">		this.fileMetaFactory = requireNonNull(fileMetaFactory);</span>
+<span class="fc" id="L64">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L65">		this.servletUriComponentsBuilderFactory = requireNonNull(servletUriComponentsBuilderFactory);</span>
+<span class="fc" id="L66">	}</span>
+
+	/**
+	 * Creates a new entity based from a HttpServletRequest. For file attributes persists the file in the file store
+	 * and persist a file meta data entity.
+	 *
+	 * @param meta    entity meta data
+	 * @param request HTTP request parameters
+	 * @return entity created from HTTP request parameters
+	 */
+	public Entity toEntity(final EntityType meta, final Map&lt;String, Object&gt; request)
+	{
+<span class="fc" id="L78">		final Entity entity = entityManager.create(meta, POPULATE);</span>
+
+<span class="fc bfc" id="L80" title="All 2 branches covered.">		for (Attribute attr : meta.getAtomicAttributes())</span>
+		{
+<span class="pc bpc" id="L82" title="1 of 2 branches missed.">			if (attr.getExpression() == null)</span>
+			{
+<span class="fc" id="L84">				String paramName = attr.getName();</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">				if (request.containsKey(paramName))</span>
+				{
+<span class="fc" id="L87">					final Object paramValue = request.get(paramName);</span>
+<span class="fc" id="L88">					Attribute idAttribute = meta.getIdAttribute();</span>
+<span class="fc" id="L89">					Object idValue = request.get(idAttribute.getName());</span>
+<span class="fc" id="L90">					final Object value = this.toEntityValue(attr, paramValue, idValue);</span>
+<span class="fc" id="L91">					entity.set(attr.getName(), value);</span>
+				}
+			}
+<span class="fc" id="L94">		}</span>
+
+<span class="fc" id="L96">		return entity;</span>
+	}
+
+	/**
+	 * Converts a HTTP request parameter to a entity value of which the type is defined by the attribute. For file
+	 * attributes persists the file in the file store and persist a file meta data entity.
+	 *
+	 * @param attr       attribute
+	 * @param paramValue HTTP parameter value
+	 * @return Object
+	 */
+	public Object toEntityValue(Attribute attr, Object paramValue, Object id)
+	{
+		// Treat empty strings as null
+<span class="pc bpc" id="L110" title="1 of 6 branches missed.">		if (paramValue != null &amp;&amp; (paramValue instanceof String) &amp;&amp; ((String) paramValue).isEmpty())</span>
+		{
+<span class="nc" id="L112">			paramValue = null;</span>
+		}
+
+		Object value;
+<span class="fc" id="L116">		AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L117" title="5 of 12 branches missed.">		switch (attrType)</span>
+		{
+			case BOOL:
+<span class="nc" id="L120">				value = convertBool(attr, paramValue);</span>
+<span class="nc" id="L121">				break;</span>
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="fc" id="L129">				value = convertString(attr, paramValue);</span>
+<span class="fc" id="L130">				break;</span>
+			case CATEGORICAL:
+			case XREF:
+<span class="fc" id="L133">				value = convertRef(attr, paramValue);</span>
+<span class="fc" id="L134">				break;</span>
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="fc" id="L138">				value = convertMref(attr, paramValue);</span>
+<span class="fc" id="L139">				break;</span>
+			case DATE:
+<span class="fc" id="L141">				value = convertDate(attr, paramValue);</span>
+<span class="fc" id="L142">				break;</span>
+			case DATE_TIME:
+<span class="fc" id="L144">				value = convertDateTime(attr, paramValue);</span>
+<span class="fc" id="L145">				break;</span>
+			case DECIMAL:
+<span class="nc" id="L147">				value = convertDecimal(attr, paramValue);</span>
+<span class="nc" id="L148">				break;</span>
+			case FILE:
+<span class="fc" id="L150">				value = convertFile(attr, paramValue, id);</span>
+<span class="fc" id="L151">				break;</span>
+			case INT:
+<span class="fc" id="L153">				value = convertInt(attr, paramValue);</span>
+<span class="fc" id="L154">				break;</span>
+			case LONG:
+<span class="nc" id="L156">				value = convertLong(attr, paramValue);</span>
+<span class="nc" id="L157">				break;</span>
+			case COMPOUND:
+<span class="nc" id="L159">				throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+			default:
+<span class="nc" id="L161">				throw new UnexpectedEnumException(attrType);</span>
+		}
+<span class="fc" id="L163">		return value;</span>
+	}
+
+	private static Long convertLong(Attribute attr, Object paramValue)
+	{
+		Long value;
+<span class="nc bnc" id="L169" title="All 2 branches missed.">		if (paramValue != null)</span>
+		{
+<span class="nc bnc" id="L171" title="All 2 branches missed.">			if (paramValue instanceof String)</span>
+			{
+<span class="nc" id="L173">				value = Long.valueOf((String) paramValue);</span>
+			}
+			// javascript number converted to double
+<span class="nc bnc" id="L176" title="All 2 branches missed.">			else if (paramValue instanceof Number)</span>
+			{
+<span class="nc" id="L178">				value = ((Number) paramValue).longValue();</span>
+			}
+			else
+			{
+<span class="nc" id="L182">				throw new MolgenisDataException(</span>
+<span class="nc" id="L183">						format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L184">								paramValue.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="nc" id="L185">								Number.class.getSimpleName()));</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L190">			value = null;</span>
+		}
+<span class="nc" id="L192">		return value;</span>
+	}
+
+	private static Integer convertInt(Attribute attr, Object paramValue)
+	{
+		Integer value;
+<span class="pc bpc" id="L198" title="1 of 2 branches missed.">		if (paramValue != null)</span>
+		{
+<span class="fc bfc" id="L200" title="All 2 branches covered.">			if (paramValue instanceof String)</span>
+			{
+<span class="fc" id="L202">				value = Integer.valueOf((String) paramValue);</span>
+			}
+			// javascript number converted to double
+<span class="pc bpc" id="L205" title="1 of 2 branches missed.">			else if ((paramValue instanceof Number))</span>
+			{
+<span class="fc" id="L207">				value = ((Number) paramValue).intValue();</span>
+			}
+			else
+			{
+<span class="nc" id="L211">				throw new MolgenisDataException(</span>
+<span class="nc" id="L212">						format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L213">								paramValue.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="nc" id="L214">								Number.class.getSimpleName()));</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L219">			value = null;</span>
+		}
+<span class="fc" id="L221">		return value;</span>
+	}
+
+	private FileMeta convertFile(Attribute attr, Object paramValue, Object entityId)
+	{
+		FileMeta value;
+<span class="pc bpc" id="L227" title="1 of 2 branches missed.">		if (paramValue != null)</span>
+		{
+			/*
+			 * If an entity is updated and no new file is passed, use the old file value
+			 */
+<span class="fc bfc" id="L232" title="All 2 branches covered.">			if (!(paramValue instanceof MultipartFile))</span>
+			{
+
+<span class="fc" id="L235">				EntityType entityType = attr.getEntity();</span>
+<span class="fc" id="L236">				Attribute idAttribute = entityType.getIdAttribute();</span>
+<span class="fc" id="L237">				Object idValue = this.toEntityValue(idAttribute, entityId, null);</span>
+<span class="fc" id="L238">				Entity oldEntity = dataService.findOneById(entityType.getId(), idValue);</span>
+
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">				if (paramValue instanceof String)</span>
+				{
+<span class="fc" id="L242">					FileMeta entity = (FileMeta) oldEntity.getEntity(attr.getName());</span>
+<span class="pc bpc" id="L243" title="1 of 2 branches missed.">					if (entity.get(FILENAME).equals(paramValue))</span>
+					{
+<span class="fc" id="L245">						value = entity;</span>
+					}
+					else
+					{
+<span class="nc" id="L249">						throw new MolgenisDataException(&quot;Cannot update entity with file attribute without passing file,&quot;</span>
+								+ &quot; while changing the name of the existing file attribute&quot;);
+					}
+<span class="fc" id="L252">				}</span>
+				else
+				{
+<span class="nc" id="L255">					throw new MolgenisDataException(</span>
+<span class="nc" id="L256">							format(&quot;Attribute [%s] value is of type [%s] instead of [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L257">									paramValue.getClass().getSimpleName(), MultipartFile.class.getSimpleName()));</span>
+				}
+<span class="fc" id="L259">			}</span>
+			else
+			{
+<span class="fc" id="L262">				MultipartFile multipartFile = (MultipartFile) paramValue;</span>
+
+<span class="fc" id="L264">				String id = idGenerator.generateId();</span>
+				try
+				{
+<span class="fc" id="L267">					fileStore.store(multipartFile.getInputStream(), id);</span>
+				}
+<span class="nc" id="L269">				catch (IOException e)</span>
+				{
+<span class="nc" id="L271">					throw new MolgenisDataException(e);</span>
+<span class="fc" id="L272">				}</span>
+
+<span class="fc" id="L274">				FileMeta fileEntity = fileMetaFactory.create(id);</span>
+<span class="fc" id="L275">				fileEntity.setFilename(multipartFile.getOriginalFilename());</span>
+<span class="fc" id="L276">				fileEntity.setContentType(multipartFile.getContentType());</span>
+<span class="fc" id="L277">				fileEntity.setSize(multipartFile.getSize());</span>
+<span class="fc" id="L278">				ServletUriComponentsBuilder currentRequest = servletUriComponentsBuilderFactory.fromCurrentRequest();</span>
+<span class="fc" id="L279">				UriComponents downloadUri = currentRequest.replacePath(FileDownloadControllerUtils.URI + '/' + id)</span>
+<span class="fc" id="L280">														  .replaceQuery(null)</span>
+<span class="fc" id="L281">														  .build();</span>
+<span class="fc" id="L282">				fileEntity.setUrl(downloadUri.toUriString());</span>
+<span class="fc" id="L283">				dataService.add(FILE_META, fileEntity);</span>
+
+<span class="fc" id="L285">				value = fileEntity;</span>
+<span class="fc" id="L286">			}</span>
+		}
+		else
+		{
+<span class="nc" id="L290">			value = null;</span>
+		}
+<span class="fc" id="L292">		return value;</span>
+	}
+
+	private static Double convertDecimal(Attribute attr, Object paramValue)
+	{
+		Double value;
+<span class="nc bnc" id="L298" title="All 2 branches missed.">		if (paramValue != null)</span>
+		{
+<span class="nc bnc" id="L300" title="All 2 branches missed.">			if (paramValue instanceof String)</span>
+			{
+<span class="nc" id="L302">				value = Double.valueOf((String) paramValue);</span>
+			}
+			// javascript number converted to double
+<span class="nc bnc" id="L305" title="All 2 branches missed.">			else if (paramValue instanceof Number)</span>
+			{
+<span class="nc" id="L307">				value = ((Number) paramValue).doubleValue();</span>
+			}
+			else
+			{
+<span class="nc" id="L311">				throw new MolgenisDataException(</span>
+<span class="nc" id="L312">						format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L313">								paramValue.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="nc" id="L314">								Number.class.getSimpleName()));</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L319">			value = null;</span>
+		}
+<span class="nc" id="L321">		return value;</span>
+	}
+
+	private static Instant convertDateTime(Attribute attr, Object paramValue)
+	{
+		Instant value;
+<span class="pc bpc" id="L327" title="1 of 2 branches missed.">		if (paramValue != null)</span>
+		{
+<span class="fc bfc" id="L329" title="All 2 branches covered.">			if (paramValue instanceof Instant)</span>
+			{
+<span class="fc" id="L331">				value = (Instant) paramValue;</span>
+			}
+<span class="pc bpc" id="L333" title="1 of 2 branches missed.">			else if (paramValue instanceof String)</span>
+			{
+<span class="fc" id="L335">				String paramStrValue = (String) paramValue;</span>
+				try
+				{
+<span class="fc" id="L338">					value = parseInstant(paramStrValue);</span>
+				}
+<span class="nc" id="L340">				catch (DateTimeParseException e)</span>
+				{
+<span class="nc" id="L342">					throw new MolgenisDataException(</span>
+<span class="nc" id="L343">							format(FAILED_TO_PARSE_ATTRIBUTE_AS_DATETIME_MESSAGE, attr.getName(), paramStrValue));</span>
+<span class="fc" id="L344">				}</span>
+<span class="fc" id="L345">			}</span>
+			else
+			{
+<span class="nc" id="L348">				throw new MolgenisDataException(</span>
+<span class="nc" id="L349">						format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L350">								paramValue.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="nc" id="L351">								Instant.class.getSimpleName()));</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L356">			value = null;</span>
+		}
+<span class="fc" id="L358">		return value;</span>
+	}
+
+	private static LocalDate convertDate(Attribute attr, Object paramValue)
+	{
+		LocalDate value;
+<span class="pc bpc" id="L364" title="1 of 2 branches missed.">		if (paramValue != null)</span>
+		{
+<span class="pc bpc" id="L366" title="1 of 2 branches missed.">			if (paramValue instanceof LocalDate)</span>
+			{
+<span class="nc" id="L368">				value = (LocalDate) paramValue;</span>
+			}
+<span class="pc bpc" id="L370" title="1 of 2 branches missed.">			else if (paramValue instanceof String)</span>
+			{
+<span class="fc" id="L372">				String paramStrValue = (String) paramValue;</span>
+				try
+				{
+<span class="fc" id="L375">					value = parseLocalDate(paramStrValue);</span>
+				}
+<span class="fc" id="L377">				catch (DateTimeParseException e)</span>
+				{
+<span class="fc" id="L379">					throw new MolgenisDataException(</span>
+<span class="fc" id="L380">							format(FAILED_TO_PARSE_ATTRIBUTE_AS_DATE_MESSAGE, attr.getName(), paramStrValue));</span>
+<span class="fc" id="L381">				}</span>
+<span class="fc" id="L382">			}</span>
+			else
+			{
+<span class="nc" id="L385">				throw new MolgenisDataException(</span>
+<span class="nc" id="L386">						format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L387">								paramValue.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="nc" id="L388">								LocalDate.class.getSimpleName()));</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L393">			value = null;</span>
+		}
+<span class="fc" id="L395">		return value;</span>
+	}
+
+	private List&lt;?&gt; convertMref(Attribute attr, Object paramValue)
+	{
+		List&lt;?&gt; value;
+<span class="fc bfc" id="L401" title="All 2 branches covered.">		if (paramValue != null)</span>
+		{
+			List&lt;?&gt; mrefParamValues;
+<span class="pc bpc" id="L404" title="1 of 2 branches missed.">			if (paramValue instanceof String)</span>
+			{
+<span class="fc" id="L406">				mrefParamValues = asList(StringUtils.split((String) paramValue, ','));</span>
+			}
+<span class="nc bnc" id="L408" title="All 2 branches missed.">			else if (paramValue instanceof List&lt;?&gt;)</span>
+			{
+<span class="nc" id="L410">				mrefParamValues = (List&lt;?&gt;) paramValue;</span>
+			}
+			else
+			{
+<span class="nc" id="L414">				throw new MolgenisDataException(</span>
+<span class="nc" id="L415">						format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L416">								paramValue.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="nc" id="L417">								List.class.getSimpleName()));</span>
+			}
+
+<span class="fc" id="L420">			EntityType mrefEntity = attr.getRefEntity();</span>
+<span class="fc" id="L421">			Attribute mrefEntityIdAttr = mrefEntity.getIdAttribute();</span>
+<span class="fc" id="L422">			value = mrefParamValues.stream()</span>
+<span class="fc" id="L423">								   .map(mrefParamValue -&gt; toEntityValue(mrefEntityIdAttr, mrefParamValue, null))</span>
+<span class="fc" id="L424">								   .map(mrefIdValue -&gt; entityManager.getReference(mrefEntity, mrefIdValue))</span>
+<span class="fc" id="L425">								   .collect(toList());</span>
+<span class="fc" id="L426">		}</span>
+		else
+		{
+<span class="fc" id="L429">			value = emptyList();</span>
+		}
+<span class="fc" id="L431">		return value;</span>
+	}
+
+	private Object convertRef(Attribute attr, Object paramValue)
+	{
+		Object value;
+<span class="pc bpc" id="L437" title="1 of 2 branches missed.">		if (paramValue != null)</span>
+		{
+<span class="fc" id="L439">			Object idValue = toEntityValue(attr.getRefEntity().getIdAttribute(), paramValue, null);</span>
+<span class="fc" id="L440">			value = entityManager.getReference(attr.getRefEntity(), idValue);</span>
+<span class="fc" id="L441">		}</span>
+		else
+		{
+<span class="nc" id="L444">			value = null;</span>
+		}
+<span class="fc" id="L446">		return value;</span>
+	}
+
+	private static String convertString(Attribute attr, Object paramValue)
+	{
+		String value;
+<span class="pc bpc" id="L452" title="1 of 2 branches missed.">		if (paramValue != null)</span>
+		{
+<span class="pc bpc" id="L454" title="1 of 2 branches missed.">			if (paramValue instanceof String)</span>
+			{
+<span class="fc" id="L456">				value = (String) paramValue;</span>
+			}
+			else
+			{
+<span class="nc" id="L460">				throw new MolgenisDataException(</span>
+<span class="nc" id="L461">						format(&quot;Attribute [%s] value is of type [%s] instead of [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L462">								paramValue.getClass().getSimpleName(), String.class.getSimpleName()));</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L467">			value = null;</span>
+		}
+<span class="fc" id="L469">		return value;</span>
+	}
+
+	private static Boolean convertBool(Attribute attr, Object paramValue)
+	{
+		Boolean value;
+<span class="nc bnc" id="L475" title="All 2 branches missed.">		if (paramValue != null)</span>
+		{
+<span class="nc bnc" id="L477" title="All 2 branches missed.">			if (paramValue instanceof String)</span>
+			{
+<span class="nc" id="L479">				value = Boolean.valueOf((String) paramValue);</span>
+			}
+<span class="nc bnc" id="L481" title="All 2 branches missed.">			else if (paramValue instanceof Boolean)</span>
+			{
+<span class="nc" id="L483">				value = (Boolean) paramValue;</span>
+			}
+			else
+			{
+<span class="nc" id="L487">				throw new MolgenisDataException(</span>
+<span class="nc" id="L488">						format(&quot;Attribute [%s] value is of type [%s] instead of [%s] or [%s]&quot;, attr.getName(),</span>
+<span class="nc" id="L489">								paramValue.getClass().getSimpleName(), String.class.getSimpleName(),</span>
+<span class="nc" id="L490">								Boolean.class.getSimpleName()));</span>
+			}
+		}
+		else
+		{
+			// boolean false is not posted (http feature), so if null and required, should be false
+<span class="nc bnc" id="L496" title="All 2 branches missed.">			value = !attr.isNillable() ? false : null;</span>
+		}
+<span class="nc" id="L498">		return value;</span>
+	}
+
+	/**
+	 * For entities with attributes that are part of a bidirectional relationship update the other side of the relationship.
+	 *
+	 * @param entity created entity
+	 */
+	public void updateMappedByEntities(@Nonnull Entity entity)
+	{
+<span class="fc" id="L508">		updateMappedByEntities(entity, null);</span>
+<span class="fc" id="L509">	}</span>
+
+	/**
+	 * For entities with attributes that are part of a bidirectional relationship update the other side of the relationship.
+	 *
+	 * @param entity         created or updated entity
+	 * @param existingEntity existing entity
+	 */
+	public void updateMappedByEntities(@Nonnull Entity entity, @Nullable Entity existingEntity)
+	{
+<span class="fc" id="L519">		entity.getEntityType().getMappedByAttributes().forEach(mappedByAttr -&gt;</span>
+		{
+<span class="fc" id="L521">			AttributeType type = mappedByAttr.getDataType();</span>
+<span class="pc bpc" id="L522" title="1 of 2 branches missed.">			switch (type)</span>
+			{
+				case ONE_TO_MANY:
+<span class="fc" id="L525">					updateMappedByEntitiesOneToMany(entity, existingEntity, mappedByAttr);</span>
+<span class="fc" id="L526">					break;</span>
+				default:
+<span class="nc" id="L528">					throw new RuntimeException(</span>
+<span class="nc" id="L529">							format(&quot;Attribute [%s] of type [%s] can't be mapped by another attribute&quot;,</span>
+<span class="nc" id="L530">									mappedByAttr.getName(), type.toString()));</span>
+			}
+<span class="fc" id="L532">		});</span>
+<span class="fc" id="L533">	}</span>
+
+	/**
+	 * For entities with the given attribute that is part of a bidirectional one-to-many relationship update the other side of the relationship.
+	 *
+	 * @param entity         created or updated entity
+	 * @param existingEntity existing entity
+	 * @param attr           bidirectional one-to-many attribute
+	 */
+	private void updateMappedByEntitiesOneToMany(@Nonnull Entity entity, @Nullable Entity existingEntity,
+			@Nonnull Attribute attr)
+	{
+<span class="pc bpc" id="L545" title="2 of 4 branches missed.">		if (attr.getDataType() != ONE_TO_MANY || !attr.isMappedBy())</span>
+		{
+<span class="nc" id="L547">			throw new IllegalArgumentException(</span>
+<span class="nc" id="L548">					format(&quot;Attribute [%s] is not of type [%s] or not mapped by another attribute&quot;, attr.getName(),</span>
+<span class="nc" id="L549">							attr.getDataType().toString()));</span>
+		}
+
+		// update ref entities of created/updated entity
+<span class="fc" id="L553">		Attribute refAttr = attr.getMappedBy();</span>
+<span class="fc" id="L554">		Stream&lt;Entity&gt; stream = stream(entity.getEntities(attr.getName()).spliterator(), false);</span>
+<span class="fc bfc" id="L555" title="All 2 branches covered.">		if (existingEntity != null)</span>
+		{
+			// filter out unchanged ref entities
+<span class="fc" id="L558">			Set&lt;Object&gt; refEntityIds = stream(existingEntity.getEntities(attr.getName()).spliterator(), false).map(</span>
+<span class="fc" id="L559">					Entity::getIdValue).collect(toSet());</span>
+<span class="fc bfc" id="L560" title="All 2 branches covered.">			stream = stream.filter(refEntity -&gt; !refEntityIds.contains(refEntity.getIdValue()));</span>
+		}
+<span class="fc" id="L562">		List&lt;Entity&gt; updatedRefEntities = stream.map(refEntity -&gt;</span>
+		{
+<span class="pc bpc" id="L564" title="1 of 2 branches missed.">			if (refEntity.getEntity(refAttr.getName()) != null)</span>
+			{
+<span class="nc" id="L566">				throw new MolgenisDataException(</span>
+<span class="nc" id="L567">						format(&quot;Updating [%s] with id [%s] not allowed: [%s] is already referred to by another [%s]&quot;,</span>
+<span class="nc" id="L568">								attr.getRefEntity().getId(), refEntity.getIdValue().toString(), refAttr.getName(),</span>
+<span class="nc" id="L569">								entity.getEntityType().getId()));</span>
+			}
+
+<span class="fc" id="L572">			refEntity.set(refAttr.getName(), entity);</span>
+<span class="fc" id="L573">			return refEntity;</span>
+<span class="fc" id="L574">		}).collect(toList());</span>
+
+		// update ref entities of existing entity
+<span class="fc bfc" id="L577" title="All 2 branches covered.">		if (existingEntity != null)</span>
+		{
+<span class="fc" id="L579">			Set&lt;Object&gt; refEntityIds = stream(entity.getEntities(attr.getName()).spliterator(), false).map(</span>
+<span class="fc" id="L580">					Entity::getIdValue).collect(toSet());</span>
+<span class="fc" id="L581">			List&lt;Entity&gt; updatedRefEntitiesExistingEntity = stream(</span>
+<span class="fc" id="L582">					existingEntity.getEntities(attr.getName()).spliterator(), false).filter(</span>
+<span class="fc bfc" id="L583" title="All 2 branches covered.">					refEntity -&gt; !refEntityIds.contains(refEntity.getIdValue())).map(refEntity -&gt;</span>
+			{
+<span class="fc" id="L585">				refEntity.set(refAttr.getName(), null);</span>
+<span class="fc" id="L586">				return refEntity;</span>
+<span class="fc" id="L587">			}).collect(toList());</span>
+
+<span class="fc" id="L589">			updatedRefEntities = Stream.concat(updatedRefEntities.stream(), updatedRefEntitiesExistingEntity.stream())</span>
+<span class="fc" id="L590">									   .collect(toList());</span>
+		}
+
+<span class="pc bpc" id="L593" title="1 of 2 branches missed.">		if (!updatedRefEntities.isEmpty())</span>
+		{
+<span class="fc" id="L595">			dataService.update(attr.getRefEntity().getId(), updatedRefEntities.stream());</span>
+		}
+<span class="fc" id="L597">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

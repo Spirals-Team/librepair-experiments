@@ -1,0 +1,328 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AlgorithmServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">semantic-mapper</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.semanticmapper.service.impl</a> &gt; <span class="el_source">AlgorithmServiceImpl.java</span></div><h1>AlgorithmServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.semanticmapper.service.impl;
+
+import com.google.common.collect.Multimap;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.Entity;
+import org.molgenis.data.EntityManager;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.semantic.Relation;
+import org.molgenis.js.magma.JsMagmaScriptEvaluator;
+import org.molgenis.ontology.core.model.OntologyTerm;
+import org.molgenis.script.core.ScriptException;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.semanticmapper.algorithmgenerator.bean.GeneratedAlgorithm;
+import org.molgenis.semanticmapper.algorithmgenerator.service.AlgorithmGeneratorService;
+import org.molgenis.semanticmapper.mapping.model.AttributeMapping;
+import org.molgenis.semanticmapper.mapping.model.EntityMapping;
+import org.molgenis.semanticmapper.service.AlgorithmService;
+import org.molgenis.semanticsearch.explain.bean.ExplainedAttribute;
+import org.molgenis.semanticsearch.service.OntologyTagService;
+import org.molgenis.semanticsearch.service.SemanticSearchService;
+import org.molgenis.util.UnexpectedEnumException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static com.google.common.collect.Sets.newLinkedHashSet;
+import static java.lang.Double.parseDouble;
+import static java.lang.Math.round;
+import static java.lang.Math.toIntExact;
+import static java.lang.String.format;
+import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.StreamSupport.stream;
+import static org.apache.commons.lang3.StringUtils.isEmpty;
+import static org.molgenis.data.DataConverter.toBoolean;
+import static org.molgenis.data.meta.AttributeType.*;
+
+public class AlgorithmServiceImpl implements AlgorithmService
+{
+<span class="fc" id="L52">	private static final Logger LOG = LoggerFactory.getLogger(AlgorithmServiceImpl.class);</span>
+
+	private static final int ENTITY_REFERENCE_FETCHING_DEPTH = 3;
+
+	private final OntologyTagService ontologyTagService;
+	private final SemanticSearchService semanticSearchService;
+	private final AlgorithmGeneratorService algorithmGeneratorService;
+	private final JsMagmaScriptEvaluator jsMagmaScriptEvaluator;
+	private final EntityManager entityManager;
+
+	public AlgorithmServiceImpl(OntologyTagService ontologyTagService, SemanticSearchService semanticSearchService,
+			AlgorithmGeneratorService algorithmGeneratorService, EntityManager entityManager,
+			JsMagmaScriptEvaluator jsMagmaScriptEvaluator)
+<span class="fc" id="L65">	{</span>
+<span class="fc" id="L66">		this.ontologyTagService = requireNonNull(ontologyTagService);</span>
+<span class="fc" id="L67">		this.semanticSearchService = requireNonNull(semanticSearchService);</span>
+<span class="fc" id="L68">		this.algorithmGeneratorService = requireNonNull(algorithmGeneratorService);</span>
+<span class="fc" id="L69">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L70">		this.jsMagmaScriptEvaluator = requireNonNull(jsMagmaScriptEvaluator);</span>
+<span class="fc" id="L71">	}</span>
+
+	@Override
+	public String generateAlgorithm(Attribute targetAttribute, EntityType targetEntityType,
+			List&lt;Attribute&gt; sourceAttributes, EntityType sourceEntityType)
+	{
+<span class="nc" id="L77">		return algorithmGeneratorService.generate(targetAttribute, sourceAttributes, targetEntityType,</span>
+				sourceEntityType);
+	}
+
+	@Override
+	@RunAsSystem
+	public void autoGenerateAlgorithm(EntityType sourceEntityType, EntityType targetEntityType, EntityMapping mapping,
+			Attribute targetAttribute)
+	{
+<span class="nc" id="L86">		LOG.debug(&quot;createAttributeMappingIfOnlyOneMatch: target= &quot; + targetAttribute.getName());</span>
+<span class="nc" id="L87">		Multimap&lt;Relation, OntologyTerm&gt; tagsForAttribute = ontologyTagService.getTagsForAttribute(targetEntityType,</span>
+				targetAttribute);
+
+<span class="nc" id="L90">		Map&lt;Attribute, ExplainedAttribute&gt; relevantAttributes = semanticSearchService.decisionTreeToFindRelevantAttributes(</span>
+<span class="nc" id="L91">				sourceEntityType, targetAttribute, tagsForAttribute.values(), null);</span>
+<span class="nc" id="L92">		GeneratedAlgorithm generatedAlgorithm = algorithmGeneratorService.generate(targetAttribute, relevantAttributes,</span>
+				targetEntityType, sourceEntityType);
+
+<span class="nc bnc" id="L95" title="All 2 branches missed.">		if (StringUtils.isNotBlank(generatedAlgorithm.getAlgorithm()))</span>
+		{
+<span class="nc" id="L97">			AttributeMapping attributeMapping = mapping.addAttributeMapping(targetAttribute.getName());</span>
+<span class="nc" id="L98">			attributeMapping.setAlgorithm(generatedAlgorithm.getAlgorithm());</span>
+<span class="nc" id="L99">			attributeMapping.getSourceAttributes().addAll(generatedAlgorithm.getSourceAttributes());</span>
+<span class="nc" id="L100">			attributeMapping.setAlgorithmState(generatedAlgorithm.getAlgorithmState());</span>
+<span class="nc" id="L101">			LOG.debug(&quot;Creating attribute mapping: &quot; + targetAttribute.getName() + &quot; = &quot;</span>
+<span class="nc" id="L102">					+ generatedAlgorithm.getAlgorithm());</span>
+		}
+<span class="nc" id="L104">	}</span>
+
+	@Override
+	public Iterable&lt;AlgorithmEvaluation&gt; applyAlgorithm(Attribute targetAttribute, String algorithm,
+			Iterable&lt;Entity&gt; sourceEntities)
+	{
+<span class="fc" id="L110">		return stream(sourceEntities.spliterator(), false).map(entity -&gt; {</span>
+<span class="fc" id="L111">			AlgorithmEvaluation algorithmResult = new AlgorithmEvaluation(entity);</span>
+			Object derivedValue;
+
+			try
+			{
+<span class="fc" id="L116">				Object result = jsMagmaScriptEvaluator.eval(algorithm, entity, ENTITY_REFERENCE_FETCHING_DEPTH);</span>
+
+				// jsMagmaScriptEvaluator.eval() catches and returns the error instead of throwing it
+				// so check instance of result object here
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">				if (result instanceof ScriptException)</span>
+				{
+<span class="fc" id="L122">					return algorithmResult.errorMessage(((ScriptException) result).getMessage());</span>
+				}
+
+<span class="nc" id="L125">				derivedValue = convert(result, targetAttribute);</span>
+			}
+<span class="fc" id="L127">			catch (RuntimeException e)</span>
+			{
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">				if (e.getMessage() == null)</span>
+				{
+<span class="fc" id="L131">					return algorithmResult.errorMessage(</span>
+							&quot;Applying an algorithm on a null source value caused an exception. Is the target attribute required?&quot;);
+				}
+<span class="nc" id="L134">				return algorithmResult.errorMessage(e.getMessage());</span>
+<span class="nc" id="L135">			}</span>
+<span class="nc" id="L136">			return algorithmResult.value(derivedValue);</span>
+<span class="fc" id="L137">		}).collect(toList());</span>
+	}
+
+	@Override
+	public Object apply(AttributeMapping attributeMapping, Entity sourceEntity, EntityType sourceEntityType)
+	{
+<span class="fc" id="L143">		String algorithm = attributeMapping.getAlgorithm();</span>
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">		if (isEmpty(algorithm))</span>
+		{
+<span class="nc" id="L146">			return null;</span>
+		}
+<span class="fc" id="L148">		Object result = jsMagmaScriptEvaluator.eval(algorithm, sourceEntity, ENTITY_REFERENCE_FETCHING_DEPTH);</span>
+
+		// jsMagmaScriptEvaluator.eval() catches and returns the error instead of throwing it
+		// so check instance of result object here
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">		if (result instanceof ScriptException)</span>
+		{
+<span class="fc" id="L154">			throw new ScriptException(((ScriptException) result).getMessage(), ((ScriptException) result).getCause());</span>
+		}
+
+<span class="nc" id="L157">		return convert(result, attributeMapping.getTargetAttribute());</span>
+	}
+
+	@Override
+	public Collection&lt;String&gt; getSourceAttributeNames(String algorithmScript)
+	{
+<span class="nc" id="L163">		Collection&lt;String&gt; result = emptyList();</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">		if (!isEmpty(algorithmScript))</span>
+		{
+<span class="nc" id="L166">			result = findMatchesForPattern(algorithmScript, &quot;\\$\\('([^\\$\\(\\)]+)'\\)&quot;);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">			if (result.isEmpty())</span>
+			{
+<span class="nc" id="L169">				result = findMatchesForPattern(algorithmScript, &quot;\\$\\(([^\\$\\(\\)]+)\\)&quot;);</span>
+			}
+		}
+<span class="nc" id="L172">		return result;</span>
+	}
+
+	private static Collection&lt;String&gt; findMatchesForPattern(String algorithmScript, String patternString)
+	{
+<span class="nc" id="L177">		LinkedHashSet&lt;String&gt; result = newLinkedHashSet();</span>
+<span class="nc" id="L178">		Matcher matcher = Pattern.compile(patternString).matcher(algorithmScript);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">		while (matcher.find())</span>
+		{
+<span class="nc" id="L181">			result.add(matcher.group(1).split(&quot;\\.&quot;)[0]);</span>
+		}
+<span class="nc" id="L183">		return result;</span>
+	}
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	private Object convert(Object value, Attribute attr)
+	{
+		Object convertedValue;
+<span class="fc" id="L190">		AttributeType attrType = attr.getDataType();</span>
+<span class="pc bnc" id="L191" title="All 11 branches missed.">		switch (attrType)</span>
+		{
+			case BOOL:
+<span class="nc bnc" id="L194" title="All 2 branches missed.">				convertedValue = value != null ? toBoolean(value) : null;</span>
+<span class="nc" id="L195">				break;</span>
+			case CATEGORICAL:
+			case XREF:
+			case FILE:
+<span class="nc bnc" id="L199" title="All 2 branches missed.">				convertedValue = value != null ? entityManager.getReference(attr.getRefEntity(),</span>
+<span class="nc" id="L200">						convert(value, attr.getRefEntity().getIdAttribute())) : null;</span>
+<span class="nc" id="L201">				break;</span>
+			case CATEGORICAL_MREF:
+			case MREF:
+			case ONE_TO_MANY:
+<span class="nc" id="L205">				Collection&lt;Object&gt; valueIds = (Collection&lt;Object&gt;) value;</span>
+
+<span class="nc" id="L207">				convertedValue = valueIds.stream()</span>
+<span class="nc" id="L208">										 .map(valueId -&gt; entityManager.getReference(attr.getRefEntity(),</span>
+<span class="nc" id="L209">												 convert(valueId, attr.getRefEntity().getIdAttribute())))</span>
+<span class="nc" id="L210">										 .collect(toList());</span>
+<span class="nc" id="L211">				break;</span>
+			case DATE:
+<span class="nc" id="L213">				convertedValue = convertToDate(value);</span>
+<span class="nc" id="L214">				break;</span>
+			case DATE_TIME:
+<span class="nc" id="L216">				convertedValue = convertToDateTime(value);</span>
+<span class="nc" id="L217">				break;</span>
+			case DECIMAL:
+<span class="nc" id="L219">				convertedValue = convertToDouble(value);</span>
+<span class="nc" id="L220">				break;</span>
+			case EMAIL:
+			case ENUM:
+			case HTML:
+			case HYPERLINK:
+			case SCRIPT:
+			case STRING:
+			case TEXT:
+<span class="nc bnc" id="L228" title="All 2 branches missed.">				convertedValue = value != null ? value.toString() : null;</span>
+<span class="nc" id="L229">				break;</span>
+			case INT:
+<span class="nc" id="L231">				convertedValue = convertToInteger(value);</span>
+<span class="nc" id="L232">				break;</span>
+			case LONG:
+<span class="nc" id="L234">				convertedValue = convertToLong(value);</span>
+<span class="nc" id="L235">				break;</span>
+			case COMPOUND:
+<span class="nc" id="L237">				throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+			default:
+<span class="nc" id="L239">				throw new UnexpectedEnumException(attrType);</span>
+		}
+
+<span class="nc" id="L242">		return convertedValue;</span>
+	}
+
+	LocalDate convertToDate(Object value)
+	{
+		try
+		{
+<span class="nc bnc" id="L249" title="All 2 branches missed.">			return value != null ? Instant.ofEpochMilli(Double.valueOf(value.toString()).longValue())</span>
+<span class="nc" id="L250">										  .atZone(ZoneId.systemDefault())</span>
+<span class="nc" id="L251">										  .toLocalDate() : null;</span>
+		}
+<span class="fc" id="L253">		catch (NumberFormatException e)</span>
+		{
+<span class="fc" id="L255">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L256">			throw new AlgorithmException(</span>
+<span class="fc" id="L257">					format(&quot;'%s' can't be converted to type '%s'&quot;, value.toString(), DATE.toString()));</span>
+		}
+	}
+
+	private Instant convertToDateTime(Object value)
+	{
+		try
+		{
+<span class="nc bnc" id="L265" title="All 2 branches missed.">			return value != null ? Instant.ofEpochMilli(Double.valueOf(value.toString()).longValue()) : null;</span>
+		}
+<span class="fc" id="L267">		catch (NumberFormatException e)</span>
+		{
+<span class="fc" id="L269">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L270">			throw new AlgorithmException(</span>
+<span class="fc" id="L271">					format(&quot;'%s' can't be converted to type '%s'&quot;, value.toString(), DATE_TIME.toString()));</span>
+		}
+	}
+
+	private Double convertToDouble(Object value)
+	{
+		try
+		{
+<span class="nc bnc" id="L279" title="All 2 branches missed.">			return value != null ? parseDouble(value.toString()) : null;</span>
+		}
+<span class="fc" id="L281">		catch (NumberFormatException e)</span>
+		{
+<span class="fc" id="L283">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L284">			throw new AlgorithmException(</span>
+<span class="fc" id="L285">					format(&quot;'%s' can't be converted to type '%s'&quot;, value.toString(), DECIMAL.toString()));</span>
+		}
+	}
+
+	private Integer convertToInteger(Object value)
+	{
+		Integer convertedValue;
+		try
+		{
+<span class="nc bnc" id="L294" title="All 2 branches missed.">			convertedValue = value != null ? toIntExact(round(parseDouble(value.toString()))) : null;</span>
+		}
+<span class="fc" id="L296">		catch (NumberFormatException e)</span>
+		{
+<span class="fc" id="L298">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L299">			throw new AlgorithmException(</span>
+<span class="fc" id="L300">					format(&quot;'%s' can't be converted to type '%s'&quot;, value.toString(), INT.toString()));</span>
+		}
+<span class="fc" id="L302">		catch (ArithmeticException e)</span>
+		{
+<span class="fc" id="L304">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L305">			throw new AlgorithmException(</span>
+<span class="fc" id="L306">					format(&quot;'%s' is larger than the maximum allowed value for type '%s'&quot;, value.toString(),</span>
+<span class="fc" id="L307">							INT.toString()));</span>
+<span class="nc" id="L308">		}</span>
+<span class="nc" id="L309">		return convertedValue;</span>
+	}
+
+	private Long convertToLong(Object value)
+	{
+		Long convertedValue;
+		try
+		{
+<span class="nc bnc" id="L317" title="All 2 branches missed.">			convertedValue = value != null ? round(parseDouble(value.toString())) : null;</span>
+		}
+<span class="fc" id="L319">		catch (NumberFormatException e)</span>
+		{
+<span class="fc" id="L321">			LOG.debug(&quot;&quot;, e);</span>
+<span class="fc" id="L322">			throw new AlgorithmException(</span>
+<span class="fc" id="L323">					format(&quot;'%s' can't be converted to type '%s'&quot;, value.toString(), LONG.toString()));</span>
+<span class="nc" id="L324">		}</span>
+<span class="nc" id="L325">		return convertedValue;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

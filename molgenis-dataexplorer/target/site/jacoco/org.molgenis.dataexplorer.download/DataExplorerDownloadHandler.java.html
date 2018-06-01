@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataExplorerDownloadHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">dataexplorer</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.dataexplorer.download</a> &gt; <span class="el_source">DataExplorerDownloadHandler.java</span></div><h1>DataExplorerDownloadHandler.java</h1><pre class="source lang-java linenums">package org.molgenis.dataexplorer.download;
+
+import com.google.common.collect.Streams;
+import org.molgenis.data.DataService;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.csv.CsvWriter;
+import org.molgenis.data.excel.ExcelSheetWriter;
+import org.molgenis.data.excel.ExcelWriter;
+import org.molgenis.data.excel.ExcelWriter.FileFormat;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.AbstractWritable.AttributeWriteMode;
+import org.molgenis.data.support.AbstractWritable.EntityWriteMode;
+import org.molgenis.dataexplorer.controller.DataRequest;
+import org.molgenis.util.UnexpectedEnumException;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.util.List;
+import java.util.Set;
+
+import static com.google.common.collect.Sets.newHashSet;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+
+public class DataExplorerDownloadHandler
+{
+	// Magic value: https://github.com/molgenis/molgenis/issues/6687
+	private static final long MAX_EXCEL_CELLS = 500000L;
+	private final DataService dataService;
+	private final AttributeFactory attrMetaFactory;
+
+	public DataExplorerDownloadHandler(DataService dataService, AttributeFactory attrMetaFactory)
+<span class="fc" id="L35">	{</span>
+<span class="fc" id="L36">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L37">		this.attrMetaFactory = requireNonNull(attrMetaFactory);</span>
+<span class="fc" id="L38">	}</span>
+
+	public void writeToExcel(DataRequest dataRequest, OutputStream outputStream) throws IOException
+	{
+<span class="fc" id="L42">		String entityTypeId = dataRequest.getEntityName();</span>
+<span class="fc" id="L43">		List&lt;Attribute&gt; attributes = filterAttributes(dataRequest);</span>
+<span class="fc" id="L44">		checkNumberOfCells(dataRequest, entityTypeId, attributes.size());</span>
+<span class="fc" id="L45">		AttributeWriteMode attributeWriteMode = getAttributeWriteMode(dataRequest.getColNames());</span>
+<span class="fc" id="L46">		try (ExcelWriter excelWriter = new ExcelWriter(outputStream, attrMetaFactory, FileFormat.XLSX);</span>
+<span class="fc" id="L47">				ExcelSheetWriter excelSheetWriter = excelWriter.createWritable(entityTypeId, attributes,</span>
+						attributeWriteMode))
+		{
+<span class="fc" id="L50">			excelSheetWriter.setEntityWriteMode(getEntityWriteMode(dataRequest.getEntityValues()));</span>
+<span class="fc" id="L51">			excelSheetWriter.add(dataService.findAll(entityTypeId, dataRequest.getQuery()));</span>
+		}
+<span class="fc" id="L53">	}</span>
+
+	private List&lt;Attribute&gt; filterAttributes(DataRequest dataRequest)
+	{
+<span class="fc" id="L57">		EntityType entityType = dataService.getEntityType(dataRequest.getEntityName());</span>
+<span class="fc" id="L58">		final Set&lt;String&gt; attributeNames = newHashSet(dataRequest.getAttributeNames());</span>
+<span class="fc" id="L59">		return Streams.stream(entityType.getAtomicAttributes())</span>
+<span class="fc" id="L60">					  .filter(attribute -&gt; attributeNames.contains(attribute.getName()))</span>
+<span class="fc" id="L61">					  .collect(toList());</span>
+	}
+
+	private void checkNumberOfCells(DataRequest dataRequest, String entityTypeId, int cols)
+	{
+<span class="fc" id="L66">		long rows = dataService.count(entityTypeId, dataRequest.getQuery());</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">		if (rows * cols &gt;= MAX_EXCEL_CELLS)</span>
+		{
+<span class="fc" id="L69">			throw new MolgenisDataException(String.format(</span>
+					&quot;Total number of cells for this download exceeds the maximum of %s for .xlsx downloads, please use .csv instead&quot;,
+<span class="fc" id="L71">					MAX_EXCEL_CELLS));</span>
+		}
+<span class="fc" id="L73">	}</span>
+
+	public void writeToCsv(DataRequest request, OutputStream outputStream, char separator) throws IOException
+	{
+<span class="fc" id="L77">		writeToCsv(request, outputStream, separator, false);</span>
+<span class="fc" id="L78">	}</span>
+
+	public void writeToCsv(DataRequest dataRequest, OutputStream outputStream, char separator, boolean noQuotes)
+			throws IOException
+	{
+<span class="fc" id="L83">		try (CsvWriter csvWriter = new CsvWriter(outputStream, separator, noQuotes))</span>
+		{
+<span class="fc" id="L85">			csvWriter.setEntityWriteMode(getEntityWriteMode(dataRequest.getEntityValues()));</span>
+<span class="fc" id="L86">			String entityTypeId = dataRequest.getEntityName();</span>
+<span class="fc" id="L87">			writeCsvHeaders(dataRequest, csvWriter);</span>
+<span class="fc" id="L88">			csvWriter.add(dataService.findAll(entityTypeId, dataRequest.getQuery()));</span>
+		}
+<span class="fc" id="L90">	}</span>
+
+	private void writeCsvHeaders(DataRequest dataRequest, CsvWriter csvWriter) throws IOException
+	{
+<span class="fc" id="L94">		List&lt;Attribute&gt; attributes = filterAttributes(dataRequest);</span>
+<span class="pc bpc" id="L95" title="1 of 3 branches missed.">		switch (dataRequest.getColNames())</span>
+		{
+			case ATTRIBUTE_LABELS:
+<span class="fc" id="L98">				csvWriter.writeAttributes(attributes);</span>
+<span class="fc" id="L99">				break;</span>
+			case ATTRIBUTE_NAMES:
+<span class="fc" id="L101">				csvWriter.writeAttributeNames(attributes.stream().map(Attribute::getName).collect(toList()));</span>
+<span class="fc" id="L102">				break;</span>
+			default:
+<span class="nc" id="L104">				throw new UnexpectedEnumException(dataRequest.getColNames());</span>
+		}
+<span class="fc" id="L106">	}</span>
+
+	private EntityWriteMode getEntityWriteMode(DataRequest.EntityValues entityValues)
+	{
+<span class="pc bpc" id="L110" title="1 of 3 branches missed.">		switch (entityValues)</span>
+		{
+			case ENTITY_IDS:
+<span class="fc" id="L113">				return EntityWriteMode.ENTITY_IDS;</span>
+			case ENTITY_LABELS:
+<span class="fc" id="L115">				return EntityWriteMode.ENTITY_LABELS;</span>
+			default:
+<span class="nc" id="L117">				throw new UnexpectedEnumException(entityValues);</span>
+		}
+	}
+
+	private AttributeWriteMode getAttributeWriteMode(DataRequest.ColNames colNames)
+	{
+<span class="pc bpc" id="L123" title="1 of 3 branches missed.">		switch (colNames)</span>
+		{
+			case ATTRIBUTE_LABELS:
+<span class="fc" id="L126">				return AttributeWriteMode.ATTRIBUTE_LABELS;</span>
+			case ATTRIBUTE_NAMES:
+<span class="fc" id="L128">				return AttributeWriteMode.ATTRIBUTE_NAMES;</span>
+			default:
+<span class="nc" id="L130">				throw new UnexpectedEnumException(colNames);</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

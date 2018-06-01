@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UntypedTagService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">semantic-search</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.semanticsearch.service.impl</a> &gt; <span class="el_source">UntypedTagService.java</span></div><h1>UntypedTagService.java</h1><pre class="source lang-java linenums">package org.molgenis.semanticsearch.service.impl;
+
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.UnknownEntityException;
+import org.molgenis.data.UnknownEntityTypeException;
+import org.molgenis.data.meta.model.*;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.semantic.LabeledResource;
+import org.molgenis.data.semantic.Relation;
+import org.molgenis.data.semantic.SemanticTag;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.semanticsearch.repository.TagRepository;
+import org.molgenis.semanticsearch.service.TagService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ATTRIBUTES;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.data.meta.model.PackageMetadata.PACKAGE;
+
+/**
+ * Service to tag metadata with simple
+ * String terms.
+ */
+public class UntypedTagService implements TagService&lt;LabeledResource, LabeledResource&gt;
+{
+<span class="nc" id="L40">	private static final Logger LOG = LoggerFactory.getLogger(UntypedTagService.class);</span>
+
+	private final DataService dataService;
+	private final TagRepository tagRepository;
+
+	public UntypedTagService(DataService dataService, TagRepository tagRepository)
+<span class="nc" id="L46">	{</span>
+<span class="nc" id="L47">		this.dataService = requireNonNull(dataService);</span>
+<span class="nc" id="L48">		this.tagRepository = requireNonNull(tagRepository);</span>
+<span class="nc" id="L49">	}</span>
+
+	private Entity findAttributeEntity(EntityType entityType, String attributeName)
+	{
+<span class="nc" id="L53">		Entity entityTypeEntity = dataService.findOneById(ENTITY_TYPE_META_DATA, entityType.getId());</span>
+<span class="nc" id="L54">		Optional&lt;Entity&gt; result = stream(entityTypeEntity.getEntities(ATTRIBUTES).spliterator(), false).filter(</span>
+<span class="nc" id="L55">				att -&gt; attributeName.equals(att.getString(AttributeMetadata.NAME))).findFirst();</span>
+<span class="nc" id="L56">		return result.orElse(null);</span>
+	}
+
+	private Entity findEntity(EntityType emd)
+	{
+<span class="nc" id="L61">		return dataService.findOneById(ENTITY_TYPE_META_DATA, emd.getId());</span>
+	}
+
+	@Override
+	public void removeAttributeTag(EntityType entityType,
+			SemanticTag&lt;Attribute, LabeledResource, LabeledResource&gt; removeTag)
+	{
+<span class="nc" id="L68">		Attribute attribute = removeTag.getSubject();</span>
+<span class="nc" id="L69">		Entity attributeEntity = findAttributeEntity(entityType, attribute.getName());</span>
+<span class="nc" id="L70">		List&lt;Entity&gt; tags = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">		for (Entity tagEntity : attributeEntity.getEntities(AttributeMetadata.TAGS))</span>
+		{
+<span class="nc" id="L73">			SemanticTag&lt;Attribute, LabeledResource, LabeledResource&gt; tag = SemanticTag.asTag(attribute, tagEntity);</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">			if (!removeTag.equals(tag))</span>
+			{
+<span class="nc" id="L76">				tags.add(tagEntity);</span>
+			}
+<span class="nc" id="L78">		}</span>
+<span class="nc" id="L79">		attributeEntity.set(AttributeMetadata.TAGS, tags);</span>
+<span class="nc" id="L80">		dataService.update(ATTRIBUTE_META_DATA, attributeEntity);</span>
+<span class="nc" id="L81">	}</span>
+
+	@Override
+	@RunAsSystem
+	public Multimap&lt;Relation, LabeledResource&gt; getTagsForAttribute(EntityType entityType, Attribute attribute)
+	{
+<span class="nc" id="L87">		Entity entity = findAttributeEntity(entityType, attribute.getName());</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">		if (entity == null) return ArrayListMultimap.create();</span>
+
+<span class="nc" id="L90">		Multimap&lt;Relation, LabeledResource&gt; tags = ArrayListMultimap.create();</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">		for (Entity tagEntity : entity.getEntities(AttributeMetadata.TAGS))</span>
+		{
+<span class="nc" id="L93">			SemanticTag&lt;Attribute, LabeledResource, LabeledResource&gt; tag = SemanticTag.asTag(attribute, tagEntity);</span>
+<span class="nc" id="L94">			tags.put(tag.getRelation(), tag.getObject());</span>
+<span class="nc" id="L95">		}</span>
+<span class="nc" id="L96">		return tags;</span>
+	}
+
+	@Override
+	@RunAsSystem
+	public Iterable&lt;SemanticTag&lt;EntityType, LabeledResource, LabeledResource&gt;&gt; getTagsForEntity(EntityType entityType)
+	{
+<span class="nc" id="L103">		List&lt;SemanticTag&lt;EntityType, LabeledResource, LabeledResource&gt;&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L104">		Entity entity = findEntity(entityType);</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="nc" id="L107">			LOG.warn(&quot;No known entity with name &quot; + entityType.getId() + &quot;.&quot;);</span>
+		}
+		else
+		{
+<span class="nc bnc" id="L111" title="All 2 branches missed.">			for (Entity tagEntity : entity.getEntities(EntityTypeMetadata.TAGS))</span>
+			{
+<span class="nc" id="L113">				result.add(SemanticTag.asTag(entityType, tagEntity));</span>
+<span class="nc" id="L114">			}</span>
+		}
+<span class="nc" id="L116">		return result;</span>
+	}
+
+	@Override
+	public void addAttributeTag(EntityType entityType, SemanticTag&lt;Attribute, LabeledResource, LabeledResource&gt; tag)
+	{
+<span class="nc" id="L122">		Entity entity = findAttributeEntity(entityType, tag.getSubject().getName());</span>
+<span class="nc" id="L123">		List&lt;Entity&gt; tags = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">		for (Entity tagEntity : entity.getEntities(AttributeMetadata.TAGS))</span>
+		{
+<span class="nc" id="L126">			tags.add(tagEntity);</span>
+<span class="nc" id="L127">		}</span>
+<span class="nc" id="L128">		tags.add(getTagEntity(tag));</span>
+<span class="nc" id="L129">		entity.set(AttributeMetadata.TAGS, tags);</span>
+<span class="nc" id="L130">		dataService.update(ATTRIBUTE_META_DATA, entity);</span>
+<span class="nc" id="L131">	}</span>
+
+	@Override
+	public void addEntityTag(SemanticTag&lt;EntityType, LabeledResource, LabeledResource&gt; tag)
+	{
+<span class="nc" id="L136">		Entity entity = findEntity(tag.getSubject());</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">		if (entity == null)</span>
+		{
+<span class="nc" id="L139">			throw new UnknownEntityTypeException(tag.getSubject().getId());</span>
+		}
+<span class="nc" id="L141">		ImmutableList&lt;SemanticTag&lt;EntityType, LabeledResource, LabeledResource&gt;&gt; existingTags = ImmutableList.copyOf(</span>
+<span class="nc" id="L142">				getTagsForEntity(tag.getSubject()));</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">		if (existingTags.contains(tag))</span>
+		{
+<span class="nc" id="L145">			LOG.debug(&quot;Tag already present&quot;);</span>
+<span class="nc" id="L146">			return;</span>
+		}
+
+<span class="nc" id="L149">		ImmutableList.Builder&lt;Entity&gt; builder = ImmutableList.builder();</span>
+<span class="nc" id="L150">		builder.addAll(entity.getEntities(EntityTypeMetadata.TAGS));</span>
+<span class="nc" id="L151">		builder.add(getTagEntity(tag));</span>
+<span class="nc" id="L152">		entity.set(EntityTypeMetadata.TAGS, builder.build());</span>
+<span class="nc" id="L153">		dataService.update(ENTITY_TYPE_META_DATA, entity);</span>
+<span class="nc" id="L154">	}</span>
+
+	public Entity getTagEntity(SemanticTag&lt;?, LabeledResource, LabeledResource&gt; tag)
+	{
+<span class="nc" id="L158">		return tagRepository.getTagEntity(tag.getObject().getIri(), tag.getObject().getLabel(), tag.getRelation(),</span>
+<span class="nc" id="L159">				tag.getCodeSystem().getIri());</span>
+	}
+
+	@Override
+	@RunAsSystem
+	public Iterable&lt;SemanticTag&lt;Package, LabeledResource, LabeledResource&gt;&gt; getTagsForPackage(Package p)
+	{
+<span class="nc" id="L166">		Entity packageEntity = dataService.findOne(PACKAGE, new QueryImpl&lt;&gt;().eq(PackageMetadata.ID, p.getId()));</span>
+
+<span class="nc bnc" id="L168" title="All 2 branches missed.">		if (packageEntity == null)</span>
+		{
+<span class="nc" id="L170">			throw new UnknownEntityException(PACKAGE, p.getId());</span>
+		}
+
+<span class="nc" id="L173">		List&lt;SemanticTag&lt;Package, LabeledResource, LabeledResource&gt;&gt; tags = Lists.newArrayList();</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">		for (Entity tagEntity : packageEntity.getEntities(PackageMetadata.TAGS))</span>
+		{
+<span class="nc" id="L176">			tags.add(SemanticTag.asTag(p, tagEntity));</span>
+<span class="nc" id="L177">		}</span>
+
+<span class="nc" id="L179">		return tags;</span>
+	}
+
+	@Override
+	public void removeEntityTag(SemanticTag&lt;EntityType, LabeledResource, LabeledResource&gt; tag)
+	{
+<span class="nc" id="L185">		throw new UnsupportedOperationException(&quot;not yet implemented&quot;);</span>
+	}
+
+	@Override
+	public void removeAllTagsFromEntity(String entityTypeId)
+	{
+<span class="nc" id="L191">		throw new UnsupportedOperationException();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

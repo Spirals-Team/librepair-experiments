@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GavinJobFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">gavin</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.gavin.job</a> &gt; <span class="el_source">GavinJobFactory.java</span></div><h1>GavinJobFactory.java</h1><pre class="source lang-java linenums">package org.molgenis.gavin.job;
+
+import org.molgenis.core.ui.menu.MenuReaderService;
+import org.molgenis.data.DataService;
+import org.molgenis.data.annotation.core.EffectBasedAnnotator;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.gavin.job.input.Parser;
+import org.molgenis.jobs.JobExecutionUpdater;
+import org.molgenis.jobs.ProgressImpl;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.security.token.RunAsUserTokenFactory;
+import org.springframework.mail.MailSender;
+import org.springframework.security.access.intercept.RunAsUserToken;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.List;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Stream.of;
+import static org.molgenis.gavin.job.meta.GavinJobExecutionMetaData.GAVIN_JOB_EXECUTION;
+
+@Component
+public class GavinJobFactory
+{
+	private final Parser parser;
+	private DataService dataService;
+	private PlatformTransactionManager transactionManager;
+	private UserDetailsService userDetailsService;
+	private JobExecutionUpdater jobExecutionUpdater;
+	private MailSender mailSender;
+	private FileStore fileStore;
+	private RepositoryAnnotator cadd;
+	private RepositoryAnnotator exac;
+	private RepositoryAnnotator snpEff;
+	private EffectBasedAnnotator gavin;
+	private MenuReaderService menuReaderService;
+	private AnnotatorRunner annotatorRunner;
+	private RunAsUserTokenFactory runAsUserTokenFactory;
+
+	public GavinJobFactory(DataService dataService, PlatformTransactionManager transactionManager,
+			UserDetailsService userDetailsService, JobExecutionUpdater jobExecutionUpdater, MailSender mailSender,
+			FileStore fileStore, RepositoryAnnotator cadd, RepositoryAnnotator exac, RepositoryAnnotator snpEff,
+			EffectBasedAnnotator gavin, MenuReaderService menuReaderService, Parser parser,
+			AnnotatorRunner annotatorRunner, RunAsUserTokenFactory runAsUserTokenFactory)
+<span class="nc" id="L50">	{</span>
+<span class="nc" id="L51">		this.dataService = requireNonNull(dataService);</span>
+<span class="nc" id="L52">		this.transactionManager = requireNonNull(transactionManager);</span>
+<span class="nc" id="L53">		this.userDetailsService = requireNonNull(userDetailsService);</span>
+<span class="nc" id="L54">		this.jobExecutionUpdater = requireNonNull(jobExecutionUpdater);</span>
+<span class="nc" id="L55">		this.mailSender = requireNonNull(mailSender);</span>
+<span class="nc" id="L56">		this.fileStore = requireNonNull(fileStore);</span>
+<span class="nc" id="L57">		this.cadd = requireNonNull(cadd);</span>
+<span class="nc" id="L58">		this.exac = requireNonNull(exac);</span>
+<span class="nc" id="L59">		this.snpEff = requireNonNull(snpEff);</span>
+<span class="nc" id="L60">		this.gavin = requireNonNull(gavin);</span>
+<span class="nc" id="L61">		this.menuReaderService = requireNonNull(menuReaderService);</span>
+<span class="nc" id="L62">		this.parser = requireNonNull(parser);</span>
+<span class="nc" id="L63">		this.annotatorRunner = requireNonNull(annotatorRunner);</span>
+<span class="nc" id="L64">		this.runAsUserTokenFactory = requireNonNull(runAsUserTokenFactory);</span>
+<span class="nc" id="L65">	}</span>
+
+	@RunAsSystem
+	public GavinJob createJob(GavinJobExecution gavinJobExecution)
+	{
+<span class="nc" id="L70">		dataService.add(gavinJobExecution.getEntityType().getId(), gavinJobExecution);</span>
+<span class="nc" id="L71">		String username = gavinJobExecution.getUser();</span>
+		// create an authentication to run as the user that is listed as the owner of the job
+<span class="nc" id="L73">		RunAsUserToken runAsAuthentication = runAsUserTokenFactory.create(&quot;Job Execution&quot;,</span>
+<span class="nc" id="L74">				userDetailsService.loadUserByUsername(username), null);</span>
+
+<span class="nc" id="L76">		return new GavinJob(new ProgressImpl(gavinJobExecution, jobExecutionUpdater, mailSender),</span>
+<span class="nc" id="L77">				new TransactionTemplate(transactionManager), runAsAuthentication, gavinJobExecution.getIdentifier(),</span>
+				fileStore, menuReaderService, cadd, exac, snpEff, gavin, parser, annotatorRunner, gavinJobExecution);
+	}
+
+	public List&lt;String&gt; getAnnotatorsWithMissingResources()
+	{
+<span class="nc bnc" id="L83" title="All 2 branches missed.">		return of(cadd, exac, snpEff, gavin).filter(annotator -&gt; !annotator.annotationDataExists())</span>
+<span class="nc" id="L84">											.map(RepositoryAnnotator::getSimpleName)</span>
+<span class="nc" id="L85">											.collect(toList());</span>
+	}
+
+	/**
+	 * Retrieves a {@link GavinJobExecution} for anyone who has the identifier, without checking their permissions.
+	 *
+	 * @param jobIdentifier the identifier of the {@link GavinJobExecution}
+	 * @return GavinJobExecution with the specified identifier, if it exists
+	 * @throws JobNotFoundException if no GavinJobExecution with the specified identifier exists.
+	 */
+	@RunAsSystem
+	public GavinJobExecution findGavinJobExecution(String jobIdentifier) throws JobNotFoundException
+	{
+<span class="nc" id="L98">		GavinJobExecution result = dataService.findOneById(GAVIN_JOB_EXECUTION, jobIdentifier, GavinJobExecution.class);</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">		if (result == null)</span>
+		{
+
+<span class="nc" id="L102">			throw new JobNotFoundException(&quot;Job not found.&quot;);</span>
+		}
+<span class="nc" id="L104">		return result;</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

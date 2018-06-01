@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OntologyRepositoryCollection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">ontology-core</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.ontology.core.importer.repository</a> &gt; <span class="el_source">OntologyRepositoryCollection.java</span></div><h1>OntologyRepositoryCollection.java</h1><pre class="source lang-java linenums">package org.molgenis.ontology.core.importer.repository;
+
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.TreeTraverser;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.Repository;
+import org.molgenis.data.file.support.FileRepositoryCollection;
+import org.molgenis.data.mem.InMemoryRepository;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.ontology.core.meta.*;
+import org.molgenis.ontology.core.utils.OWLClassContainer;
+import org.molgenis.ontology.core.utils.OntologyLoader;
+import org.molgenis.util.file.ZipFileUtil;
+import org.semanticweb.owlapi.model.OWLClass;
+import org.semanticweb.owlapi.model.OWLOntologyCreationException;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.ontology.core.meta.OntologyMetaData.ONTOLOGY;
+import static org.molgenis.ontology.core.meta.OntologyTermDynamicAnnotationMetaData.ONTOLOGY_TERM_DYNAMIC_ANNOTATION;
+import static org.molgenis.ontology.core.meta.OntologyTermMetaData.ONTOLOGY_TERM;
+import static org.molgenis.ontology.core.meta.OntologyTermNodePathMetaData.ONTOLOGY_TERM_NODE_PATH;
+import static org.molgenis.ontology.core.meta.OntologyTermSynonymMetaData.ONTOLOGY_TERM_SYNONYM;
+
+/**
+ * RepositoryCollection for the import of an owl file.
+ * &lt;p&gt;
+ * Reads the owl file's contents using an {@link OntologyLoader}. Fills {@link InMemoryRepository}s with their contents.
+ */
+public class OntologyRepositoryCollection extends FileRepositoryCollection
+{
+	private static final String PSEUDO_ROOT_CLASS_NODEPATH = &quot;0[0]&quot;;
+	private final static String PSEUDO_ROOT_CLASS_LABEL = &quot;top&quot;;
+
+	private final File file;
+	private final String fileName;
+
+	@Autowired
+	private IdGenerator idGenerator;
+
+	@Autowired
+	private OntologyFactory ontologyFactory;
+
+	@Autowired
+	private OntologyTermNodePathFactory ontologyTermNodePathFactory;
+
+	@Autowired
+	private OntologyTermDynamicAnnotationFactory ontologyTermDynamicAnnotationFactory;
+
+	@Autowired
+	private OntologyTermSynonymFactory ontologyTermSynonymFactory;
+
+	@Autowired
+	private OntologyTermFactory ontologyTermFactory;
+
+	// repositories
+	private Repository&lt;Entity&gt; ontologyRepository;
+	private Repository&lt;Entity&gt; nodePathRepository;
+	private Repository&lt;Entity&gt; ontologyTermRepository;
+	private Repository&lt;Entity&gt; annotationRepository;
+	private Repository&lt;Entity&gt; synonymRepository;
+	private Map&lt;String, Repository&lt;Entity&gt;&gt; repositories;
+
+	private OntologyLoader loader;
+<span class="nc" id="L79">	private Multimap&lt;String, OntologyTermNodePath&gt; nodePathsPerOntologyTerm = ArrayListMultimap.create();</span>
+	private Ontology ontologyEntity;
+
+	/**
+	 * Creates a new {@link OntologyRepositoryCollection} for an ontology file
+	 *
+	 * @param file the ontology file
+	 */
+	public OntologyRepositoryCollection(File file)
+	{
+<span class="nc" id="L89">		super(OntologyFileExtensions.getOntology());</span>
+<span class="nc" id="L90">		this.file = requireNonNull(file);</span>
+
+<span class="nc" id="L92">		String name = file.getName();</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">		if (name.endsWith(OntologyFileExtensions.OBO_ZIP.toString()))</span>
+		{
+<span class="nc" id="L95">			name = name.substring(0, name.lastIndexOf('.' + OntologyFileExtensions.OBO_ZIP.toString()))</span>
+<span class="nc" id="L96">					   .replace('.', '_');</span>
+		}
+<span class="nc bnc" id="L98" title="All 2 branches missed.">		else if (name.endsWith(OntologyFileExtensions.OWL_ZIP.toString()))</span>
+		{
+<span class="nc" id="L100">			name = name.substring(0, name.lastIndexOf('.' + OntologyFileExtensions.OWL_ZIP.toString()))</span>
+<span class="nc" id="L101">					   .replace('.', '_');</span>
+		}
+		else
+		{
+<span class="nc" id="L105">			throw new IllegalArgumentException(format(&quot;Not a obo.zip or owl.zip file [%s]&quot;, file.getName()));</span>
+		}
+<span class="nc" id="L107">		this.fileName = name;</span>
+<span class="nc" id="L108">	}</span>
+
+	@Override
+	public void init() throws IOException
+	{
+<span class="nc" id="L113">		ontologyRepository = new InMemoryRepository(ontologyFactory.getEntityType());</span>
+<span class="nc" id="L114">		nodePathRepository = new InMemoryRepository(ontologyTermNodePathFactory.getEntityType());</span>
+<span class="nc" id="L115">		ontologyTermRepository = new InMemoryRepository(ontologyTermFactory.getEntityType());</span>
+<span class="nc" id="L116">		annotationRepository = new InMemoryRepository(ontologyTermDynamicAnnotationFactory.getEntityType());</span>
+<span class="nc" id="L117">		synonymRepository = new InMemoryRepository(ontologyTermSynonymFactory.getEntityType());</span>
+<span class="nc" id="L118">		repositories = ImmutableMap.of(ONTOLOGY_TERM_DYNAMIC_ANNOTATION, annotationRepository, ONTOLOGY_TERM_SYNONYM,</span>
+				synonymRepository, ONTOLOGY_TERM_NODE_PATH, nodePathRepository, ONTOLOGY, ontologyRepository,
+				ONTOLOGY_TERM, ontologyTermRepository);
+
+<span class="nc" id="L122">		List&lt;File&gt; uploadedFiles = ZipFileUtil.unzip(file);</span>
+		try
+		{
+<span class="nc" id="L125">			loader = new OntologyLoader(fileName, uploadedFiles.get(0));</span>
+		}
+<span class="nc" id="L127">		catch (OWLOntologyCreationException e)</span>
+		{
+<span class="nc" id="L129">			throw new IOException(e);</span>
+<span class="nc" id="L130">		}</span>
+<span class="nc" id="L131">		createOntology();</span>
+<span class="nc" id="L132">		createNodePaths();</span>
+<span class="nc" id="L133">		createOntologyTerms();</span>
+<span class="nc" id="L134">	}</span>
+
+	/**
+	 * Initializes the {@link #ontologyEntity} and adds it to the {@link #ontologyRepository}.
+	 */
+	private void createOntology()
+	{
+<span class="nc" id="L141">		ontologyEntity = ontologyFactory.create();</span>
+<span class="nc" id="L142">		ontologyEntity.setId(idGenerator.generateId());</span>
+<span class="nc" id="L143">		ontologyEntity.setOntologyIri(loader.getOntologyIRI());</span>
+<span class="nc" id="L144">		ontologyEntity.setOntologyName(loader.getOntologyName());</span>
+<span class="nc" id="L145">		ontologyRepository.add(ontologyEntity);</span>
+<span class="nc" id="L146">	}</span>
+
+	/**
+	 * Creates {@link OntologyTermNodePathMetaData} {@link Entity}s for an entire ontology tree and writes them to the
+	 * {@link #nodePathsPerOntologyTerm} {@link Multimap}.
+	 */
+	private void createNodePaths()
+	{
+<span class="nc" id="L154">		TreeTraverser&lt;OWLClassContainer&gt; traverser = new TreeTraverser&lt;OWLClassContainer&gt;()</span>
+<span class="nc" id="L155">		{</span>
+			@Override
+			public Iterable&lt;OWLClassContainer&gt; children(OWLClassContainer container)
+			{
+<span class="nc" id="L159">				int count = 0;</span>
+<span class="nc" id="L160">				List&lt;OWLClassContainer&gt; containers = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">				for (OWLClass childClass : loader.getChildClass(container.getOwlClass()))</span>
+				{
+<span class="nc" id="L163">					containers.add(new OWLClassContainer(childClass, constructNodePath(container.getNodePath(), count),</span>
+							false));
+<span class="nc" id="L165">					count++;</span>
+<span class="nc" id="L166">				}</span>
+<span class="nc" id="L167">				return containers;</span>
+			}
+		};
+
+<span class="nc" id="L171">		OWLClass pseudoRootClass = loader.createClass(PSEUDO_ROOT_CLASS_LABEL, loader.getRootClasses());</span>
+
+<span class="nc bnc" id="L173" title="All 2 branches missed.">		for (OWLClassContainer container : traverser.preOrderTraversal(</span>
+				new OWLClassContainer(pseudoRootClass, PSEUDO_ROOT_CLASS_NODEPATH, true)))
+		{
+<span class="nc" id="L176">			OWLClass ontologyTerm = container.getOwlClass();</span>
+<span class="nc" id="L177">			String ontologyTermNodePath = container.getNodePath();</span>
+<span class="nc" id="L178">			String ontologyTermIRI = ontologyTerm.getIRI().toString();</span>
+<span class="nc" id="L179">			OntologyTermNodePath nodePathEntity = createNodePathEntity(container, ontologyTermNodePath);</span>
+<span class="nc" id="L180">			nodePathsPerOntologyTerm.put(ontologyTermIRI, nodePathEntity);</span>
+<span class="nc" id="L181">		}</span>
+<span class="nc" id="L182">	}</span>
+
+	/**
+	 * Creates {@link OntologyTermMetaData} {@link Entity}s for all {@link OWLClass}ses in the {@link #loader} and adds
+	 * them to the {@link #ontologyTermRepository}.
+	 */
+	private void createOntologyTerms()
+	{
+<span class="nc" id="L190">		loader.getAllclasses().forEach(this::createOntologyTerm);</span>
+<span class="nc" id="L191">	}</span>
+
+	/**
+	 * Creates an {@link OntologyTermMetaData} {@link Entity} and adds it in the {@link #ontologyTermRepository}
+	 *
+	 * @param ontologyTermClass the OWLClass to create an entity for
+	 * @return the created ontology term {@link Entity}
+	 */
+	private Entity createOntologyTerm(OWLClass ontologyTermClass)
+	{
+<span class="nc" id="L201">		String ontologyTermIRI = ontologyTermClass.getIRI().toString();</span>
+<span class="nc" id="L202">		String ontologyTermName = loader.getLabel(ontologyTermClass);</span>
+<span class="nc" id="L203">		OntologyTerm ontologyTerm = ontologyTermFactory.create();</span>
+<span class="nc" id="L204">		ontologyTerm.setId(idGenerator.generateId());</span>
+<span class="nc" id="L205">		ontologyTerm.setOntologyTermIri(ontologyTermIRI);</span>
+<span class="nc" id="L206">		ontologyTerm.setOntologyTermName(ontologyTermName);</span>
+<span class="nc" id="L207">		ontologyTerm.setOntologyTermSynonyms(createSynonyms(ontologyTermClass));</span>
+<span class="nc" id="L208">		ontologyTerm.setOntologyTermDynamicAnnotations(createDynamicAnnotations(ontologyTermClass));</span>
+<span class="nc" id="L209">		ontologyTerm.setOntologyTermNodePaths(nodePathsPerOntologyTerm.get(ontologyTermIRI));</span>
+<span class="nc" id="L210">		ontologyTerm.setOntology(ontologyEntity);</span>
+<span class="nc" id="L211">		ontologyTermRepository.add(ontologyTerm);</span>
+<span class="nc" id="L212">		return ontologyTerm;</span>
+	}
+
+	/**
+	 * Creates {@link OntologyTermSynonymMetaData} {@link Entity}s for an ontology term
+	 *
+	 * @param ontologyTerm {@link OWLClass} for the ontology term
+	 * @return {@link List} of created synonym {@link Entity}s
+	 */
+	private List&lt;OntologyTermSynonym&gt; createSynonyms(OWLClass ontologyTerm)
+	{
+<span class="nc" id="L223">		return loader.getSynonyms(ontologyTerm).stream().map(this::createSynonym).collect(Collectors.toList());</span>
+	}
+
+	/**
+	 * Creates an {@link OntologyTermSynonymMetaData} {@link Entity} and adds it to the {@link #synonymRepository}.
+	 *
+	 * @param synonym String of the synonym to create an {@link Entity} for
+	 * @return the created {@link Entity}
+	 */
+	private OntologyTermSynonym createSynonym(String synonym)
+	{
+<span class="nc" id="L234">		OntologyTermSynonym entity = ontologyTermSynonymFactory.create();</span>
+<span class="nc" id="L235">		entity.setId(idGenerator.generateId());</span>
+<span class="nc" id="L236">		entity.setOntologyTermSynonym(synonym);</span>
+<span class="nc" id="L237">		synonymRepository.add(entity);</span>
+<span class="nc" id="L238">		return entity;</span>
+	}
+
+	/**
+	 * Creates {@link OntologyTermDynamicAnnotationMetaData} {@link Entity}s for the databaseIds of an ontology term.
+	 *
+	 * @param term the term to create annotation entities for
+	 * @return List of created {@link Entity}s.
+	 */
+	private List&lt;OntologyTermDynamicAnnotation&gt; createDynamicAnnotations(OWLClass term)
+	{
+<span class="nc" id="L249">		return loader.getDatabaseIds(term).stream().map(this::createDynamicAnnotation).collect(Collectors.toList());</span>
+	}
+
+	/**
+	 * Creates an {@link OntologyTermDynamicAnnotationMetaData} {@link Entity} for a key:value label.
+	 *
+	 * @param label the key:value label
+	 * @return the {@link Entity}
+	 */
+	private OntologyTermDynamicAnnotation createDynamicAnnotation(String label)
+	{
+<span class="nc" id="L260">		OntologyTermDynamicAnnotation entity = ontologyTermDynamicAnnotationFactory.create();</span>
+<span class="nc" id="L261">		entity.setId(idGenerator.generateId());</span>
+<span class="nc" id="L262">		String fragments[] = label.split(&quot;:&quot;);</span>
+<span class="nc" id="L263">		entity.setName(fragments[0]);</span>
+<span class="nc" id="L264">		entity.setValue(fragments[1]);</span>
+<span class="nc" id="L265">		entity.setLabel(label);</span>
+<span class="nc" id="L266">		annotationRepository.add(entity);</span>
+<span class="nc" id="L267">		return entity;</span>
+	}
+
+	/**
+	 * Constructs the node path string for a child node
+	 *
+	 * @param parentNodePath  node path string of the node's parent
+	 * @param currentPosition position of the node in the parent's child list
+	 * @return node path string
+	 */
+	private String constructNodePath(String parentNodePath, int currentPosition)
+	{
+<span class="nc" id="L279">		StringBuilder nodePathStringBuilder = new StringBuilder();</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">		if (!StringUtils.isEmpty(parentNodePath)) nodePathStringBuilder.append(parentNodePath).append('.');</span>
+<span class="nc" id="L281">		nodePathStringBuilder.append(currentPosition)</span>
+<span class="nc" id="L282">							 .append('[')</span>
+<span class="nc" id="L283">							 .append(nodePathStringBuilder.toString().split(&quot;\\.&quot;).length - 1)</span>
+<span class="nc" id="L284">							 .append(']');</span>
+<span class="nc" id="L285">		return nodePathStringBuilder.toString();</span>
+	}
+
+	/**
+	 * Creates a {@link OntologyTermNodePathMetaData} {@link Entity} and stores it in the {@link #nodePathRepository}.
+	 *
+	 * @param container                {@link OWLClassContainer} for the path to the ontology term
+	 * @param ontologyTermNodePathText the node path
+	 * @return the created {@link Entity}
+	 */
+	private OntologyTermNodePath createNodePathEntity(OWLClassContainer container, String ontologyTermNodePathText)
+	{
+<span class="nc" id="L297">		OntologyTermNodePath ontologyTermNodePath = ontologyTermNodePathFactory.create();</span>
+<span class="nc" id="L298">		ontologyTermNodePath.setId(idGenerator.generateId());</span>
+<span class="nc" id="L299">		ontologyTermNodePath.setNodePath(ontologyTermNodePathText);</span>
+<span class="nc" id="L300">		ontologyTermNodePath.setRoot(container.isRoot());</span>
+<span class="nc" id="L301">		nodePathRepository.add(ontologyTermNodePath);</span>
+<span class="nc" id="L302">		return ontologyTermNodePath;</span>
+	}
+
+	@Override
+	public Iterable&lt;String&gt; getEntityTypeIds()
+	{
+<span class="nc" id="L308">		return repositories.keySet();</span>
+	}
+
+	@Override
+	public String getName()
+	{
+<span class="nc" id="L314">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public Iterator&lt;Repository&lt;Entity&gt;&gt; iterator()
+	{
+<span class="nc" id="L320">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public Repository&lt;Entity&gt; getRepository(String name)
+	{
+<span class="nc bnc" id="L326" title="All 2 branches missed.">		if (!repositories.containsKey(name))</span>
+		{
+<span class="nc" id="L328">			throw new MolgenisDataException(format(&quot;Unknown entity name [%s]&quot;, name));</span>
+		}
+<span class="nc" id="L330">		return repositories.get(name);</span>
+	}
+
+	@Override
+	public boolean hasRepository(String name)
+	{
+<span class="nc bnc" id="L336" title="All 2 branches missed.">		if (null == name) return false;</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">		for (String s : getEntityTypeIds())</span>
+		{
+<span class="nc bnc" id="L339" title="All 2 branches missed.">			if (s.equals(name)) return true;</span>
+<span class="nc" id="L340">		}</span>
+<span class="nc" id="L341">		return false;</span>
+	}
+
+	@Override
+	public boolean hasRepository(EntityType entityType)
+	{
+<span class="nc" id="L347">		return hasRepository(entityType.getId());</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

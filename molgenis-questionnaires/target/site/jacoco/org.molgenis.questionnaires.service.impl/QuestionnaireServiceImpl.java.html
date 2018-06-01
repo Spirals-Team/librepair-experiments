@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QuestionnaireServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">questionnaires</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.questionnaires.service.impl</a> &gt; <span class="el_source">QuestionnaireServiceImpl.java</span></div><h1>QuestionnaireServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.questionnaires.service.impl;
+
+import org.molgenis.core.ui.controller.StaticContentService;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.EntityManager;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeMetadata;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.EntityTypePermission;
+import org.molgenis.questionnaires.meta.Questionnaire;
+import org.molgenis.questionnaires.meta.QuestionnaireFactory;
+import org.molgenis.questionnaires.meta.QuestionnaireStatus;
+import org.molgenis.questionnaires.response.QuestionnaireResponse;
+import org.molgenis.questionnaires.service.QuestionnaireService;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Objects;
+
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static org.molgenis.data.EntityManager.CreationMode.POPULATE;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.data.support.QueryImpl.EQ;
+import static org.molgenis.questionnaires.meta.QuestionnaireMetaData.OWNER_USERNAME;
+import static org.molgenis.questionnaires.meta.QuestionnaireMetaData.QUESTIONNAIRE;
+import static org.molgenis.questionnaires.meta.QuestionnaireStatus.NOT_STARTED;
+import static org.molgenis.questionnaires.meta.QuestionnaireStatus.OPEN;
+import static org.molgenis.security.core.utils.SecurityUtils.getCurrentUsername;
+
+@Service
+public class QuestionnaireServiceImpl implements QuestionnaireService
+{
+	private static final String DEFAULT_SUBMISSION_TEXT = &quot;&lt;h3&gt;Thank you for submitting the questionnaire.&lt;/h3&gt;&quot;;
+
+	private final DataService dataService;
+	private final EntityManager entityManager;
+	private final UserPermissionEvaluator userPermissionEvaluator;
+	private final QuestionnaireFactory questionnaireFactory;
+	private final StaticContentService staticContentService;
+
+	public QuestionnaireServiceImpl(DataService dataService, EntityManager entityManager,
+			UserPermissionEvaluator userPermissionEvaluator, QuestionnaireFactory questionnaireFactory,
+			StaticContentService staticContentService)
+<span class="fc" id="L47">	{</span>
+<span class="fc" id="L48">		this.dataService = Objects.requireNonNull(dataService);</span>
+<span class="fc" id="L49">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L50">		this.userPermissionEvaluator = requireNonNull(userPermissionEvaluator);</span>
+<span class="fc" id="L51">		this.questionnaireFactory = requireNonNull(questionnaireFactory);</span>
+<span class="fc" id="L52">		this.staticContentService = requireNonNull(staticContentService);</span>
+<span class="fc" id="L53">	}</span>
+
+	@Override
+	public List&lt;QuestionnaireResponse&gt; getQuestionnaires()
+	{
+<span class="fc" id="L58">		return dataService.query(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="fc" id="L59">						  .eq(EntityTypeMetadata.EXTENDS, QUESTIONNAIRE)</span>
+<span class="fc" id="L60">						  .findAll()</span>
+<span class="fc" id="L61">						  .filter(entityType -&gt; userPermissionEvaluator.hasPermission(</span>
+<span class="fc" id="L62">								  new EntityTypeIdentity(entityType.getId()), EntityTypePermission.ADD_DATA))</span>
+<span class="fc" id="L63">						  .filter(entityType -&gt; userPermissionEvaluator.hasPermission(</span>
+<span class="fc" id="L64">								  new EntityTypeIdentity(entityType.getId()), EntityTypePermission.UPDATE_DATA))</span>
+<span class="fc" id="L65">						  .map(this::createQuestionnaireResponse)</span>
+<span class="fc" id="L66">						  .collect(toList());</span>
+	}
+
+	@Override
+	public QuestionnaireResponse startQuestionnaire(String entityTypeId)
+	{
+<span class="fc" id="L72">		Questionnaire questionnaire = findQuestionnaireEntity(entityTypeId);</span>
+<span class="fc bfc" id="L73" title="All 2 branches covered.">		if (questionnaire == null)</span>
+		{
+<span class="fc" id="L75">			EntityType questionnaireEntityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L76">			questionnaire = questionnaireFactory.create(entityManager.create(questionnaireEntityType, POPULATE));</span>
+<span class="fc" id="L77">			questionnaire.setOwner(getCurrentUsername());</span>
+<span class="fc" id="L78">			questionnaire.setStatus(OPEN);</span>
+<span class="fc" id="L79">			dataService.add(entityTypeId, questionnaire);</span>
+<span class="fc" id="L80">			Questionnaire newQuestionnaire = findQuestionnaireEntity(questionnaire.getEntityType().getId());</span>
+<span class="fc" id="L81">			return QuestionnaireResponse.create(newQuestionnaire);</span>
+		} else {
+<span class="fc" id="L83">			return QuestionnaireResponse.create(questionnaire);</span>
+		}
+	}
+
+	@Override
+	public String getQuestionnaireSubmissionText(String id)
+	{
+<span class="fc" id="L90">		String key = id + &quot;_submissionText&quot;;</span>
+<span class="fc" id="L91">		String submissionText = staticContentService.getContent(key);</span>
+
+<span class="fc bfc" id="L93" title="All 2 branches covered.">		if (submissionText == null)</span>
+		{
+<span class="fc" id="L95">			submissionText = DEFAULT_SUBMISSION_TEXT;</span>
+<span class="fc" id="L96">			staticContentService.submitContent(key, submissionText);</span>
+		}
+
+<span class="fc" id="L99">		return submissionText;</span>
+	}
+
+	/**
+	 * Create a {@link QuestionnaireResponse} based on an {@link EntityType}
+	 * Will set status to {@link QuestionnaireStatus}.OPEN if there is a data entry for the current user.
+	 *
+	 * @param entityType A Questionnaire EntityType
+	 * @return A {@link QuestionnaireResponse}
+	 */
+	private QuestionnaireResponse createQuestionnaireResponse(EntityType entityType)
+	{
+<span class="fc" id="L111">		String entityTypeId = entityType.getId();</span>
+
+<span class="fc" id="L113">		QuestionnaireStatus status = NOT_STARTED;</span>
+<span class="fc" id="L114">		Questionnaire questionnaireEntity = findQuestionnaireEntity(entityTypeId);</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">		if (questionnaireEntity != null)</span>
+		{
+<span class="fc" id="L117">			status = questionnaireEntity.getStatus();</span>
+		}
+<span class="fc" id="L119">		return QuestionnaireResponse.create(entityTypeId, entityType.getLabel(), entityType.getDescription(), status);</span>
+	}
+
+	/**
+	 * Find 1 row in the Questionnaire table that belongs to the current user.
+	 * Returns null if no row is found, or the questionnaire ID does not exist.
+	 *
+	 * @param entityTypeId The ID of a questionnaire table
+	 * @return An {@link Entity} of type {@link Questionnaire}
+	 */
+	private Questionnaire findQuestionnaireEntity(String entityTypeId)
+	{
+<span class="fc" id="L131">		Entity questionnaireInstance = dataService.findOne(entityTypeId, EQ(OWNER_USERNAME, getCurrentUsername()));</span>
+<span class="fc" id="L132">		return questionnaireFactory.create(questionnaireInstance);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

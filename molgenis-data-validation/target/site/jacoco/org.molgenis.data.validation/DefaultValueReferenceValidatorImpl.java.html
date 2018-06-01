@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultValueReferenceValidatorImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-validation</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.validation</a> &gt; <span class="el_source">DefaultValueReferenceValidatorImpl.java</span></div><h1>DefaultValueReferenceValidatorImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.data.validation;
+
+import com.google.common.collect.LinkedHashMultimap;
+import com.google.common.collect.Multimap;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.springframework.stereotype.Component;
+
+import java.util.Collection;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.meta.model.AttributeMetadata.*;
+import static org.molgenis.data.support.AttributeUtils.getDefaultTypedValue;
+
+@Component
+class DefaultValueReferenceValidatorImpl implements DefaultValueReferenceValidator
+{
+	private final DataService dataService;
+
+	DefaultValueReferenceValidatorImpl(DataService dataService)
+<span class="fc" id="L26">	{</span>
+<span class="fc" id="L27">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L28">	}</span>
+
+	@Override
+	public void validateEntityNotReferenced(Entity entity)
+	{
+<span class="fc" id="L33">		validateEntityNotReferencedById(entity.getIdValue(), entity.getEntityType());</span>
+<span class="fc" id="L34">	}</span>
+
+	@Override
+	public Stream&lt;Entity&gt; validateEntitiesNotReferenced(Stream&lt;Entity&gt; entityStream, EntityType entityType)
+	{
+<span class="fc" id="L39">		Multimap&lt;String, Attribute&gt; defaultValueMap = getDefaultValueMap(entityType);</span>
+<span class="fc" id="L40">		return entityStream.filter(entity -&gt;</span>
+		{
+<span class="fc" id="L42">			validateEntityNotReferenced(entity.getIdValue(), entityType, defaultValueMap);</span>
+<span class="fc" id="L43">			return true;</span>
+		});
+	}
+
+	@Override
+	public void validateEntityNotReferencedById(Object entityId, EntityType entityType)
+	{
+<span class="fc" id="L50">		validateEntityNotReferenced(entityId, entityType, getDefaultValueMap(entityType));</span>
+<span class="fc" id="L51">	}</span>
+
+	@Override
+	public Stream&lt;Object&gt; validateEntitiesNotReferencedById(Stream&lt;Object&gt; entityIdStream, EntityType entityType)
+	{
+<span class="fc" id="L56">		Multimap&lt;String, Attribute&gt; defaultValueMap = getDefaultValueMap(entityType);</span>
+<span class="fc" id="L57">		return entityIdStream.filter(entityId -&gt;</span>
+		{
+<span class="fc" id="L59">			validateEntityNotReferenced(entityId, entityType, defaultValueMap);</span>
+<span class="fc" id="L60">			return true;</span>
+		});
+	}
+
+	private void validateEntityNotReferenced(Object entityId, EntityType entityType,
+			Multimap&lt;String, Attribute&gt; defaultValueMultiMap)
+	{
+<span class="fc bfc" id="L67" title="All 2 branches covered.">		if (defaultValueMultiMap.containsKey(toAttributeDefaultValue(entityId)))</span>
+		{
+<span class="fc" id="L69">			Collection&lt;Attribute&gt; attributes = defaultValueMultiMap.get(toAttributeDefaultValue(entityId));</span>
+<span class="fc" id="L70">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L71">					String.format(&quot;'%s' with id '%s' is referenced as default value by attribute(s): '%s'&quot;,</span>
+<span class="fc" id="L72">							entityType.getLabel(), entityId.toString(),</span>
+<span class="fc" id="L73">							attributes.stream().map(Attribute::getName).collect(Collectors.joining(&quot;, &quot;)))));</span>
+		}
+<span class="fc" id="L75">	}</span>
+
+	@Override
+	public void validateEntityTypeNotReferenced(EntityType entityType)
+	{
+<span class="fc bfc" id="L80" title="All 2 branches covered.">		if (!getDefaultValueMap(entityType).isEmpty())</span>
+		{
+<span class="fc" id="L82">			throw new MolgenisValidationException(new ConstraintViolation(</span>
+<span class="fc" id="L83">					String.format(&quot;'%s' entities are referenced as default value by attributes&quot;,</span>
+<span class="fc" id="L84">							entityType.getLabel())));</span>
+		}
+<span class="fc" id="L86">	}</span>
+
+	private Multimap&lt;String, Attribute&gt; getDefaultValueMap(EntityType entityType)
+	{
+<span class="fc" id="L90">		Multimap&lt;String, Attribute&gt; defaultValueMultiMap = LinkedHashMultimap.create();</span>
+
+<span class="fc" id="L92">		dataService.query(ATTRIBUTE_META_DATA, Attribute.class)</span>
+<span class="fc" id="L93">				   .eq(REF_ENTITY_TYPE, entityType.getIdValue())</span>
+<span class="fc" id="L94">				   .and()</span>
+<span class="fc" id="L95">				   .not()</span>
+<span class="fc" id="L96">				   .eq(DEFAULT_VALUE, null)</span>
+<span class="fc" id="L97">				   .findAll()</span>
+<span class="fc" id="L98">				   .forEach(attribute -&gt;</span>
+				   {
+<span class="fc bfc" id="L100" title="All 2 branches covered.">					   if (EntityTypeUtils.isSingleReferenceType(attribute))</span>
+					   {
+<span class="fc" id="L102">						   Entity defaultEntityValue = (Entity) getDefaultTypedValue(attribute);</span>
+<span class="fc" id="L103">						   defaultValueMultiMap.put(defaultEntityValue.getIdValue().toString(), attribute);</span>
+<span class="fc" id="L104">					   }</span>
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">					   else if (EntityTypeUtils.isMultipleReferenceType(attribute))</span>
+					   {
+						   @SuppressWarnings(&quot;unchecked&quot;)
+<span class="fc" id="L108">						   Iterable&lt;Entity&gt; defaultEntitiesValue = (Iterable&lt;Entity&gt;) getDefaultTypedValue(attribute);</span>
+<span class="fc" id="L109">						   defaultEntitiesValue.forEach(defaultEntityValue -&gt; defaultValueMultiMap.put(</span>
+<span class="fc" id="L110">								   defaultEntityValue.getIdValue().toString(), attribute));</span>
+					   }
+<span class="fc" id="L112">				   });</span>
+
+<span class="fc" id="L114">		return defaultValueMultiMap;</span>
+	}
+
+	private static String toAttributeDefaultValue(Object id)
+	{
+<span class="fc" id="L119">		return id.toString();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CGDAnnotator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-annotators</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.annotation.core.entity.impl</a> &gt; <span class="el_source">CGDAnnotator.java</span></div><h1>CGDAnnotator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.annotation.core.entity.impl;
+
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.MolgenisDataException;
+import org.molgenis.data.annotation.core.RepositoryAnnotator;
+import org.molgenis.data.annotation.core.effects.EffectsMetaData;
+import org.molgenis.data.annotation.core.entity.*;
+import org.molgenis.data.annotation.core.entity.AnnotatorInfo.Status;
+import org.molgenis.data.annotation.core.entity.AnnotatorInfo.Type;
+import org.molgenis.data.annotation.core.entity.impl.framework.AbstractAnnotator;
+import org.molgenis.data.annotation.core.entity.impl.framework.RepositoryAnnotatorImpl;
+import org.molgenis.data.annotation.core.filter.FirstResultFilter;
+import org.molgenis.data.annotation.core.query.AttributeEqualsQueryCreator;
+import org.molgenis.data.annotation.core.resources.Resource;
+import org.molgenis.data.annotation.core.resources.Resources;
+import org.molgenis.data.annotation.core.resources.impl.GeneCsvRepository;
+import org.molgenis.data.annotation.core.resources.impl.RepositoryFactory;
+import org.molgenis.data.annotation.core.resources.impl.ResourceImpl;
+import org.molgenis.data.annotation.core.resources.impl.SingleResourceConfig;
+import org.molgenis.data.annotation.web.settings.SingleFileLocationCmdLineAnnotatorSettingsConfigurer;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.molgenis.data.annotation.core.entity.impl.CGDAnnotator.CGDAttributeName.*;
+import static org.molgenis.data.annotation.core.entity.impl.CGDAnnotator.GeneralizedInheritance.*;
+import static org.molgenis.data.annotation.web.settings.CGDAnnotatorSettings.Meta.CGD_LOCATION;
+import static org.molgenis.data.meta.AttributeType.STRING;
+import static org.molgenis.data.meta.AttributeType.TEXT;
+
+/**
+ * Annotator that can add HGNC_ID and ENTREZ_GENE_ID and other attributes to an EntityType that has a attribute named 'GENE'
+ * that must be the HGNC gene dataType.
+ * &lt;p&gt;
+ * It reads this info from a tab separated CGD file. The location of this file is defined by a RuntimeProperty named
+ * 'cgd_location'
+ */
+@Configuration
+<span class="fc" id="L48">public class CGDAnnotator implements AnnotatorConfig</span>
+{
+	public static final String NAME = &quot;CGD&quot;;
+
+<span class="fc" id="L52">	private static String CGD_RESOURCE = &quot;CGDResource&quot;;</span>
+	private static final char SEPARATOR = '\t';
+
+	// Output attribute labels
+	public static final String CONDITION_LABEL = &quot;CGDCOND&quot;;
+	public static final String AGE_GROUP_LABEL = &quot;CGDAGE&quot;;
+	public static final String INHERITANCE_LABEL = &quot;CGDINH&quot;;
+	public static final String GENERALIZED_INHERITANCE_LABEL = &quot;CGDGIN&quot;;
+
+	@Autowired
+	private Entity CGDAnnotatorSettings;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private Resources resources;
+
+	@Autowired
+	private EntityTypeFactory entityTypeFactory;
+
+	@Autowired
+	private AttributeFactory attributeFactory;
+
+	private RepositoryAnnotatorImpl annotator;
+
+<span class="fc" id="L78">	public enum GeneralizedInheritance</span>
+	{
+<span class="fc" id="L80">		DOM_OR_REC, DOMINANT, RECESSIVE, XLINKED, OTHER</span>
+	}
+
+<span class="fc" id="L83">	public enum CGDAttributeName</span>
+	{
+<span class="fc" id="L85">		GENE(&quot;#GENE&quot;, EffectsMetaData.GENE_NAME), REFERENCES(&quot;REFERENCES&quot;, &quot;REFS&quot;), INTERVENTION_RATIONALE(</span>
+<span class="fc" id="L86">			&quot;INTERVENTION/RATIONALE&quot;, &quot;INTERVENTION_RATIONALE&quot;), COMMENTS(&quot;COMMENTS&quot;,</span>
+<span class="fc" id="L87">			&quot;COMMENTS&quot;), INTERVENTION_CATEGORIES(&quot;INTERVENTION CATEGORIES&quot;,</span>
+<span class="fc" id="L88">			&quot;INTERVENTION_CATEGORIES&quot;), MANIFESTATION_CATEGORIES(&quot;MANIFESTATION CATEGORIES&quot;,</span>
+<span class="fc" id="L89">			&quot;MANIFESTATION_CATEGORIES&quot;), ALLELIC_CONDITIONS(&quot;ALLELIC CONDITIONS&quot;, &quot;ALLELIC_CONDITIONS&quot;), ENTREZ_GENE_ID(</span>
+<span class="fc" id="L90">			&quot;ENTREZ GENE ID&quot;, &quot;ENTREZ_GENE_ID&quot;), HGNC_ID(&quot;HGNC ID&quot;, &quot;HGNC_ID&quot;), CONDITION(&quot;CONDITION&quot;,</span>
+<span class="fc" id="L91">			CONDITION_LABEL), AGE_GROUP(&quot;AGE GROUP&quot;, AGE_GROUP_LABEL), INHERITANCE(&quot;INHERITANCE&quot;,</span>
+<span class="fc" id="L92">			INHERITANCE_LABEL), GENERALIZED_INHERITANCE(&quot;&quot;, GENERALIZED_INHERITANCE_LABEL);</span>
+
+		private final String cgdName;// Column dataType as defined in CGD file
+		private final String attributeName;// Output attribute dataType
+
+		// Mapping from attribute dataType to cgd dataType
+<span class="fc" id="L98">		private static Map&lt;String, String&gt; mappings = new HashMap&lt;&gt;();</span>
+
+		CGDAttributeName(String cgdName, String attributeName)
+<span class="fc" id="L101">		{</span>
+<span class="fc" id="L102">			this.cgdName = cgdName;</span>
+<span class="fc" id="L103">			this.attributeName = attributeName;</span>
+<span class="fc" id="L104">		}</span>
+
+		public static String getCgdName(String attributeName)
+		{
+<span class="fc bfc" id="L108" title="All 2 branches covered.">			if (mappings.isEmpty())</span>
+			{
+<span class="fc bfc" id="L110" title="All 2 branches covered.">				for (CGDAttributeName enumValue : CGDAttributeName.values())</span>
+				{
+<span class="fc" id="L112">					mappings.put(enumValue.getAttributeName(), enumValue.getCgdName());</span>
+				}
+			}
+
+<span class="fc" id="L116">			return mappings.get(attributeName);</span>
+		}
+
+		public String getCgdName()
+		{
+<span class="fc" id="L121">			return cgdName;</span>
+		}
+
+		public String getAttributeName()
+		{
+<span class="fc" id="L126">			return attributeName;</span>
+		}
+	}
+
+	@Bean
+	public RepositoryAnnotator cgd()
+	{
+<span class="fc" id="L133">		annotator = new RepositoryAnnotatorImpl(NAME);</span>
+<span class="fc" id="L134">		return annotator;</span>
+	}
+
+	@Override
+	public void init()
+	{
+<span class="fc" id="L140">		AnnotatorInfo info = getAnnotatorInfo();</span>
+<span class="fc" id="L141">		QueryCreator queryCreator = new AttributeEqualsQueryCreator(</span>
+<span class="fc" id="L142">				attributeFactory.create().setName(GENE.getAttributeName()));</span>
+<span class="fc" id="L143">		ResultFilter resultFilter = new FirstResultFilter();</span>
+
+<span class="fc" id="L145">		EntityAnnotator entityAnnotator = new CGDEntityAnnotator(CGD_RESOURCE, info, queryCreator, resultFilter,</span>
+				dataService, resources);
+<span class="fc" id="L147">		annotator.init(entityAnnotator);</span>
+<span class="fc" id="L148">	}</span>
+
+	@Bean
+	public Resource cgdResource()
+	{
+<span class="fc" id="L153">		return new ResourceImpl(CGD_RESOURCE, new SingleResourceConfig(CGD_LOCATION, CGDAnnotatorSettings))</span>
+<span class="fc" id="L154">		{</span>
+			@Override
+			public RepositoryFactory getRepositoryFactory()
+			{
+<span class="fc" id="L158">				return file -&gt; new GeneCsvRepository(file, GENE.getCgdName(), GENE.getAttributeName(),</span>
+<span class="fc" id="L159">						entityTypeFactory, attributeFactory, SEPARATOR);</span>
+			}
+		};
+
+	}
+
+	private AnnotatorInfo getAnnotatorInfo()
+	{
+<span class="fc" id="L167">		return AnnotatorInfo.create(Status.READY, Type.PHENOTYPE_ASSOCIATION, &quot;CGD&quot;, &quot;Clinical Genomics Database&quot;,</span>
+<span class="fc" id="L168">				getOutputAttributes());</span>
+	}
+
+	private List&lt;Attribute&gt; getOutputAttributes()
+	{
+<span class="fc" id="L173">		List&lt;Attribute&gt; attributes = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L175">		attributes.add(attributeFactory.create().setName(HGNC_ID.getAttributeName()).setDataType(STRING));</span>
+<span class="fc" id="L176">		attributes.add(attributeFactory.create().setName(ENTREZ_GENE_ID.getAttributeName()).setDataType(TEXT));</span>
+<span class="fc" id="L177">		attributes.add(attributeFactory.create()</span>
+<span class="fc" id="L178">									   .setName(CONDITION.getAttributeName())</span>
+<span class="fc" id="L179">									   .setDataType(TEXT)</span>
+<span class="fc" id="L180">									   .setLabel(CONDITION_LABEL));</span>
+<span class="fc" id="L181">		attributes.add(attributeFactory.create()</span>
+<span class="fc" id="L182">									   .setName(INHERITANCE.getAttributeName())</span>
+<span class="fc" id="L183">									   .setDataType(TEXT)</span>
+<span class="fc" id="L184">									   .setLabel(INHERITANCE_LABEL));</span>
+<span class="fc" id="L185">		attributes.add(attributeFactory.create()</span>
+<span class="fc" id="L186">									   .setName(GENERALIZED_INHERITANCE.getAttributeName())</span>
+<span class="fc" id="L187">									   .setDataType(TEXT)</span>
+<span class="fc" id="L188">									   .setLabel(GENERALIZED_INHERITANCE_LABEL));</span>
+<span class="fc" id="L189">		attributes.add(attributeFactory.create()</span>
+<span class="fc" id="L190">									   .setName(AGE_GROUP.getAttributeName())</span>
+<span class="fc" id="L191">									   .setDataType(TEXT)</span>
+<span class="fc" id="L192">									   .setLabel(AGE_GROUP_LABEL));</span>
+<span class="fc" id="L193">		attributes.add(attributeFactory.create().setName(ALLELIC_CONDITIONS.getAttributeName()).setDataType(TEXT));</span>
+<span class="fc" id="L194">		attributes.add(</span>
+<span class="fc" id="L195">				attributeFactory.create().setName(MANIFESTATION_CATEGORIES.getAttributeName()).setDataType(TEXT));</span>
+<span class="fc" id="L196">		attributes.add(attributeFactory.create().setName(INTERVENTION_CATEGORIES.getAttributeName()).setDataType(TEXT));</span>
+<span class="fc" id="L197">		attributes.add(attributeFactory.create().setName(COMMENTS.getAttributeName()).setDataType(TEXT));</span>
+<span class="fc" id="L198">		attributes.add(attributeFactory.create().setName(INTERVENTION_RATIONALE.getAttributeName()).setDataType(TEXT));</span>
+<span class="fc" id="L199">		attributes.add(attributeFactory.create().setName(REFERENCES.getAttributeName()).setDataType(TEXT));</span>
+
+<span class="fc" id="L201">		return attributes;</span>
+	}
+
+	private class CGDEntityAnnotator extends AbstractAnnotator
+	{
+		public CGDEntityAnnotator(String sourceRepositoryName, AnnotatorInfo info, QueryCreator queryCreator,
+				ResultFilter resultFilter, DataService dataService, Resources resources)
+<span class="fc" id="L208">		{</span>
+<span class="fc" id="L209">			super(sourceRepositoryName, info, queryCreator, resultFilter, dataService, resources,</span>
+<span class="fc" id="L210">					new SingleFileLocationCmdLineAnnotatorSettingsConfigurer(CGD_LOCATION, CGDAnnotatorSettings));</span>
+<span class="fc" id="L211">		}</span>
+
+		@Override
+		protected Object getResourceAttributeValue(Attribute attr, Entity sourceEntity)
+		{
+<span class="fc bfc" id="L216" title="All 2 branches covered.">			if (attr.getName().equals(GENERALIZED_INHERITANCE.getAttributeName()))</span>
+			{
+<span class="fc" id="L218">				return getGeneralizedInheritance(sourceEntity);</span>
+			}
+
+<span class="fc" id="L221">			String sourceName = CGDAttributeName.getCgdName(attr.getName());</span>
+<span class="pc bpc" id="L222" title="1 of 2 branches missed.">			if (sourceName == null) throw new MolgenisDataException(&quot;Unknown attribute [&quot; + attr.getName() + &quot;]&quot;);</span>
+
+<span class="fc" id="L224">			return sourceEntity.get(sourceName);</span>
+		}
+
+		private String getGeneralizedInheritance(Entity sourceEntity)
+		{
+<span class="fc" id="L229">			GeneralizedInheritance inherMode = OTHER;</span>
+<span class="fc" id="L230">			String value = sourceEntity.getString(INHERITANCE.getCgdName());</span>
+<span class="pc bpc" id="L231" title="1 of 2 branches missed.">			if (value != null)</span>
+			{
+<span class="pc bpc" id="L233" title="3 of 4 branches missed.">				if (value.contains(&quot;AD&quot;) &amp;&amp; value.contains(&quot;AR&quot;))</span>
+				{
+<span class="nc" id="L235">					inherMode = DOM_OR_REC;</span>
+				}
+<span class="pc bpc" id="L237" title="1 of 2 branches missed.">				else if (value.contains(&quot;AR&quot;))</span>
+				{
+<span class="fc" id="L239">					inherMode = RECESSIVE;</span>
+				}
+<span class="nc bnc" id="L241" title="All 2 branches missed.">				else if (value.contains(&quot;AD&quot;))</span>
+				{
+<span class="nc" id="L243">					inherMode = DOMINANT;</span>
+				}
+<span class="nc bnc" id="L245" title="All 2 branches missed.">				else if (value.contains(&quot;XL&quot;))</span>
+				{
+<span class="nc" id="L247">					inherMode = XLINKED;</span>
+				}
+			}
+
+<span class="fc" id="L251">			return inherMode.toString();</span>
+		}
+
+		@Override
+		public List&lt;Attribute&gt; createAnnotatorAttributes(AttributeFactory attributeFactory)
+		{
+<span class="nc" id="L257">			return getOutputAttributes();</span>
+		}
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

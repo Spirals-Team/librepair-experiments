@@ -1,0 +1,646 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PermissionManagerController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">core-ui</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.core.ui.admin.permission</a> &gt; <span class="el_source">PermissionManagerController.java</span></div><h1>PermissionManagerController.java</h1><pre class="source lang-java linenums">package org.molgenis.core.ui.admin.permission;
+
+import com.google.common.collect.Lists;
+import org.molgenis.core.ui.admin.permission.exception.UnexpectedPermissionException;
+import org.molgenis.data.DataService;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeMetadata;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.meta.model.PackageMetadata;
+import org.molgenis.data.meta.system.SystemEntityTypeRegistry;
+import org.molgenis.data.plugin.model.Plugin;
+import org.molgenis.data.plugin.model.PluginIdentity;
+import org.molgenis.data.security.EntityIdentity;
+import org.molgenis.data.security.EntityIdentityUtils;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.PackageIdentity;
+import org.molgenis.data.security.auth.Group;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.security.acl.MutableAclClassService;
+import org.molgenis.security.acl.SidUtils;
+import org.molgenis.security.core.PermissionSet;
+import org.molgenis.security.permission.Permissions;
+import org.molgenis.web.PluginController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.acls.domain.GrantedAuthoritySid;
+import org.springframework.security.acls.domain.PrincipalSid;
+import org.springframework.security.acls.model.*;
+import org.springframework.stereotype.Controller;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.context.request.WebRequest;
+
+import javax.validation.Valid;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static java.lang.String.format;
+import static java.util.Collections.singletonList;
+import static java.util.Comparator.comparing;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
+import static org.molgenis.core.ui.admin.permission.PermissionManagerController.URI;
+import static org.molgenis.data.plugin.model.PluginMetadata.PLUGIN;
+import static org.molgenis.data.security.auth.GroupMetaData.GROUP;
+import static org.molgenis.data.security.auth.UserMetaData.USER;
+import static org.molgenis.data.security.auth.UserMetaData.USERNAME;
+import static org.molgenis.security.acl.SidUtils.createAnonymousSid;
+import static org.molgenis.security.core.PermissionSet.*;
+import static org.molgenis.security.core.utils.SecurityUtils.ANONYMOUS_USERNAME;
+
+@Controller
+@RequestMapping(URI)
+public class PermissionManagerController extends PluginController
+{
+<span class="fc" id="L61">	private static final Logger LOG = LoggerFactory.getLogger(PermissionManagerController.class);</span>
+
+	public static final String URI = PluginController.PLUGIN_URI_PREFIX + &quot;permissionmanager&quot;;
+	public static final String DUPLICATE_KEY = &quot;Duplicate key %s&quot;;
+
+	private final DataService dataService;
+	private final MutableAclService mutableAclService;
+	private final MutableAclClassService mutableAclClassService;
+	private final SystemEntityTypeRegistry systemEntityTypeRegistry;
+
+	PermissionManagerController(DataService dataService, MutableAclService mutableAclService,
+			MutableAclClassService mutableAclClassService, SystemEntityTypeRegistry systemEntityTypeRegistry)
+	{
+<span class="fc" id="L74">		super(URI);</span>
+<span class="fc" id="L75">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L76">		this.mutableAclService = requireNonNull(mutableAclService);</span>
+<span class="fc" id="L77">		this.mutableAclClassService = requireNonNull(mutableAclClassService);</span>
+<span class="fc" id="L78">		this.systemEntityTypeRegistry = requireNonNull(systemEntityTypeRegistry);</span>
+<span class="fc" id="L79">	}</span>
+
+	@GetMapping
+	public String init(Model model)
+	{
+<span class="fc" id="L84">		model.addAttribute(&quot;users&quot;, Lists.newArrayList(getUsers().stream().filter(user -&gt;</span>
+		{
+<span class="fc" id="L86">			Boolean superuser = user.isSuperuser();</span>
+<span class="pc bpc" id="L87" title="1 of 4 branches missed.">			return superuser == null || !superuser;</span>
+<span class="fc" id="L88">		}).collect(Collectors.toList())));</span>
+<span class="fc" id="L89">		model.addAttribute(&quot;groups&quot;, getGroups());</span>
+<span class="fc" id="L90">		model.addAttribute(&quot;entityTypes&quot;, getEntityTypeDtos());</span>
+<span class="fc" id="L91">		return &quot;view-permissionmanager&quot;;</span>
+	}
+
+	private List&lt;EntityTypeRlsResponse&gt; getEntityTypeDtos()
+	{
+<span class="pc bpc" id="L96" title="1 of 2 branches missed.">		List&lt;EntityType&gt; entityTypes = getEntityTypes().filter(entityType -&gt; !entityType.isAbstract())</span>
+<span class="fc" id="L97">													   .collect(toList());</span>
+<span class="fc" id="L98">		Collection&lt;String&gt; aclClasses = mutableAclClassService.getAclClassTypes();</span>
+<span class="fc" id="L99">		entityTypes.sort(comparing(EntityType::getLabel));</span>
+<span class="fc" id="L100">		return entityTypes.stream().map(entityType -&gt;</span>
+		{
+<span class="fc" id="L102">			boolean rlsEnabled = aclClasses.contains(EntityIdentityUtils.toType(entityType));</span>
+<span class="fc" id="L103">			boolean readOnly = systemEntityTypeRegistry.hasSystemEntityType(entityType.getId());</span>
+<span class="fc" id="L104">			return new EntityTypeRlsResponse(entityType.getId(), entityType.getLabel(), rlsEnabled, readOnly);</span>
+<span class="fc" id="L105">		}).collect(toList());</span>
+	}
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	@GetMapping(&quot;/entityclass/group/{groupId}&quot;)
+	@ResponseBody
+	public Permissions getGroupEntityClassPermissions(@PathVariable String groupId)
+	{
+<span class="fc" id="L114">		Sid sid = getSidForGroupId(groupId);</span>
+<span class="fc" id="L115">		return getEntityTypePermissions(sid);</span>
+	}
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	@GetMapping(&quot;/plugin/user/{userId}&quot;)
+	@ResponseBody
+	public Permissions getUserPluginPermissions(@PathVariable String userId)
+	{
+<span class="fc" id="L124">		Sid sid = getSidForUserId(userId);</span>
+<span class="fc" id="L125">		return getPluginPermissions(sid);</span>
+	}
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	@GetMapping(&quot;/package/user/{userId}&quot;)
+	@ResponseBody
+	public Permissions getUserPackagePermissions(@PathVariable String userId)
+	{
+<span class="fc" id="L134">		Sid sid = getSidForUserId(userId);</span>
+<span class="fc" id="L135">		return getPackagePermissions(sid);</span>
+	}
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	@GetMapping(&quot;/package/group/{groupId}&quot;)
+	@ResponseBody
+	public Permissions getGroupPackagePermissions(@PathVariable String groupId)
+	{
+<span class="fc" id="L144">		Sid sid = getSidForGroupId(groupId);</span>
+<span class="fc" id="L145">		return getPackagePermissions(sid);</span>
+	}
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	@GetMapping(&quot;/entityclass/user/{userId}&quot;)
+	@ResponseBody
+	public Permissions getUserEntityClassPermissions(@PathVariable String userId)
+	{
+<span class="fc" id="L154">		Sid sid = getSidForUserId(userId);</span>
+<span class="fc" id="L155">		return getEntityTypePermissions(sid);</span>
+	}
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	@PostMapping(&quot;/update/plugin/group&quot;)
+	@ResponseStatus(HttpStatus.OK)
+	public void updateGroupPluginPermissions(@RequestParam String groupId, WebRequest webRequest)
+	{
+<span class="fc" id="L164">		Sid sid = getSidForGroupId(groupId);</span>
+<span class="fc" id="L165">		updatePluginPermissions(webRequest, sid);</span>
+<span class="fc" id="L166">	}</span>
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	@PostMapping(&quot;/update/entityclass/group&quot;)
+	@ResponseStatus(HttpStatus.OK)
+	public void updateGroupEntityClassPermissions(@RequestParam String groupId, WebRequest webRequest)
+	{
+<span class="fc" id="L174">		Sid sid = getSidForGroupId(groupId);</span>
+<span class="fc" id="L175">		updateEntityTypePermissions(webRequest, sid);</span>
+<span class="fc" id="L176">	}</span>
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	@PostMapping(&quot;/update/package/group&quot;)
+	@ResponseStatus(HttpStatus.OK)
+	public void updateGroupPackagePermissions(@RequestParam String groupId, WebRequest webRequest)
+	{
+<span class="fc" id="L184">		Sid sid = getSidForGroupId(groupId);</span>
+<span class="fc" id="L185">		updatePackagePermissions(webRequest, sid);</span>
+<span class="fc" id="L186">	}</span>
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	@PostMapping(&quot;/update/package/user&quot;)
+	@ResponseStatus(HttpStatus.OK)
+	public void updateUserPackagePermissions(@RequestParam String userId, WebRequest webRequest)
+	{
+<span class="fc" id="L194">		Sid sid = getSidForUserId(userId);</span>
+<span class="fc" id="L195">		updatePackagePermissions(webRequest, sid);</span>
+<span class="fc" id="L196">	}</span>
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	@PostMapping(&quot;/update/plugin/user&quot;)
+	@ResponseStatus(HttpStatus.OK)
+	public void updateUserPluginPermissions(@RequestParam String userId, WebRequest webRequest)
+	{
+<span class="fc" id="L204">		Sid sid = getSidForUserId(userId);</span>
+<span class="fc" id="L205">		updatePluginPermissions(webRequest, sid);</span>
+<span class="fc" id="L206">	}</span>
+
+	private void removeSidPluginPermission(Plugin plugin, Sid sid)
+	{
+<span class="fc" id="L210">		ObjectIdentity objectIdentity = new PluginIdentity(plugin);</span>
+<span class="fc" id="L211">		removePermissionForSid(sid, objectIdentity);</span>
+<span class="fc" id="L212">	}</span>
+
+	private void createSidPluginPermission(Plugin plugin, Sid sid, PermissionSet pluginPermission)
+	{
+<span class="fc" id="L216">		ObjectIdentity objectIdentity = new PluginIdentity(plugin);</span>
+<span class="fc" id="L217">		createSidPermission(sid, objectIdentity, pluginPermission);</span>
+<span class="fc" id="L218">	}</span>
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional(readOnly = true)
+	@GetMapping(&quot;/plugin/group/{groupId}&quot;)
+	@ResponseBody
+	public Permissions getGroupPluginPermissions(@PathVariable String groupId)
+	{
+<span class="fc" id="L226">		Sid sid = getSidForGroupId(groupId);</span>
+<span class="fc" id="L227">		return getPluginPermissions(sid);</span>
+	}
+
+	/**
+	 * package-private for testability
+	 */
+	List&lt;Plugin&gt; getPlugins()
+	{
+<span class="fc" id="L235">		return dataService.findAll(PLUGIN, Plugin.class).collect(toList());</span>
+	}
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	@PostMapping(&quot;/update/entityclass/user&quot;)
+	@ResponseStatus(HttpStatus.OK)
+	public void updateUserEntityClassPermissions(@RequestParam String userId, WebRequest webRequest)
+	{
+<span class="fc" id="L244">		Sid sid = getSidForUserId(userId);</span>
+<span class="fc" id="L245">		updateEntityTypePermissions(webRequest, sid);</span>
+<span class="fc" id="L246">	}</span>
+
+	@PreAuthorize(&quot;hasAnyRole('ROLE_SU')&quot;)
+	@Transactional
+	@PostMapping(&quot;/update/entityclass/rls&quot;)
+	@ResponseStatus(HttpStatus.OK)
+	public void updateEntityClassRls(@Valid @RequestBody EntityTypeRlsRequest entityTypeRlsRequest)
+	{
+<span class="fc" id="L254">		String entityTypeId = entityTypeRlsRequest.getId();</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">		if (systemEntityTypeRegistry.hasSystemEntityType(entityTypeId))</span>
+		{
+<span class="fc" id="L257">			throw new IllegalArgumentException(&quot;Updating system entity type not allowed&quot;);</span>
+		}
+
+<span class="fc" id="L260">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L261">		String aclClassType = EntityIdentityUtils.toType(entityType);</span>
+<span class="fc" id="L262">		boolean hasAclClass = mutableAclClassService.hasAclClass(aclClassType);</span>
+<span class="fc bfc" id="L263" title="All 2 branches covered.">		if (entityTypeRlsRequest.isRlsEnabled())</span>
+		{
+<span class="pc bpc" id="L265" title="1 of 2 branches missed.">			if (!hasAclClass)</span>
+			{
+<span class="fc" id="L267">				mutableAclClassService.createAclClass(aclClassType, EntityIdentityUtils.toIdType(entityType));</span>
+<span class="fc" id="L268">				dataService.findAll(entityType.getId())</span>
+<span class="fc" id="L269">						   .forEach(entity -&gt; mutableAclService.createAcl(new EntityIdentity(entity)));</span>
+			}
+		}
+		else
+		{
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">			if (hasAclClass)</span>
+			{
+<span class="fc" id="L276">				mutableAclClassService.deleteAclClass(aclClassType);</span>
+			}
+		}
+<span class="fc" id="L279">	}</span>
+
+	private static PermissionSet paramValueToPermissionSet(String paramValue)
+	{
+<span class="pc bpc" id="L283" title="3 of 5 branches missed.">		switch (paramValue.toUpperCase())</span>
+		{
+			case &quot;COUNT&quot;:
+<span class="nc" id="L286">				return PermissionSet.COUNT;</span>
+			case &quot;READ&quot;:
+<span class="fc" id="L288">				return PermissionSet.READ;</span>
+			case &quot;WRITE&quot;:
+<span class="fc" id="L290">				return PermissionSet.WRITE;</span>
+			case &quot;WRITEMETA&quot;:
+<span class="nc" id="L292">				return PermissionSet.WRITEMETA;</span>
+			default:
+<span class="nc" id="L294">				throw new IllegalArgumentException(format(&quot;Unknown PermissionSet '%s'&quot;, paramValue));</span>
+		}
+	}
+
+	private void updatePluginPermissions(WebRequest webRequest, Sid sid)
+	{
+<span class="fc bfc" id="L300" title="All 2 branches covered.">		for (Plugin plugin : getPlugins())</span>
+		{
+<span class="fc" id="L302">			String param = &quot;radio-&quot; + plugin.getId();</span>
+<span class="fc" id="L303">			String value = webRequest.getParameter(param);</span>
+<span class="pc bpc" id="L304" title="1 of 2 branches missed.">			if (value != null)</span>
+			{
+<span class="fc bfc" id="L306" title="All 2 branches covered.">				if (!value.equals(&quot;none&quot;))</span>
+				{
+<span class="fc" id="L308">					createSidPluginPermission(plugin, sid, paramValueToPermissionSet(value));</span>
+				}
+				else
+				{
+<span class="fc" id="L312">					removeSidPluginPermission(plugin, sid);</span>
+				}
+			}
+<span class="fc" id="L315">		}</span>
+<span class="fc" id="L316">	}</span>
+
+	private void updatePackagePermissions(WebRequest webRequest, Sid sid)
+	{
+<span class="fc bfc" id="L320" title="All 2 branches covered.">		for (Package pack : getPackages())</span>
+		{
+<span class="fc" id="L322">			String param = &quot;radio-&quot; + pack.getId();</span>
+<span class="fc" id="L323">			String value = webRequest.getParameter(param);</span>
+<span class="pc bpc" id="L324" title="1 of 2 branches missed.">			if (value != null)</span>
+			{
+<span class="fc bfc" id="L326" title="All 2 branches covered.">				if (!value.equals(&quot;none&quot;))</span>
+				{
+<span class="fc" id="L328">					createSidPackagePermission(pack, sid, paramValueToPermissionSet(value));</span>
+				}
+				else
+				{
+<span class="fc" id="L332">					removeSidPackagePermission(pack, sid);</span>
+				}
+			}
+<span class="fc" id="L335">		}</span>
+<span class="fc" id="L336">	}</span>
+
+	private Permissions getPackagePermissions(Sid sid)
+	{
+<span class="fc" id="L340">		List&lt;Package&gt; packages = getPackages();</span>
+<span class="fc" id="L341">		List&lt;ObjectIdentity&gt; packageIdentities = packages.stream().map(PackageIdentity::new).collect(toList());</span>
+<span class="fc" id="L342">		Map&lt;ObjectIdentity, Acl&gt; aclMap = mutableAclService.readAclsById(packageIdentities, singletonList(sid));</span>
+
+<span class="fc" id="L344">		return toPackagePermissions(packages, aclMap, sid);</span>
+
+	}
+
+	private Permissions getPluginPermissions(Sid sid)
+	{
+<span class="fc" id="L350">		List&lt;Plugin&gt; plugins = getPlugins();</span>
+
+<span class="fc" id="L352">		List&lt;ObjectIdentity&gt; pluginIdentities = plugins.stream().map(PluginIdentity::new).collect(toList());</span>
+<span class="fc" id="L353">		Map&lt;ObjectIdentity, Acl&gt; aclMap = mutableAclService.readAclsById(pluginIdentities, singletonList(sid));</span>
+
+<span class="fc" id="L355">		return toPluginPermissions(plugins, aclMap, sid);</span>
+	}
+
+	private Permissions toPluginPermissions(List&lt;Plugin&gt; plugins, Map&lt;ObjectIdentity, Acl&gt; aclMap, Sid sid)
+	{
+<span class="fc" id="L360">		Permissions permissions = new Permissions();</span>
+
+		// set permissions: entity ids
+<span class="fc" id="L363">		Map&lt;String, String&gt; pluginMap = plugins.stream().collect(toMap(Plugin::getId, Plugin::getId, (u, v) -&gt;</span>
+		{
+<span class="nc" id="L365">			throw new IllegalStateException(format(DUPLICATE_KEY, u));</span>
+		}, LinkedHashMap::new));
+<span class="fc" id="L367">		permissions.setEntityIds(pluginMap);</span>
+
+		// set permissions: user of group id
+<span class="fc" id="L370">		boolean isUser = setUserOrGroup(sid, permissions);</span>
+
+		// set permissions: permissions
+<span class="fc" id="L373">		writeAclsToPermissions(aclMap, sid, permissions, isUser);</span>
+<span class="fc" id="L374">		return permissions;</span>
+	}
+
+	private void writeAclsToPermissions(Map&lt;ObjectIdentity, Acl&gt; aclMap, Sid sid, Permissions permissions,
+			boolean isUser)
+	{
+<span class="fc" id="L380">		aclMap.forEach((objectIdentity, acl) -&gt;</span>
+		{
+<span class="fc" id="L382">			String pluginId = objectIdentity.getIdentifier().toString();</span>
+<span class="fc" id="L383">			acl.getEntries().forEach(ace -&gt;</span>
+			{
+<span class="pc bpc" id="L385" title="1 of 2 branches missed.">				if (ace.getSid().equals(sid))</span>
+				{
+<span class="fc" id="L387">					org.molgenis.security.permission.Permission pluginPermission = createPermissionDtoForAce(ace);</span>
+<span class="fc bfc" id="L388" title="All 2 branches covered.">					if (isUser)</span>
+					{
+<span class="fc" id="L390">						permissions.addUserPermission(pluginId, pluginPermission);</span>
+					}
+					else
+					{
+<span class="fc" id="L394">						permissions.addGroupPermission(pluginId, pluginPermission);</span>
+					}
+				}
+<span class="fc" id="L397">			});</span>
+<span class="fc" id="L398">		});</span>
+<span class="fc" id="L399">	}</span>
+
+	private org.molgenis.security.permission.Permission createPermissionDtoForAce(AccessControlEntry ace)
+	{
+<span class="fc" id="L403">		org.molgenis.security.permission.Permission result = new org.molgenis.security.permission.Permission();</span>
+<span class="pc bpc" id="L404" title="1 of 5 branches missed.">		switch (ace.getPermission().getMask())</span>
+		{
+			case COUNT_MASK:
+<span class="fc" id="L407">				result.setType(&quot;count&quot;);</span>
+<span class="fc" id="L408">				break;</span>
+			case READ_MASK:
+<span class="fc" id="L410">				result.setType(&quot;read&quot;);</span>
+<span class="fc" id="L411">				break;</span>
+			case WRITE_MASK:
+<span class="fc" id="L413">				result.setType(&quot;write&quot;);</span>
+<span class="fc" id="L414">				break;</span>
+			case WRITEMETA_MASK:
+<span class="fc" id="L416">				result.setType(&quot;writemeta&quot;);</span>
+<span class="fc" id="L417">				break;</span>
+			default:
+<span class="nc" id="L419">				throw new UnexpectedPermissionException(ace.getPermission());</span>
+		}
+<span class="fc" id="L421">		return result;</span>
+	}
+
+	private void removeSidEntityTypePermission(EntityType entityType, Sid sid)
+	{
+<span class="fc" id="L426">		ObjectIdentity objectIdentity = new EntityTypeIdentity(entityType);</span>
+<span class="fc" id="L427">		removePermissionForSid(sid, objectIdentity);</span>
+<span class="fc" id="L428">	}</span>
+
+	private void createSidEntityTypePermission(EntityType entityType, Sid sid, PermissionSet permissionSet)
+	{
+<span class="fc" id="L432">		ObjectIdentity objectIdentity = new EntityTypeIdentity(entityType);</span>
+<span class="fc" id="L433">		createSidPermission(sid, objectIdentity, permissionSet);</span>
+<span class="fc" id="L434">	}</span>
+
+	private void createSidPackagePermission(Package pack, Sid sid, PermissionSet permissionSet)
+	{
+<span class="fc" id="L438">		ObjectIdentity objectIdentity = new PackageIdentity(pack);</span>
+<span class="fc" id="L439">		createSidPermission(sid, objectIdentity, permissionSet);</span>
+<span class="fc" id="L440">	}</span>
+
+	private void removeSidPackagePermission(Package pack, Sid sid)
+	{
+<span class="fc" id="L444">		ObjectIdentity objectIdentity = new PackageIdentity(pack);</span>
+<span class="fc" id="L445">		removePermissionForSid(sid, objectIdentity);</span>
+<span class="fc" id="L446">	}</span>
+
+	private void removePermissionForSid(Sid sid, ObjectIdentity objectIdentity)
+	{
+<span class="fc" id="L450">		MutableAcl acl = (MutableAcl) mutableAclService.readAclById(objectIdentity, singletonList(sid));</span>
+
+<span class="fc" id="L452">		boolean aclUpdated = deleteAceIfExists(sid, acl);</span>
+<span class="fc bfc" id="L453" title="All 2 branches covered.">		if (aclUpdated)</span>
+		{
+<span class="fc" id="L455">			mutableAclService.updateAcl(acl);</span>
+		}
+<span class="fc" id="L457">	}</span>
+
+	private void updateEntityTypePermissions(WebRequest webRequest, Sid sid)
+	{
+<span class="fc" id="L461">		getEntityTypes().forEach(entityType -&gt;</span>
+		{
+<span class="fc" id="L463">			String param = &quot;radio-&quot; + entityType.getId();</span>
+<span class="fc" id="L464">			String value = webRequest.getParameter(param);</span>
+<span class="pc bpc" id="L465" title="1 of 2 branches missed.">			if (value != null)</span>
+			{
+<span class="fc bfc" id="L467" title="All 2 branches covered.">				if (!value.equals(&quot;none&quot;))</span>
+				{
+<span class="fc" id="L469">					createSidEntityTypePermission(entityType, sid, paramValueToPermissionSet(value));</span>
+				}
+				else
+				{
+<span class="fc" id="L473">					removeSidEntityTypePermission(entityType, sid);</span>
+				}
+			}
+<span class="fc" id="L476">		});</span>
+<span class="fc" id="L477">	}</span>
+
+	private Permissions getEntityTypePermissions(Sid sid)
+	{
+<span class="fc" id="L481">		List&lt;EntityType&gt; entityTypes = getEntityTypes().collect(toList());</span>
+
+<span class="fc" id="L483">		List&lt;ObjectIdentity&gt; objectIdentities = entityTypes.stream().map(EntityTypeIdentity::new).collect(toList());</span>
+<span class="fc" id="L484">		Map&lt;ObjectIdentity, Acl&gt; aclMap = mutableAclService.readAclsById(objectIdentities, singletonList(sid));</span>
+
+<span class="fc" id="L486">		return toEntityTypePermissions(entityTypes, aclMap, sid);</span>
+	}
+
+	private Permissions toEntityTypePermissions(List&lt;EntityType&gt; entityTypes, Map&lt;ObjectIdentity, Acl&gt; aclMap, Sid sid)
+	{
+<span class="fc" id="L491">		Permissions permissions = new Permissions();</span>
+
+		// set permissions: entity ids
+<span class="fc" id="L494">		Map&lt;String, String&gt; entityTypeMap = entityTypes.stream()</span>
+<span class="fc" id="L495">													   .collect(toMap(EntityType::getId, EntityType::getId, (u, v) -&gt;</span>
+													   {
+<span class="nc" id="L497">														   throw new IllegalStateException(format(DUPLICATE_KEY, u));</span>
+													   }, LinkedHashMap::new));
+<span class="fc" id="L499">		permissions.setEntityIds(entityTypeMap);</span>
+
+<span class="fc" id="L501">		return toPermissions(aclMap, sid, permissions);</span>
+	}
+
+	private Permissions toPackagePermissions(List&lt;Package&gt; packages, Map&lt;ObjectIdentity, Acl&gt; aclMap, Sid sid)
+	{
+<span class="fc" id="L506">		Permissions permissions = new Permissions();</span>
+
+		// set permissions: entity ids
+<span class="fc" id="L509">		Map&lt;String, String&gt; entityTypeMap = packages.stream().collect(toMap(Package::getId, Package::getId, (u, v) -&gt;</span>
+		{
+<span class="nc" id="L511">			throw new IllegalStateException(format(DUPLICATE_KEY, u));</span>
+		}, LinkedHashMap::new));
+
+<span class="fc" id="L514">		permissions.setEntityIds(entityTypeMap);</span>
+
+<span class="fc" id="L516">		return toPermissions(aclMap, sid, permissions);</span>
+	}
+
+	private Permissions toPermissions(Map&lt;ObjectIdentity, Acl&gt; aclMap, Sid sid, Permissions permissions)
+	{
+<span class="fc" id="L521">		boolean isUser = setUserOrGroup(sid, permissions);</span>
+
+		// set permissions: permissions
+<span class="fc" id="L524">		writeAclsToPermissions(aclMap, sid, permissions, isUser);</span>
+<span class="fc" id="L525">		return permissions;</span>
+	}
+
+	private void createSidPermission(Sid sid, ObjectIdentity objectIdentity,
+			org.springframework.security.acls.model.Permission permission)
+	{
+<span class="fc" id="L531">		MutableAcl acl = (MutableAcl) mutableAclService.readAclById(objectIdentity, singletonList(sid));</span>
+
+<span class="fc" id="L533">		deleteAceIfExists(sid, acl);</span>
+<span class="fc" id="L534">		acl.insertAce(0, permission, sid, true);</span>
+<span class="fc" id="L535">		mutableAclService.updateAcl(acl);</span>
+<span class="fc" id="L536">	}</span>
+
+	private Sid getSidForUserId(String userId)
+	{
+<span class="fc" id="L540">		User user = getUser(userId);</span>
+<span class="fc" id="L541">		return SidUtils.createSid(user);</span>
+	}
+
+	private Sid getSidForGroupId(String groupId)
+	{
+<span class="fc" id="L546">		Group group = getGroup(groupId);</span>
+<span class="fc" id="L547">		return SidUtils.createSid(group);</span>
+	}
+
+	private Group getGroup(String groupId)
+	{
+<span class="fc" id="L552">		Group group = dataService.findOneById(GROUP, groupId, Group.class);</span>
+<span class="pc bpc" id="L553" title="1 of 2 branches missed.">		if (group == null)</span>
+		{
+<span class="nc" id="L555">			throw new RuntimeException(&quot;unknown group id [&quot; + groupId + &quot;]&quot;);</span>
+		}
+<span class="fc" id="L557">		return group;</span>
+	}
+
+	private User getUser(String userId)
+	{
+<span class="fc" id="L562">		User user = dataService.findOneById(USER, userId, User.class);</span>
+<span class="pc bpc" id="L563" title="1 of 2 branches missed.">		if (user == null)</span>
+		{
+<span class="nc" id="L565">			throw new RuntimeException(&quot;unknown user id [&quot; + userId + &quot;]&quot;);</span>
+		}
+<span class="fc" id="L567">		return user;</span>
+	}
+
+	/**
+	 * package-private for testability
+	 */
+	List&lt;User&gt; getUsers()
+	{
+<span class="fc" id="L575">		return dataService.findAll(USER, User.class).collect(toList());</span>
+	}
+
+	/**
+	 * package-private for testability
+	 */
+	List&lt;Group&gt; getGroups()
+	{
+<span class="fc" id="L583">		return dataService.findAll(GROUP, Group.class).collect(toList());</span>
+	}
+
+	List&lt;Package&gt; getPackages()
+	{
+<span class="fc" id="L588">		return dataService.findAll(PackageMetadata.PACKAGE, Package.class).collect(toList());</span>
+	}
+
+	private boolean setUserOrGroup(Sid sid, Permissions permissions)
+	{
+		boolean isUser;
+<span class="fc bfc" id="L594" title="All 2 branches covered.">		if (sid instanceof PrincipalSid)</span>
+		{
+<span class="fc" id="L596">			String userId = ((PrincipalSid) sid).getPrincipal();</span>
+<span class="fc" id="L597">			permissions.setUserId(userId);</span>
+<span class="fc" id="L598">			isUser = true;</span>
+<span class="fc" id="L599">		}</span>
+<span class="pc bpc" id="L600" title="1 of 2 branches missed.">		else if (sid.equals(createAnonymousSid()))</span>
+		{
+<span class="nc" id="L602">			String userId = dataService.query(USER, User.class).eq(USERNAME, ANONYMOUS_USERNAME).findOne().getId();</span>
+<span class="nc" id="L603">			permissions.setUserId(userId);</span>
+<span class="nc" id="L604">			isUser = true;</span>
+<span class="nc" id="L605">		}</span>
+		else
+		{
+<span class="fc" id="L608">			String groupId = ((GrantedAuthoritySid) sid).getGrantedAuthority().substring(&quot;ROLE_&quot;.length());</span>
+<span class="fc" id="L609">			permissions.setGroupId(groupId);</span>
+<span class="fc" id="L610">			isUser = false;</span>
+		}
+<span class="fc" id="L612">		return isUser;</span>
+	}
+
+	private boolean deleteAceIfExists(Sid sid, MutableAcl acl)
+	{
+<span class="fc" id="L617">		boolean aclUpdated = false;</span>
+<span class="fc" id="L618">		int nrEntries = acl.getEntries().size();</span>
+<span class="fc bfc" id="L619" title="All 2 branches covered.">		for (int i = nrEntries - 1; i &gt;= 0; i--)</span>
+		{
+<span class="fc" id="L621">			AccessControlEntry accessControlEntry = acl.getEntries().get(i);</span>
+<span class="pc bpc" id="L622" title="1 of 2 branches missed.">			if (accessControlEntry.getSid().equals(sid))</span>
+			{
+<span class="fc" id="L624">				acl.deleteAce(i);</span>
+<span class="fc" id="L625">				aclUpdated = true;</span>
+			}
+		}
+<span class="fc" id="L628">		return aclUpdated;</span>
+	}
+
+	private Stream&lt;EntityType&gt; getEntityTypes()
+	{
+<span class="fc" id="L633">		return dataService.findAll(EntityTypeMetadata.ENTITY_TYPE_META_DATA, EntityType.class);</span>
+	}
+
+	@ExceptionHandler(RuntimeException.class)
+	@ResponseBody
+	@ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+	public Map&lt;String, String&gt; handleRuntimeException(RuntimeException e)
+	{
+<span class="nc" id="L641">		LOG.error(null, e);</span>
+<span class="nc" id="L642">		return Collections.singletonMap(&quot;errorMessage&quot;,</span>
+<span class="nc" id="L643">				&quot;An error occurred. Please contact the administrator.&lt;br /&gt;Message:&quot; + e.getMessage());</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

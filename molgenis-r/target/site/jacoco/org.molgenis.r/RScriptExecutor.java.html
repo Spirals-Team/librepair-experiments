@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RScriptExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">r</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.r</a> &gt; <span class="el_source">RScriptExecutor.java</span></div><h1>RScriptExecutor.java</h1><pre class="source lang-java linenums">package org.molgenis.r;
+
+import org.apache.http.Header;
+import org.apache.http.HttpEntity;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.util.EntityUtils;
+import org.molgenis.script.core.ScriptException;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.UUID;
+
+import static java.lang.String.format;
+import static java.util.Collections.singletonList;
+import static java.util.Objects.requireNonNull;
+
+/**
+ * Executes an R script using OpenCPU
+ */
+@Service
+public class RScriptExecutor
+{
+	private final CloseableHttpClient httpClient;
+	private final OpenCpuSettings openCpuSettings;
+
+	public RScriptExecutor(CloseableHttpClient httpClient, OpenCpuSettings openCpuSettings)
+<span class="fc" id="L40">	{</span>
+<span class="fc" id="L41">		this.httpClient = requireNonNull(httpClient);</span>
+<span class="fc" id="L42">		this.openCpuSettings = requireNonNull(openCpuSettings);</span>
+<span class="fc" id="L43">	}</span>
+
+	/**
+	 * Execute R script and parse response:
+	 * - write the response to outputPathname if outputPathname is not null
+	 * - else return the response
+	 *
+	 * @param script         R script to execute
+	 * @param outputPathname optional output pathname for output file
+	 * @return response value or null in outputPathname is not null
+	 */
+	String executeScript(String script, String outputPathname)
+	{
+		// Workaround: script contains the absolute output pathname in case outputPathname is not null
+		// Replace the absolute output pathname with a relative filename such that OpenCPU can handle the script.
+		String scriptOutputFilename;
+<span class="fc bfc" id="L59" title="All 2 branches covered.">		if (outputPathname != null)</span>
+		{
+<span class="fc" id="L61">			scriptOutputFilename = generateRandomString();</span>
+<span class="fc" id="L62">			script = script.replace(outputPathname, scriptOutputFilename);</span>
+		}
+		else
+		{
+<span class="fc" id="L66">			scriptOutputFilename = null;</span>
+		}
+
+		try
+		{
+			// execute script and use session key to retrieve script response
+<span class="fc" id="L72">			String openCpuSessionKey = executeScriptExecuteRequest(script);</span>
+<span class="fc" id="L73">			return executeScriptGetResponseRequest(openCpuSessionKey, scriptOutputFilename, outputPathname);</span>
+		}
+<span class="nc" id="L75">		catch (IOException e)</span>
+		{
+<span class="nc" id="L77">			throw new UncheckedIOException(e);</span>
+		}
+	}
+
+	/**
+	 * Execute R script using OpenCPU
+	 *
+	 * @param rScript R script
+	 * @return OpenCPU session key
+	 * @throws IOException if error occured during script execution request
+	 */
+	private String executeScriptExecuteRequest(String rScript) throws IOException
+	{
+<span class="fc" id="L90">		URI uri = getScriptExecutionUri();</span>
+<span class="fc" id="L91">		HttpPost httpPost = new HttpPost(uri);</span>
+<span class="fc" id="L92">		NameValuePair nameValuePair = new BasicNameValuePair(&quot;x&quot;, rScript);</span>
+<span class="fc" id="L93">		httpPost.setEntity(new UrlEncodedFormEntity(singletonList(nameValuePair)));</span>
+
+		String openCpuSessionKey;
+<span class="fc" id="L96">		try (CloseableHttpResponse response = httpClient.execute(httpPost))</span>
+		{
+<span class="fc" id="L98">			int statusCode = response.getStatusLine().getStatusCode();</span>
+<span class="pc bpc" id="L99" title="2 of 4 branches missed.">			if (statusCode &gt;= 200 &amp;&amp; statusCode &lt; 300)</span>
+			{
+<span class="fc" id="L101">				Header openCpuSessionKeyHeader = response.getFirstHeader(&quot;X-ocpu-session&quot;);</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">				if (openCpuSessionKeyHeader == null)</span>
+				{
+<span class="nc" id="L104">					throw new IOException(&quot;Missing 'X-ocpu-session' header&quot;);</span>
+				}
+<span class="fc" id="L106">				openCpuSessionKey = openCpuSessionKeyHeader.getValue();</span>
+<span class="fc" id="L107">				EntityUtils.consume(response.getEntity());</span>
+<span class="fc" id="L108">			}</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">			else if (statusCode == 400)</span>
+			{
+<span class="nc" id="L111">				HttpEntity entity = response.getEntity();</span>
+<span class="nc" id="L112">				String rErrorMessage = EntityUtils.toString(entity);</span>
+<span class="nc" id="L113">				EntityUtils.consume(entity);</span>
+<span class="nc" id="L114">				throw new ScriptException(rErrorMessage);</span>
+			}
+			else
+			{
+<span class="nc" id="L118">				throw new ClientProtocolException(format(&quot;Unexpected response status: %d&quot;, statusCode));</span>
+			}
+		}
+<span class="fc" id="L121">		return openCpuSessionKey;</span>
+	}
+
+	/**
+	 * Retrieve R script response using OpenCPU
+	 *
+	 * @param openCpuSessionKey    OpenCPU session key
+	 * @param scriptOutputFilename R script output filename (can be null)
+	 * @param outputPathname       output pathname (can be null)
+	 * @return response value or null if scriptOutputFilename is not null
+	 * @throws IOException if error occured during script response retrieval
+	 */
+	private String executeScriptGetResponseRequest(String openCpuSessionKey, String scriptOutputFilename,
+			String outputPathname) throws IOException
+	{
+		String responseValue;
+<span class="fc bfc" id="L137" title="All 2 branches covered.">		if (scriptOutputFilename != null)</span>
+		{
+<span class="fc" id="L139">			executeScriptGetFileRequest(openCpuSessionKey, scriptOutputFilename, outputPathname);</span>
+<span class="fc" id="L140">			responseValue = null;</span>
+		}
+		else
+		{
+<span class="fc" id="L144">			responseValue = executeScriptGetValueRequest(openCpuSessionKey);</span>
+		}
+<span class="fc" id="L146">		return responseValue;</span>
+	}
+
+	/**
+	 * Retrieve R script file response using OpenCPU and write to file
+	 *
+	 * @param openCpuSessionKey    OpenCPU session key
+	 * @param scriptOutputFilename R script output filename
+	 * @param outputPathname       Output pathname
+	 * @throws IOException if error occured during script response retrieval
+	 */
+	private void executeScriptGetFileRequest(String openCpuSessionKey, String scriptOutputFilename,
+			String outputPathname) throws IOException
+	{
+<span class="fc" id="L160">		URI scriptGetValueResponseUri = getScriptGetFileResponseUri(openCpuSessionKey, scriptOutputFilename);</span>
+<span class="fc" id="L161">		HttpGet httpGet = new HttpGet(scriptGetValueResponseUri);</span>
+<span class="fc" id="L162">		try (CloseableHttpResponse response = httpClient.execute(httpGet))</span>
+		{
+<span class="fc" id="L164">			int statusCode = response.getStatusLine().getStatusCode();</span>
+<span class="pc bpc" id="L165" title="2 of 4 branches missed.">			if (statusCode &gt;= 200 &amp;&amp; statusCode &lt; 300)</span>
+			{
+<span class="fc" id="L167">				HttpEntity entity = response.getEntity();</span>
+<span class="fc" id="L168">				Files.copy(entity.getContent(), Paths.get(outputPathname));</span>
+<span class="fc" id="L169">				EntityUtils.consume(entity);</span>
+<span class="fc" id="L170">			}</span>
+			else
+			{
+<span class="nc" id="L173">				throw new ClientProtocolException(format(&quot;Unexpected response status: %d&quot;, statusCode));</span>
+			}
+		}
+<span class="fc" id="L176">	}</span>
+
+	/**
+	 * Retrieve and return R script STDOUT response using OpenCPU
+	 *
+	 * @param openCpuSessionKey OpenCPU session key
+	 * @return R script STDOUT
+	 * @throws IOException if error occured during script response retrieval
+	 */
+	private String executeScriptGetValueRequest(String openCpuSessionKey) throws IOException
+	{
+<span class="fc" id="L187">		URI scriptGetValueResponseUri = getScriptGetValueResponseUri(openCpuSessionKey);</span>
+<span class="fc" id="L188">		HttpGet httpGet = new HttpGet(scriptGetValueResponseUri);</span>
+		String responseValue;
+<span class="fc" id="L190">		try (CloseableHttpResponse response = httpClient.execute(httpGet))</span>
+		{
+<span class="fc" id="L192">			int statusCode = response.getStatusLine().getStatusCode();</span>
+<span class="pc bpc" id="L193" title="2 of 4 branches missed.">			if (statusCode &gt;= 200 &amp;&amp; statusCode &lt; 300)</span>
+			{
+<span class="fc" id="L195">				HttpEntity entity = response.getEntity();</span>
+<span class="fc" id="L196">				responseValue = EntityUtils.toString(entity);</span>
+<span class="fc" id="L197">				EntityUtils.consume(entity);</span>
+<span class="fc" id="L198">			}</span>
+			else
+			{
+<span class="nc" id="L201">				throw new ClientProtocolException(format(&quot;Unexpected response status: %d&quot;, statusCode));</span>
+			}
+		}
+<span class="fc" id="L204">		return responseValue;</span>
+	}
+
+	private String generateRandomString()
+	{
+<span class="fc" id="L209">		return UUID.randomUUID().toString().replaceAll(&quot;-&quot;, &quot;&quot;);</span>
+	}
+
+	private URI getScriptExecutionUri()
+	{
+		try
+		{
+<span class="fc" id="L216">			return new URI(getOpenCpuUri() + &quot;library/base/R/identity&quot;);</span>
+		}
+<span class="nc" id="L218">		catch (URISyntaxException e)</span>
+		{
+<span class="nc" id="L220">			throw new RuntimeException(e);</span>
+		}
+	}
+
+	private URI getScriptGetValueResponseUri(String openCpuSessionKey)
+	{
+		try
+		{
+<span class="fc" id="L228">			return new URI(getOpenCpuUri() + &quot;tmp/&quot; + openCpuSessionKey + &quot;/stdout&quot;);</span>
+		}
+<span class="nc" id="L230">		catch (URISyntaxException e)</span>
+		{
+<span class="nc" id="L232">			throw new RuntimeException(e);</span>
+		}
+	}
+
+	private URI getScriptGetFileResponseUri(String openCpuSessionKey, String fileId)
+	{
+		try
+		{
+<span class="fc" id="L240">			return new URI(getOpenCpuUri() + &quot;tmp/&quot; + openCpuSessionKey + &quot;/files/&quot; + fileId);</span>
+		}
+<span class="nc" id="L242">		catch (URISyntaxException e)</span>
+		{
+<span class="nc" id="L244">			throw new RuntimeException(e);</span>
+		}
+	}
+
+	private URI getOpenCpuUri()
+	{
+		try
+		{
+<span class="fc" id="L252">			return new URIBuilder().setScheme(openCpuSettings.getScheme())</span>
+<span class="fc" id="L253">								   .setHost(openCpuSettings.getHost())</span>
+<span class="fc" id="L254">								   .setPort(openCpuSettings.getPort())</span>
+<span class="fc" id="L255">								   .setPath(openCpuSettings.getRootPath())</span>
+<span class="fc" id="L256">								   .build();</span>
+		}
+<span class="nc" id="L258">		catch (URISyntaxException e)</span>
+		{
+<span class="nc" id="L260">			throw new RuntimeException(e);</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

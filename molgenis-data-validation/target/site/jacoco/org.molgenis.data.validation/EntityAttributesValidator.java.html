@@ -1,0 +1,520 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EntityAttributesValidator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-validation</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.validation</a> &gt; <span class="el_source">EntityAttributesValidator.java</span></div><h1>EntityAttributesValidator.java</h1><pre class="source lang-java linenums">package org.molgenis.data.validation;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.validator.internal.constraintvalidators.bv.EmailValidator;
+import org.molgenis.data.Entity;
+import org.molgenis.data.Range;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.util.EntityUtils;
+import org.molgenis.util.UnexpectedEnumException;
+import org.springframework.stereotype.Component;
+
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.meta.AttributeType.*;
+
+/**
+ * Attribute data type validator.
+ * &lt;p&gt;
+ * Does not check if xref,mref, categorical values are present. That happens in the EntityValidator.
+ */
+@Component
+public class EntityAttributesValidator
+{
+	private final ExpressionValidator expressionValidator;
+	private EmailValidator emailValidator;
+
+	public EntityAttributesValidator(ExpressionValidator expressionValidator)
+<span class="fc" id="L38">	{</span>
+<span class="fc" id="L39">		this.expressionValidator = requireNonNull(expressionValidator);</span>
+<span class="fc" id="L40">	}</span>
+
+	public Set&lt;ConstraintViolation&gt; validate(Entity entity, EntityType meta)
+	{
+<span class="fc" id="L44">		Set&lt;ConstraintViolation&gt; violations = checkNullableExpressions(entity, meta);</span>
+<span class="fc" id="L45">		violations.addAll(checkValidationExpressions(entity, meta));</span>
+
+<span class="fc bfc" id="L47" title="All 2 branches covered.">		for (Attribute attr : meta.getAtomicAttributes())</span>
+		{
+<span class="fc" id="L49">			ConstraintViolation violation = null;</span>
+
+<span class="fc" id="L51">			AttributeType attrType = attr.getDataType();</span>
+<span class="pc bpc" id="L52" title="13 of 17 branches missed.">			switch (attrType)</span>
+			{
+				case EMAIL:
+<span class="nc" id="L55">					violation = checkEmail(entity, attr, meta);</span>
+<span class="nc" id="L56">					break;</span>
+				case BOOL:
+<span class="nc" id="L58">					violation = checkBoolean(entity, attr, meta);</span>
+<span class="nc" id="L59">					break;</span>
+				case DATE:
+<span class="nc" id="L61">					violation = checkDate(entity, attr, meta);</span>
+<span class="nc" id="L62">					break;</span>
+				case DATE_TIME:
+<span class="nc" id="L64">					violation = checkDateTime(entity, attr, meta);</span>
+<span class="nc" id="L65">					break;</span>
+				case DECIMAL:
+<span class="nc" id="L67">					violation = checkDecimal(entity, attr, meta);</span>
+<span class="nc" id="L68">					break;</span>
+				case HYPERLINK:
+<span class="nc" id="L70">					violation = checkHyperlink(entity, attr, meta);</span>
+<span class="nc" id="L71">					break;</span>
+				case INT:
+<span class="fc" id="L73">					violation = checkInt(entity, attr, meta);</span>
+<span class="pc bpc" id="L74" title="1 of 4 branches missed.">					if ((violation == null) &amp;&amp; (attr.getRange() != null))</span>
+					{
+<span class="fc" id="L76">						violation = checkRange(entity, attr, meta);</span>
+					}
+					break;
+				case LONG:
+<span class="nc" id="L80">					violation = checkLong(entity, attr, meta);</span>
+<span class="nc bnc" id="L81" title="All 4 branches missed.">					if ((violation == null) &amp;&amp; (attr.getRange() != null))</span>
+					{
+<span class="nc" id="L83">						violation = checkRange(entity, attr, meta);</span>
+					}
+					break;
+				case ENUM:
+<span class="nc" id="L87">					violation = checkEnum(entity, attr, meta);</span>
+<span class="nc" id="L88">					break;</span>
+				case HTML:
+<span class="nc" id="L90">					violation = checkText(entity, attr, meta, HTML);</span>
+<span class="nc" id="L91">					break;</span>
+				case SCRIPT:
+<span class="nc" id="L93">					violation = checkText(entity, attr, meta, SCRIPT);</span>
+<span class="nc" id="L94">					break;</span>
+				case TEXT:
+<span class="nc" id="L96">					violation = checkText(entity, attr, meta, TEXT);</span>
+<span class="nc" id="L97">					break;</span>
+				case STRING:
+<span class="fc" id="L99">					violation = checkText(entity, attr, meta, STRING);</span>
+<span class="fc" id="L100">					break;</span>
+				case CATEGORICAL:
+				case FILE:
+				case XREF:
+<span class="fc" id="L104">					violation = checkXref(entity, attr, meta);</span>
+<span class="fc" id="L105">					break;</span>
+				case CATEGORICAL_MREF:
+				case MREF:
+				case ONE_TO_MANY:
+<span class="fc" id="L109">					violation = checkMref(entity, attr, meta);</span>
+<span class="fc" id="L110">					break;</span>
+				case COMPOUND:
+					// no op
+<span class="nc" id="L113">					break;</span>
+				default:
+<span class="nc" id="L115">					throw new UnexpectedEnumException(attrType);</span>
+			}
+
+<span class="fc bfc" id="L118" title="All 2 branches covered.">			if (violation != null)</span>
+			{
+<span class="fc" id="L120">				violations.add(violation);</span>
+			}
+<span class="fc" id="L122">		}</span>
+
+<span class="fc" id="L124">		return violations;</span>
+	}
+
+	private ConstraintViolation checkMref(Entity entity, Attribute attr, EntityType entityType)
+	{
+		Iterable&lt;Entity&gt; refEntities;
+		try
+		{
+<span class="fc" id="L132">			refEntities = entity.getEntities(attr.getName());</span>
+		}
+<span class="nc" id="L134">		catch (Exception e)</span>
+		{
+<span class="nc" id="L136">			return createConstraintViolation(entity, attr, entityType, &quot;Not a valid entity, expected an entity list.&quot;);</span>
+<span class="fc" id="L137">		}</span>
+<span class="pc bpc" id="L138" title="1 of 2 branches missed.">		if (refEntities == null)</span>
+		{
+<span class="nc" id="L140">			return createConstraintViolation(entity, attr, entityType, &quot;Not a valid entity, expected an entity list.&quot;);</span>
+		}
+<span class="fc bfc" id="L142" title="All 2 branches covered.">		for (Entity refEntity : refEntities)</span>
+		{
+<span class="fc bfc" id="L144" title="All 2 branches covered.">			if (refEntity == null)</span>
+			{
+<span class="fc" id="L146">				return createConstraintViolation(entity, attr, entityType, &quot;Not a valid entity, null is not allowed&quot;);</span>
+			}
+<span class="fc bfc" id="L148" title="All 2 branches covered.">			if (!refEntity.getEntityType().getId().equals(attr.getRefEntity().getId()))</span>
+			{
+<span class="fc" id="L150">				return createConstraintViolation(entity, attr, entityType, &quot;Not a valid entity type.&quot;);</span>
+			}
+<span class="fc" id="L152">		}</span>
+<span class="fc" id="L153">		return null;</span>
+	}
+
+	private ConstraintViolation checkXref(Entity entity, Attribute attr, EntityType entityType)
+	{
+		Entity refEntity;
+		try
+		{
+<span class="fc" id="L161">			refEntity = entity.getEntity(attr.getName());</span>
+		}
+<span class="nc" id="L163">		catch (Exception e)</span>
+		{
+<span class="nc" id="L165">			return createConstraintViolation(entity, attr, entityType, &quot;Not a valid entity.&quot;);</span>
+<span class="fc" id="L166">		}</span>
+
+<span class="pc bpc" id="L168" title="1 of 2 branches missed.">		if (refEntity == null)</span>
+		{
+<span class="nc" id="L170">			return null;</span>
+		}
+<span class="fc bfc" id="L172" title="All 2 branches covered.">		if (!refEntity.getEntityType().getId().equals(attr.getRefEntity().getId()))</span>
+		{
+<span class="fc" id="L174">			return createConstraintViolation(entity, attr, entityType, &quot;Not a valid entity type.&quot;);</span>
+		}
+<span class="fc" id="L176">		return null;</span>
+	}
+
+	private Set&lt;ConstraintViolation&gt; checkNullableExpressions(Entity entity, EntityType entityType)
+	{
+<span class="fc" id="L181">		List&lt;String&gt; nullableExpressions = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L182">		List&lt;Attribute&gt; expressionAttributes = new ArrayList&lt;&gt;();</span>
+
+<span class="fc bfc" id="L184" title="All 2 branches covered.">		for (Attribute attribute : entityType.getAtomicAttributes())</span>
+		{
+<span class="fc" id="L186">			String nullableExpression = attribute.getNullableExpression();</span>
+<span class="fc bfc" id="L187" title="All 2 branches covered.">			if (nullableExpression != null)</span>
+			{
+<span class="fc" id="L189">				expressionAttributes.add(attribute);</span>
+<span class="fc" id="L190">				nullableExpressions.add(nullableExpression);</span>
+			}
+<span class="fc" id="L192">		}</span>
+
+<span class="fc" id="L194">		Set&lt;ConstraintViolation&gt; violations = new LinkedHashSet&lt;&gt;();</span>
+
+<span class="fc bfc" id="L196" title="All 2 branches covered.">		if (!nullableExpressions.isEmpty())</span>
+		{
+<span class="fc" id="L198">			List&lt;Boolean&gt; results = expressionValidator.resolveBooleanExpressions(nullableExpressions, entity);</span>
+<span class="fc bfc" id="L199" title="All 2 branches covered.">			for (int i = 0; i &lt; results.size(); i++)</span>
+			{
+<span class="pc bpc" id="L201" title="1 of 4 branches missed.">				if (!results.get(i) &amp;&amp; EntityUtils.isNullValue(entity, expressionAttributes.get(i)))</span>
+				{
+<span class="fc" id="L203">					violations.add(createConstraintViolation(entity, expressionAttributes.get(i), entityType,</span>
+<span class="fc" id="L204">							format(&quot;Offended nullable expression: %s&quot;, nullableExpressions.get(i))));</span>
+				}
+			}
+		}
+
+<span class="fc" id="L209">		return violations;</span>
+	}
+
+	private Set&lt;ConstraintViolation&gt; checkValidationExpressions(Entity entity, EntityType meta)
+	{
+<span class="fc" id="L214">		List&lt;String&gt; validationExpressions = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L215">		List&lt;Attribute&gt; expressionAttributes = new ArrayList&lt;&gt;();</span>
+
+<span class="fc bfc" id="L217" title="All 2 branches covered.">		for (Attribute attribute : meta.getAtomicAttributes())</span>
+		{
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">			if (StringUtils.isNotBlank(attribute.getValidationExpression()))</span>
+			{
+<span class="nc" id="L221">				expressionAttributes.add(attribute);</span>
+<span class="nc" id="L222">				validationExpressions.add(attribute.getValidationExpression());</span>
+			}
+<span class="fc" id="L224">		}</span>
+
+<span class="fc" id="L226">		Set&lt;ConstraintViolation&gt; violations = new LinkedHashSet&lt;&gt;();</span>
+
+<span class="pc bpc" id="L228" title="1 of 2 branches missed.">		if (!validationExpressions.isEmpty())</span>
+		{
+<span class="nc" id="L230">			List&lt;Boolean&gt; results = expressionValidator.resolveBooleanExpressions(validationExpressions, entity);</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">			for (int i = 0; i &lt; results.size(); i++)</span>
+			{
+<span class="nc bnc" id="L233" title="All 2 branches missed.">				if (!results.get(i))</span>
+				{
+<span class="nc" id="L235">					violations.add(createConstraintViolation(entity, expressionAttributes.get(i), meta,</span>
+<span class="nc" id="L236">							format(&quot;Offended validation expression: %s&quot;, validationExpressions.get(i))));</span>
+				}
+			}
+		}
+
+<span class="fc" id="L241">		return violations;</span>
+	}
+
+	private ConstraintViolation checkEmail(Entity entity, Attribute attribute, EntityType entityType)
+	{
+<span class="nc" id="L246">		String email = entity.getString(attribute.getName());</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">		if (email == null)</span>
+		{
+<span class="nc" id="L249">			return null;</span>
+		}
+
+<span class="nc bnc" id="L252" title="All 2 branches missed.">		if (emailValidator == null)</span>
+		{
+<span class="nc" id="L254">			emailValidator = new EmailValidator();</span>
+		}
+
+<span class="nc bnc" id="L257" title="All 2 branches missed.">		if (!emailValidator.isValid(email, null))</span>
+		{
+<span class="nc" id="L259">			return createConstraintViolation(entity, attribute, entityType, &quot;Not a valid e-mail address.&quot;);</span>
+		}
+
+<span class="nc bnc" id="L262" title="All 2 branches missed.">		if (email.length() &gt; EMAIL.getMaxLength())</span>
+		{
+<span class="nc" id="L264">			return createConstraintViolation(entity, attribute, entityType);</span>
+		}
+
+<span class="nc" id="L267">		return null;</span>
+	}
+
+	private static ConstraintViolation checkBoolean(Entity entity, Attribute attribute, EntityType entityType)
+	{
+		try
+		{
+<span class="nc" id="L274">			entity.getBoolean(attribute.getName());</span>
+<span class="nc" id="L275">			return null;</span>
+		}
+<span class="nc" id="L277">		catch (Exception e)</span>
+		{
+<span class="nc" id="L279">			return createConstraintViolation(entity, attribute, entityType);</span>
+		}
+	}
+
+	private static ConstraintViolation checkDateTime(Entity entity, Attribute attribute, EntityType entityType)
+	{
+		try
+		{
+<span class="nc" id="L287">			entity.getInstant(attribute.getName());</span>
+<span class="nc" id="L288">			return null;</span>
+		}
+<span class="nc" id="L290">		catch (Exception e)</span>
+		{
+<span class="nc" id="L292">			return createConstraintViolation(entity, attribute, entityType);</span>
+		}
+	}
+
+	private static ConstraintViolation checkDate(Entity entity, Attribute attribute, EntityType entityType)
+	{
+		try
+		{
+<span class="nc" id="L300">			entity.getLocalDate(attribute.getName());</span>
+<span class="nc" id="L301">			return null;</span>
+		}
+<span class="nc" id="L303">		catch (Exception e)</span>
+		{
+<span class="nc" id="L305">			return createConstraintViolation(entity, attribute, entityType);</span>
+		}
+	}
+
+	private static ConstraintViolation checkDecimal(Entity entity, Attribute attribute, EntityType entityType)
+	{
+		try
+		{
+<span class="nc" id="L313">			entity.getDouble(attribute.getName());</span>
+<span class="nc" id="L314">			return null;</span>
+		}
+<span class="nc" id="L316">		catch (Exception e)</span>
+		{
+<span class="nc" id="L318">			return createConstraintViolation(entity, attribute, entityType);</span>
+		}
+	}
+
+	private ConstraintViolation checkHyperlink(Entity entity, Attribute attribute, EntityType entityType)
+	{
+<span class="nc" id="L324">		String link = entity.getString(attribute.getName());</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">		if (link == null)</span>
+		{
+<span class="nc" id="L327">			return null;</span>
+		}
+
+		try
+		{
+<span class="nc" id="L332">			new URI(link);</span>
+		}
+<span class="nc" id="L334">		catch (URISyntaxException e)</span>
+		{
+<span class="nc" id="L336">			return createConstraintViolation(entity, attribute, entityType, &quot;Not a valid hyperlink.&quot;);</span>
+<span class="nc" id="L337">		}</span>
+
+<span class="nc bnc" id="L339" title="All 2 branches missed.">		if (link.length() &gt; HYPERLINK.getMaxLength())</span>
+		{
+<span class="nc" id="L341">			return createConstraintViolation(entity, attribute, entityType);</span>
+		}
+
+<span class="nc" id="L344">		return null;</span>
+	}
+
+	private static ConstraintViolation checkInt(Entity entity, Attribute attribute, EntityType entityType)
+	{
+		try
+		{
+<span class="fc" id="L351">			entity.getInt(attribute.getName());</span>
+<span class="fc" id="L352">			return null;</span>
+		}
+<span class="nc" id="L354">		catch (Exception e)</span>
+		{
+<span class="nc" id="L356">			return createConstraintViolation(entity, attribute, entityType);</span>
+		}
+	}
+
+	private static ConstraintViolation checkLong(Entity entity, Attribute attribute, EntityType entityType)
+	{
+		try
+		{
+<span class="nc" id="L364">			entity.getLong(attribute.getName());</span>
+<span class="nc" id="L365">			return null;</span>
+		}
+<span class="nc" id="L367">		catch (Exception e)</span>
+		{
+<span class="nc" id="L369">			return createConstraintViolation(entity, attribute, entityType);</span>
+		}
+	}
+
+	private static ConstraintViolation checkRange(Entity entity, Attribute attr, EntityType entityType)
+	{
+<span class="fc" id="L375">		Range range = attr.getRange();</span>
+		Long value;
+<span class="pc bpc" id="L377" title="2 of 3 branches missed.">		switch (attr.getDataType())</span>
+		{
+			case INT:
+<span class="fc" id="L380">				Integer intValue = entity.getInt(attr.getName());</span>
+<span class="pc bpc" id="L381" title="1 of 2 branches missed.">				value = intValue != null ? intValue.longValue() : null;</span>
+<span class="fc" id="L382">				break;</span>
+			case LONG:
+<span class="nc" id="L384">				value = entity.getLong(attr.getName());</span>
+<span class="nc" id="L385">				break;</span>
+			default:
+<span class="nc" id="L387">				throw new RuntimeException(</span>
+<span class="nc" id="L388">						format(&quot;Range not allowed for data type [%s]&quot;, attr.getDataType().toString()));</span>
+		}
+<span class="pc bpc" id="L390" title="1 of 8 branches missed.">		if ((value != null) &amp;&amp; ((range.getMin() != null &amp;&amp; value &lt; range.getMin()) || (range.getMax() != null</span>
+<span class="fc bfc" id="L391" title="All 2 branches covered.">				&amp;&amp; value &gt; range.getMax())))</span>
+		{
+<span class="fc" id="L393">			return createConstraintViolation(entity, attr, entityType);</span>
+		}
+
+<span class="fc" id="L396">		return null;</span>
+	}
+
+	private static ConstraintViolation checkText(Entity entity, Attribute attribute, EntityType meta,
+			AttributeType fieldType)
+	{
+<span class="fc" id="L402">		String text = entity.getString(attribute.getName());</span>
+<span class="fc bfc" id="L403" title="All 2 branches covered.">		if (text == null)</span>
+		{
+<span class="fc" id="L405">			return null;</span>
+		}
+
+<span class="pc bpc" id="L408" title="1 of 2 branches missed.">		if (text.length() &gt; fieldType.getMaxLength())</span>
+		{
+<span class="nc" id="L410">			return createConstraintViolation(entity, attribute, meta);</span>
+		}
+
+<span class="fc" id="L413">		return null;</span>
+	}
+
+	private ConstraintViolation checkEnum(Entity entity, Attribute attribute, EntityType entityType)
+	{
+<span class="nc" id="L418">		String value = entity.getString(attribute.getName());</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">		if (value != null)</span>
+		{
+<span class="nc" id="L421">			List&lt;String&gt; enumOptions = attribute.getEnumOptions();</span>
+
+<span class="nc bnc" id="L423" title="All 2 branches missed.">			if (!enumOptions.contains(value))</span>
+			{
+<span class="nc" id="L425">				return createConstraintViolation(entity, attribute, entityType,</span>
+<span class="nc" id="L426">						&quot;Value must be one of &quot; + enumOptions.toString());</span>
+			}
+		}
+
+<span class="nc" id="L430">		return null;</span>
+	}
+
+	private static ConstraintViolation createConstraintViolation(Entity entity, Attribute attribute,
+			EntityType entityType)
+	{
+<span class="fc" id="L436">		String message = format(&quot;Invalid %s value '%s' for attribute '%s' of entity '%s'.&quot;,</span>
+<span class="fc" id="L437">				attribute.getDataType().toString().toLowerCase(), entity.get(attribute.getName()), attribute.getLabel(),</span>
+<span class="fc" id="L438">				entityType.getId());</span>
+
+<span class="fc" id="L440">		Range range = attribute.getRange();</span>
+<span class="pc bpc" id="L441" title="1 of 2 branches missed.">		if (range != null)</span>
+		{
+<span class="fc" id="L443">			message += format(&quot;Value must be between %d and %d&quot;, range.getMin(), range.getMax());</span>
+		}
+
+<span class="fc" id="L446">		Long maxLength = attribute.getDataType().getMaxLength();</span>
+<span class="pc bpc" id="L447" title="1 of 2 branches missed.">		if (maxLength != null)</span>
+		{
+<span class="nc" id="L449">			message += format(&quot;Value must be less than or equal to %d characters&quot;, maxLength);</span>
+		}
+
+<span class="fc" id="L452">		return new ConstraintViolation(message);</span>
+	}
+
+	private ConstraintViolation createConstraintViolation(Entity entity, Attribute attribute, EntityType entityType,
+			String message)
+	{
+<span class="fc" id="L458">		Object value = getDataValuesForType(entity, attribute);</span>
+<span class="fc bfc" id="L459" title="All 2 branches covered.">		String dataValue = value != null ? value.toString() : null;</span>
+<span class="fc" id="L460">		String fullMessage = format(&quot;Invalid [%s] value [%s] for attribute [%s] of entity [%s] with type [%s].&quot;,</span>
+<span class="fc" id="L461">				attribute.getDataType().toString().toLowerCase(), dataValue, attribute.getLabel(),</span>
+<span class="fc" id="L462">				entity.getLabelValue(), entityType.getId());</span>
+<span class="fc" id="L463">		fullMessage += &quot; &quot; + message;</span>
+
+<span class="fc" id="L465">		return new ConstraintViolation(fullMessage);</span>
+	}
+
+	/**
+	 * Package-private for testability.
+	 */
+	Object getDataValuesForType(Entity entity, Attribute attribute)
+	{
+<span class="fc" id="L473">		String attributeName = attribute.getName();</span>
+<span class="pc bpc" id="L474" title="4 of 11 branches missed.">		switch (attribute.getDataType())</span>
+		{
+			case DATE:
+<span class="nc" id="L477">				return entity.getLocalDate(attributeName);</span>
+			case DATE_TIME:
+<span class="nc" id="L479">				return entity.getInstant(attributeName);</span>
+			case BOOL:
+<span class="nc" id="L481">				return entity.getBoolean(attributeName);</span>
+			case DECIMAL:
+<span class="fc" id="L483">				return entity.getDouble(attributeName);</span>
+			case LONG:
+<span class="fc" id="L485">				return entity.getLong(attributeName);</span>
+			case INT:
+<span class="fc" id="L487">				return entity.getInt(attributeName);</span>
+			case HYPERLINK:
+			case ENUM:
+			case HTML:
+			case TEXT:
+			case SCRIPT:
+			case EMAIL:
+			case STRING:
+<span class="fc" id="L495">				return entity.getString(attributeName);</span>
+			case CATEGORICAL:
+			case XREF:
+			case FILE:
+<span class="fc" id="L499">				Entity refEntity = entity.getEntity(attributeName);</span>
+<span class="pc bpc" id="L500" title="1 of 2 branches missed.">				if (refEntity != null) return refEntity.getIdValue();</span>
+<span class="nc" id="L501">				else return &quot;&quot;;</span>
+			case CATEGORICAL_MREF:
+			case MREF:
+<span class="fc" id="L504">				List&lt;String&gt; mrefValues = newArrayList();</span>
+<span class="fc bfc" id="L505" title="All 2 branches covered.">				for (Entity mrefEntity : entity.getEntities(attributeName))</span>
+				{
+<span class="fc bfc" id="L507" title="All 2 branches covered.">					if (mrefEntity != null)</span>
+					{
+<span class="fc" id="L509">						mrefValues.add(mrefEntity.getIdValue().toString());</span>
+					}
+<span class="fc" id="L511">				}</span>
+<span class="fc" id="L512">				return mrefValues;</span>
+			case COMPOUND:
+<span class="nc" id="L514">				return &quot;&quot;;</span>
+			default:
+<span class="fc" id="L516">				return &quot;&quot;;</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

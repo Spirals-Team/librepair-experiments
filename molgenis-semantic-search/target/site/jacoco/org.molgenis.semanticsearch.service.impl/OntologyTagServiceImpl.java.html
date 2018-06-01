@@ -1,0 +1,316 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OntologyTagServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">semantic-search</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.semanticsearch.service.impl</a> &gt; <span class="el_source">OntologyTagServiceImpl.java</span></div><h1>OntologyTagServiceImpl.java</h1><pre class="source lang-java linenums">package org.molgenis.semanticsearch.service.impl;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.UnknownAttributeException;
+import org.molgenis.data.UnknownEntityException;
+import org.molgenis.data.meta.model.*;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.data.semantic.LabeledResource;
+import org.molgenis.data.semantic.Relation;
+import org.molgenis.data.semantic.SemanticTag;
+import org.molgenis.ontology.core.model.Ontology;
+import org.molgenis.ontology.core.model.OntologyTerm;
+import org.molgenis.ontology.core.service.OntologyService;
+import org.molgenis.security.core.runas.RunAsSystem;
+import org.molgenis.semanticsearch.repository.TagRepository;
+import org.molgenis.semanticsearch.semantic.OntologyTag;
+import org.molgenis.semanticsearch.service.OntologyTagService;
+import org.springframework.transaction.annotation.Transactional;
+
+import javax.validation.constraints.NotNull;
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static com.google.common.collect.LinkedHashMultimap.create;
+import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.data.meta.model.AttributeMetadata.ATTRIBUTE_META_DATA;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ATTRIBUTES;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.data.meta.model.PackageMetadata.PACKAGE;
+import static org.molgenis.data.meta.model.TagMetadata.TAG;
+
+/**
+ * Service to tag metadata with ontology terms.
+ */
+public class OntologyTagServiceImpl implements OntologyTagService
+{
+	private final DataService dataService;
+	private final TagRepository tagRepository;
+	private final OntologyService ontologyService;
+	private final IdGenerator idGenerator;
+	private final TagMetadata tagMetadata;
+
+	public OntologyTagServiceImpl(DataService dataService, OntologyService ontologyService, TagRepository tagRepository,
+			IdGenerator idGenerator, TagMetadata tagMetadata)
+<span class="fc" id="L54">	{</span>
+<span class="fc" id="L55">		this.dataService = requireNonNull(dataService);</span>
+<span class="fc" id="L56">		this.tagRepository = requireNonNull(tagRepository);</span>
+<span class="fc" id="L57">		this.ontologyService = requireNonNull(ontologyService);</span>
+<span class="fc" id="L58">		this.idGenerator = requireNonNull(idGenerator);</span>
+<span class="fc" id="L59">		this.tagMetadata = requireNonNull(tagMetadata);</span>
+<span class="fc" id="L60">	}</span>
+
+	@Override
+	public void removeAttributeTag(String entity, String attribute, String relationIRI, String ontologyTermIRI)
+	{
+<span class="nc" id="L65">		Entity attributeEntity = findAttributeEntity(entity, attribute);</span>
+<span class="nc" id="L66">		Iterable&lt;Entity&gt; tags = attributeEntity.getEntities(AttributeMetadata.TAGS);</span>
+<span class="nc" id="L67">		Iterable&lt;Entity&gt; newTags = StreamSupport.stream(tags.spliterator(), false)</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">												.filter(e -&gt; !isSameTag(relationIRI, ontologyTermIRI, e))</span>
+<span class="nc" id="L69">												.collect(Collectors.toList());</span>
+<span class="nc" id="L70">		attributeEntity.set(AttributeMetadata.TAGS, newTags);</span>
+<span class="nc" id="L71">		dataService.update(ATTRIBUTE_META_DATA, attributeEntity);</span>
+<span class="nc" id="L72">		updateEntityTypeEntityWithNewAttributeEntity(entity, attribute, attributeEntity);</span>
+<span class="nc" id="L73">	}</span>
+
+	@Override
+	public void removeAttributeTag(EntityType entityType, SemanticTag&lt;Attribute, OntologyTerm, Ontology&gt; removeTag)
+	{
+<span class="fc" id="L78">		Attribute attribute = removeTag.getSubject();</span>
+<span class="fc" id="L79">		Entity attributeEntity = findAttributeEntity(entityType.getId(), attribute.getName());</span>
+<span class="fc" id="L80">		List&lt;Entity&gt; tags = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">		for (Entity tagEntity : attributeEntity.getEntities(AttributeMetadata.TAGS))</span>
+		{
+<span class="fc" id="L83">			SemanticTag&lt;Attribute, OntologyTerm, Ontology&gt; tag = asTag(attribute, tagEntity);</span>
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">			if (!removeTag.equals(tag))</span>
+			{
+<span class="fc" id="L86">				tags.add(tagEntity);</span>
+			}
+<span class="fc" id="L88">		}</span>
+<span class="fc" id="L89">		attributeEntity.set(AttributeMetadata.TAGS, tags);</span>
+<span class="fc" id="L90">		dataService.update(ATTRIBUTE_META_DATA, attributeEntity);</span>
+<span class="fc" id="L91">	}</span>
+
+	@Override
+	@RunAsSystem
+	public Multimap&lt;Relation, OntologyTerm&gt; getTagsForAttribute(EntityType entityType, Attribute attribute)
+	{
+<span class="fc" id="L97">		Multimap&lt;Relation, OntologyTerm&gt; tags = create();</span>
+
+<span class="fc bfc" id="L99" title="All 2 branches covered.">		for (Tag tagEntity : attribute.getTags())</span>
+		{
+<span class="fc" id="L101">			SemanticTag&lt;Attribute, OntologyTerm, Ontology&gt; tag = asTag(attribute, tagEntity);</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">			if (tag != null)</span>
+			{
+<span class="fc" id="L104">				tags.put(tag.getRelation(), tag.getObject());</span>
+			}
+<span class="fc" id="L106">		}</span>
+<span class="fc" id="L107">		return tags;</span>
+	}
+
+	@Override
+	public Iterable&lt;SemanticTag&lt;Package, OntologyTerm, Ontology&gt;&gt; getTagsForPackage(Package aPackage)
+	{
+<span class="fc" id="L113">		Entity packageEntity = dataService.findOneById(PACKAGE, aPackage.getId());</span>
+
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">		if (packageEntity == null)</span>
+		{
+<span class="nc" id="L117">			throw new UnknownEntityException(PACKAGE, aPackage.getId());</span>
+		}
+
+<span class="fc" id="L120">		List&lt;SemanticTag&lt;Package, OntologyTerm, Ontology&gt;&gt; tags = Lists.newArrayList();</span>
+<span class="fc bfc" id="L121" title="All 2 branches covered.">		for (Entity tagEntity : packageEntity.getEntities(PackageMetadata.TAGS))</span>
+		{
+<span class="fc" id="L123">			tags.add(asTag(aPackage, tagEntity));</span>
+<span class="fc" id="L124">		}</span>
+
+<span class="fc" id="L126">		return tags;</span>
+	}
+
+	@Override
+	public void addAttributeTag(EntityType entityType, SemanticTag&lt;Attribute, OntologyTerm, Ontology&gt; tag)
+	{
+<span class="fc" id="L132">		Entity entity = findAttributeEntity(entityType.getId(), tag.getSubject().getName());</span>
+<span class="fc" id="L133">		List&lt;Entity&gt; tags = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L134" title="All 2 branches covered.">		for (Entity tagEntity : entity.getEntities(AttributeMetadata.TAGS))</span>
+		{
+<span class="fc" id="L136">			tags.add(tagEntity);</span>
+<span class="fc" id="L137">		}</span>
+<span class="fc" id="L138">		tags.add(getTagEntity(tag));</span>
+<span class="fc" id="L139">		entity.set(AttributeMetadata.TAGS, tags);</span>
+<span class="fc" id="L140">		dataService.update(ATTRIBUTE_META_DATA, entity);</span>
+<span class="fc" id="L141">	}</span>
+
+	@Override
+	public OntologyTag addAttributeTag(String entity, String attribute, String relationIRI,
+			List&lt;String&gt; ontologyTermIRIs)
+	{
+<span class="nc" id="L147">		boolean added = false;</span>
+<span class="nc" id="L148">		Entity attributeEntity = findAttributeEntity(entity, attribute);</span>
+<span class="nc" id="L149">		Tag tag = new Tag(tagMetadata);</span>
+<span class="nc" id="L150">		Stream&lt;OntologyTerm&gt; terms = ontologyTermIRIs.stream().map(ontologyService::getOntologyTerm);</span>
+<span class="nc" id="L151">		OntologyTerm combinedOntologyTerm = OntologyTerm.and(terms.toArray(OntologyTerm[]::new));</span>
+<span class="nc" id="L152">		Relation relation = Relation.forIRI(relationIRI);</span>
+<span class="nc" id="L153">		tag.setId(idGenerator.generateId());</span>
+<span class="nc" id="L154">		tag.setCodeSystem(null);</span>
+<span class="nc" id="L155">		tag.setRelationIri(relation.getIRI());</span>
+<span class="nc" id="L156">		tag.setRelationLabel(relation.getLabel());</span>
+<span class="nc" id="L157">		tag.setLabel(combinedOntologyTerm.getLabel());</span>
+<span class="nc" id="L158">		tag.setObjectIri(combinedOntologyTerm.getIRI());</span>
+<span class="nc" id="L159">		dataService.add(TAG, tag);</span>
+
+<span class="nc" id="L161">		Map&lt;String, Entity&gt; tags = Maps.newHashMap();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">		for (Entity attrTag : attributeEntity.getEntities(AttributeMetadata.TAGS))</span>
+		{
+<span class="nc" id="L164">			tags.put(attrTag.get(TagMetadata.OBJECT_IRI).toString(), attrTag);</span>
+<span class="nc" id="L165">		}</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">		if (!tags.containsKey(tag.get(TagMetadata.OBJECT_IRI).toString()))</span>
+		{
+<span class="nc" id="L168">			tags.put(tag.get(TagMetadata.OBJECT_IRI).toString(), tag);</span>
+<span class="nc" id="L169">			added = true;</span>
+		}
+<span class="nc" id="L171">		attributeEntity.set(AttributeMetadata.TAGS, tags.values());</span>
+<span class="nc" id="L172">		dataService.update(ATTRIBUTE_META_DATA, attributeEntity);</span>
+<span class="nc" id="L173">		updateEntityTypeEntityWithNewAttributeEntity(entity, attribute, attributeEntity);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">		return added ? OntologyTag.create(combinedOntologyTerm, relation) : null;</span>
+	}
+
+	public Entity getTagEntity(SemanticTag&lt;?, OntologyTerm, Ontology&gt; tag)
+	{
+<span class="fc" id="L179">		return tagRepository.getTagEntity(tag.getObject().getIRI(), tag.getObject().getLabel(), tag.getRelation(),</span>
+<span class="fc" id="L180">				tag.getCodeSystem().getIRI());</span>
+	}
+
+	@Override
+	@Transactional
+	public void removeAllTagsFromEntity(String entityTypeId)
+	{
+<span class="fc" id="L187">		EntityType entityTypedata = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L188">		Iterable&lt;Attribute&gt; attributes = entityTypedata.getAtomicAttributes();</span>
+
+<span class="fc bfc" id="L190" title="All 2 branches covered.">		for (Attribute attribute : attributes)</span>
+		{
+<span class="fc" id="L192">			Entity attributeEntity = findAttributeEntity(entityTypeId, attribute.getName());</span>
+<span class="fc" id="L193">			attributeEntity.set(AttributeMetadata.TAGS, emptyList());</span>
+<span class="fc" id="L194">			dataService.update(ATTRIBUTE_META_DATA, attributeEntity);</span>
+<span class="fc" id="L195">			updateEntityTypeEntityWithNewAttributeEntity(entityTypeId, attribute.getName(), attributeEntity);</span>
+<span class="fc" id="L196">		}</span>
+<span class="fc" id="L197">	}</span>
+
+	@Override
+	@Transactional
+	public Map&lt;String, OntologyTag&gt; tagAttributesInEntity(String entity, Map&lt;Attribute, OntologyTerm&gt; tags)
+	{
+<span class="fc" id="L203">		Map&lt;String, OntologyTag&gt; result = new LinkedHashMap&lt;&gt;();</span>
+<span class="pc bpc" id="L204" title="1 of 2 branches missed.">		for (Entry&lt;Attribute, OntologyTerm&gt; tag : tags.entrySet())</span>
+		{
+
+<span class="nc" id="L207">			OntologyTerm ontologyTerm = tag.getValue();</span>
+<span class="nc" id="L208">			OntologyTag ontologyTag = addAttributeTag(entity, tag.getKey().getName(),</span>
+<span class="nc" id="L209">					Relation.isAssociatedWith.getIRI(), Collections.singletonList(ontologyTerm.getIRI()));</span>
+<span class="nc" id="L210">			result.put(tag.getKey().getName(), ontologyTag);</span>
+<span class="nc" id="L211">		}</span>
+<span class="fc" id="L212">		return result;</span>
+	}
+
+	@Override
+	public void addEntityTag(SemanticTag&lt;EntityType, OntologyTerm, Ontology&gt; tag)
+	{
+<span class="nc" id="L218">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public void removeEntityTag(SemanticTag&lt;EntityType, OntologyTerm, Ontology&gt; tag)
+	{
+<span class="nc" id="L224">		throw new UnsupportedOperationException();</span>
+	}
+
+	@Override
+	public Iterable&lt;SemanticTag&lt;EntityType, LabeledResource, LabeledResource&gt;&gt; getTagsForEntity(EntityType entityType)
+	{
+<span class="nc" id="L230">		throw new UnsupportedOperationException();</span>
+	}
+
+	/**
+	 * The attribute just got updated, but the entity does not know this yet. To reindex this document in elasticsearch,
+	 * update it.
+	 *
+	 * @param entity          name of the entity
+	 * @param attribute       the name of the attribute that got changed
+	 * @param attributeEntity the entity of the attribute that got changed
+	 */
+	private void updateEntityTypeEntityWithNewAttributeEntity(String entity, String attribute, Entity attributeEntity)
+	{
+<span class="fc" id="L243">		EntityType entityEntity = dataService.getEntityType(entity);</span>
+<span class="fc" id="L244">		Iterable&lt;Attribute&gt; attributes = entityEntity.getOwnAllAttributes();</span>
+<span class="fc" id="L245">		entityEntity.set(ATTRIBUTES, StreamSupport.stream(attributes.spliterator(), false)</span>
+<span class="pc bpc" id="L246" title="1 of 2 branches missed.">												  .map(att -&gt; att.getName().equals(attribute) ? attributeEntity : att)</span>
+<span class="fc" id="L247">												  .collect(Collectors.toList()));</span>
+<span class="fc" id="L248">		dataService.update(ENTITY_TYPE_META_DATA, entityEntity);</span>
+<span class="fc" id="L249">	}</span>
+
+	private boolean isSameTag(String relationIRI, String ontologyTermIRI, Entity e)
+	{
+<span class="nc bnc" id="L253" title="All 4 branches missed.">		return ontologyTermIRI.equals(e.getString(TagMetadata.OBJECT_IRI)) &amp;&amp; relationIRI.equals(</span>
+<span class="nc" id="L254">				e.getString(TagMetadata.RELATION_IRI));</span>
+	}
+
+	@RunAsSystem
+	private @NotNull
+	Entity findAttributeEntity(String entityTypeId, String attributeName)
+	{
+<span class="fc" id="L261">		EntityType entityTypeEntity = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L262">		Attribute attributeEntity = entityTypeEntity.getAttribute(attributeName);</span>
+
+<span class="pc bpc" id="L264" title="1 of 2 branches missed.">		if (attributeEntity == null)</span>
+		{
+<span class="nc" id="L266">			throw new UnknownAttributeException(entityTypeEntity, attributeName);</span>
+		}
+
+<span class="fc" id="L269">		return attributeEntity;</span>
+	}
+
+	private &lt;SubjectType&gt; SemanticTag&lt;SubjectType, OntologyTerm, Ontology&gt; asTag(SubjectType subjectType,
+			Entity tagEntity)
+	{
+<span class="fc" id="L275">		String identifier = tagEntity.getString(TagMetadata.ID);</span>
+<span class="fc" id="L276">		Relation relation = asRelation(tagEntity);</span>
+<span class="fc" id="L277">		Ontology ontology = asOntology(tagEntity);</span>
+<span class="fc" id="L278">		OntologyTerm ontologyTerm = asOntologyTerm(tagEntity);</span>
+<span class="pc bpc" id="L279" title="1 of 4 branches missed.">		if (relation == null || ontologyTerm == null)</span>
+		{
+<span class="fc" id="L281">			return null;</span>
+		}
+<span class="fc" id="L283">		return new SemanticTag&lt;&gt;(identifier, subjectType, relation, ontologyTerm, ontology);</span>
+	}
+
+	private static Relation asRelation(Entity tagEntity)
+	{
+<span class="fc" id="L288">		String relationIRI = tagEntity.getString(TagMetadata.RELATION_IRI);</span>
+<span class="pc bpc" id="L289" title="1 of 2 branches missed.">		if (relationIRI == null)</span>
+		{
+<span class="nc" id="L291">			return null;</span>
+		}
+<span class="fc" id="L293">		return Relation.forIRI(relationIRI);</span>
+	}
+
+	private OntologyTerm asOntologyTerm(Entity tagEntity)
+	{
+<span class="fc" id="L298">		String objectIRI = tagEntity.getString(TagMetadata.OBJECT_IRI);</span>
+<span class="pc bpc" id="L299" title="1 of 2 branches missed.">		if (objectIRI == null)</span>
+		{
+<span class="nc" id="L301">			return null;</span>
+		}
+<span class="fc" id="L303">		return ontologyService.getOntologyTerm(objectIRI);</span>
+	}
+
+	private Ontology asOntology(Entity tagEntity)
+	{
+<span class="fc" id="L308">		String codeSystemIRI = tagEntity.getString(TagMetadata.CODE_SYSTEM);</span>
+<span class="pc bpc" id="L309" title="1 of 2 branches missed.">		if (codeSystemIRI == null)</span>
+		{
+<span class="nc" id="L311">			return null;</span>
+		}
+<span class="fc" id="L313">		return ontologyService.getOntology(codeSystemIRI);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

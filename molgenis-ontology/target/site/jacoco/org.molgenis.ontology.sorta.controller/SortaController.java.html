@@ -1,0 +1,607 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SortaController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">ontology</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.ontology.sorta.controller</a> &gt; <span class="el_source">SortaController.java</span></div><h1>SortaController.java</h1><pre class="source lang-java linenums">package org.molgenis.ontology.sorta.controller;
+
+import com.google.common.collect.ImmutableMap;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.core.ui.menu.MenuReaderService;
+import org.molgenis.data.*;
+import org.molgenis.data.QueryRule.Operator;
+import org.molgenis.data.csv.CsvWriter;
+import org.molgenis.data.file.FileStore;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.EntityTypeFactory;
+import org.molgenis.data.populate.IdGenerator;
+import org.molgenis.data.rest.EntityCollectionResponse;
+import org.molgenis.data.rest.EntityPager;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.EntityTypePermission;
+import org.molgenis.data.security.auth.User;
+import org.molgenis.data.security.permission.PermissionSystemService;
+import org.molgenis.data.support.DynamicEntity;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.jobs.model.JobExecutionMetaData;
+import org.molgenis.ontology.core.meta.OntologyTermMetaData;
+import org.molgenis.ontology.core.service.OntologyService;
+import org.molgenis.ontology.sorta.job.SortaJobExecution;
+import org.molgenis.ontology.sorta.job.SortaJobExecutionFactory;
+import org.molgenis.ontology.sorta.job.SortaJobFactory;
+import org.molgenis.ontology.sorta.job.SortaJobImpl;
+import org.molgenis.ontology.sorta.meta.MatchingTaskContentMetaData;
+import org.molgenis.ontology.sorta.meta.SortaJobExecutionMetaData;
+import org.molgenis.ontology.sorta.repo.SortaCsvRepository;
+import org.molgenis.ontology.sorta.request.SortaServiceRequest;
+import org.molgenis.ontology.sorta.request.SortaServiceResponse;
+import org.molgenis.ontology.sorta.service.SortaService;
+import org.molgenis.ontology.sorta.service.impl.SortaServiceImpl;
+import org.molgenis.ontology.utils.SortaServiceUtil;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.security.core.runas.RunAsSystemAspect;
+import org.molgenis.security.user.UserAccountService;
+import org.molgenis.web.PluginController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.text.NumberFormat;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+import static java.util.Arrays.asList;
+import static java.util.Collections.singletonList;
+import static java.util.Objects.requireNonNull;
+import static org.apache.commons.lang3.StringUtils.isEmpty;
+import static org.apache.commons.lang3.StringUtils.isNotEmpty;
+import static org.molgenis.data.QueryRule.Operator.*;
+import static org.molgenis.data.Sort.Direction.DESC;
+import static org.molgenis.data.meta.AttributeType.XREF;
+import static org.molgenis.data.meta.model.EntityType.AttributeCopyMode.DEEP_COPY_ATTRS;
+import static org.molgenis.ontology.sorta.controller.SortaController.URI;
+import static org.molgenis.ontology.sorta.meta.MatchingTaskContentMetaData.*;
+import static org.molgenis.ontology.sorta.meta.SortaJobExecutionMetaData.SORTA_JOB_EXECUTION;
+import static org.molgenis.ontology.utils.SortaServiceUtil.getEntityAsMap;
+
+@Controller
+@RequestMapping(URI)
+public class SortaController extends PluginController
+{
+<span class="nc" id="L83">	private static final Logger LOG = LoggerFactory.getLogger(SortaController.class);</span>
+
+	public static final String ID = &quot;sorta&quot;;
+	public static final String URI = PluginController.PLUGIN_URI_PREFIX + ID;
+
+	private static final int BATCH_SIZE = 1000;
+	private static final String MODEL_KEY_MESSAGE = &quot;message&quot;;
+	public static final String MATCH_VIEW_NAME = &quot;sorta-match-view&quot;;
+	public static final double DEFAULT_THRESHOLD = 100.0;
+
+	private final OntologyService ontologyService;
+	private final SortaService sortaService;
+	private final DataService dataService;
+	private final UserAccountService userAccountService;
+	private final SortaJobFactory sortaMatchJobFactory;
+	private final ExecutorService taskExecutor;
+	private final FileStore fileStore;
+	private final UserPermissionEvaluator permissionService;
+	private final MenuReaderService menuReaderService;
+	private final IdGenerator idGenerator;
+	private final PermissionSystemService permissionSystemService;
+	private final MatchingTaskContentMetaData matchingTaskContentMetaData;
+	private final SortaJobExecutionMetaData sortaJobExecutionMetaData;
+	private final OntologyTermMetaData ontologyTermMetaData;
+	private final SortaJobExecutionFactory sortaJobExecutionFactory;
+	private final EntityTypeFactory entityTypeFactory;
+	private final AttributeFactory attrMetaFactory;
+
+	public SortaController(OntologyService ontologyService, SortaService sortaService,
+			SortaJobFactory sortaMatchJobFactory, ExecutorService taskExecutor, UserAccountService userAccountService,
+			FileStore fileStore, UserPermissionEvaluator permissionService, DataService dataService,
+			MenuReaderService menuReaderService, IdGenerator idGenerator,
+			PermissionSystemService permissionSystemService, MatchingTaskContentMetaData matchingTaskContentMetaData,
+			SortaJobExecutionMetaData sortaJobExecutionMetaData, OntologyTermMetaData ontologyTermMetaData,
+			SortaJobExecutionFactory sortaJobExecutionFactory, EntityTypeFactory entityTypeFactory,
+			AttributeFactory attrMetaFactory)
+	{
+<span class="nc" id="L120">		super(URI);</span>
+<span class="nc" id="L121">		this.ontologyService = requireNonNull(ontologyService);</span>
+<span class="nc" id="L122">		this.sortaService = requireNonNull(sortaService);</span>
+<span class="nc" id="L123">		this.sortaMatchJobFactory = requireNonNull(sortaMatchJobFactory);</span>
+<span class="nc" id="L124">		this.taskExecutor = requireNonNull(taskExecutor);</span>
+<span class="nc" id="L125">		this.userAccountService = requireNonNull(userAccountService);</span>
+<span class="nc" id="L126">		this.fileStore = requireNonNull(fileStore);</span>
+<span class="nc" id="L127">		this.permissionService = requireNonNull(permissionService);</span>
+<span class="nc" id="L128">		this.dataService = requireNonNull(dataService);</span>
+<span class="nc" id="L129">		this.menuReaderService = requireNonNull(menuReaderService);</span>
+<span class="nc" id="L130">		this.idGenerator = requireNonNull(idGenerator);</span>
+<span class="nc" id="L131">		this.permissionSystemService = requireNonNull(permissionSystemService);</span>
+<span class="nc" id="L132">		this.matchingTaskContentMetaData = requireNonNull(matchingTaskContentMetaData);</span>
+<span class="nc" id="L133">		this.sortaJobExecutionMetaData = requireNonNull(sortaJobExecutionMetaData);</span>
+<span class="nc" id="L134">		this.ontologyTermMetaData = requireNonNull(ontologyTermMetaData);</span>
+<span class="nc" id="L135">		this.sortaJobExecutionFactory = requireNonNull(sortaJobExecutionFactory);</span>
+<span class="nc" id="L136">		this.entityTypeFactory = requireNonNull(entityTypeFactory);</span>
+<span class="nc" id="L137">		this.attrMetaFactory = requireNonNull(attrMetaFactory);</span>
+<span class="nc" id="L138">	}</span>
+
+	@GetMapping
+	public String init(Model model)
+	{
+<span class="nc" id="L143">		model.addAttribute(&quot;existingTasks&quot;, getJobsForCurrentUser());</span>
+<span class="nc" id="L144">		return MATCH_VIEW_NAME;</span>
+	}
+
+	private SortaJobExecution findSortaJobExecution(String sortaJobExecutionId)
+	{
+<span class="nc" id="L149">		Fetch fetch = new Fetch();</span>
+<span class="nc" id="L150">		sortaJobExecutionMetaData.getAtomicAttributes().forEach(attr -&gt; fetch.field(attr.getName()));</span>
+<span class="nc" id="L151">		return RunAsSystemAspect.runAsSystem(</span>
+<span class="nc" id="L152">				() -&gt; dataService.findOneById(SORTA_JOB_EXECUTION, sortaJobExecutionId, fetch,</span>
+						SortaJobExecution.class));
+	}
+
+	@GetMapping(&quot;/jobs&quot;)
+	@ResponseBody
+	public List&lt;SortaJobExecution&gt; getJobs()
+	{
+<span class="nc" id="L160">		return getJobsForCurrentUser();</span>
+	}
+
+	@GetMapping(&quot;/newtask&quot;)
+	public String matchTask(Model model)
+	{
+<span class="nc" id="L166">		model.addAttribute(&quot;ontologies&quot;, ontologyService.getOntologies());</span>
+<span class="nc" id="L167">		return MATCH_VIEW_NAME;</span>
+	}
+
+	@PostMapping(&quot;/threshold/{sortaJobExecutionId}&quot;)
+	public String updateThreshold(@RequestParam(value = &quot;threshold&quot;) String threshold,
+			@PathVariable String sortaJobExecutionId, Model model)
+	{
+<span class="nc bnc" id="L174" title="All 2 branches missed.">		if (!StringUtils.isEmpty(threshold))</span>
+		{
+<span class="nc" id="L176">			SortaJobExecution sortaJobExecution = findSortaJobExecution(sortaJobExecutionId);</span>
+			try
+			{
+<span class="nc" id="L179">				User currentUser = userAccountService.getCurrentUser();</span>
+<span class="nc bnc" id="L180" title="All 4 branches missed.">				if (currentUser.isSuperuser() || sortaJobExecution.getUser().equals(currentUser.getUsername()))</span>
+				{
+<span class="nc" id="L182">					RunAsSystemAspect.runAsSystem(() -&gt;</span>
+					{
+<span class="nc" id="L184">						Double thresholdValue = Double.parseDouble(threshold);</span>
+<span class="nc" id="L185">						sortaJobExecution.setThreshold(thresholdValue);</span>
+<span class="nc" id="L186">						dataService.update(SORTA_JOB_EXECUTION, sortaJobExecution);</span>
+<span class="nc" id="L187">					});</span>
+				}
+			}
+<span class="nc" id="L190">			catch (NumberFormatException e)</span>
+			{
+<span class="nc" id="L192">				model.addAttribute(MODEL_KEY_MESSAGE, threshold + &quot; is illegal threshold value!&quot;);</span>
+			}
+<span class="nc" id="L194">			catch (Exception other)</span>
+			{
+<span class="nc" id="L196">				model.addAttribute(MODEL_KEY_MESSAGE, &quot;Error updating threshold: &quot; + other.getMessage());</span>
+<span class="nc" id="L197">			}</span>
+		}
+
+<span class="nc" id="L200">		return matchResult(sortaJobExecutionId, model);</span>
+	}
+
+	@GetMapping(&quot;/result/{sortaJobExecutionId}&quot;)
+	public String matchResult(@PathVariable(&quot;sortaJobExecutionId&quot;) String sortaJobExecutionId, Model model)
+	{
+<span class="nc" id="L206">		SortaJobExecution sortaJobExecution = findSortaJobExecution(sortaJobExecutionId);</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">		if (sortaJobExecution != null)</span>
+		{
+<span class="nc" id="L209">			model.addAttribute(&quot;sortaJobExecutionId&quot;, sortaJobExecution.getIdentifier());</span>
+<span class="nc" id="L210">			model.addAttribute(&quot;threshold&quot;, sortaJobExecution.getThreshold());</span>
+<span class="nc" id="L211">			model.addAttribute(&quot;ontologyIri&quot;, sortaJobExecution.getOntologyIri());</span>
+<span class="nc" id="L212">			model.addAttribute(&quot;numberOfMatched&quot;, countMatchedEntities(sortaJobExecution, true));</span>
+<span class="nc" id="L213">			model.addAttribute(&quot;numberOfUnmatched&quot;, countMatchedEntities(sortaJobExecution, false));</span>
+<span class="nc" id="L214">			return MATCH_VIEW_NAME;</span>
+		}
+		else
+		{
+<span class="nc" id="L218">			LOG.info(&quot;Job execution with id {} not found.&quot;, sortaJobExecutionId);</span>
+<span class="nc" id="L219">			model.addAttribute(MODEL_KEY_MESSAGE, &quot;Job execution not found.&quot;);</span>
+<span class="nc" id="L220">			return init(model);</span>
+		}
+	}
+
+	@GetMapping(&quot;/count/{sortaJobExecutionId}&quot;)
+	@ResponseBody
+	public Map&lt;String, Object&gt; countMatchResult(@PathVariable(&quot;sortaJobExecutionId&quot;) String sortaJobExecutionId)
+	{
+<span class="nc" id="L228">		SortaJobExecution sortaJobExecution = findSortaJobExecution(sortaJobExecutionId);</span>
+<span class="nc" id="L229">		return ImmutableMap.of(&quot;numberOfMatched&quot;, countMatchedEntities(sortaJobExecution, true), &quot;numberOfUnmatched&quot;,</span>
+<span class="nc" id="L230">				countMatchedEntities(sortaJobExecution, false));</span>
+	}
+
+	@PostMapping(&quot;/delete/{sortaJobExecutionId}&quot;)
+	@ResponseStatus(value = HttpStatus.OK)
+	public String deleteResult(@PathVariable(&quot;sortaJobExecutionId&quot;) String sortaJobExecutionId, Model model)
+	{
+<span class="nc" id="L237">		SortaJobExecution sortaJobExecution = findSortaJobExecution(sortaJobExecutionId);</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">		if (sortaJobExecution != null)</span>
+		{
+<span class="nc" id="L240">			User currentUser = userAccountService.getCurrentUser();</span>
+<span class="nc bnc" id="L241" title="All 4 branches missed.">			if (currentUser.isSuperuser() || sortaJobExecution.getUser().equals(currentUser.getUsername()))</span>
+			{
+<span class="nc" id="L243">				RunAsSystemAspect.runAsSystem(</span>
+<span class="nc" id="L244">						() -&gt; dataService.deleteById(SORTA_JOB_EXECUTION, sortaJobExecution.getIdentifier()));</span>
+<span class="nc" id="L245">				tryDeleteRepository(sortaJobExecution.getResultEntityName());</span>
+<span class="nc" id="L246">				tryDeleteRepository(sortaJobExecution.getSourceEntityName());</span>
+			}
+		}
+<span class="nc" id="L249">		return init(model);</span>
+	}
+
+	private void tryDeleteRepository(String entityTypeId)
+	{
+<span class="nc bnc" id="L254" title="All 4 branches missed.">		if (dataService.hasRepository(entityTypeId) &amp;&amp; permissionService.hasPermission(</span>
+				new EntityTypeIdentity(entityTypeId), EntityTypePermission.DELETE_METADATA))
+		{
+<span class="nc" id="L257">			RunAsSystemAspect.runAsSystem(() -&gt; deleteRepository(entityTypeId));</span>
+		}
+		else
+		{
+<span class="nc" id="L261">			LOG.info(&quot;Unable to delete repository {}&quot;, entityTypeId);</span>
+		}
+<span class="nc" id="L263">	}</span>
+
+	private void deleteRepository(String entityTypeId)
+	{
+		try
+		{
+<span class="nc" id="L269">			dataService.getMeta().deleteEntityType(entityTypeId);</span>
+<span class="nc" id="L270">			LOG.info(&quot;Deleted repository {}&quot;, entityTypeId);</span>
+		}
+<span class="nc" id="L272">		catch (Exception ex)</span>
+		{
+<span class="nc" id="L274">			LOG.error(&quot;Failed to delete existing writable repository {}&quot;, entityTypeId);</span>
+<span class="nc" id="L275">		}</span>
+<span class="nc" id="L276">	}</span>
+
+	@PostMapping(&quot;/match/retrieve&quot;)
+	@ResponseBody
+	public EntityCollectionResponse retrieveSortaJobResults(@RequestBody SortaServiceRequest sortaServiceRequest)
+	{
+<span class="nc" id="L282">		List&lt;Map&lt;String, Object&gt;&gt; entityMaps = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L283">		String sortaJobExecutionId = sortaServiceRequest.getSortaJobExecutionId();</span>
+<span class="nc" id="L284">		String filterQuery = sortaServiceRequest.getFilterQuery();</span>
+<span class="nc" id="L285">		String ontologyIri = sortaServiceRequest.getOntologyIri();</span>
+<span class="nc" id="L286">		EntityPager entityPager = sortaServiceRequest.getEntityPager();</span>
+<span class="nc" id="L287">		SortaJobExecution sortaJobExecution = findSortaJobExecution(sortaJobExecutionId);</span>
+<span class="nc" id="L288">		String resultEntityName = sortaJobExecution.getResultEntityName();</span>
+<span class="nc" id="L289">		double threshold = sortaJobExecution.getThreshold();</span>
+
+<span class="nc" id="L291">		boolean isMatched = sortaServiceRequest.isMatched();</span>
+
+<span class="nc" id="L293">		QueryRule queryRuleInputEntities = new QueryRule(</span>
+<span class="nc bnc" id="L294" title="All 4 branches missed.">				Arrays.asList(new QueryRule(VALIDATED, EQUALS, isMatched), new QueryRule(isMatched ? OR : AND),</span>
+<span class="nc" id="L295">						new QueryRule(SCORE, isMatched ? GREATER_EQUAL : LESS, threshold)));</span>
+
+<span class="nc" id="L297">		List&lt;QueryRule&gt; queryRuleInputEntitiesInOneMatchingTask = singletonList(queryRuleInputEntities);</span>
+
+		// Add filter to the query if query string is not empty
+<span class="nc bnc" id="L300" title="All 2 branches missed.">		if (isNotEmpty(filterQuery))</span>
+		{
+<span class="nc" id="L302">			Iterable&lt;String&gt; filteredInputTermIds = dataService.findAll(sortaJobExecution.getSourceEntityName(),</span>
+<span class="nc" id="L303">					new QueryImpl&lt;&gt;().search(filterQuery))</span>
+<span class="nc" id="L304">															   .map(inputEntity -&gt; inputEntity.getString(</span>
+																	   SortaServiceImpl.DEFAULT_MATCHING_IDENTIFIER))
+<span class="nc" id="L306">															   .collect(Collectors.toList());</span>
+<span class="nc" id="L307">			QueryRule previousQueryRule = new QueryRule(queryRuleInputEntitiesInOneMatchingTask);</span>
+<span class="nc" id="L308">			QueryRule queryRuleFilterInput = new QueryRule(MatchingTaskContentMetaData.INPUT_TERM, Operator.IN,</span>
+					filteredInputTermIds);
+<span class="nc" id="L310">			queryRuleInputEntitiesInOneMatchingTask = Arrays.asList(previousQueryRule, new QueryRule(Operator.AND),</span>
+					queryRuleFilterInput);
+		}
+
+<span class="nc" id="L314">		Query&lt;Entity&gt; query = new QueryImpl&lt;&gt;(queryRuleInputEntitiesInOneMatchingTask);</span>
+<span class="nc" id="L315">		long count = dataService.count(resultEntityName, query);</span>
+<span class="nc" id="L316">		int start = entityPager.getStart();</span>
+<span class="nc" id="L317">		int num = entityPager.getNum();</span>
+
+<span class="nc" id="L319">		Stream&lt;Entity&gt; findAll = dataService.findAll(sortaJobExecution.getResultEntityName(),</span>
+<span class="nc" id="L320">				query.offset(start).pageSize(num).sort(new Sort().on(VALIDATED, DESC).on(SCORE, DESC)));</span>
+<span class="nc" id="L321">		findAll.forEach(mappingEntity -&gt;</span>
+		{
+<span class="nc" id="L323">			Map&lt;String, Object&gt; outputEntity = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L324">			outputEntity.put(&quot;inputTerm&quot;, getEntityAsMap(mappingEntity.getEntity(INPUT_TERM)));</span>
+<span class="nc" id="L325">			outputEntity.put(&quot;matchedTerm&quot;, getEntityAsMap(mappingEntity));</span>
+<span class="nc" id="L326">			Object matchedTerm = mappingEntity.get(MATCHED_TERM);</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">			if (matchedTerm != null)</span>
+			{
+<span class="nc" id="L329">				outputEntity.put(&quot;ontologyTerm&quot;, SortaServiceUtil.getEntityAsMap(</span>
+<span class="nc" id="L330">						sortaService.getOntologyTermEntity(matchedTerm.toString(), ontologyIri)));</span>
+			}
+<span class="nc" id="L332">			entityMaps.add(outputEntity);</span>
+<span class="nc" id="L333">		});</span>
+
+<span class="nc" id="L335">		EntityPager pager = new EntityPager(start, num, count, null);</span>
+<span class="nc" id="L336">		return new EntityCollectionResponse(pager, entityMaps, &quot;/match/retrieve&quot;, ontologyTermMetaData,</span>
+				permissionService, dataService);
+	}
+
+	@PostMapping(&quot;/match&quot;)
+	public String match(@RequestParam(value = &quot;taskName&quot;) String jobName,
+			@RequestParam(value = &quot;selectOntologies&quot;) String ontologyIri,
+			@RequestParam(value = &quot;inputTerms&quot;) String inputTerms, Model model, HttpServletRequest httpServletRequest)
+			throws IOException
+	{
+<span class="nc bnc" id="L346" title="All 4 branches missed.">		if (isEmpty(ontologyIri) || isEmpty(inputTerms)) return init(model);</span>
+<span class="nc" id="L347">		ByteArrayInputStream inputStream = new ByteArrayInputStream(inputTerms.getBytes(&quot;UTF8&quot;));</span>
+<span class="nc" id="L348">		return startMatchJob(jobName, ontologyIri, model, httpServletRequest, inputStream);</span>
+	}
+
+	@PostMapping(value = &quot;/match/upload&quot;, headers = &quot;Content-Type=multipart/form-data&quot;)
+	public String upload(@RequestParam(value = &quot;taskName&quot;) String jobName,
+			@RequestParam(value = &quot;selectOntologies&quot;) String ontologyIri,
+			@RequestParam(value = &quot;file&quot;) MultipartFile file, Model model, HttpServletRequest httpServletRequest)
+			throws IOException
+	{
+<span class="nc bnc" id="L357" title="All 4 branches missed.">		if (isEmpty(ontologyIri) || file == null) return init(model);</span>
+<span class="nc" id="L358">		InputStream inputStream = file.getInputStream();</span>
+<span class="nc" id="L359">		return startMatchJob(jobName, ontologyIri, model, httpServletRequest, inputStream);</span>
+	}
+
+	@PostMapping(&quot;/match/entity&quot;)
+	@ResponseBody
+	public SortaServiceResponse findMatchingOntologyTerms(@RequestBody Map&lt;String, Object&gt; request)
+	{
+		// TODO: less obfuscated request object, let Spring do the matching
+<span class="nc bnc" id="L367" title="All 4 branches missed.">		if (request.containsKey(&quot;sortaJobExecutionId&quot;) &amp;&amp; !isEmpty(request.get(&quot;sortaJobExecutionId&quot;).toString())</span>
+<span class="nc bnc" id="L368" title="All 4 branches missed.">				&amp;&amp; request.containsKey(IDENTIFIER) &amp;&amp; !isEmpty(request.get(IDENTIFIER).toString()))</span>
+		{
+<span class="nc" id="L370">			String sortaJobExecutionId = request.get(&quot;sortaJobExecutionId&quot;).toString();</span>
+<span class="nc" id="L371">			SortaJobExecution sortaJobExecution = findSortaJobExecution(sortaJobExecutionId);</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">			if (sortaJobExecution == null) return new SortaServiceResponse(&quot;sortaJobExecutionId is invalid!&quot;);</span>
+
+<span class="nc" id="L374">			String inputTermIdentifier = request.get(IDENTIFIER).toString();</span>
+<span class="nc" id="L375">			Entity inputEntity = dataService.findOneById(sortaJobExecution.getSourceEntityName(), inputTermIdentifier);</span>
+
+<span class="nc bnc" id="L377" title="All 2 branches missed.">			if (inputEntity == null) return new SortaServiceResponse(&quot;inputTerm identifier is invalid!&quot;);</span>
+
+<span class="nc" id="L379">			return new SortaServiceResponse(inputEntity,</span>
+<span class="nc" id="L380">					sortaService.findOntologyTermEntities(sortaJobExecution.getOntologyIri(), inputEntity));</span>
+		}
+<span class="nc" id="L382">		return new SortaServiceResponse(</span>
+				&quot;Please check that sortaJobExecutionId and identifier keys exist in input and have nonempty value!&quot;);
+	}
+
+	private Entity toDownloadRow(SortaJobExecution sortaJobExecution, Entity resultEntity,
+			EntityType downloadEntityType)
+	{
+<span class="nc" id="L389">		NumberFormat format = NumberFormat.getNumberInstance();</span>
+<span class="nc" id="L390">		format.setMaximumFractionDigits(2);</span>
+<span class="nc" id="L391">		Entity inputEntity = resultEntity.getEntity(MatchingTaskContentMetaData.INPUT_TERM);</span>
+<span class="nc" id="L392">		Entity ontologyTermEntity = sortaService.getOntologyTermEntity(</span>
+<span class="nc" id="L393">				resultEntity.getString(MatchingTaskContentMetaData.MATCHED_TERM), sortaJobExecution.getOntologyIri());</span>
+
+<span class="nc" id="L395">		Entity row = new DynamicEntity(downloadEntityType);</span>
+<span class="nc" id="L396">		inputEntity.getAttributeNames().forEach(attributeName -&gt;</span>
+		{
+<span class="nc bnc" id="L398" title="All 2 branches missed.">			if (!attributeName.equalsIgnoreCase(SortaCsvRepository.ALLOWED_IDENTIFIER))</span>
+			{
+<span class="nc" id="L400">				row.set(attributeName, inputEntity.get(attributeName));</span>
+			}
+<span class="nc" id="L402">		});</span>
+<span class="nc bnc" id="L403" title="All 2 branches missed.">		if (ontologyTermEntity != null)</span>
+		{
+<span class="nc" id="L405">			row.set(OntologyTermMetaData.ONTOLOGY_TERM_NAME,</span>
+<span class="nc" id="L406">					ontologyTermEntity.getString(OntologyTermMetaData.ONTOLOGY_TERM_NAME));</span>
+<span class="nc" id="L407">			row.set(OntologyTermMetaData.ONTOLOGY_TERM_IRI,</span>
+<span class="nc" id="L408">					ontologyTermEntity.getString(OntologyTermMetaData.ONTOLOGY_TERM_IRI));</span>
+		}
+<span class="nc" id="L410">		row.set(MatchingTaskContentMetaData.VALIDATED, resultEntity.getBoolean(MatchingTaskContentMetaData.VALIDATED));</span>
+<span class="nc" id="L411">		Double score = resultEntity.getDouble(MatchingTaskContentMetaData.SCORE);</span>
+<span class="nc bnc" id="L412" title="All 2 branches missed.">		if (score != null)</span>
+		{
+<span class="nc" id="L414">			row.set(MatchingTaskContentMetaData.SCORE, format.format(score));</span>
+		}
+<span class="nc" id="L416">		return row;</span>
+	}
+
+	@GetMapping(&quot;/match/download/{sortaJobExecutionId}&quot;)
+	public void download(@PathVariable String sortaJobExecutionId, HttpServletResponse response) throws IOException
+	{
+<span class="nc" id="L422">		try (CsvWriter csvWriter = new CsvWriter(response.getOutputStream(), SortaServiceImpl.DEFAULT_SEPARATOR))</span>
+		{
+<span class="nc" id="L424">			SortaJobExecution sortaJobExecution = findSortaJobExecution(sortaJobExecutionId);</span>
+
+<span class="nc" id="L426">			response.setContentType(&quot;text/csv&quot;);</span>
+<span class="nc" id="L427">			response.addHeader(&quot;Content-Disposition&quot;, &quot;attachment; filename=&quot; + generateCsvFileName());</span>
+
+<span class="nc" id="L429">			List&lt;String&gt; columnHeaders = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L430">			EntityType targetMetadata = entityTypeFactory.create(&quot;SortaDownload&quot; + sortaJobExecutionId);</span>
+
+<span class="nc" id="L432">			EntityType sourceMetaData = dataService.getEntityType(sortaJobExecution.getSourceEntityName());</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">			for (Attribute attribute : sourceMetaData.getAttributes())</span>
+			{
+<span class="nc bnc" id="L435" title="All 2 branches missed.">				if (!attribute.getName().equalsIgnoreCase(SortaCsvRepository.ALLOWED_IDENTIFIER))</span>
+				{
+<span class="nc" id="L437">					columnHeaders.add(attribute.getName());</span>
+<span class="nc" id="L438">					targetMetadata.addAttribute(attrMetaFactory.create().setName(attribute.getName()));</span>
+				}
+<span class="nc" id="L440">			}</span>
+<span class="nc" id="L441">			columnHeaders.addAll(</span>
+<span class="nc" id="L442">					Arrays.asList(OntologyTermMetaData.ONTOLOGY_TERM_NAME, OntologyTermMetaData.ONTOLOGY_TERM_IRI,</span>
+							MatchingTaskContentMetaData.SCORE, MatchingTaskContentMetaData.VALIDATED));
+<span class="nc" id="L444">			targetMetadata.addAttribute(ontologyTermMetaData.getAttribute(OntologyTermMetaData.ONTOLOGY_TERM_NAME));</span>
+<span class="nc" id="L445">			targetMetadata.addAttribute(ontologyTermMetaData.getAttribute(OntologyTermMetaData.ONTOLOGY_TERM_IRI));</span>
+<span class="nc" id="L446">			targetMetadata.addAttribute(</span>
+<span class="nc" id="L447">					Attribute.newInstance(matchingTaskContentMetaData.getAttribute(MatchingTaskContentMetaData.SCORE),</span>
+							EntityType.AttributeCopyMode.SHALLOW_COPY_ATTRS, attrMetaFactory)
+<span class="nc" id="L449">							 .setDataType(AttributeType.STRING));</span>
+<span class="nc" id="L450">			targetMetadata.addAttribute(</span>
+<span class="nc" id="L451">					matchingTaskContentMetaData.getAttribute(MatchingTaskContentMetaData.VALIDATED));</span>
+
+<span class="nc" id="L453">			csvWriter.writeAttributeNames(columnHeaders);</span>
+
+<span class="nc" id="L455">			dataService.findAll(sortaJobExecution.getResultEntityName(), new QueryImpl&lt;&gt;())</span>
+<span class="nc" id="L456">					   .forEach(resultEntity -&gt; csvWriter.add(</span>
+<span class="nc" id="L457">							   toDownloadRow(sortaJobExecution, resultEntity, targetMetadata)));</span>
+		}
+<span class="nc" id="L459">	}</span>
+
+	private String startMatchJob(String jobName, String ontologyIri, Model model, HttpServletRequest httpServletRequest,
+			InputStream inputStream) throws IOException
+	{
+<span class="nc" id="L464">		String sessionId = httpServletRequest.getSession().getId();</span>
+<span class="nc" id="L465">		File uploadFile = fileStore.store(inputStream, sessionId</span>
+				+ &quot;.csv&quot;); // TODO determine whether multiple match jobs during the same session results in wrong file usage
+<span class="nc" id="L467">		String inputRepositoryName = idGenerator.generateId();</span>
+<span class="nc" id="L468">		SortaCsvRepository inputRepository = new SortaCsvRepository(inputRepositoryName, jobName + &quot; input&quot;, uploadFile,</span>
+				entityTypeFactory, attrMetaFactory);
+
+<span class="nc bnc" id="L471" title="All 2 branches missed.">		if (!validateFileHeader(inputRepository))</span>
+		{
+<span class="nc" id="L473">			model.addAttribute(MODEL_KEY_MESSAGE, &quot;The Name header is missing!&quot;);</span>
+<span class="nc" id="L474">			return matchTask(model);</span>
+		}
+
+<span class="nc bnc" id="L477" title="All 2 branches missed.">		if (!validateEmptyFileHeader(inputRepository))</span>
+		{
+<span class="nc" id="L479">			model.addAttribute(MODEL_KEY_MESSAGE, &quot;The empty header is not allowed!&quot;);</span>
+<span class="nc" id="L480">			return matchTask(model);</span>
+		}
+
+<span class="nc bnc" id="L483" title="All 2 branches missed.">		if (!validateInputFileContent(inputRepository))</span>
+		{
+<span class="nc" id="L485">			model.addAttribute(MODEL_KEY_MESSAGE, &quot;The content of input is empty!&quot;);</span>
+<span class="nc" id="L486">			return matchTask(model);</span>
+		}
+
+<span class="nc" id="L489">		SortaJobExecution jobExecution = createJobExecution(inputRepository, jobName, ontologyIri);</span>
+<span class="nc" id="L490">		SortaJobImpl sortaMatchJob = sortaMatchJobFactory.create(jobExecution);</span>
+<span class="nc" id="L491">		taskExecutor.submit(sortaMatchJob);</span>
+
+<span class="nc" id="L493">		return &quot;redirect:&quot; + getSortaServiceMenuUrl();</span>
+	}
+
+	private List&lt;SortaJobExecution&gt; getJobsForCurrentUser()
+	{
+<span class="nc" id="L498">		final List&lt;SortaJobExecution&gt; jobs = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L499">		User currentUser = userAccountService.getCurrentUser();</span>
+<span class="nc" id="L500">		Query&lt;SortaJobExecution&gt; query = dataService.query(SORTA_JOB_EXECUTION, SortaJobExecution.class)</span>
+<span class="nc" id="L501">													.eq(JobExecutionMetaData.USER, currentUser.getUsername());</span>
+<span class="nc" id="L502">		query.sort().on(JobExecutionMetaData.START_DATE, DESC);</span>
+<span class="nc" id="L503">		RunAsSystemAspect.runAsSystem(() -&gt; query.findAll().forEach(job -&gt;</span>
+		{
+			// TODO: fetch the user as well
+<span class="nc" id="L506">			job.set(JobExecutionMetaData.USER, currentUser.getUsername());</span>
+<span class="nc" id="L507">			jobs.add(job);</span>
+<span class="nc" id="L508">		}));</span>
+<span class="nc" id="L509">		return jobs;</span>
+	}
+
+	private SortaJobExecution createJobExecution(Repository&lt;Entity&gt; inputData, String jobName, String ontologyIri)
+	{
+<span class="nc" id="L514">		String resultEntityName = idGenerator.generateId();</span>
+
+<span class="nc" id="L516">		SortaJobExecution sortaJobExecution = sortaJobExecutionFactory.create();</span>
+<span class="nc" id="L517">		sortaJobExecution.setIdentifier(resultEntityName);</span>
+<span class="nc" id="L518">		sortaJobExecution.setName(jobName);</span>
+<span class="nc" id="L519">		sortaJobExecution.setUser(userAccountService.getCurrentUser());</span>
+<span class="nc" id="L520">		sortaJobExecution.setSourceEntityName(inputData.getName());</span>
+<span class="nc" id="L521">		sortaJobExecution.setDeleteUrl(getSortaServiceMenuUrl() + &quot;/delete/&quot; + resultEntityName);</span>
+<span class="nc" id="L522">		sortaJobExecution.setResultEntityName(resultEntityName);</span>
+<span class="nc" id="L523">		sortaJobExecution.setThreshold(DEFAULT_THRESHOLD);</span>
+<span class="nc" id="L524">		sortaJobExecution.setOntologyIri(ontologyIri);</span>
+
+<span class="nc" id="L526">		RunAsSystemAspect.runAsSystem(() -&gt;</span>
+		{
+<span class="nc" id="L528">			createInputRepository(inputData);</span>
+<span class="nc" id="L529">			createEmptyResultRepository(jobName, resultEntityName, inputData.getEntityType());</span>
+<span class="nc" id="L530">			dataService.add(SORTA_JOB_EXECUTION, sortaJobExecution);</span>
+<span class="nc" id="L531">		});</span>
+
+<span class="nc" id="L533">		EntityType resultEntityType = entityTypeFactory.create(resultEntityName);</span>
+<span class="nc" id="L534">		permissionSystemService.giveUserWriteMetaPermissions(asList(inputData.getEntityType(), resultEntityType));</span>
+
+<span class="nc" id="L536">		return sortaJobExecution;</span>
+	}
+
+	private void createEmptyResultRepository(String jobName, String resultEntityName, EntityType sourceMetaData)
+	{
+<span class="nc" id="L541">		EntityType resultEntityType = EntityType.newInstance(matchingTaskContentMetaData, DEEP_COPY_ATTRS,</span>
+				attrMetaFactory);
+<span class="nc" id="L543">		resultEntityType.setId(resultEntityName);</span>
+<span class="nc" id="L544">		resultEntityType.setPackage(null);</span>
+<span class="nc" id="L545">		resultEntityType.setAbstract(false);</span>
+<span class="nc" id="L546">		resultEntityType.addAttribute(attrMetaFactory.create()</span>
+<span class="nc" id="L547">													 .setName(INPUT_TERM)</span>
+<span class="nc" id="L548">													 .setDataType(XREF)</span>
+<span class="nc" id="L549">													 .setRefEntity(sourceMetaData)</span>
+<span class="nc" id="L550">													 .setDescription(&quot;Reference to the input term&quot;)</span>
+<span class="nc" id="L551">													 .setNillable(false));</span>
+<span class="nc" id="L552">		resultEntityType.setLabel(jobName + &quot; output&quot;);</span>
+<span class="nc" id="L553">		dataService.getMeta().addEntityType(resultEntityType);</span>
+<span class="nc" id="L554">	}</span>
+
+	private void createInputRepository(Repository&lt;Entity&gt; inputRepository)
+	{
+		// Add the original input dataset to database
+<span class="nc" id="L559">		dataService.getMeta().addEntityType(inputRepository.getEntityType());</span>
+
+<span class="nc" id="L561">		Repository&lt;Entity&gt; target = dataService.getRepository(inputRepository.getName());</span>
+<span class="nc" id="L562">		inputRepository.forEachBatched(entities -&gt; target.add(entities.stream()), BATCH_SIZE);</span>
+<span class="nc" id="L563">	}</span>
+
+	private long countMatchedEntities(SortaJobExecution sortaJobExecution, boolean isMatched)
+	{
+<span class="nc" id="L567">		double threshold = sortaJobExecution.getThreshold();</span>
+<span class="nc" id="L568">		QueryRule validatedRule = new QueryRule(MatchingTaskContentMetaData.VALIDATED, EQUALS, isMatched);</span>
+<span class="nc bnc" id="L569" title="All 2 branches missed.">		QueryRule thresholdRule = new QueryRule(MatchingTaskContentMetaData.SCORE, isMatched ? GREATER_EQUAL : LESS,</span>
+<span class="nc" id="L570">				threshold);</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">		QueryRule combinedRule = new QueryRule(</span>
+<span class="nc" id="L572">				asList(validatedRule, new QueryRule(isMatched ? OR : AND), thresholdRule));</span>
+
+<span class="nc" id="L574">		return dataService.count(sortaJobExecution.getResultEntityName(), new QueryImpl&lt;&gt;(combinedRule));</span>
+	}
+
+	private String generateCsvFileName()
+	{
+<span class="nc" id="L579">		SimpleDateFormat dateFormat = new SimpleDateFormat(&quot;yyyy-MM-dd HH:mm:ss&quot;);</span>
+<span class="nc" id="L580">		return &quot;match-result&quot; + &quot;_&quot; + dateFormat.format(new Date()) + &quot;.csv&quot;;</span>
+	}
+
+	private boolean validateFileHeader(Repository&lt;Entity&gt; repository)
+	{
+<span class="nc" id="L585">		return StreamSupport.stream(repository.getEntityType().getAttributes().spliterator(), false)</span>
+<span class="nc" id="L586">							.map(Attribute::getName)</span>
+<span class="nc" id="L587">							.anyMatch(name -&gt; name.equalsIgnoreCase(SortaServiceImpl.DEFAULT_MATCHING_NAME_FIELD));</span>
+	}
+
+	private boolean validateEmptyFileHeader(Repository&lt;Entity&gt; repository)
+	{
+<span class="nc" id="L592">		return StreamSupport.stream(repository.getEntityType().getAttributes().spliterator(), false)</span>
+<span class="nc" id="L593">							.map(Attribute::getName)</span>
+<span class="nc" id="L594">							.anyMatch(StringUtils::isNotBlank);</span>
+	}
+
+	private boolean validateInputFileContent(Repository&lt;Entity&gt; repository)
+	{
+<span class="nc" id="L599">		return repository.iterator().hasNext();</span>
+	}
+
+	private String getSortaServiceMenuUrl()
+	{
+<span class="nc" id="L604">		return menuReaderService.getMenu().findMenuItemPath(ID);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

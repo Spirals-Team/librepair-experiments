@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TagWizardController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">semantic-mapper</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.semanticmapper.controller</a> &gt; <span class="el_source">TagWizardController.java</span></div><h1>TagWizardController.java</h1><pre class="source lang-java linenums">package org.molgenis.semanticmapper.controller;
+
+import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.DataService;
+import org.molgenis.data.Entity;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.semantic.Relation;
+import org.molgenis.ontology.core.model.Ontology;
+import org.molgenis.ontology.core.model.OntologyTerm;
+import org.molgenis.ontology.core.service.OntologyService;
+import org.molgenis.semanticmapper.data.request.AddTagRequest;
+import org.molgenis.semanticmapper.data.request.AutoTagRequest;
+import org.molgenis.semanticmapper.data.request.GetOntologyTermRequest;
+import org.molgenis.semanticmapper.data.request.RemoveTagRequest;
+import org.molgenis.semanticsearch.semantic.Hit;
+import org.molgenis.semanticsearch.semantic.OntologyTag;
+import org.molgenis.semanticsearch.service.OntologyTagService;
+import org.molgenis.semanticsearch.service.SemanticSearchService;
+import org.molgenis.web.ErrorMessageResponse;
+import org.molgenis.web.PluginController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
+
+import javax.validation.Valid;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import static com.google.common.collect.ImmutableSortedSet.of;
+import static com.google.common.collect.Lists.newArrayList;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
+import static org.molgenis.data.meta.model.EntityTypeMetadata.ENTITY_TYPE_META_DATA;
+import static org.molgenis.semanticmapper.controller.TagWizardController.URI;
+
+@Controller
+@RequestMapping(URI)
+public class TagWizardController extends PluginController
+{
+<span class="nc" id="L48">	private static final Logger LOG = LoggerFactory.getLogger(TagWizardController.class);</span>
+
+	public static final String ID = &quot;tagwizard&quot;;
+	public static final String URI = PluginController.PLUGIN_URI_PREFIX + ID;
+
+	private static final String VIEW_TAG_WIZARD = &quot;view-tag-wizard&quot;;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private OntologyService ontologyService;
+
+	@Autowired
+	private OntologyTagService ontologyTagService;
+
+	@Autowired
+	private SemanticSearchService semanticSearchService;
+
+	public TagWizardController()
+	{
+<span class="nc" id="L69">		super(URI);</span>
+<span class="nc" id="L70">	}</span>
+
+	/**
+	 * Displays on tag wizard button press
+	 *
+	 * @param target The target entity name
+	 * @param model  the model
+	 * @return name of the tag wizard view
+	 */
+	@GetMapping
+	public String viewTagWizard(@RequestParam(required = false, value = &quot;selectedTarget&quot;) String target, Model model)
+	{
+<span class="nc" id="L82">		List&lt;String&gt; entityTypeIds = dataService.findAll(ENTITY_TYPE_META_DATA, EntityType.class)</span>
+<span class="nc" id="L83">												.map(EntityType::getId)</span>
+<span class="nc" id="L84">												.collect(toList());</span>
+
+<span class="nc bnc" id="L86" title="All 2 branches missed.">		if (StringUtils.isEmpty(target))</span>
+		{
+<span class="nc" id="L88">			Optional&lt;String&gt; findFirst = entityTypeIds.stream().findFirst();</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">			if (findFirst.isPresent())</span>
+			{
+<span class="nc" id="L91">				target = findFirst.get();</span>
+			}
+		}
+
+<span class="nc bnc" id="L95" title="All 2 branches missed.">		if (StringUtils.isEmpty(target))</span>
+		{
+<span class="nc" id="L97">			throw new IllegalStateException(&quot;There are no entities available!&quot;);</span>
+		}
+
+<span class="nc" id="L100">		List&lt;Ontology&gt; ontologies = ontologyService.getOntologies();</span>
+<span class="nc" id="L101">		EntityType emd = dataService.getEntityType(target);</span>
+<span class="nc" id="L102">		List&lt;Attribute&gt; attributes = newArrayList(emd.getAttributes());</span>
+<span class="nc" id="L103">		Map&lt;String, Multimap&lt;Relation, OntologyTerm&gt;&gt; taggedAttributes = attributes.stream()</span>
+<span class="nc" id="L104">																				   .collect(toMap((Attribute::getName),</span>
+<span class="nc" id="L105">																						   (x -&gt; ontologyTagService.getTagsForAttribute(</span>
+																								   emd, x))));
+
+<span class="nc" id="L108">		model.addAttribute(&quot;entity&quot;, emd);</span>
+<span class="nc" id="L109">		model.addAttribute(&quot;entityTypeIds&quot;, entityTypeIds);</span>
+<span class="nc" id="L110">		model.addAttribute(&quot;attributes&quot;, attributes);</span>
+<span class="nc" id="L111">		model.addAttribute(&quot;ontologies&quot;, ontologies);</span>
+<span class="nc" id="L112">		model.addAttribute(&quot;taggedAttributes&quot;, taggedAttributes);</span>
+<span class="nc" id="L113">		model.addAttribute(&quot;relations&quot;, Relation.values());</span>
+
+<span class="nc" id="L115">		return VIEW_TAG_WIZARD;</span>
+	}
+
+	/**
+	 * Add a tag for a single attribute
+	 *
+	 * @param request the {@link AddTagRequest} containing the entityTypeId, attributeName, relationIRI and ontologyTermIRIs
+	 */
+	@PostMapping(&quot;/tagattribute&quot;)
+	public @ResponseBody
+	OntologyTag addTagAttribute(@Valid @RequestBody AddTagRequest request)
+	{
+<span class="nc" id="L127">		return ontologyTagService.addAttributeTag(request.getEntityTypeId(), request.getAttributeName(),</span>
+<span class="nc" id="L128">				request.getRelationIRI(), request.getOntologyTermIRIs());</span>
+	}
+
+	/**
+	 * Delete a single tag
+	 *
+	 * @param request the {@link RemoveTagRequest} containing entityTypeId, attributeName, relationIRI and ontologyTermIRI
+	 */
+	@PostMapping(&quot;/deletesingletag&quot;)
+	public @ResponseBody
+	void deleteSingleTag(@Valid @RequestBody RemoveTagRequest request)
+	{
+<span class="nc" id="L140">		ontologyTagService.removeAttributeTag(request.getEntityTypeId(), request.getAttributeName(),</span>
+<span class="nc" id="L141">				request.getRelationIRI(), request.getOntologyTermIRI());</span>
+<span class="nc" id="L142">	}</span>
+
+	/**
+	 * Clears all tags from every attribute in the current target entity
+	 *
+	 * @param entityTypeId The name of the {@link Entity}
+	 */
+	@PostMapping(&quot;/clearalltags&quot;)
+	public @ResponseBody
+	void clearAllTags(@RequestParam String entityTypeId)
+	{
+<span class="nc" id="L153">		ontologyTagService.removeAllTagsFromEntity(entityTypeId);</span>
+<span class="nc" id="L154">	}</span>
+
+	/**
+	 * Automatically tags all attributes in the current entity using Lucene lexical matching. Stores the tags in the
+	 * OntologyTag Repository.
+	 *
+	 * @param request containing the entityTypeId and selected ontology identifiers
+	 * @return A {@link Map} containing Attribute name and a Map of Tag iri and label
+	 */
+	@PostMapping(&quot;/autotagattributes&quot;)
+	public @ResponseBody
+	Map&lt;String, OntologyTag&gt; autoTagAttributes(@Valid @RequestBody AutoTagRequest request)
+	{
+<span class="nc" id="L167">		Map&lt;Attribute, Hit&lt;OntologyTerm&gt;&gt; autoGeneratedTags = semanticSearchService.findTags(request.getEntityTypeId(),</span>
+<span class="nc" id="L168">				request.getOntologyIds());</span>
+
+<span class="nc" id="L170">		return ontologyTagService.tagAttributesInEntity(request.getEntityTypeId(),</span>
+<span class="nc" id="L171">				Maps.transformValues(autoGeneratedTags, Hit::getResult));</span>
+	}
+
+	/**
+	 * Returns ontology terms based on a search term and a selected ontology
+	 *
+	 * @param request Containing ontology identifiers and a search term
+	 * @return A {@link List} of {@link OntologyTerm}s
+	 */
+	@PostMapping(&quot;/getontologyterms&quot;)
+	public @ResponseBody
+	List&lt;OntologyTerm&gt; getAllOntologyTerms(@Valid @RequestBody GetOntologyTermRequest request)
+	{
+<span class="nc" id="L184">		return ontologyService.findOntologyTerms(request.getOntologyIds(), of(request.getSearchTerm()), 100);</span>
+	}
+
+	@ExceptionHandler(RuntimeException.class)
+	@ResponseBody
+	@ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+	public ErrorMessageResponse handleRuntimeException(RuntimeException e)
+	{
+<span class="nc" id="L192">		LOG.error(e.getMessage(), e);</span>
+<span class="nc" id="L193">		return new ErrorMessageResponse(new ErrorMessageResponse.ErrorMessage(</span>
+<span class="nc" id="L194">				&quot;An error occurred. Please contact the administrator.&lt;br /&gt;Message:&quot; + e.getMessage()));</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

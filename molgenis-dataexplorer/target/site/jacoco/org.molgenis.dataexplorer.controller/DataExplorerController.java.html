@@ -1,0 +1,473 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataExplorerController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">dataexplorer</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.dataexplorer.controller</a> &gt; <span class="el_source">DataExplorerController.java</span></div><h1>DataExplorerController.java</h1><pre class="source lang-java linenums">package org.molgenis.dataexplorer.controller;
+
+import com.google.gson.Gson;
+import freemarker.core.ParseException;
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.core.ui.menu.MenuReaderService;
+import org.molgenis.data.*;
+import org.molgenis.data.annotation.web.meta.AnnotationJobExecutionMetaData;
+import org.molgenis.data.meta.model.AttributeFactory;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.data.meta.model.Package;
+import org.molgenis.data.security.EntityTypeIdentity;
+import org.molgenis.data.security.EntityTypePermission;
+import org.molgenis.data.security.exception.EntityTypePermissionDeniedException;
+import org.molgenis.data.support.EntityTypeUtils;
+import org.molgenis.data.support.QueryImpl;
+import org.molgenis.dataexplorer.controller.DataRequest.DownloadType;
+import org.molgenis.dataexplorer.download.DataExplorerDownloadHandler;
+import org.molgenis.dataexplorer.negotiator.NegotiatorController;
+import org.molgenis.dataexplorer.settings.DataExplorerSettings;
+import org.molgenis.genomebrowser.GenomeBrowserTrack;
+import org.molgenis.genomebrowser.service.GenomeBrowserService;
+import org.molgenis.jobs.model.JobExecutionMetaData;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.security.core.utils.SecurityUtils;
+import org.molgenis.settings.AppSettings;
+import org.molgenis.util.UnexpectedEnumException;
+import org.molgenis.web.PluginController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.MessageSource;
+import org.springframework.context.i18n.LocaleContextHolder;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.view.freemarker.FreeMarkerConfigurer;
+
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.net.URLDecoder;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import static org.molgenis.data.annotation.web.meta.AnnotationJobExecutionMetaData.ANNOTATION_JOB_EXECUTION;
+import static org.molgenis.data.util.EntityUtils.getTypedValue;
+import static org.molgenis.dataexplorer.controller.DataExplorerController.URI;
+import static org.molgenis.dataexplorer.controller.DataRequest.DownloadType.DOWNLOAD_TYPE_CSV;
+
+/**
+ * Controller class for the data explorer.
+ */
+@Controller
+@RequestMapping(URI)
+public class DataExplorerController extends PluginController
+{
+<span class="fc" id="L61">	private static final Logger LOG = LoggerFactory.getLogger(DataExplorerController.class);</span>
+
+	public static final String ID = &quot;dataexplorer&quot;;
+	public static final String URI = PluginController.PLUGIN_URI_PREFIX + ID;
+
+	public static final String MOD_ANNOTATORS = &quot;annotators&quot;;
+	public static final String MOD_ENTITIESREPORT = &quot;entitiesreport&quot;;
+	public static final String MOD_DATA = &quot;data&quot;;
+	public static final String NAVIGATOR = &quot;navigator&quot;;
+
+	@Autowired
+	private DataExplorerSettings dataExplorerSettings;
+
+	@Autowired
+	private NegotiatorController directoryController;
+
+	@Autowired
+	private DataService dataService;
+
+	@Autowired
+	private UserPermissionEvaluator permissionService;
+
+	@Autowired
+	private FreeMarkerConfigurer freemarkerConfigurer;
+
+	@Autowired
+	private Gson gson;
+
+	@Autowired
+	private MessageSource messageSource;
+
+	@Autowired
+	private AttributeFactory attrMetaFactory;
+
+	@Autowired
+	private GenomeBrowserService genomeBrowserService;
+
+	@Autowired
+	private MenuReaderService menuReaderService;
+
+	@Autowired
+	private AppSettings appSettings;
+
+	public DataExplorerController()
+	{
+<span class="fc" id="L106">		super(URI);</span>
+<span class="fc" id="L107">	}</span>
+
+	/**
+	 * Show the explorer page
+	 *
+	 * @return the view name
+	 */
+	@GetMapping
+	public String init(@RequestParam(value = &quot;entity&quot;, required = false) String selectedEntityName,
+			@RequestParam(value = &quot;entityId&quot;, required = false) String selectedEntityId, Model model)
+	{
+<span class="fc" id="L118">		StringBuilder message = new StringBuilder(&quot;&quot;);</span>
+
+<span class="fc" id="L120">		final boolean currentUserIsSu = SecurityUtils.currentUserIsSu();</span>
+
+<span class="fc" id="L122">		Map&lt;String, EntityType&gt; entitiesMeta = dataService.getMeta()</span>
+<span class="fc" id="L123">														  .getEntityTypes()</span>
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">														  .filter(entityType -&gt; !entityType.isAbstract())</span>
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">														  .filter(entityType -&gt; currentUserIsSu</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">																  || !EntityTypeUtils.isSystemEntity(entityType))</span>
+<span class="fc" id="L127">														  .sorted(Comparator.comparing(EntityType::getLabel))</span>
+<span class="fc" id="L128">														  .collect(Collectors.toMap(EntityType::getId,</span>
+<span class="pc" id="L129">																  Function.identity(), (e1, e2) -&gt; e2,</span>
+																  LinkedHashMap::new));
+
+<span class="fc" id="L132">		model.addAttribute(&quot;entitiesMeta&quot;, entitiesMeta);</span>
+<span class="pc bpc" id="L133" title="1 of 4 branches missed.">		if (selectedEntityId != null &amp;&amp; selectedEntityName == null)</span>
+		{
+<span class="nc" id="L135">			EntityType entityType = dataService.getMeta().getEntityType(selectedEntityId);</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">			if (entityType == null)</span>
+			{
+<span class="nc" id="L138">				message.append(&quot;Entity does not exist or you do not have permission on this entity&quot;);</span>
+			}
+			else
+			{
+<span class="nc" id="L142">				selectedEntityName = entityType.getId();</span>
+			}
+
+<span class="nc bnc" id="L145" title="All 2 branches missed.">			if (selectedEntityName != null)</span>
+			{
+<span class="nc" id="L147">				checkExistsAndPermission(selectedEntityName, message);</span>
+			}
+		}
+<span class="pc bpc" id="L150" title="1 of 2 branches missed.">		if (StringUtils.isNotEmpty(message.toString()))</span>
+		{
+<span class="nc" id="L152">			model.addAttribute(&quot;warningMessage&quot;, message.toString());</span>
+		}
+<span class="fc" id="L154">		model.addAttribute(&quot;selectedEntityName&quot;, selectedEntityName);</span>
+<span class="fc" id="L155">		model.addAttribute(&quot;isAdmin&quot;, currentUserIsSu);</span>
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">		boolean navigatorAvailable = menuReaderService.getMenu().findMenuItemPath(NAVIGATOR) != null;</span>
+<span class="pc bpc" id="L157" title="3 of 4 branches missed.">		model.addAttribute(&quot;showNavigatorLink&quot;, dataExplorerSettings.isShowNavigatorLink() &amp;&amp; navigatorAvailable);</span>
+
+<span class="fc bfc" id="L159" title="All 2 branches covered.">		model.addAttribute(&quot;hasTrackingId&quot;, null != appSettings.getGoogleAnalyticsTrackingId());</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">		model.addAttribute(&quot;hasMolgenisTrackingId&quot;, null != appSettings.getGoogleAnalyticsTrackingIdMolgenis());</span>
+
+<span class="fc" id="L162">		return &quot;view-dataexplorer&quot;;</span>
+	}
+
+	private void checkExistsAndPermission(@RequestParam(value = &quot;entity&quot;, required = false) String selectedEntityName,
+			StringBuilder message)
+	{
+<span class="nc" id="L168">		boolean entityExists = dataService.hasRepository(selectedEntityName);</span>
+<span class="nc" id="L169">		boolean hasEntityPermission = permissionService.hasPermission(new EntityTypeIdentity(selectedEntityName),</span>
+				EntityTypePermission.READ_METADATA);
+
+<span class="nc bnc" id="L172" title="All 4 branches missed.">		if (!(entityExists &amp;&amp; hasEntityPermission))</span>
+		{
+<span class="nc bnc" id="L174" title="All 2 branches missed.">			if (selectedEntityName != null)</span>
+			{
+<span class="nc" id="L176">				message.append(&quot;Entity does not exist or you do not have permission on this entity&quot;);</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">				if (!SecurityUtils.currentUserIsAuthenticated())</span>
+				{
+<span class="nc" id="L179">					message.append(&quot;, log in to view more entities&quot;);</span>
+				}
+				else
+				{
+<span class="nc" id="L183">					message.append(&quot;, please specify the fully qualified entity name&quot;);</span>
+				}
+			}
+		}
+<span class="nc" id="L187">	}</span>
+
+	@GetMapping(&quot;/module/{moduleId}&quot;)
+	public String getModule(@PathVariable(&quot;moduleId&quot;) String moduleId, @RequestParam(&quot;entity&quot;) String entityTypeId,
+			Model model)
+	{
+		EntityType selectedEntityType;
+		Map&lt;String, GenomeBrowserTrack&gt; entityTracks;
+<span class="pc bpc" id="L195" title="3 of 4 branches missed.">		switch (moduleId)</span>
+		{
+			case MOD_DATA:
+<span class="nc" id="L198">				selectedEntityType = dataService.getMeta().getEntityTypeById(entityTypeId);</span>
+<span class="nc" id="L199">				entityTracks = genomeBrowserService.getGenomeBrowserTracks(selectedEntityType);</span>
+<span class="nc" id="L200">				model.addAttribute(&quot;genomeTracks&quot;, genomeBrowserService.getTracksJson(entityTracks));</span>
+				//if multiple tracks are available we assume chrom and pos attribute are the same
+<span class="nc bnc" id="L202" title="All 2 branches missed.">				if (!entityTracks.isEmpty())</span>
+				{
+					//FIXME: how to do this cleaner
+<span class="nc" id="L205">					GenomeBrowserTrack track = entityTracks.entrySet().iterator().next().getValue();</span>
+<span class="nc" id="L206">					model.addAttribute(&quot;pos_attr&quot;, track.getGenomeBrowserAttrs().getPos());</span>
+<span class="nc" id="L207">					model.addAttribute(&quot;chrom_attr&quot;, track.getGenomeBrowserAttrs().getChrom());</span>
+				}
+<span class="nc" id="L209">				model.addAttribute(&quot;showDirectoryButton&quot;, directoryController.showDirectoryButton(entityTypeId));</span>
+<span class="nc" id="L210">				model.addAttribute(&quot;NegotiatorEnabled&quot;, directoryController.showDirectoryButton(entityTypeId));</span>
+<span class="nc" id="L211">				break;</span>
+			case MOD_ENTITIESREPORT:
+				//TODO: figure out if we need to know pos and chrom attrs here
+<span class="nc" id="L214">				selectedEntityType = dataService.getMeta().getEntityTypeById(entityTypeId);</span>
+<span class="nc" id="L215">				entityTracks = genomeBrowserService.getGenomeBrowserTracks(selectedEntityType);</span>
+<span class="nc" id="L216">				model.addAttribute(&quot;genomeTracks&quot;, genomeBrowserService.getTracksJson(entityTracks));</span>
+<span class="nc" id="L217">				model.addAttribute(&quot;showDirectoryButton&quot;, directoryController.showDirectoryButton(entityTypeId));</span>
+<span class="nc" id="L218">				model.addAttribute(&quot;NegotiatorEnabled&quot;, directoryController.showDirectoryButton(entityTypeId));</span>
+
+<span class="nc" id="L220">				model.addAttribute(&quot;datasetRepository&quot;, dataService.getRepository(entityTypeId));</span>
+<span class="nc" id="L221">				model.addAttribute(&quot;viewName&quot;, dataExplorerSettings.getEntityReport(entityTypeId));</span>
+<span class="nc" id="L222">				break;</span>
+			case MOD_ANNOTATORS:
+				// throw exception rather than disable the tab, users can act on the message. Hiding the tab is less
+				// self-explanatory
+<span class="fc bfc" id="L226" title="All 2 branches covered.">				if (!permissionService.hasPermission(new EntityTypeIdentity(entityTypeId),</span>
+						EntityTypePermission.UPDATE_METADATA))
+				{
+<span class="fc" id="L229">					throw new EntityTypePermissionDeniedException(EntityTypePermission.UPDATE_METADATA, entityTypeId);</span>
+				}
+<span class="fc" id="L231">				Entity annotationRun = dataService.findOne(ANNOTATION_JOB_EXECUTION,</span>
+<span class="fc" id="L232">						new QueryImpl&lt;&gt;().eq(AnnotationJobExecutionMetaData.TARGET_NAME, entityTypeId)</span>
+<span class="fc" id="L233">										 .sort(new Sort(JobExecutionMetaData.START_DATE, Sort.Direction.DESC)));</span>
+<span class="fc" id="L234">				model.addAttribute(&quot;annotationRun&quot;, annotationRun);</span>
+<span class="fc" id="L235">				model.addAttribute(&quot;entityTypeId&quot;, entityTypeId);</span>
+				break;
+		}
+
+<span class="fc" id="L239">		return &quot;view-dataexplorer-mod-&quot; + moduleId; // TODO bad request in case of invalid module id</span>
+	}
+
+	@GetMapping(&quot;/copy&quot;)
+	@ResponseBody
+	public boolean showCopy(@RequestParam(&quot;entity&quot;) String entityTypeId)
+	{
+<span class="nc bnc" id="L246" title="All 2 branches missed.">		return permissionService.hasPermission(new EntityTypeIdentity(entityTypeId), EntityTypePermission.READ_DATA)</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">				&amp;&amp; dataService.getCapabilities(entityTypeId).contains(RepositoryCapability.WRITABLE);</span>
+	}
+
+	/**
+	 * Returns modules configuration for this entity based on current user permissions.
+	 */
+	@GetMapping(&quot;/modules&quot;)
+	@ResponseBody
+	public ModulesConfigResponse getModules(@RequestParam(&quot;entity&quot;) String entityTypeId)
+	{
+<span class="nc" id="L257">		boolean modAggregates = dataExplorerSettings.getModAggregates();</span>
+<span class="nc" id="L258">		boolean modAnnotators = dataExplorerSettings.getModAnnotators();</span>
+<span class="nc" id="L259">		boolean modData = dataExplorerSettings.getModData();</span>
+<span class="nc" id="L260">		boolean modReports = dataExplorerSettings.getModReports();</span>
+
+<span class="nc" id="L262">		ModulesConfigResponse modulesConfig = new ModulesConfigResponse();</span>
+<span class="nc" id="L263">		String aggregatesTitle = messageSource.getMessage(&quot;dataexplorer_aggregates_title&quot;, new Object[] {},</span>
+<span class="nc" id="L264">				LocaleContextHolder.getLocale());</span>
+<span class="nc bnc" id="L265" title="All 4 branches missed.">		if (modData &amp;&amp; permissionService.hasPermission(new EntityTypeIdentity(entityTypeId),</span>
+				EntityTypePermission.READ_DATA))
+		{
+<span class="nc" id="L268">			modulesConfig.add(new ModuleConfig(&quot;data&quot;, &quot;Data&quot;, &quot;grid-icon.png&quot;));</span>
+		}
+<span class="nc bnc" id="L270" title="All 4 branches missed.">		if (modAggregates &amp;&amp; dataService.getCapabilities(entityTypeId).contains(RepositoryCapability.AGGREGATEABLE)</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">				&amp;&amp; permissionService.hasPermission(new EntityTypeIdentity(entityTypeId),</span>
+				EntityTypePermission.AGGREGATE_DATA))
+		{
+<span class="nc" id="L274">			modulesConfig.add(new ModuleConfig(&quot;aggregates&quot;, aggregatesTitle, &quot;aggregate-icon.png&quot;));</span>
+		}
+<span class="nc bnc" id="L276" title="All 4 branches missed.">		if (modAnnotators &amp;&amp; permissionService.hasPermission(new EntityTypeIdentity(entityTypeId),</span>
+				EntityTypePermission.UPDATE_DATA))
+		{
+<span class="nc" id="L279">			modulesConfig.add(new ModuleConfig(&quot;annotators&quot;, &quot;Annotators&quot;, &quot;annotator-icon.png&quot;));</span>
+		}
+<span class="nc bnc" id="L281" title="All 4 branches missed.">		if (modReports &amp;&amp; permissionService.hasPermission(new EntityTypeIdentity(entityTypeId),</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">				EntityTypePermission.READ_DATA) &amp;&amp; permissionService.hasPermission(new EntityTypeIdentity(entityTypeId),</span>
+				EntityTypePermission.UPDATE_METADATA))
+		{
+<span class="nc" id="L285">			String modEntitiesReportName = dataExplorerSettings.getEntityReport(entityTypeId);</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">			if (modEntitiesReportName != null)</span>
+			{
+<span class="nc" id="L288">				modulesConfig.add(new ModuleConfig(MOD_ENTITIESREPORT, modEntitiesReportName, &quot;report-icon.png&quot;));</span>
+			}
+		}
+<span class="nc" id="L291">		return modulesConfig;</span>
+	}
+
+	@GetMapping(&quot;/navigatorLinks&quot;)
+	@ResponseBody
+	public List&lt;NavigatorLink&gt; getNavigatorLinks(@RequestParam(&quot;entity&quot;) String entityTypeId)
+	{
+<span class="fc" id="L298">		List&lt;NavigatorLink&gt; result = new LinkedList&lt;&gt;();</span>
+<span class="fc" id="L299">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L300">		String navigatorPath = menuReaderService.getMenu().findMenuItemPath(NAVIGATOR);</span>
+<span class="pc bpc" id="L301" title="1 of 2 branches missed.">		if (entityType != null)</span>
+		{
+<span class="fc" id="L303">			Package pack = entityType.getPackage();</span>
+<span class="fc" id="L304">			getNavigatorLinks(result, pack, navigatorPath);</span>
+
+			//add root navigator link
+<span class="fc" id="L307">			result.add(NavigatorLink.create(navigatorPath + &quot;/&quot;, &quot;glyphicon-home&quot;));</span>
+<span class="fc" id="L308">			Collections.reverse(result);</span>
+		}
+<span class="fc" id="L310">		return result;</span>
+	}
+
+	private void getNavigatorLinks(List&lt;NavigatorLink&gt; result, Package pack, String navigatorPath)
+	{
+<span class="fc bfc" id="L315" title="All 2 branches covered.">		if (pack != null)</span>
+		{
+<span class="fc" id="L317">			String label = pack.getLabel();</span>
+<span class="fc" id="L318">			String href = navigatorPath + &quot;/&quot; + pack.getId();</span>
+<span class="fc" id="L319">			result.add(NavigatorLink.create(href, label));</span>
+<span class="fc" id="L320">			pack = pack.getParent();</span>
+<span class="fc" id="L321">			getNavigatorLinks(result, pack, navigatorPath);</span>
+		}
+<span class="fc" id="L323">	}</span>
+
+	@PostMapping(&quot;/download&quot;)
+	public void download(@RequestParam(&quot;dataRequest&quot;) String dataRequestStr, HttpServletResponse response)
+			throws IOException
+	{
+<span class="nc" id="L329">		DataExplorerDownloadHandler download = new DataExplorerDownloadHandler(dataService, attrMetaFactory);</span>
+
+		// Workaround because binding with @RequestBody is not possible:
+		// http://stackoverflow.com/a/9970672
+<span class="nc" id="L333">		dataRequestStr = URLDecoder.decode(dataRequestStr, &quot;UTF-8&quot;);</span>
+<span class="nc" id="L334">		LOG.info(&quot;Download request: [&quot; + dataRequestStr + &quot;]&quot;);</span>
+<span class="nc" id="L335">		DataRequest dataRequest = gson.fromJson(dataRequestStr, DataRequest.class);</span>
+
+<span class="nc" id="L337">		final String fileName = getDownloadFilename(dataRequest.getEntityName(), LocalDateTime.now(),</span>
+<span class="nc" id="L338">				dataRequest.getDownloadType());</span>
+		ServletOutputStream outputStream;
+
+<span class="nc bnc" id="L341" title="All 3 branches missed.">		switch (dataRequest.getDownloadType())</span>
+		{
+			case DOWNLOAD_TYPE_CSV:
+<span class="nc" id="L344">				response.setContentType(&quot;text/csv&quot;);</span>
+<span class="nc" id="L345">				response.addHeader(&quot;Content-Disposition&quot;, &quot;attachment; filename=\&quot;&quot; + fileName + &quot;\&quot;&quot;);</span>
+
+<span class="nc" id="L347">				outputStream = response.getOutputStream();</span>
+<span class="nc" id="L348">				download.writeToCsv(dataRequest, outputStream, ',');</span>
+<span class="nc" id="L349">				break;</span>
+			case DOWNLOAD_TYPE_XLSX:
+<span class="nc" id="L351">				response.setContentType(&quot;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet&quot;);</span>
+<span class="nc" id="L352">				response.addHeader(&quot;Content-Disposition&quot;, &quot;attachment; filename=\&quot;&quot; + fileName + &quot;\&quot;&quot;);</span>
+
+<span class="nc" id="L354">				outputStream = response.getOutputStream();</span>
+<span class="nc" id="L355">				download.writeToExcel(dataRequest, outputStream);</span>
+<span class="nc" id="L356">				break;</span>
+			default:
+<span class="nc" id="L358">				throw new UnexpectedEnumException(dataRequest.getDownloadType());</span>
+		}
+<span class="nc" id="L360">	}</span>
+
+	public String getDownloadFilename(String entityTypeId, LocalDateTime localDateTime, DownloadType downloadType)
+	{
+<span class="fc" id="L364">		String timestamp = localDateTime.format(DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd_HH_mm_ss&quot;));</span>
+<span class="fc bfc" id="L365" title="All 2 branches covered.">		return String.format(&quot;%s_%s.%s&quot;, entityTypeId, timestamp, downloadType == DOWNLOAD_TYPE_CSV ? &quot;csv&quot; : &quot;xlsx&quot;);</span>
+	}
+
+	/**
+	 * Builds a model containing one entity and returns the entityReport ftl view
+	 *
+	 * @return entity report view
+	 * @throws Exception if an entity name or id is not found
+	 */
+	@PostMapping(&quot;/details&quot;)
+	public String viewEntityDetails(@RequestParam(value = &quot;entityTypeId&quot;) String entityTypeId,
+			@RequestParam(value = &quot;entityId&quot;) String entityId, Model model)
+	{
+<span class="fc" id="L378">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc" id="L379">		Object id = getTypedValue(entityId, entityType.getIdAttribute());</span>
+
+<span class="fc" id="L381">		model.addAttribute(&quot;entity&quot;, dataService.getRepository(entityTypeId).findOneById(id));</span>
+<span class="fc" id="L382">		model.addAttribute(&quot;entityType&quot;, entityType);</span>
+<span class="fc" id="L383">		model.addAttribute(&quot;viewName&quot;, getEntityReportViewName(entityTypeId));</span>
+
+		// Used to create a URL to a standalone report
+<span class="fc" id="L386">		model.addAttribute(&quot;showStandaloneReportUrl&quot;, dataExplorerSettings.getModStandaloneReports());</span>
+<span class="fc" id="L387">		model.addAttribute(&quot;entityTypeId&quot;, entityTypeId);</span>
+<span class="fc" id="L388">		model.addAttribute(&quot;entityId&quot;, entityId);</span>
+
+<span class="fc" id="L390">		return &quot;view-entityreport&quot;;</span>
+	}
+
+	/**
+	 * Builds a model containing one entity and returns standalone report ftl view
+	 *
+	 * @return standalone report view
+	 * @throws Exception                   if an entity name or id is not found
+	 * @throws MolgenisDataAccessException if an EntityType does not exist
+	 */
+	@GetMapping(&quot;/details/{entityTypeId}/{entityId}&quot;)
+	public String viewEntityDetailsById(@PathVariable(value = &quot;entityTypeId&quot;) String entityTypeId,
+			@PathVariable(value = &quot;entityId&quot;) String entityId, Model model) throws Exception
+	{
+<span class="fc" id="L404">		EntityType entityType = dataService.getEntityType(entityTypeId);</span>
+<span class="fc bfc" id="L405" title="All 2 branches covered.">		if (entityType == null)</span>
+		{
+<span class="fc" id="L407">			throw new MolgenisDataAccessException(</span>
+					&quot;EntityType with id [&quot; + entityTypeId + &quot;] does not exist. Did you use the correct URL?&quot;);
+		}
+<span class="fc" id="L410">		Object id = getTypedValue(entityId, entityType.getIdAttribute());</span>
+
+<span class="fc" id="L412">		model.addAttribute(&quot;entity&quot;, dataService.getRepository(entityTypeId).findOneById(id));</span>
+<span class="fc" id="L413">		model.addAttribute(&quot;entityType&quot;, entityType);</span>
+<span class="fc" id="L414">		model.addAttribute(&quot;entityTypeId&quot;, entityTypeId);</span>
+<span class="fc" id="L415">		model.addAttribute(&quot;viewName&quot;, getStandaloneReportViewName(entityTypeId));</span>
+
+<span class="fc" id="L417">		return &quot;view-standalone-report&quot;;</span>
+	}
+
+	private String getEntityReportViewName(String entityTypeId)
+	{
+		// check if entity report is set for this entity
+<span class="fc" id="L423">		String reportTemplate = dataExplorerSettings.getEntityReport(entityTypeId);</span>
+<span class="pc bpc" id="L424" title="1 of 2 branches missed.">		if (reportTemplate != null)</span>
+		{
+<span class="fc" id="L426">			String specificViewname = &quot;view-entityreport-specific-&quot; + reportTemplate;</span>
+<span class="pc bpc" id="L427" title="1 of 2 branches missed.">			if (viewExists(specificViewname))</span>
+			{
+<span class="fc" id="L429">				return specificViewname;</span>
+			}
+		}
+
+		// if there are no RuntimeProperty mappings, execute existing behaviour
+<span class="nc" id="L434">		final String specificViewname = &quot;view-entityreport-specific-&quot; + entityTypeId;</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">		if (viewExists(specificViewname))</span>
+		{
+<span class="nc" id="L437">			return specificViewname;</span>
+		}
+<span class="nc bnc" id="L439" title="All 2 branches missed.">		if (viewExists(&quot;view-entityreport-generic&quot;))</span>
+		{
+<span class="nc" id="L441">			return &quot;view-entityreport-generic&quot;;</span>
+		}
+<span class="nc" id="L443">		return &quot;view-entityreport-generic-default&quot;;</span>
+	}
+
+	private String getStandaloneReportViewName(String entityTypeId)
+	{
+<span class="fc" id="L448">		final String specificStandaloneReportViewName = &quot;view-standalone-report-specific-&quot; + entityTypeId;</span>
+<span class="pc bpc" id="L449" title="1 of 2 branches missed.">		if (viewExists(specificStandaloneReportViewName))</span>
+		{
+<span class="fc" id="L451">			return specificStandaloneReportViewName;</span>
+		}
+<span class="nc" id="L453">		return &quot;view-standalone-report-default&quot;;</span>
+	}
+
+	private boolean viewExists(String viewName)
+	{
+		try
+		{
+<span class="pc bpc" id="L460" title="1 of 2 branches missed.">			return freemarkerConfigurer.getConfiguration().getTemplate(viewName + &quot;.ftl&quot;) != null;</span>
+		}
+<span class="nc" id="L462">		catch (ParseException e)</span>
+		{
+<span class="nc" id="L464">			LOG.info(&quot;error parsing template: &quot;, e);</span>
+<span class="nc" id="L465">			return false;</span>
+		}
+<span class="nc" id="L467">		catch (IOException e)</span>
+		{
+<span class="nc" id="L469">			return false;</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

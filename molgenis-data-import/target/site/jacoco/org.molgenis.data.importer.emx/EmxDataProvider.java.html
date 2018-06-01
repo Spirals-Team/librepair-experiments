@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EmxDataProvider.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">data-import</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.data.importer.emx</a> &gt; <span class="el_source">EmxDataProvider.java</span></div><h1>EmxDataProvider.java</h1><pre class="source lang-java linenums">package org.molgenis.data.importer.emx;
+
+import org.apache.commons.lang3.StringUtils;
+import org.molgenis.data.*;
+import org.molgenis.data.importer.DataProvider;
+import org.molgenis.data.meta.AttributeType;
+import org.molgenis.data.meta.model.Attribute;
+import org.molgenis.data.meta.model.EntityType;
+import org.molgenis.util.UnexpectedEnumException;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Stream;
+
+import static java.lang.String.format;
+import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.StreamSupport.stream;
+import static org.molgenis.data.EntityManager.CreationMode.POPULATE;
+import static org.molgenis.data.meta.DefaultPackage.PACKAGE_DEFAULT;
+import static org.molgenis.data.meta.model.Package.PACKAGE_SEPARATOR;
+
+class EmxDataProvider implements DataProvider
+{
+	private final EmxImportJob job;
+	private final EntityManager entityManager;
+
+	EmxDataProvider(EmxImportJob job, EntityManager entityManager)
+<span class="fc" id="L29">	{</span>
+<span class="fc" id="L30">		this.job = requireNonNull(job);</span>
+<span class="fc" id="L31">		this.entityManager = requireNonNull(entityManager);</span>
+<span class="fc" id="L32">	}</span>
+
+	@Override
+	public Stream&lt;EntityType&gt; getEntityTypes()
+	{
+<span class="fc" id="L37">		return job.getParsedMetaData().getEntities().stream();</span>
+	}
+
+	@Override
+	public boolean hasEntities(EntityType entityType)
+	{
+<span class="fc bfc" id="L43" title="All 2 branches covered.">		if (job.getSource().hasRepository(entityType))</span>
+		{
+<span class="fc" id="L45">			return true;</span>
+		}
+<span class="fc bfc" id="L47" title="All 2 branches covered.">		else if (isDefaultPackageEntityType(entityType))</span>
+		{
+<span class="fc" id="L49">			String alternativeEntityTypeId = getDefaultPackageEntityTypeAlternativeId(entityType);</span>
+<span class="fc" id="L50">			return job.getSource().hasRepository(alternativeEntityTypeId);</span>
+		}
+		else
+		{
+<span class="fc" id="L54">			return false;</span>
+		}
+	}
+
+	@Override
+	public Stream&lt;Entity&gt; getEntities(EntityType entityType)
+	{
+<span class="fc" id="L61">		Repository&lt;Entity&gt; repository = job.getSource().getRepository(entityType);</span>
+<span class="pc bpc" id="L62" title="1 of 4 branches missed.">		if (repository == null &amp;&amp; isDefaultPackageEntityType(entityType))</span>
+		{
+<span class="fc" id="L64">			String alternativeEntityTypeId = getDefaultPackageEntityTypeAlternativeId(entityType);</span>
+<span class="fc" id="L65">			repository = job.getSource().getRepository(alternativeEntityTypeId);</span>
+		}
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">		if (repository == null)</span>
+		{
+<span class="nc" id="L69">			throw new UnknownRepositoryException(entityType.getId());</span>
+		}
+<span class="pc" id="L71">		return stream(repository.spliterator(), false).map(sourceEntity -&gt; toEntity(entityType, sourceEntity));</span>
+	}
+
+	private boolean isDefaultPackageEntityType(EntityType entityType)
+	{
+<span class="fc" id="L76">		return entityType.getId().startsWith(PACKAGE_DEFAULT + PACKAGE_SEPARATOR);</span>
+	}
+
+	private String getDefaultPackageEntityTypeAlternativeId(EntityType entityType)
+	{
+<span class="fc" id="L81">		return entityType.getId().substring(PACKAGE_DEFAULT.length() + PACKAGE_SEPARATOR.length());</span>
+	}
+
+	/**
+	 * Create an entity from the EMX entity
+	 *
+	 * @param entityType entity meta data
+	 * @param emxEntity  EMX entity
+	 * @return MOLGENIS entity
+	 */
+	private Entity toEntity(EntityType entityType, Entity emxEntity)
+	{
+<span class="nc" id="L93">		Entity entity = entityManager.create(entityType, POPULATE);</span>
+<span class="nc bnc" id="L94" title="All 2 branches missed.">		for (Attribute attr : entityType.getAtomicAttributes())</span>
+		{
+<span class="nc bnc" id="L96" title="All 4 branches missed.">			if (attr.getExpression() == null &amp;&amp; !attr.isMappedBy())</span>
+			{
+<span class="nc" id="L98">				String attrName = attr.getName();</span>
+<span class="nc" id="L99">				Object emxValue = emxEntity.get(attrName);</span>
+
+<span class="nc" id="L101">				AttributeType attrType = attr.getDataType();</span>
+<span class="nc bnc" id="L102" title="All 5 branches missed.">				switch (attrType)</span>
+				{
+					case BOOL:
+					case DATE:
+					case DATE_TIME:
+					case DECIMAL:
+					case EMAIL:
+					case ENUM:
+					case HTML:
+					case HYPERLINK:
+					case INT:
+					case LONG:
+					case SCRIPT:
+					case STRING:
+					case TEXT:
+<span class="nc bnc" id="L117" title="All 2 branches missed.">						Object value = emxValue != null ? DataConverter.convert(emxValue, attr) : null;</span>
+<span class="nc bnc" id="L118" title="All 8 branches missed.">						if ((!attr.isAuto() || value != null) &amp;&amp; (!attr.hasDefaultValue() || value != null))</span>
+						{
+<span class="nc" id="L120">							entity.set(attrName, value);</span>
+						}
+						break;
+					case CATEGORICAL:
+					case FILE:
+					case XREF:
+						// DataConverter.convert performs no conversion for reference types
+<span class="nc" id="L127">						Entity refEntity = toRefEntity(attr, emxValue);</span>
+
+						// do not set generated auto refEntities to null
+<span class="nc bnc" id="L130" title="All 8 branches missed.">						if ((!attr.isAuto() || refEntity != null) &amp;&amp; (!attr.hasDefaultValue() || refEntity != null))</span>
+						{
+<span class="nc" id="L132">							entity.set(attrName, refEntity);</span>
+						}
+						break;
+					case CATEGORICAL_MREF:
+					case MREF:
+						// DataConverter.convert performs no conversion for reference types
+<span class="nc" id="L138">						List&lt;Entity&gt; refEntities = toRefEntities(attr, emxValue);</span>
+
+						// do not set generated auto refEntities to null
+<span class="nc bnc" id="L141" title="All 2 branches missed.">						if (!refEntities.isEmpty())</span>
+						{
+<span class="nc" id="L143">							entity.set(attrName, refEntities);</span>
+						}
+						break;
+					case COMPOUND:
+<span class="nc" id="L147">						throw new RuntimeException(format(&quot;Illegal attribute type [%s]&quot;, attrType.toString()));</span>
+					default:
+<span class="nc" id="L149">						throw new UnexpectedEnumException(attrType);</span>
+				}
+			}
+<span class="nc" id="L152">		}</span>
+<span class="nc" id="L153">		return entity;</span>
+	}
+
+	private List&lt;Entity&gt; toRefEntities(Attribute attr, Object emxValue)
+	{
+		List&lt;Entity&gt; refEntities;
+<span class="nc bnc" id="L159" title="All 2 branches missed.">		if (emxValue != null)</span>
+		{
+<span class="nc bnc" id="L161" title="All 2 branches missed.">			if (emxValue instanceof Iterable&lt;?&gt;)</span>
+			{
+<span class="nc" id="L163">				List&lt;Entity&gt; mrefEntities = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">				for (Object emxValueItem : (Iterable&lt;?&gt;) emxValue)</span>
+				{
+					Entity entityValue;
+<span class="nc bnc" id="L167" title="All 2 branches missed.">					if (emxValueItem instanceof Entity)</span>
+					{
+<span class="nc" id="L169">						entityValue = toEntity(attr.getRefEntity(), (Entity) emxValueItem);</span>
+					}
+					else
+					{
+<span class="nc" id="L173">						EntityType xrefEntity = attr.getRefEntity();</span>
+<span class="nc" id="L174">						Object entityId = DataConverter.convert(emxValueItem, xrefEntity.getIdAttribute());</span>
+<span class="nc" id="L175">						entityValue = entityManager.getReference(xrefEntity, entityId);</span>
+					}
+<span class="nc" id="L177">					mrefEntities.add(entityValue);</span>
+<span class="nc" id="L178">				}</span>
+<span class="nc" id="L179">				refEntities = mrefEntities;</span>
+<span class="nc" id="L180">			}</span>
+			else
+			{
+<span class="nc" id="L183">				EntityType mrefEntity = attr.getRefEntity();</span>
+<span class="nc" id="L184">				Attribute refIdAttr = mrefEntity.getIdAttribute();</span>
+
+<span class="nc" id="L186">				String[] tokens = StringUtils.split(emxValue.toString(), ',');</span>
+<span class="nc" id="L187">				List&lt;Entity&gt; mrefEntities = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">				for (String token : tokens)</span>
+				{
+<span class="nc" id="L190">					Object entityId = DataConverter.convert(token.trim(), refIdAttr);</span>
+<span class="nc" id="L191">					mrefEntities.add(entityManager.getReference(mrefEntity, entityId));</span>
+				}
+<span class="nc" id="L193">				refEntities = mrefEntities;</span>
+<span class="nc" id="L194">			}</span>
+		}
+		else
+		{
+<span class="nc" id="L198">			refEntities = emptyList();</span>
+		}
+<span class="nc" id="L200">		return refEntities;</span>
+	}
+
+	private Entity toRefEntity(Attribute attr, Object emxValue)
+	{
+		Entity refEntity;
+<span class="nc bnc" id="L206" title="All 2 branches missed.">		if (emxValue != null)</span>
+		{
+<span class="nc bnc" id="L208" title="All 2 branches missed.">			if (emxValue instanceof Entity)</span>
+			{
+<span class="nc" id="L210">				refEntity = toEntity(attr.getRefEntity(), (Entity) emxValue);</span>
+			}
+			else
+			{
+<span class="nc" id="L214">				EntityType xrefEntity = attr.getRefEntity();</span>
+<span class="nc" id="L215">				Object entityId = DataConverter.convert(emxValue, xrefEntity.getIdAttribute());</span>
+<span class="nc" id="L216">				refEntity = entityManager.getReference(xrefEntity, entityId);</span>
+<span class="nc" id="L217">			}</span>
+		}
+		else
+		{
+<span class="nc" id="L221">			refEntity = null;</span>
+		}
+<span class="nc" id="L223">		return refEntity;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>

@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AppController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">app-manager</a> &gt; <a href="index.source.html" class="el_package">org.molgenis.app.manager.controller</a> &gt; <span class="el_source">AppController.java</span></div><h1>AppController.java</h1><pre class="source lang-java linenums">package org.molgenis.app.manager.controller;
+
+import org.molgenis.app.manager.exception.AppIsInactiveException;
+import org.molgenis.app.manager.model.AppResponse;
+import org.molgenis.app.manager.service.AppManagerService;
+import org.molgenis.core.ui.menu.MenuReaderService;
+import org.molgenis.data.plugin.model.PluginIdentity;
+import org.molgenis.data.plugin.model.PluginPermissionDeniedException;
+import org.molgenis.security.core.UserPermissionEvaluator;
+import org.molgenis.settings.AppSettings;
+import org.molgenis.web.PluginController;
+import org.springframework.context.i18n.LocaleContextHolder;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.util.FileCopyUtils;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.servlet.ModelAndView;
+import org.springframework.web.servlet.view.RedirectView;
+
+import javax.annotation.Nullable;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+
+import static java.net.URLConnection.guessContentTypeFromName;
+import static java.util.Objects.requireNonNull;
+import static org.molgenis.app.manager.controller.AppController.URI;
+import static org.molgenis.data.plugin.model.PluginPermission.VIEW_PLUGIN;
+import static org.springframework.http.HttpHeaders.CONTENT_DISPOSITION;
+
+@Controller
+@RequestMapping(URI)
+public class AppController extends PluginController
+{
+	public static final String ID = &quot;app&quot;;
+	public static final String URI = PluginController.PLUGIN_URI_PREFIX + ID;
+
+	private final AppManagerService appManagerService;
+	private final UserPermissionEvaluator userPermissionEvaluator;
+	private final AppSettings appSettings;
+	private final MenuReaderService menuReaderService;
+
+	public AppController(AppManagerService appManagerService, UserPermissionEvaluator userPermissionEvaluator,
+			AppSettings appSettings, MenuReaderService menuReaderService)
+	{
+<span class="fc" id="L51">		super(URI);</span>
+<span class="fc" id="L52">		this.appManagerService = requireNonNull(appManagerService);</span>
+<span class="fc" id="L53">		this.userPermissionEvaluator = requireNonNull(userPermissionEvaluator);</span>
+<span class="fc" id="L54">		this.appSettings = requireNonNull(appSettings);</span>
+<span class="fc" id="L55">		this.menuReaderService = requireNonNull(menuReaderService);</span>
+<span class="fc" id="L56">	}</span>
+
+	@GetMapping(&quot;/{pluginId}/**&quot;)
+	@Nullable
+	public ModelAndView serveApp(@PathVariable String pluginId, Model model, HttpServletRequest request,
+			HttpServletResponse response) throws IOException
+	{
+<span class="fc" id="L63">		PluginIdentity pluginIdentity = new PluginIdentity(pluginId);</span>
+<span class="fc bfc" id="L64" title="All 2 branches covered.">		if (!userPermissionEvaluator.hasPermission(pluginIdentity, VIEW_PLUGIN))</span>
+		{
+<span class="fc" id="L66">			throw new PluginPermissionDeniedException(pluginId, VIEW_PLUGIN);</span>
+		}
+
+<span class="fc" id="L69">		String wildCardPath = extractWildcardPath(request, pluginId);</span>
+<span class="fc bfc" id="L70" title="All 2 branches covered.">		if (wildCardPath.isEmpty())</span>
+		{
+<span class="fc" id="L72">			RedirectView redirectView = new RedirectView(findAppMenuURL(pluginId));</span>
+<span class="fc" id="L73">			redirectView.setExposePathVariables(false);</span>
+<span class="fc" id="L74">			return new ModelAndView(redirectView);</span>
+		}
+
+<span class="fc" id="L77">		AppResponse appResponse = appManagerService.getAppByUri(pluginId);</span>
+
+<span class="fc bfc" id="L79" title="All 2 branches covered.">		if (!appResponse.getIsActive())</span>
+		{
+<span class="fc" id="L81">			throw new AppIsInactiveException(pluginId);</span>
+		}
+<span class="fc bfc" id="L83" title="All 2 branches covered.">		else if (isResourceRequest(wildCardPath))</span>
+		{
+			// Copies resource to response and returns null to short circuit the template filter
+<span class="fc" id="L86">			serveAppResource(response, wildCardPath, appResponse);</span>
+<span class="fc" id="L87">			return null;</span>
+		}
+		else
+		{
+<span class="fc" id="L91">			return serveAppTemplate(pluginId, model, appResponse);</span>
+		}
+	}
+
+	private static boolean isResourceRequest(String wildCardPath)
+	{
+<span class="pc bpc" id="L97" title="2 of 6 branches missed.">		return wildCardPath.startsWith(&quot;/js/&quot;) || wildCardPath.startsWith(&quot;/css/&quot;) || wildCardPath.startsWith(&quot;/img/&quot;);</span>
+	}
+
+	private ModelAndView serveAppTemplate(@PathVariable String uri, Model model, AppResponse appResponse)
+	{
+<span class="fc" id="L102">		model.addAttribute(&quot;baseUrl&quot;, findAppMenuURL(uri));</span>
+<span class="fc" id="L103">		model.addAttribute(&quot;template&quot;, appResponse.getTemplateContent());</span>
+<span class="fc" id="L104">		model.addAttribute(&quot;lng&quot;, LocaleContextHolder.getLocale().getLanguage());</span>
+<span class="fc" id="L105">		model.addAttribute(&quot;fallbackLng&quot;, appSettings.getLanguageCode());</span>
+<span class="fc" id="L106">		model.addAttribute(&quot;app&quot;, appResponse);</span>
+
+<span class="fc" id="L108">		return new ModelAndView(&quot;view-app&quot;);</span>
+	}
+
+	private void serveAppResource(HttpServletResponse response, String wildCardPath, AppResponse appResponse)
+			throws IOException
+	{
+<span class="fc" id="L114">		File requestedResource = new File(appResponse.getResourceFolder() + wildCardPath);</span>
+<span class="fc" id="L115">		response.setContentType(guessMimeType(requestedResource.getName()));</span>
+<span class="fc" id="L116">		response.setContentLength((int) requestedResource.length());</span>
+<span class="fc" id="L117">		response.setHeader(CONTENT_DISPOSITION,</span>
+<span class="fc" id="L118">				&quot;attachment; filename=&quot; + requestedResource.getName().replace(&quot; &quot;, &quot;_&quot;));</span>
+
+<span class="fc" id="L120">		try (InputStream is = new FileInputStream(requestedResource))</span>
+		{
+<span class="fc" id="L122">			FileCopyUtils.copy(is, response.getOutputStream());</span>
+		}
+<span class="fc" id="L124">	}</span>
+
+	private static String extractWildcardPath(HttpServletRequest request, String key)
+	{
+<span class="fc" id="L128">		int index = request.getRequestURI().indexOf(key);</span>
+<span class="fc" id="L129">		return request.getRequestURI().substring(index + key.length());</span>
+	}
+
+	private String findAppMenuURL(String uri)
+	{
+<span class="fc" id="L134">		return menuReaderService.getMenu().findMenuItemPath(&quot;app/&quot; + uri + &quot;/&quot;);</span>
+	}
+
+	private static String guessMimeType(String fileName)
+	{
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">		if (fileName.endsWith(&quot;.js&quot;)) return &quot;application/javascript;charset=UTF-8&quot;;</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">		if (fileName.endsWith(&quot;.css&quot;)) return &quot;text/css;charset=UTF-8&quot;;</span>
+<span class="nc" id="L141">		return guessContentTypeFromName(fileName);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.1.201803210924</span></div></body></html>
