@@ -1,0 +1,1 @@
+ALTER TABLE categoria CHANGE COLUMN nome nome VARCHAR(100) NOT NULL;
