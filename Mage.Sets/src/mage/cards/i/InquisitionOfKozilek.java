@@ -1,0 +1,46 @@
+
+
+package mage.cards.i;
+
+import java.util.UUID;
+import mage.abilities.effects.common.discard.DiscardCardYouChooseTargetEffect;
+import mage.cards.CardImpl;
+import mage.cards.CardSetInfo;
+import mage.constants.CardType;
+import mage.constants.ComparisonType;
+import mage.constants.TargetController;
+import mage.filter.FilterCard;
+import mage.filter.predicate.Predicates;
+import mage.filter.predicate.mageobject.CardTypePredicate;
+import mage.filter.predicate.mageobject.ConvertedManaCostPredicate;
+import mage.target.TargetPlayer;
+
+/**
+ *
+ * @author BetaSteward_at_googlemail.com
+ */
+public final class InquisitionOfKozilek extends CardImpl {
+
+    private static final FilterCard filter = new FilterCard("nonland card with converted mana cost 3 or less");
+
+    static {
+        filter.add(Predicates.not(new CardTypePredicate(CardType.LAND)));
+        filter.add(new ConvertedManaCostPredicate(ComparisonType.FEWER_THAN, 4));
+    }
+
+    public InquisitionOfKozilek(UUID ownerId, CardSetInfo setInfo){
+        super(ownerId,setInfo,new CardType[]{CardType.SORCERY},"{B}");
+
+        this.getSpellAbility().addTarget(new TargetPlayer());
+        this.getSpellAbility().addEffect(new DiscardCardYouChooseTargetEffect(filter, TargetController.ANY));
+    }
+
+    public InquisitionOfKozilek(final InquisitionOfKozilek card) {
+        super(card);
+    }
+
+    @Override
+    public InquisitionOfKozilek copy() {
+        return new InquisitionOfKozilek(this);
+    }
+}
