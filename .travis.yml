@@ -1,0 +1,132 @@
+language: java
+jdk:
+  - oraclejdk8
+
+services:
+  - docker
+
+cache:
+  timeout: 604800 #1 week
+  directories:
+    - $HOME/.m2
+    - web/node_modules
+
+env:
+  - TEST=taskana-core DB=H2
+  - TEST=taskana-core DB=DB2_10_5
+  - TEST=taskana-core DB=DB2_11_1
+
+stage: "test #1"
+script:
+  - echo "abc"
+  - ./ci/prepare_db.sh $DB 
+  - mvn clean install -f lib/taskana-core 
+
+jobs:
+  include:
+    - language: node_js
+      node_js:
+        - 6
+      before_install: cd web
+      env:
+        - TEST=taskana-web
+      install: 
+        - npm install
+        - npm run build:prod 
+      script: 
+        - npm run test-phantom
+        - mvn clean install
+    
+    - stage: "test #2"
+      env:
+        - TEST=taskana-spring
+      script:
+        - mvn clean install -f lib/taskana-spring 
+   
+    - stage: "test #2"
+      env:
+        - TEST=taskana-cdi
+      script:
+        - mvn clean install -f lib/taskana-cdi
+
+    - stage: "test #2"
+      env:
+        - RELEASE=taskana-core
+      script:
+        - ./ci/release.sh lib/taskana-core $TRAVIS_TAG
+      if: (branch = master and not type = pull_request) or tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ 
+
+    - stage: "test #2"
+      env:
+        - RELEASE=taskana-web
+      script:
+        - ./ci/release.sh web $TRAVIS_TAG
+      if: (branch = master and not type = pull_request) or tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ 
+
+    - stage: "test #3"
+      env:
+        - TEST=taskana-spring-txtest
+      script:
+        - mvn clean install -f lib/taskana-spring-txtest
+
+    - stage: "test #3"
+      env:
+        - TEST=taskana-spring-example
+      script:
+        - mvn clean install -f lib/taskana-spring-example
+
+    - stage: "test #3"
+      env:
+        - TEST=taskana-cdi-example
+      script:
+        - mvn clean install -f lib/taskana-cdi-example
+
+    - stage: "test #3"
+      env:
+        - TEST=taskana-rest-spring
+      script:
+        - mvn clean install -f rest/taskana-rest-spring
+    
+    - stage: "test #3"
+      env:
+        - RELEASE=taskana-spring
+      script:
+        - ./ci/release.sh lib/taskana-spring $TRAVIS_TAG
+      if: (branch = master and not type = pull_request) or tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ 
+
+    - stage: "test #3"
+      env:
+        - RELEASE=taskana-cdi
+      script:
+        - ./ci/release.sh lib/taskana-cdi $TRAVIS_TAG
+      if: (branch = master and not type = pull_request) or tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ 
+    
+    - stage: "test #4"
+      env:
+        - TEST=taskana-rest-spring-example
+      script:
+        - mvn clean install -f rest/taskana-rest-spring-example
+
+    - stage: "test #4"
+      env:
+        - RELEASE=taskana-rest-spring
+      script:
+        - ./ci/release.sh rest/taskana-rest-spring $TRAVIS_TAG
+      if: (branch = master and not type = pull_request) or tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ 
+
+    - stage: "test #5"
+      env:
+        - DEPLOY=taskana-spring-rest-example
+      script:
+        - ./ci/rename-manifest $TRAVIS_TAG manifest.yml 
+        - ./ci/change_version rest/taskana-spring-rest-example $TRAVIS_TAG
+        - mvn clean install -f rest/taskana-spring-rest-example -DskipTests 
+      deploy:
+        provider: cloudfoundry
+        username: holger.hagen@novatec-gmbh.de
+        password: $PASSWD
+        api: https://api.ng.bluemix.net
+        organization: '"NovaTec Consulting GmbH"'
+        space: Taskana
+      if: tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ 
+
