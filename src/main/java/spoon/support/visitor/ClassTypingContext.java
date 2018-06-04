@@ -16,7 +16,6 @@
  */
 package spoon.support.visitor;
 
-import java.awt.event.HierarchyListener;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -214,15 +213,14 @@ public class ClassTypingContext extends AbstractTypingContext {
 				if (actualTypeArguments.isEmpty()) {
 					//may be they are not set - check whether type declares some generic parameters
 					List<CtTypeParameter> typeParams;
-					CtType<?> type = typeRef.getTypeDeclaration();
-					if (type != null) {
+					try {
+						CtType<?> type = typeRef.getTypeDeclaration();
 						typeParams = type.getFormalCtTypeParameters();
-					} else {
-						// not in classpath
+					} catch (final SpoonClassNotFoundException e) {
 						if (typeRef.getFactory().getEnvironment().getNoClasspath()) {
 							typeParams = Collections.emptyList();
 						} else {
-							throw new SpoonClassNotFoundException(type.getQualifiedName() + " cannot be found in the sourcepath or classpath");
+							throw e;
 						}
 					}
 					if (typeParams.size() > 0) {
