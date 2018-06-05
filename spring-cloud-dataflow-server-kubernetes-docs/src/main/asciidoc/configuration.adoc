@@ -1,0 +1,404 @@
+[[configuration]]
+= Server Configuration
+
+[partintro]
+--
+In this section you will learn how to configure Spring Cloud Data Flow server's features such as the relational database to use and security.
+--
+
+[[enable-disable-specific-features]]
+== Feature Toggles
+
+Data Flow server offers specific set of features that can be enabled/disabled when launching. These features include all the lifecycle operations, REST endpoints (server, client implementations including Shell and the UI) for:
+
+. Streams
+. Tasks
+. Analytics
+
+You can enable or disable these features by setting the following boolean environment variables when launching the Data Flow server:
+
+* `SPRING_CLOUD_DATAFLOW_FEATURES_STREAMS_ENABLED`
+* `SPRING_CLOUD_DATAFLOW_FEATURES_TASKS_ENABLED`
+* `SPRING_CLOUD_DATAFLOW_FEATURES_ANALYTICS_ENABLED`
+
+By default, all the features are enabled.
+
+NOTE: Since analytics feature is enabled by default, the Data Flow server is expected to have a valid Redis store available as analytic repository as we provide a default implementation of analytics based on Redis. This also means that the Data Flow server's `health` depends on the redis store availability as well. If you do not want to enable HTTP endpoints to read analytics data written to Redis, then disable the analytics feature using the property mentioned above.
+
+The REST endpoint `/features` provides information on the features enabled/disabled.
+
+[[configuration-general]]
+== General Configuration
+
+The Spring Cloud Data Flow server for Kubernetes uses the Fabric8 https://github.com/fabric8io/spring-cloud-kubernetes[`spring-cloud-kubernetes`] module to process both ConfigMap and Secrets settings. You just need to enable the ConfigMap support by passing in an environment variable of `SPRING_CLOUD_KUBERNETES_CONFIG_NAME` and setting that to the name of the ConfigMap. Same is true for the Secrets where the environment variable is `SPRING_CLOUD_KUBERNETES_SECRETS_NAME`. To use the Secrets you also need to set `SPRING_CLOUD_KUBERNETES_SECRETS_ENABLE_API` to true.
+
+Here is an example of a snippet from a deployment that sets these environment variables.
+
+[source,yaml]
+----
+        env:
+        - name: SPRING_CLOUD_KUBERNETES_SECRETS_ENABLE_API
+          value: 'true'
+        - name: SPRING_CLOUD_KUBERNETES_SECRETS_NAME
+          value: mysql
+        - name: SPRING_CLOUD_KUBERNETES_CONFIG_NAME
+          value: scdf-server
+----
+
+=== Using ConfigMap and Secrets
+
+Configuration properties can be passed to the Data Flow Server using Kubernetes https://kubernetes.io/docs/tasks/configure-pod-container/configmap/[ConfigMap] and https://kubernetes.io/docs/concepts/configuration/secret/[Secrets]. 
+
+An example configuration could look like the following where we configure Rabbit MQ, MySQL and Redis as well as basic security settings for the server:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scdf-server
+  labels:
+    app: scdf-server
+data:
+  application.yaml: |-
+    security:
+      basic:
+        enabled: true
+        realm: Spring Cloud Data Flow
+    spring:
+      cloud:
+        dataflow:
+          security:
+            authentication:
+              file:
+                enabled: true
+                users:
+                  admin: admin, ROLE_MANAGE, ROLE_VIEW
+                  user: password, ROLE_VIEW, ROLE_CREATE
+        deployer:
+          kubernetes:
+            environmentVariables: 'SPRING_RABBITMQ_HOST=${RABBITMQ_SERVICE_HOST},SPRING_RABBITMQ_PORT=${RABBITMQ_SERVICE_PORT},SPRING_REDIS_HOST=${REDIS_SERVICE_HOST},SPRING_REDIS_PORT=${REDIS_SERVICE_PORT}'
+      datasource:
+        url: jdbc:mysql://${MYSQL_SERVICE_HOST}:${MYSQL_SERVICE_PORT}/mysql
+        username: root
+        password: ${mysql-root-password}
+        driverClassName: org.mariadb.jdbc.Driver
+        testOnBorrow: true
+        validationQuery: "SELECT 1"
+      redis:
+        host: ${REDIS_SERVICE_HOST}
+        port: ${REDIS_SERVICE_PORT}
+----
+
+We assume here that Rabbit MQ is deployed using `rabbitmq` as the service name. For MySQL we assume the service name is `mysql` and for Redis we assume it is `redis`. Kubernetes will publish these services' host and port values as environment variables that we can use when configuring the apps we deploy.
+
+We prefer to provide the MySQL connection password in a Secrets file:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+data:
+  mysql-root-password: eW91cnBhc3N3b3Jk
+----
+
+The password is provided as a base64 encoded value.
+
+[[configuration-rdbms]]
+== Database Configuration
+
+Spring Cloud Data Flow provides schemas for H2, HSQLDB, MySQL, Oracle, PostgreSQL, DB2 and SQL Server that will be automatically created when the server starts.
+
+The JDBC drivers for *MySQL* (via MariaDB driver), *HSQLDB*, *PostgreSQL* along with embedded *H2* are available out of the box.
+If you are using any other database, then the corresponding JDBC driver jar needs to be on the classpath of the server.
+
+For instance,
+If you are using *MySQL* in addition to password in the Secrets file provide the following properties in the ConfigMap:
+
+[source,yaml]
+----
+data:
+  application.yaml: |-
+    spring:
+      datasource:
+        url: jdbc:mysql://${MYSQL_SERVICE_HOST}:${MYSQL_SERVICE_PORT}/mysql
+        username: root
+        password: ${mysql-root-password}
+        driverClassName: org.mariadb.jdbc.Driver
+        url: jdbc:mysql://${MYSQL_SERVICE_HOST}:${MYSQL_SERVICE_PORT}/test
+        driverClassName: org.mariadb.jdbc.Driver
+----
+
+For *PostgreSQL*:
+
+[source,yaml]
+----
+data:
+  application.yaml: |-
+    spring:
+      datasource:
+        url: jdbc:postgresql://${PGSQL_SERVICE_HOST}:${PGSQL_SERVICE_PORT}/database
+        username: root
+        password: ${postgres-password}
+        driverClassName: org.postgresql.Driver
+----
+
+For *HSQLDB*:
+
+[source,yaml]
+----
+data:
+  application.yaml: |-
+    spring:
+      datasource:
+        url: jdbc:hsqldb:hsql://${HSQLDB_SERVICE_HOST}:${HSQLDB_SERVICE_PORT}/database
+        username: sa
+        driverClassName: org.hsqldb.jdbc.JDBCDriver
+----
+
+NOTE: There is a schema update to the Spring Cloud Data Flow datastore when upgrading from version `1.0.x` to `1.1.x` and from `1.1.x` to `1.2.x`.
+Migration scripts for specific database types can be found in the https://github.com/spring-cloud/spring-cloud-task/tree/master/spring-cloud-task-core/src/main/resources/org/springframework/cloud/task/migration[spring-cloud-task] repo.
+
+
+[[configuration-security]]
+== Security
+
+We are now securing the server application in the sample configurations file used in the <<kubernetes-getting-started,Getting Started section>>.
+
+This section covers the basic configuration settings we provide in the provided sample configuration, please refer to the  link:http://docs.spring.io/spring-cloud-dataflow/docs/{scdf-core-version}/reference/htmlsingle/#configuration-security[core security documentation] for more detailed coverage of the security configuration options for the Spring Cloud Data Flow server and shell.
+
+The security settings in the `src/kubernetes/server/server-config-rabbit.yaml` file are:
+[source,yaml]
+----
+    security:
+      basic:
+        enabled: true                                         # <1>
+        realm: Spring Cloud Data Flow                         # <2>
+    spring:
+      cloud:
+        dataflow:
+          security:
+            authentication:
+              file:
+                enabled: true
+                users:
+                  admin: admin, ROLE_MANAGE, ROLE_VIEW        # <3>
+                  user: password, ROLE_VIEW, ROLE_CREATE      # <4>
+----
+
+<1> Enable security
+<2> Optionally set the realm, defaults to "Spring"
+<3> Create an 'admin' user with password set to 'admin' that can view apps, streams and tasks and that can also view management endpoints
+<4> Create a 'user' user with password set to 'password' than can register apps and create streams and tasks and also view them
+
+Feel free to change user names and passwords to suite, and also maybe move the definition of user passwords to a Kubernetes Secret.
+
+== Spring Cloud Deployer for Kubernetes Properties
+
+The Spring Cloud Deployer for Kubernetes has several properties you can use to configure the apps that it deploys.
+The configuration is controlled by configuration properties under the `spring.cloud.deployer.kubernetes` prefix.
+
+=== Using Deployments
+
+The deployer uses Replication Controllers by default. To use Deployments instead you can set the following option as part of the container env section in a deployment YAML file. This is now the preferred setting and will be the default in future releases of the deployer.
+
+```
+        env:
+        - name: SPRING_CLOUD_DEPLOYER_KUBERNETES_CREATE_DEPLOYMENT
+          value: 'true'
+```
+
+=== CPU and Memory Limits
+
+You can control the default values to set the `cpu` and `memory` requirements for the pods that are created as part of app deployments. You can declare the following as part of the container env section in a deployment YAML file:
+
+```
+        env:
+        - name: SPRING_CLOUD_DEPLOYER_KUBERNETES_CPU
+          value: 500m
+        - name: SPRING_CLOUD_DEPLOYER_KUBERNETES_MEMORY
+          value: 640Mi
+```
+
+=== Liveness and Rediness Probes Configurations
+
+You can modify the settings used for the liveness and readiness probes. This might be necessary if your cluster is slower and the apps need more time to start up. Here is an example of setting the delay and period for the liveness probe:
+
+```
+        env:
+        - name: SPRING_CLOUD_DEPLOYER_KUBERNETES_LIVENESS_PROBE_DELAY
+          value: '120'
+        - name: SPRING_CLOUD_DEPLOYER_KUBERNETES_LIVENESS_PROBE_PERIOD
+          value: '45'
+```
+
+See https://github.com/spring-cloud/spring-cloud-deployer-kubernetes/blob/master/src/main/java/org/springframework/cloud/deployer/spi/kubernetes/KubernetesDeployerProperties.java[KubernetesDeployerProperties] for more of the supported options.
+
+=== Using SPRING_APPLICATION_JSON
+
+Data Flow Server properties that are common across all of the Data Flow Server implementations including the configuration of maven repository settings can be set in a similar manner although the latter might be easier to set using a `SPRING_APPLICATION_JSON` environment variable like:
+
+[options=nowrap]
+```
+        env:
+        - name: SPRING_APPLICATION_JSON
+          value: "{ \"maven\": { \"local-repository\": null, \"remote-repositories\": { \"repo1\": { \"url\": \"https://repo.spring.io/libs-snapshot\"} } } }"
+
+```
+
+=== Private Docker Registry
+
+Docker images can be pulled from a private registry on global basis. First a Secret must be created in the cluster. Follow the https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/[Pull an Image from a Private Registry] guide to create the Secret.
+
+Once the Secret is created, use the `SPRING_CLOUD_DEPLOYER_KUBERNETES_IMAGE_PULL_SECRET` env variable to set the Secret to use, for example:
+
+```
+        env:
+        - name: SPRING_CLOUD_DEPLOYER_KUBERNETES_IMAGE_PULL_SECRET
+          value: mysecret
+```
+
+Replacing `mysecret` with the name of the Secret you created earlier.
+
+[[configuration-monitoring-management]]
+== Monitoring and Management
+
+We recommend using the `kubectl` command for troubleshooting streams and tasks. 
+
+You can list all artifacts and resources used by using the following command:
+
+[source,shell]
+----
+kubectl get all,cm,secrets,pvc
+----
+
+You can list all resources used by a specific app or service by using a label to select resources. The following command list all resources used by the `mysql` service:
+
+[source,shell]
+----
+kubectl get all -l app=mysql
+----
+
+You can get the logs for a specific pod by issuing:
+
+[source,shell]
+----
+kubectl logs pod <pod-name>
+----
+
+If the pod is continuously getting restarted you can add `-p` as an option to see the previous log like:
+
+[source,shell]
+----
+kubectl logs -p <pod-name>
+----
+
+You can also tail or follow a log by adding an `-f` option:
+
+[source,shell]
+----
+kubectl logs -f <pod-name>
+----
+
+A useful command to help in troubleshooting issues, such as a container that has a fatal error starting up, is to use the describe command like:
+
+[source,shell]
+----
+kubectl describe pod ticktock-log-0-qnk72
+----
+
+=== Inspecting Server Logs
+
+You can access the server logs by using the following command (just supply the name of pod for the server):
+
+[source,shell]
+----
+kubectl get pod -l app=scdf=server
+kubectl logs <scdf-server-pod-name>
+----
+
+=== Streams
+
+The stream apps are deployed with the stream name followed by the name of the app and for processors and sinks there is also an instance index appended. 
+
+To see all the pods that are deployed by the Spring Cloud Data Flow server you can specify the label `role=spring-app`:
+
+[source,shell]
+----
+kubectl get pod -l role=spring-app
+----
+
+To see details for a specific app deployment you can use (just supply the name of pod for the app):
+
+[source,shell]
+----
+kubectl describe pod <app-pod-name>
+----
+
+For the application logs use:
+
+[source,shell]
+----
+kubectl logs <app-pod-name>
+----
+
+If you would like to tail a log you can use:
+
+[source,shell]
+----
+kubectl logs -f <app-pod-name>
+----
+
+=== Tasks
+
+Tasks are launched as bare pods without a replication controller. The pods remain after the tasks complete and this gives you an opportunity to review the logs. 
+
+To see all pods for a specific task use this command while providing the task name:
+
+[source,shell]
+----
+kubectl get pod -l task-name=<task-name>
+----
+
+To review the task logs use:
+
+[source,shell]
+----
+kubectl logs <task-pod-name>
+----
+
+You have two options to delete completed pods. You can delete them manually once they are no longer needed.
+
+To delete the task pod use:
+
+[source,shell]
+----
+kubectl delete pod <task-pod-name>
+----
+
+You can also use the Data Flow shell command `task execution cleanup` command to remove the completed pod for a task execution.
+
+First we need to determine the `ID` for the task execution:
+
+[source,shell]
+----
+dataflow:>task execution list 
+╔═════════╤══╤════════════════════════════╤════════════════════════════╤═════════╗
+║Task Name│ID│         Start Time         │          End Time          │Exit Code║
+╠═════════╪══╪════════════════════════════╪════════════════════════════╪═════════╣
+║task1    │1 │Fri May 05 18:12:05 EDT 2017│Fri May 05 18:12:05 EDT 2017│0        ║
+╚═════════╧══╧════════════════════════════╧════════════════════════════╧═════════╝
+----
+
+Next we issue the command to cleanup the execution artifacts (the completed pod):
+
+[source,shell]
+----
+dataflow:>task execution cleanup --id 1
+Request to clean up resources for task execution 1 has been submitted
+----
+
