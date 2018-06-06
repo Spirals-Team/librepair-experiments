@@ -1,0 +1,61 @@
+# Table of contents
+
+- [Release Notes](https://github.com/molgenis/molgenis/releases)
+- [Quick start](quickstart/guide-quickstart.md)
+    - [Run Docker container](quickstart/guide-docker.md)
+    - [Run in Tomcat](quickstart/guide-tomcat.md)
+    - [Compile code](quickstart/guide-local-compile.md)
+- User Documentation
+    - Data
+      - Import data
+        - [Quick data upload](user_documentation/guide-quick-upload.md)
+        - [Advanced data upload](user_documentation/guide-upload.md)
+            - [EMX format](user_documentation/ref-emx.md)
+            - [Localization](user_documentation/guide-l10n.md)
+      - Finding data 
+        - [Using search-all](user_documentation/guide-search.md)
+        - [Using dataexplorer](user_documentation/guide-explore.md)
+      - Modify data
+        - [Using expressions](user_documentation/ref-expressions.md)
+        - [Modify metadata](user_documentation/guide-metadata-manager.md)
+        - [SORTA](user_documentation/guide-SORTA.md)
+      - [Downloading data](user_documentation/guide-emx-download.md)
+      - [Scheduled Jobs](user_documentation/guide-schedule.md)
+    - [Admin features](user_documentation/guide-admin.md)
+      - [Customize your MOLGENIS](user_documentation/guide-customize.md)
+      - [Using the Appstore](user_documentation/guide-appstore.md)
+      - [Authentication methods](user_documentation/guide-authentication.md)        
+    - [Biobanks](user_documentation/biobanking.md)
+      - [Biobank Directory](user_documentation/biobank-directory.md)
+    - [Questionnaires](user_documentation/guide-questionnaire.md)
+    - [Scripts](user_documentation/guide-scripts.md)
+      - [R](user_documentation/guide-R.md)
+      - [Python](user_documentation/guide-python.md)
+- Developer documentation
+    - [Start](developer_documentation/start.md)
+    - [Architecture](developer_documentation/architecture.md)
+    - [Technologies](developer_documentation/technologies.md)
+    - API
+      - [REST](developer_documentation/guide-rest.md)
+        - [REST api V1](developer_documentation/ref-rest.md)
+        - [REST api V2](developer_documentation/ref-rest2.md)
+        - [RSQL operators](developer_documentation/ref-RSQL.md)
+        - [Swagger specification](developer_documentation/ref-swagger.md)
+      - [R](developer_documentation/ref-R.md)
+      - [Python](developer_documentation/ref-python.md)  
+      - [FAIR](developer_documentation/guide-fair.md)
+    - IDE
+      - [IntelliJ](developer_documentation/intellij.md)
+    - Frontend
+      - [App development](developer_documentation/app-development.md)
+      - [Frontend development](developer_documentation/frontend-development.md)
+      - [UX Frontend](developer_documentation/frontend.md)
+    - Backend  
+      - [Security](developer_documentation/security.md)
+      - [Data Backend](developer_documentation/backend.md)
+      - [Annotators](developer_documentation/annotators.md)
+      - [Services](developer_documentation/service.md)
+      - [Jobs](developer_documentation/jobs.md)
+      - [Dynamic Decorators](developer_documentation/dynamic-decorators.md)
+    - Testing
+      - [Running the integration tests](developer_documentation/integration-tests.md)
