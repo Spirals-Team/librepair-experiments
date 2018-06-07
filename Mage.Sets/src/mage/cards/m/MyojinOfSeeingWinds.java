@@ -1,0 +1,66 @@
+
+package mage.cards.m;
+
+import java.util.UUID;
+import mage.MageInt;
+import mage.abilities.Ability;
+import mage.abilities.common.EntersBattlefieldAbility;
+import mage.abilities.common.SimpleActivatedAbility;
+import mage.abilities.common.SimpleStaticAbility;
+import mage.abilities.condition.common.CastFromHandSourceCondition;
+import mage.abilities.condition.common.SourceHasCounterCondition;
+import mage.abilities.costs.common.RemoveCountersSourceCost;
+import mage.abilities.decorator.ConditionalContinuousEffect;
+import mage.abilities.decorator.ConditionalOneShotEffect;
+import mage.abilities.dynamicvalue.common.PermanentsOnBattlefieldCount;
+import mage.abilities.effects.common.DrawCardSourceControllerEffect;
+import mage.abilities.effects.common.continuous.GainAbilitySourceEffect;
+import mage.abilities.effects.common.counter.AddCountersSourceEffect;
+import mage.abilities.keyword.IndestructibleAbility;
+import mage.cards.CardImpl;
+import mage.cards.CardSetInfo;
+import mage.constants.*;
+import mage.counters.CounterType;
+import mage.filter.FilterPermanent;
+import mage.filter.predicate.permanent.ControllerPredicate;
+import mage.watchers.common.CastFromHandWatcher;
+
+/**
+ * @author LevelX
+ */
+public final class MyojinOfSeeingWinds extends CardImpl {
+
+    private static final FilterPermanent filter = new FilterPermanent("permanent you control");
+    static {
+        filter.add(new ControllerPredicate(TargetController.YOU));
+    }
+
+    public MyojinOfSeeingWinds(UUID ownerId, CardSetInfo setInfo) {
+        super(ownerId,setInfo,new CardType[]{CardType.CREATURE},"{7}{U}{U}{U}");
+        addSuperType(SuperType.LEGENDARY);
+        this.subtype.add(SubType.SPIRIT);
+
+        this.power = new MageInt(3);
+        this.toughness = new MageInt(3);
+
+        this.getSpellAbility().addWatcher(new CastFromHandWatcher());
+
+        // Myojin of Seeing Winds enters the battlefield with a divinity counter on it if you cast it from your hand.
+        this.addAbility(new EntersBattlefieldAbility(new ConditionalOneShotEffect(new AddCountersSourceEffect(CounterType.DIVINITY.createInstance()), CastFromHandSourceCondition.instance, ""), "{this} enters the battlefield with a divinity counter on it if you cast it from your hand"));
+        // Myojin of Seeing Winds is indestructible as long as it has a divinity counter on it.
+        this.addAbility(new SimpleStaticAbility(Zone.BATTLEFIELD, new ConditionalContinuousEffect(new GainAbilitySourceEffect(IndestructibleAbility.getInstance(), Duration.WhileOnBattlefield),
+                new SourceHasCounterCondition(CounterType.DIVINITY), "{this} is indestructible as long as it has a divinity counter on it")));
+        // Remove a divinity counter from Myojin of Seeing Winds: Draw a card for each permanent you control.
+        Ability ability = new SimpleActivatedAbility(Zone.BATTLEFIELD, new DrawCardSourceControllerEffect(new PermanentsOnBattlefieldCount(filter)), new RemoveCountersSourceCost(CounterType.DIVINITY.createInstance()));
+        this.addAbility(ability);
+    }
+
+    public MyojinOfSeeingWinds(final MyojinOfSeeingWinds card) {
+        super(card);
+    }
+
+    @Override
+    public MyojinOfSeeingWinds copy() {
+        return new MyojinOfSeeingWinds(this);
+    }
+}
