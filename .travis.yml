@@ -1,0 +1,44 @@
+# travis need to have provided language type to start proper build process.
+language: java
+
+sudo: required # for docker
+
+# The Travis CI environment provides Oracle JDK 7 (default),
+# so we need to force use jdk8 instead.
+jdk:
+  - oraclejdk8
+
+cache:
+  directories:
+  - $HOME/.m2
+
+script:
+  - docker-compose --file docker-compose-ci.yml up &
+  # run integration tests.
+  - mvn --batch-mode verify
+
+  # produce docker image
+  - mvn docker:build -pl posesor-webapi-deploy
+
+  # produces quality metrics for sonarqube.com
+  # Since it's a multi-module projecy you should first perform an install from the root project
+  # and then run the sonar:sonar goal as a dedicated step (https://stackoverflow.com/questions/36438281)
+  - mvn clean install
+  - mvn sonar:sonar -Dsonar.host.url=https://sonarqube.com -Dsonar.login="$SONAR_TOKEN" -Dsonar.projectKey=posesor
+
+after_success:
+  # sends coverage to codacy
+  - mvn com.gavinmogan:codacy-maven-plugin:coverage -DcoverageReportFile=target/site/jacoco/jacoco.xml -DprojectToken="$CODACY_PROJECT_TOKEN" -DapiToken="$CODACY_API_TOKEN"
+
+  # push application image to docker registry
+  # initially will start to push from develop and - in the nearest future - will change to master.
+  - if [ "$TRAVIS_BRANCH" == "develop" ]; then
+    docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
+    docker tag respekto/posesor-host:0.0.13 respekto/posesor-host:latest;
+    docker push respekto/posesor-host;
+    fi
+
+
+# support for docker
+services:
+  - docker
