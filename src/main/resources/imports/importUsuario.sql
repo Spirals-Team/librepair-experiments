@@ -1,0 +1,2 @@
+insert into usuario(nome, cpf, email, senha, foto, ativo) values ('Michel Luz', '123-456-789', 'michelcluz@gmail.com', '1234', 'fotinha', true);
+insert into usuario(nome, cpf, email, senha, foto, ativo) values ('Rafael Calearo', '123-456-789', 'rafael@gmail.com', '1234', 'fotinha', true);
