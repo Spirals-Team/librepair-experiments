@@ -1,0 +1,21 @@
+// code by jph
+package ch.ethz.idsc.demo.mg;
+
+import java.io.IOException;
+
+import lcm.logging.LogPlayer;
+import lcm.logging.LogPlayerConfig;
+
+enum GokartLcmLogPlayer {
+  ;
+  public static void main(String[] args) throws IOException {
+    LogPlayerConfig cfg = new LogPlayerConfig();
+    cfg.logFile = LogFileLocations.DUBI15a.getFile().toString();
+    LogPlayer.create(cfg);
+    try {
+      // DavisDetailModule.standalone();
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+  }
+}
