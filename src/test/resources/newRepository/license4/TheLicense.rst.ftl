@@ -1,0 +1,1 @@
+The license4! ${organizationName} ${copyright.years}, ${copyright.holder}
