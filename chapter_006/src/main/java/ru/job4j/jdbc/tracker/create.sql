@@ -1,0 +1,18 @@
+CREATE DATABASE IF NOT EXISTS shop;
+
+CREATE TABLE IF NOT EXIST comments (
+  id_c INTEGER IDENTITY,
+  comment_c TEXT NOT NULL,
+);
+
+CREATE TABLE IF NOT EXISTS items (
+  id_i INTEGER IDENTITY,
+  name_i VARCHAR(45) NOT NULL,
+  description_i VARCHAR(45) NOT NULL,
+  create_i DATE NOT NULL,
+  id_c INT,
+  CONSTRAINT fk_items FOREIGN KEY(id_c)
+    REFERENCES comments(id_c)
+    ON UPDATE CASCADE
+    ON DELETE CASCADE
+);
