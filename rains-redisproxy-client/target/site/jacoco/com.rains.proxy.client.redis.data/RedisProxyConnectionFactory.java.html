@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RedisProxyConnectionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rains-redisproxy-client</a> &gt; <a href="index.source.html" class="el_package">com.rains.proxy.client.redis.data</a> &gt; <span class="el_source">RedisProxyConnectionFactory.java</span></div><h1>RedisProxyConnectionFactory.java</h1><pre class="source lang-java linenums">package com.rains.proxy.client.redis.data;
+
+import com.netflix.loadbalancer.ILoadBalancer;
+import com.netflix.loadbalancer.Server;
+import com.rains.proxy.client.redis.RedsiProxyException;
+import com.rains.proxy.client.ribbon.RibbonRedisProxyClient;
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
+import org.springframework.cloud.netflix.ribbon.SpringClientFactory;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.jedis.JedisConnectionFactory;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPoolConfig;
+import redis.clients.util.Pool;
+
+import java.util.*;
+
+public class RedisProxyConnectionFactory extends JedisConnectionFactory {
+<span class="nc" id="L21">    private static final Logger logger = LoggerFactory.getLogger(RedisProxyConnectionFactory.class);</span>
+    private final static String REDISPROXYSERVICENAME = &quot;redisProxy&quot;;
+    private RibbonRedisProxyClient loadBalancerClient;
+
+
+<span class="nc" id="L26">    private String serviceId =REDISPROXYSERVICENAME;</span>
+
+   private RedisProperties properties;
+
+
+
+<span class="nc" id="L32">    public RedisProxyConnectionFactory(SpringClientFactory springClientFactory, RedisProperties properties) {</span>
+<span class="nc" id="L33">        this.properties = properties;</span>
+<span class="nc bnc" id="L34" title="All 2 branches missed.">        this.serviceId = StringUtils.isNotEmpty(properties.getHost())?properties.getHost():serviceId;</span>
+
+<span class="nc" id="L36">        ILoadBalancer loadBalancer =springClientFactory.getLoadBalancer(serviceId);</span>
+
+<span class="nc bnc" id="L38" title="All 2 branches missed.">        if(loadBalancer==null){</span>
+<span class="nc" id="L39">            logger.error(&quot;serviceId : {} not fetch loadBalancer,sure redisProxy service is ok!&quot;,serviceId);</span>
+<span class="nc" id="L40">            throw  new RedsiProxyException(&quot;serviceId : &quot;+serviceId +&quot; not fetch loadBalancer&quot;);</span>
+        }
+
+<span class="nc" id="L43">        this.loadBalancerClient = new RibbonRedisProxyClient(springClientFactory.getLoadBalancer(serviceId));</span>
+
+<span class="nc" id="L45">    }</span>
+
+    @Override
+    public RedisConnection getConnection() {
+
+<span class="nc" id="L50">        return super.getConnection();</span>
+    }
+
+    @Override
+    protected Jedis fetchJedisConnector() {
+<span class="nc" id="L55">        Map&lt;String,Pool&lt;Jedis&gt;&gt; poolMap = createPoolList();</span>
+
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        if(!poolMap.isEmpty()){</span>
+
+<span class="nc" id="L59">           return loadBalancerClient.callWithRibbon(poolMap);</span>
+        }
+
+<span class="nc" id="L62">        return super.fetchJedisConnector();</span>
+    }
+
+    /**
+     * 初始化多个redis pool,并缓存起来
+     * @return
+     */
+    private  Map&lt;String,Pool&lt;Jedis&gt;&gt; createPoolList(){
+<span class="nc" id="L70">      List&lt;Server&gt; servers=  getAllRedisProxyServers();</span>
+<span class="nc" id="L71">      Map&lt;String,Pool&lt;Jedis&gt;&gt; poolMap = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">      if(servers==null){</span>
+<span class="nc" id="L74">           return  poolMap;</span>
+      }
+<span class="nc" id="L76">        super.setPoolConfig(jedisPoolConfig());</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">      for(Server s : servers){</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">          if(poolMap.containsKey(s.getHost())){</span>
+<span class="nc" id="L79">              continue;</span>
+          }
+<span class="nc" id="L81">          super.setHostName(s.getHost());</span>
+<span class="nc" id="L82">          super.setPort(s.getPort());</span>
+
+<span class="nc" id="L84">          poolMap.put(s.getId(),super.createRedisPool());</span>
+<span class="nc" id="L85">      }</span>
+
+<span class="nc" id="L87">      return poolMap;</span>
+    }
+
+    /**
+     * 初始化jedispool参数
+     * @return jedisPoolConfig
+     */
+    private JedisPoolConfig jedisPoolConfig() {
+<span class="nc" id="L95">        JedisPoolConfig config = new JedisPoolConfig();</span>
+<span class="nc" id="L96">        RedisProperties.Pool props = this.properties.getPool();</span>
+<span class="nc" id="L97">        config.setMaxTotal(props.getMaxActive());</span>
+<span class="nc" id="L98">        config.setMaxIdle(props.getMaxIdle());</span>
+<span class="nc" id="L99">        config.setMinIdle(props.getMinIdle());</span>
+<span class="nc" id="L100">        config.setMaxWaitMillis(props.getMaxWait());</span>
+<span class="nc" id="L101">        return config;</span>
+    }
+
+    /**
+     * 从注册中心获取所有redisProxy的服务
+     * @return
+     */
+    private  List&lt;Server&gt; getAllRedisProxyServers(){
+<span class="nc" id="L109">       List&lt;Server&gt; servers = loadBalancerClient.getAllServers();</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">       if(servers==null){</span>
+<span class="nc" id="L111">           return Collections.emptyList();</span>
+       }
+<span class="nc" id="L113">       return servers;</span>
+    }
+
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

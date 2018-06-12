@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ThrooughCmdExecute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">redis-proxy-core</a> &gt; <a href="index.source.html" class="el_package">com.rains.proxy.core.command.execute</a> &gt; <span class="el_source">ThrooughCmdExecute.java</span></div><h1>ThrooughCmdExecute.java</h1><pre class="source lang-java linenums">package com.rains.proxy.core.command.execute;
+
+import com.rains.proxy.core.bean.RedisServerMasterCluster;
+import com.rains.proxy.core.bean.support.RedisServerBean;
+import com.rains.proxy.core.bean.support.RedisServerClusterBean;
+import com.rains.proxy.core.client.impl.AbstractPoolClient;
+import com.rains.proxy.core.cluster.LoadBalance;
+import com.rains.proxy.core.cluster.impl.support.RedisQuestBean;
+import com.rains.proxy.core.command.ICmdExecute;
+import com.rains.proxy.core.command.impl.RedisCommand;
+import com.rains.proxy.core.command.impl.RedisRequestPolicy;
+import com.rains.proxy.core.enums.RedisCmdTypeEnums;
+import com.rains.proxy.core.reply.IRedisReply;
+import com.rains.proxy.core.reply.impl.EmptyRedisReply;
+import io.netty.channel.ChannelHandlerContext;
+import org.springframework.util.Assert;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * @author dourx
+ * 2018年 05 月  30日  18:02
+ * @version V1.0
+ * TODO
+ */
+public  class ThrooughCmdExecute implements ICmdExecute {
+
+    protected RedisServerMasterCluster redisServerMasterCluster;
+    protected Map&lt;String, AbstractPoolClient&gt; redisServerBeanMap;
+    protected ChannelHandlerContext ctx;
+
+<span class="nc" id="L34">    private EmptyRedisReply emptyRedisReply = new EmptyRedisReply();</span>
+
+<span class="nc" id="L36">    public static Map&lt;RedisCmdTypeEnums, ThrooughCmdExecute&gt; cmdExecute = new ConcurrentHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L38">    public ThrooughCmdExecute(Map&lt;String, AbstractPoolClient&gt; redisServerBeanMap, RedisServerMasterCluster redisServerMasterCluster) {</span>
+<span class="nc" id="L39">        this.redisServerMasterCluster = redisServerMasterCluster;</span>
+<span class="nc" id="L40">        this.redisServerBeanMap = redisServerBeanMap;</span>
+<span class="nc" id="L41">    }</span>
+
+
+    @Override
+    public IRedisReply execute(RedisCommand request) {
+<span class="nc" id="L46">        Assert.notNull(ctx, &quot;ctx must not null&quot;);</span>
+
+<span class="nc" id="L48">        String cmd = new String(request.getArgs().get(0));</span>
+
+<span class="nc" id="L50">        boolean isExecute = doExecute(cmd.toUpperCase(), request);</span>
+<span class="nc bnc" id="L51" title="All 2 branches missed.">        if (isExecute) {</span>
+<span class="nc" id="L52">            return emptyRedisReply;</span>
+        }
+
+<span class="nc" id="L55">        RedisRequestPolicy policy = request.getPolicy();</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (policy.isRead()) {//从</span>
+<span class="nc" id="L57">            AbstractPoolClient ffanRedisClient = getShardClusterFfanRedisClient(request, cmd, false);//权重算法</span>
+<span class="nc" id="L58">            ffanRedisClient.write(request, ctx);</span>
+<span class="nc" id="L59">        } else {//主</span>
+<span class="nc" id="L60">            AbstractPoolClient ffanRedisClient = getShardFfanRedisClient(request, cmd);//默认一致性hash算法</span>
+<span class="nc" id="L61">            ffanRedisClient.write(request, ctx);</span>
+        }
+
+<span class="nc" id="L64">        return emptyRedisReply;</span>
+    }
+
+    protected boolean doExecute(String cmd, RedisCommand redisCommand) {
+<span class="nc" id="L68">        return false;</span>
+    }
+
+
+
+
+    /**
+     * 一致性hash算法 主
+     * @param request
+     * @return
+     */
+    private AbstractPoolClient getShardFfanRedisClient(RedisCommand request,String command){
+<span class="nc" id="L80">        RedisQuestBean redisQuestBean=new RedisQuestBean(new String(request.getArgs().get(0)), request.getArgs().get(1), true);</span>
+<span class="nc" id="L81">        String  key=null;</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        if(redisServerMasterCluster.getMasters().size()==1){</span>
+<span class="nc" id="L83">            key=redisServerMasterCluster.getMasters().get(0).getKey();</span>
+        }else{
+<span class="nc" id="L85">            LoadBalance loadMasterBalance=redisServerMasterCluster.getLoadMasterBalance();</span>
+<span class="nc" id="L86">            RedisServerBean ffanRedisServerBean=loadMasterBalance.select(redisQuestBean, null);</span>
+<span class="nc" id="L87">            key=ffanRedisServerBean.getKey();</span>
+        }
+
+<span class="nc" id="L90">        return redisServerBeanMap.get(key);</span>
+    }
+
+    /**
+     * 读写分离， 从采用权重算法
+     * @param request
+     * @param command
+     * @return
+     */
+    private AbstractPoolClient getShardClusterFfanRedisClient(RedisCommand request,String command,boolean flag){
+<span class="nc" id="L100">        RedisQuestBean redisQuestBean=new RedisQuestBean(new String(request.getArgs().get(0)), request.getArgs().get(1),true );</span>
+<span class="nc" id="L101">        LoadBalance loadMasterBalance=redisServerMasterCluster.getLoadMasterBalance();</span>
+<span class="nc" id="L102">        RedisServerBean ffanRedisServerBean=loadMasterBalance.select(redisQuestBean, null);</span>
+<span class="nc" id="L103">        List&lt;RedisServerBean&gt; ffanRedisServerBeans=redisServerMasterCluster.getMasterFfanRedisServerBean(ffanRedisServerBean.getKey());</span>
+<span class="nc bnc" id="L104" title="All 4 branches missed.">        if(ffanRedisServerBeans!=null&amp;&amp;ffanRedisServerBeans.size()&gt;0){</span>
+<span class="nc" id="L105">            RedisServerClusterBean redisServerClusterBean= redisServerMasterCluster.getRedisServerClusterBean(ffanRedisServerBean.getKey());</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">            if(redisServerClusterBean!=null){</span>
+<span class="nc" id="L107">                LoadBalance loadClusterBalance=redisServerClusterBean.getLoadClusterBalance();</span>
+<span class="nc" id="L108">                loadClusterBalance.setFfanRedisServerMasterCluster(redisServerMasterCluster);</span>
+<span class="nc" id="L109">                redisQuestBean.setWrite(flag);</span>
+<span class="nc" id="L110">                RedisServerBean ffanClusterRedisServerBean=loadClusterBalance.select(redisQuestBean, ffanRedisServerBean);</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">                if(ffanClusterRedisServerBean!=null){</span>
+<span class="nc" id="L112">                    String key=ffanClusterRedisServerBean.getKey();</span>
+<span class="nc" id="L113">                    return redisServerBeanMap.get(key);</span>
+                }
+            }
+        }
+<span class="nc" id="L117">        String key=ffanRedisServerBean.getKey();</span>
+<span class="nc" id="L118">        return redisServerBeanMap.get(key);</span>
+
+    }
+
+    public void setCtx(ChannelHandlerContext ctx){
+<span class="nc" id="L123">        this.ctx = ctx;</span>
+<span class="nc" id="L124">    }</span>
+
+
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

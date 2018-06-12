@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RedisReplyDecoder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">redis-proxy-core</a> &gt; <a href="index.source.html" class="el_package">com.rains.proxy.core.protocol</a> &gt; <span class="el_source">RedisReplyDecoder.java</span></div><h1>RedisReplyDecoder.java</h1><pre class="source lang-java linenums">/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.rains.proxy.core.protocol;
+
+
+import com.rains.proxy.core.constants.RedisConstants;
+import com.rains.proxy.core.enums.ReplyState;
+import com.rains.proxy.core.enums.Type;
+import com.rains.proxy.core.reply.IRedisReply;
+import com.rains.proxy.core.reply.impl.*;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.ReplayingDecoder;
+import io.netty.util.CharsetUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.UnsupportedEncodingException;
+import java.util.List;
+
+/**
+ * @author dourx
+ * @version V1.0
+ * 创建日期 2018/6/1
+ */
+public class RedisReplyDecoder extends ReplayingDecoder&lt;ReplyState&gt; {
+<span class="fc" id="L41">	private static final Logger logger = LoggerFactory.getLogger(RedisReplyDecoder.class);</span>
+	
+	private IRedisReply redisReply;
+	
+	public RedisReplyDecoder() {
+<span class="fc" id="L46">	    super(ReplyState.READ_INIT);</span>
+<span class="fc" id="L47">	}</span>
+	
+	@Override
+	protected void decode(ChannelHandlerContext ctx, ByteBuf in,
+                          List&lt;Object&gt; out) throws Exception {
+
+
+<span class="pc bpc" id="L54" title="2 of 3 branches missed.">		switch (state()) {</span>
+	      case READ_INIT:
+<span class="fc" id="L56">	        char ch = (char) in.readByte();</span>
+<span class="fc bfc" id="L57" title="All 2 branches covered.">	        if (ch == RedisConstants.ASTERISK_BYTE) {</span>
+<span class="fc" id="L58">	          redisReply = new MultyBulkRedisReply();</span>
+<span class="fc bfc" id="L59" title="All 2 branches covered.">	        } else if (ch == RedisConstants.DOLLAR_BYTE) {</span>
+<span class="fc" id="L60">	          redisReply = new BulkRedisReply();</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">	        } else if (ch == RedisConstants.COLON_BYTE) {</span>
+<span class="fc" id="L62">	          redisReply = new IntegerRedisReply();</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">	        } else if (ch == RedisConstants.OK_BYTE) {</span>
+<span class="fc" id="L64">	          redisReply = new StatusRedisReply();</span>
+<span class="pc bpc" id="L65" title="1 of 2 branches missed.">	        } else if (ch == RedisConstants.ERROR_BYTE) {</span>
+<span class="fc" id="L66">	          redisReply = new ErrorRedisReply();</span>
+	        }
+<span class="fc" id="L68">	        checkpoint(ReplyState.READ_REPLY);</span>
+	      case READ_REPLY:
+<span class="pc bpc" id="L70" title="1 of 2 branches missed.">	      	if(redisReply==null){</span>
+<span class="nc" id="L71">				checkpoint(ReplyState.READ_INIT);</span>
+<span class="nc" id="L72">	      		return;</span>
+			}
+<span class="fc" id="L74">	        Type type = redisReply.getType();</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">	        if (type == Type.INTEGER) {</span>
+<span class="fc" id="L76">	          byte[] value = readLine(in).getBytes(RedisConstants.DEFAULT_CHARACTER);</span>
+<span class="fc" id="L77">	          ((IntegerRedisReply) redisReply).setValue(value);</span>
+<span class="fc bfc" id="L78" title="All 2 branches covered.">	        } else if (type == Type.STATUS) {</span>
+<span class="fc" id="L79">	          byte[] value = readLine(in).getBytes(RedisConstants.DEFAULT_CHARACTER);</span>
+<span class="fc" id="L80">	          ((StatusRedisReply) redisReply).setValue(value);</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">	        } else if (type ==Type.ERROR) {</span>
+<span class="fc" id="L82">	          byte[] value = readLine(in).getBytes(RedisConstants.DEFAULT_CHARACTER);</span>
+<span class="fc" id="L83">	          ((ErrorRedisReply) redisReply).setValue(value);</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">	        } else if (type == Type.BULK) {</span>
+<span class="fc" id="L85">	          readBulkReply(in, (BulkRedisReply) this.redisReply);</span>
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">	        } else if (type == Type.MULTYBULK) {</span>
+<span class="fc" id="L87">	          readArrayReply(in, (MultyBulkRedisReply) this.redisReply);</span>
+	        }
+	        
+<span class="fc" id="L90">	        out.add(this.redisReply);</span>
+<span class="fc" id="L91">	        this.redisReply = null;</span>
+<span class="fc" id="L92">	        checkpoint(ReplyState.READ_INIT);</span>
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">			  if(logger.isDebugEnabled()){</span>
+<span class="fc" id="L94">				  logger.debug(&quot;reply解码前协议文本内容:{}&quot;,in.slice(0,in.readerIndex()).toString(CharsetUtil.UTF_8).replaceAll(&quot;\r\n&quot;,&quot;\\\\r\\\\n&quot;));</span>
+			  }
+
+<span class="fc" id="L97">	        return;</span>
+	      default:
+<span class="nc" id="L99">	        throw new Error(&quot;can't reach there!&quot;);</span>
+	    }
+
+
+
+
+	}
+	
+	
+	
+	private void readArrayReply(ByteBuf buffer, MultyBulkRedisReply multyBulkRedisReply) throws UnsupportedEncodingException {
+<span class="fc" id="L110">	    int count = readInt(buffer);</span>
+<span class="pc bpc" id="L111" title="1 of 4 branches missed.">	    if(multyBulkRedisReply!=null&amp;&amp;multyBulkRedisReply.getCount()==count){//已经有值，防止多次,netty在读取85次会多次解析</span>
+<span class="fc" id="L112">	    	multyBulkRedisReply.getList().clear();</span>
+	    }
+<span class="fc" id="L114">	    multyBulkRedisReply.setCount(count);</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">	    for (int i = 0; i &lt; count; i++) {</span>
+<span class="fc" id="L116">	      char type = (char) buffer.readByte();</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">	      if (type == RedisConstants.COLON_BYTE) {</span>
+<span class="fc" id="L118">	        IntegerRedisReply reply = new IntegerRedisReply();</span>
+<span class="fc" id="L119">	        reply.setValue(readLine(buffer).getBytes(RedisConstants.DEFAULT_CHARACTER));</span>
+<span class="fc" id="L120">	        multyBulkRedisReply.addReply(reply);</span>
+<span class="fc bfc" id="L121" title="All 2 branches covered.">	      } else if (type == RedisConstants.DOLLAR_BYTE) {</span>
+<span class="fc" id="L122">	    	BulkRedisReply bulkReply = new BulkRedisReply();</span>
+<span class="fc" id="L123">	        readBulkReply(buffer, bulkReply);</span>
+<span class="fc" id="L124">	        multyBulkRedisReply.addReply(bulkReply);</span>
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">	      }else if(type== RedisConstants.ASTERISK_BYTE){</span>
+<span class="fc" id="L126">			  MultyBulkRedisReply mbRedisReply = new MultyBulkRedisReply();</span>
+<span class="fc" id="L127">			  readArrayReply(buffer, mbRedisReply);</span>
+<span class="fc" id="L128">			  multyBulkRedisReply.addReply(mbRedisReply);</span>
+		  }
+	    }
+	   
+<span class="fc" id="L132">	  }</span>
+
+	  private void readBulkReply(ByteBuf buffer, BulkRedisReply bulkReply) {
+<span class="fc" id="L135">	    int length = readInt(buffer);</span>
+<span class="fc" id="L136">	    bulkReply.setLength(length);</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">	    if (length == -1) {//read null</span>
+	    	
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">	    } else if (length == 0) {//read &quot;&quot;</span>
+<span class="nc" id="L140">	      buffer.skipBytes(2);</span>
+	    } else {
+<span class="fc" id="L142">	      byte[] value = new byte[length];</span>
+	      
+<span class="fc" id="L144">	      buffer.readBytes(value);</span>
+	      
+<span class="fc" id="L146">	      bulkReply.setValue(value);</span>
+	      
+<span class="fc" id="L148">	      buffer.skipBytes(2);</span>
+	    }
+<span class="fc" id="L150">	  }</span>
+
+	  private int readInt(ByteBuf buffer) {
+<span class="fc" id="L153">	    return Integer.parseInt(readLine(buffer));</span>
+	  }
+
+	  private String readLine(ByteBuf byteBuf) {
+<span class="fc" id="L157">	    StringBuilder sb = new StringBuilder();</span>
+<span class="fc" id="L158">	    char ch = (char) byteBuf.readByte();</span>
+<span class="fc bfc" id="L159" title="All 2 branches covered.">	    while (ch != RedisConstants.CR_BYTE) {</span>
+<span class="fc" id="L160">	      sb.append(ch);</span>
+<span class="fc" id="L161">	      ch = (char) byteBuf.readByte();//\r</span>
+	    }
+<span class="fc" id="L163">	    byteBuf.readByte();// \n</span>
+<span class="fc" id="L164">	    return sb.toString();</span>
+	  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

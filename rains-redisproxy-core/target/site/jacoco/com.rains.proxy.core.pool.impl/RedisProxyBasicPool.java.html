@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RedisProxyBasicPool.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">redis-proxy-core</a> &gt; <a href="index.source.html" class="el_package">com.rains.proxy.core.pool.impl</a> &gt; <span class="el_source">RedisProxyBasicPool.java</span></div><h1>RedisProxyBasicPool.java</h1><pre class="source lang-java linenums">/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.rains.proxy.core.pool.impl;
+
+
+import com.rains.proxy.core.config.RedisProxyPoolConfig;
+import com.rains.proxy.core.pool.IPoolEntry;
+import com.rains.proxy.core.pool.IdleEntriesQueue;
+import com.rains.proxy.core.pool.IRedisProxyPool;
+import com.rains.proxy.core.pool.PoolEntryFactory;
+import com.rains.proxy.core.pool.commons.Pool;
+import com.rains.proxy.core.pool.exception.RedisProxyPoolException;
+
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+
+
+
+/**
+ * @author dourx
+ * @version V1.0
+ * 创建日期 2018/6/4
+ * 连接池实现类
+ */
+public class RedisProxyBasicPool&lt;T extends Pool&gt; implements IRedisProxyPool&lt;T&gt; {
+	
+	private final RedisProxyPoolConfig config;
+	private final PoolEntryFactory&lt;T&gt; entryFactory;
+	private final IdleEntriesQueue&lt;T&gt; idleEntriesQueue;//空闲存放队列
+	private int totalCount;//当前总数
+	private volatile boolean shuttingDown;//关闭
+	private Scavenger scavenger;//回收线程
+
+	/**init entries count*/
+	private int initial;
+	private long maxWaitMillisOnBorrow;
+
+	
+	public RedisProxyBasicPool(RedisProxyPoolConfig config, IdleEntriesQueue&lt;T&gt; idleEntriesQueue,
+<span class="nc" id="L55">                               PoolEntryFactory&lt;T&gt; entryFactory) throws Exception {</span>
+<span class="nc" id="L56">		this.config = config;</span>
+<span class="nc" id="L57">		this.idleEntriesQueue = idleEntriesQueue;</span>
+<span class="nc" id="L58">		this.entryFactory = entryFactory;</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">		for (int i = 0; i &lt; config.getInitialConnection(); i++) {</span>
+			try {
+<span class="nc" id="L61">				idleEntriesQueue.offer(createIdleEntry());</span>
+<span class="nc" id="L62">			} catch (Exception e) {</span>
+<span class="nc" id="L63">				throw new RedisProxyPoolException(e);</span>
+<span class="nc" id="L64">			}</span>
+		}
+<span class="nc" id="L66">		totalCount=idleEntriesQueue.getIdleEntriesCount();</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">		if (config.getTimeBetweenEvictionRunsMillis() &gt; 0) {</span>
+<span class="nc" id="L68">	            this.scavenger = new Scavenger();</span>
+<span class="nc" id="L69">	            this.scavenger.start();</span>
+	    }
+<span class="nc" id="L71">	}</span>
+	
+	private IPoolEntry&lt;T&gt; createIdleEntry() throws Exception {
+<span class="nc" id="L74">		IPoolEntry&lt;T&gt; entry= entryFactory.createPoolEntry();</span>
+<span class="nc" id="L75">		return entry;</span>
+	}
+	
+
+
+	@Override
+	public IPoolEntry&lt;T&gt; borrowEntry() throws InterruptedException,
+			TimeoutException, RedisProxyPoolException {
+<span class="nc bnc" id="L83" title="All 2 branches missed.">		if(idleEntriesQueue.getIdleEntriesCount()&gt;0){//连接池足够</span>
+<span class="nc" id="L84">			return borrowEntry(false,config.getMaxWaitMillisOnBorrow(), TimeUnit.MILLISECONDS);</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">		}else if(idleEntriesQueue.getIdleEntriesCount()&lt;=0){//连接池不足够，但是没有超过最大值</span>
+<span class="nc" id="L86">			return borrowEntry(true,config.getMaxWaitMillisOnBorrow(), TimeUnit.MILLISECONDS);</span>
+		}
+<span class="nc" id="L88">		 throw new RedisProxyPoolException(&quot;已经超过连接池最大值&quot;);</span>
+	}
+
+	/*
+	 * 阻塞，默认系统的等待时间
+	 */
+	@Override
+	public IPoolEntry&lt;T&gt; borrowEntry(boolean createNew) throws InterruptedException, TimeoutException, RedisProxyPoolException {
+<span class="nc" id="L96">			return innerBorrowEntry(createNew,config.getMaxWaitMillisOnBorrow(),TimeUnit.MILLISECONDS);</span>
+	}
+
+	/*
+	 * 阻塞，默认设置的等待时间
+	 */
+	@Override
+	public IPoolEntry&lt;T&gt; borrowEntry(boolean createNew, long timeout,
+                                     TimeUnit unit) throws InterruptedException, TimeoutException,
+            RedisProxyPoolException {
+
+<span class="nc" id="L107">		return innerBorrowEntry(createNew,timeout,TimeUnit.MILLISECONDS);</span>
+	}
+	
+	private IPoolEntry&lt;T&gt; innerBorrowEntry(boolean createNew, long timeout, TimeUnit unit) throws RedisProxyPoolException {
+		try {
+<span class="nc" id="L112">			IPoolEntry&lt;T&gt; entry = idleEntriesQueue.poll();</span>
+
+<span class="nc bnc" id="L114" title="All 4 branches missed.">			if (entry == null &amp;&amp; createNew) {</span>
+<span class="nc" id="L115">				increaseObjects(1);</span>
+<span class="nc" id="L116">				return innerBorrowEntry(false,timeout,unit);//重新调用一次</span>
+			}
+<span class="nc bnc" id="L118" title="All 2 branches missed.">			if (entry == null) {</span>
+<span class="nc" id="L119">                throw new RedisProxyPoolException(&quot;Cannot get a free object from the pool&quot;);</span>
+            }
+<span class="nc bnc" id="L121" title="All 4 branches missed.">			if(entry!=null&amp;&amp;config.isTestOnBorrow()){//需要验证,物体对象是否完好</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">				if(!entryFactory.validateEntry(entry.getObject())){</span>
+<span class="nc" id="L123">					decreaseObject(entry);//验证不通过</span>
+<span class="nc" id="L124">					throw new RedisProxyPoolException(&quot;TestOnBorrow Entry  validate fail&quot;);</span>
+				}
+			}
+<span class="nc" id="L127">			return entry;</span>
+<span class="nc" id="L128">		} catch (Exception e) {</span>
+			
+<span class="nc" id="L130">			throw new RedisProxyPoolException(e);</span>
+		}
+	}
+	
+	/**
+	 * 削减
+	 * @param entry
+	 * @throws RedisProxyPoolException
+	 */
+	public synchronized void decreaseObject(IPoolEntry&lt;T&gt; entry) throws RedisProxyPoolException {
+<span class="nc" id="L140">		entry.getState().setValid(false);</span>
+<span class="nc" id="L141">		entryFactory.destroyEntry(entry.getObject());</span>
+<span class="nc" id="L142">		totalCount--;</span>
+		//System.out.println(totalCount);
+<span class="nc" id="L144">	}</span>
+	/**
+	 * 新创建
+	 * @param delta
+	 * @return
+	 */
+	private synchronized int increaseObjects(int delta) {
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (delta + totalCount &gt; config.getMaxActiveConnection()) {</span>
+<span class="nc" id="L152">			delta = config.getMaxActiveConnection() - totalCount;</span>
+        }
+        try {
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            for (int i = 0; i &lt; delta; i++) {</span>
+<span class="nc" id="L156">            	idleEntriesQueue.offer(createIdleEntry());</span>
+            }
+<span class="nc" id="L158">            totalCount += delta;</span>
+<span class="nc" id="L159">        } catch (Exception e) {</span>
+<span class="nc" id="L160">            throw new RuntimeException(e);</span>
+<span class="nc" id="L161">        }</span>
+<span class="nc" id="L162">        return delta;</span>
+    }
+	
+	
+
+	@Override
+	public void returnEntry(IPoolEntry&lt;T&gt; entry)
+			throws RedisProxyPoolException {
+<span class="nc bnc" id="L170" title="All 2 branches missed.">		if (entry == null){</span>
+<span class="nc" id="L171">			throw new NullPointerException(&quot;returnEntry, entry is null&quot;);</span>
+		}
+<span class="nc bnc" id="L173" title="All 2 branches missed.">		if(config.isTestOnReturn()){//回归验证</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">			if(!entryFactory.validateEntry(entry.getObject())){</span>
+<span class="nc" id="L175">				decreaseObject(entry);//验证不通过</span>
+<span class="nc" id="L176">				throw new RedisProxyPoolException(&quot;returnEntry Entry  validate fail&quot;);</span>
+			}
+		}
+<span class="nc" id="L179">		idleEntriesQueue.offer(entry);</span>
+<span class="nc" id="L180">	}</span>
+
+	@Override
+	public void shutDown() throws RedisProxyPoolException {
+		
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        while (this.idleEntriesQueue.getIdleEntriesCount() &gt; 0) {</span>
+<span class="nc" id="L186">        	IPoolEntry&lt;T&gt; entry = idleEntriesQueue.poll();</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">            if (entry != null) {</span>
+<span class="nc" id="L188">                decreaseObject(entry);</span>
+            }
+<span class="nc" id="L190">        }</span>
+        //idleEntriesQueue.clear();
+<span class="nc" id="L192">        shuttingDown=true;</span>
+<span class="nc" id="L193">	}</span>
+	
+	public synchronized void scavenge() throws RedisProxyPoolException {
+<span class="nc" id="L196">        int delta = this.totalCount - config.getMaxActiveConnection();</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        if (delta &lt;= 0) {</span>
+<span class="nc" id="L198">        	return;</span>
+        }
+<span class="nc" id="L200">        long now = System.currentTimeMillis();</span>
+        IPoolEntry&lt;T&gt; entry;
+<span class="nc bnc" id="L202" title="All 6 branches missed.">        while (delta &gt; 0 &amp;&amp;idleEntriesQueue.getIdleEntriesCount()&gt;config.getMinIdleEntries()&amp;&amp; (entry = idleEntriesQueue.poll()) != null) {</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">            if (now - entry.getState().getLastValidatedAt() &gt; config.getMinEvictableIdleTimeMillis()) {</span>
+<span class="nc" id="L204">                decreaseObject(entry); // shrink the pool size if the object reaches minEvictableIdleTimeMillis</span>
+            } else {
+<span class="nc bnc" id="L206" title="All 4 branches missed.">            	if(config.isTestWhileIdle()&amp;&amp;entryFactory.validateEntry(entry.getObject())){</span>
+<span class="nc" id="L207">            		idleEntriesQueue.offer(entry); //offer it back</span>
+<span class="nc bnc" id="L208" title="All 4 branches missed.">            	}else if(config.isTestWhileIdle()&amp;&amp;!entryFactory.validateEntry(entry.getObject())){</span>
+<span class="nc" id="L209">            		decreaseObject(entry); //offer it back</span>
+            	}else{
+<span class="nc" id="L211">            		idleEntriesQueue.offer(entry); //offer it back</span>
+            	}
+            	
+            }
+        }
+<span class="nc" id="L216">    }</span>
+	
+	/**
+	 * @return the totalCount
+	 */
+	public synchronized int getTotalCount() {
+<span class="nc" id="L222">		return totalCount;</span>
+	}
+	
+	/**
+	 * 检查空闲线程的状态
+	 * @author liubing
+	 *
+	 */
+<span class="nc" id="L230">	 private class Scavenger extends Thread {</span>
+
+	        @Override
+	        public void run() {
+<span class="nc bnc" id="L234" title="All 2 branches missed.">	            while (!RedisProxyBasicPool.this.shuttingDown) {</span>
+	                try {
+<span class="nc" id="L236">	                    Thread.sleep(config.getTimeBetweenEvictionRunsMillis());</span>
+<span class="nc" id="L237">	                    scavenge();</span>
+<span class="nc" id="L238">	                } catch (Exception  ignored) {</span>
+	                
+<span class="nc" id="L240">	                }</span>
+	            }
+<span class="nc" id="L242">	        }</span>
+
+	    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>
