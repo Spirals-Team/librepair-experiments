@@ -1,0 +1,854 @@
+[[manual-index-changes]]
+== Manual index changes
+
+As Hibernate core applies changes to the Database, Hibernate Search detects these changes and will
+update the index automatically (unless the EventListeners are disabled). Sometimes changes are made
+to the database without using Hibernate, as when backup is restored or your data is otherwise
+affected; for these cases Hibernate Search exposes the Manual Index APIs to explicitly update or
+remove a single entity from the index, or rebuild the index for the whole database, or remove all
+references to a specific type.
+
+All these methods affect the Lucene Index only, no changes are applied to the Database.
+
+
+=== Adding instances to the index
+
+Using `FullTextSession.index(T entity)` you can directly add or update a specific object instance to
+the index. If this entity was already indexed, then the index will be updated. Changes to the index
+are only applied at transaction commit.
+
+.Indexing an entity via `FullTextSession.index(T entity)`
+====
+[source, JAVA]
+----
+FullTextSession fullTextSession = Search.getFullTextSession(session);
+Transaction tx = fullTextSession.beginTransaction();
+Object customer = fullTextSession.load( Customer.class, 8 );
+fullTextSession.index(customer);
+tx.commit(); //index only updated at commit time
+----
+====
+
+In case you want to add all instances for a type, or for all indexed types, the recommended approach
+is to use a MassIndexer: see <<search-batchindex-massindexer>> for more details.
+
+The method `FullTextSession.index(T entity)` is considered an explicit indexing operation, so any
+registered EntityIndexingInterceptor won't be applied in this case. For more information on
+EntityIndexingInterceptor see <<search-mapping-indexinginterceptor>>.
+
+=== Deleting instances from the index
+
+It is equally possible to remove an entity or all entities of a given type from a Lucene index
+without the need to physically remove them from the database. This operation is named purging and is
+also done through the `FullTextSession`.
+
+
+.Purging a specific instance of an entity from the index
+====
+[source, JAVA]
+----
+FullTextSession fullTextSession = Search.getFullTextSession(session);
+Transaction tx = fullTextSession.beginTransaction();
+for (Customer customer : customers) {
+    fullTextSession.purge( Customer.class, customer.getId() );
+}
+tx.commit(); //index is updated at commit time
+----
+====
+
+Purging will remove the entity with the given id from the Lucene index but will not touch the
+database.
+
+If you need to remove all entities of a given type, you can use the purgeAll method. This operation
+removes all entities of the type passed as a parameter as well as all its subtypes.
+
+.Purging all instances of an entity from the index
+====
+[source, JAVA]
+----
+FullTextSession fullTextSession = Search.getFullTextSession(session);
+Transaction tx = fullTextSession.beginTransaction();
+fullTextSession.purgeAll( Customer.class );
+//optionally optimize the index
+//fullTextSession.getSearchFactory().optimize( Customer.class );
+tx.commit(); //index changes are applied at commit time
+----
+====
+
+As in the previous example, it is suggested to optimize the index after many purge operation to
+actually free the used space.
+
+As is the case with method `FullTextSession.index(T entity)`, also `purge` and `purgeAll` are
+considered explicit indexing operations: any registered `EntityIndexingInterceptor` won't be
+applied. For more information on `EntityIndexingInterceptor` see
+<<search-mapping-indexinginterceptor>>.
+
+
+[NOTE]
+====
+Methods index, purge and purgeAll are available on FullTextEntityManager as well.
+====
+
+[NOTE]
+====
+All manual indexing methods (index, purge and purgeAll) only affect the index, not the database,
+nevertheless they are transactional and as such they won't be applied until the transaction is
+successfully committed, or you make use of flushToIndexes.
+====
+
+
+[[search-batchindex]]
+=== Rebuilding the whole index
+
+If you change the entity mapping to the index, chances are that the whole index needs to be updated;
+for example if you decide to index an existing field using a different analyzer you'll need to
+rebuild the index for affected types. Also if the Database is replaced (like restored from a backup,
+imported from a legacy system) you'll want to be able to rebuild the index from existing data.
+Hibernate Search provides two main strategies to choose from:
+
+
+* Using `FullTextSession.flushToIndexes()` periodically, while using FullTextSession.index() on all
+entities.
+* Use a MassIndexer.
+
+[NOTE]
+====
+When you change the entity mapping to the index, if you don't know whether the changes require
+a full reindexing or not, you can follow this rule of thumb:
+
+* Rebuilding the whole index is *not* required if all you did was:
+** *adding* new indexed entities that will not have any persisted instance,
+   e.g. adding an `@Indexed` annotation on an entity which has no rows in database. 
+** *adding* new fields that will be empty for all currently persisted entities,
+   e.g. adding a new property on an entity type and mapping it to a field,
+   but with the guarantee that this property will initially be null for every instance of this entity;
+** and/or *removing* data from existing indexes/fields,
+   e.g. removing an index field, or removing the need for a field to be stored.
+* Rebuilding the whole index *is* required if you made any change to the mapping that is not mentioned above.
+====
+
+[[search-batchindex-flushtoindexes]]
+==== Using flushToIndexes()
+
+This strategy consists in removing the existing index and then adding all entities back to the index
+using `FullTextSession.purgeAll()` and `FullTextSession.index()`, however there are some memory and
+efficiency constraints. For maximum efficiency Hibernate Search batches index operations and executes
+them at commit time. If you expect to index a lot of data you need to be careful about memory
+consumption since all documents are kept in a queue until the transaction commit. You can
+potentially face an `OutOfMemoryException` if you don't empty the queue periodically: to do this you
+can use `fullTextSession.flushToIndexes()`. Every time `fullTextSession.flushToIndexes()` is called (or
+if the transaction is committed), the batch queue is processed applying all index changes. Be aware
+that, once flushed, the changes cannot be rolled back.
+
+.Index rebuilding using index() and flushToIndexes()
+====
+[source, JAVA]
+----
+fullTextSession.setFlushMode(FlushMode.MANUAL);
+fullTextSession.setCacheMode(CacheMode.IGNORE);
+transaction = fullTextSession.beginTransaction();
+//Scrollable results will avoid loading too many objects in memory
+ScrollableResults results = fullTextSession.createCriteria( Email.class )
+    .setFetchSize(BATCH_SIZE)
+    .scroll(ScrollMode.FORWARD_ONLY);
+int index = 0;
+while(results.next()) {
+    index++;
+    fullTextSession.index(results.get(0)); //index each element
+    if (index % BATCH_SIZE == 0) {
+        fullTextSession.flushToIndexes(); //apply changes to indexes
+        fullTextSession.clear(); //free memory since the queue is processed
+    }
+}
+transaction.commit();
+----
+====
+
+Try to use a batch size that guarantees that your application will not run out of memory: with a
+bigger batch size objects are fetched faster from database but more memory is needed.
+
+[[search-batchindex-massindexer]]
+==== Using a MassIndexer
+
+Hibernate Search's MassIndexer uses several parallel threads to rebuild the index; you can
+optionally select which entities need to be reloaded or have it reindex all entities. This approach
+is optimized for best performance but requires to set the application in maintenance mode: making
+queries to the index is not recommended when a MassIndexer is busy.
+
+.Index rebuilding using a MassIndexer
+====
+[source, JAVA]
+----
+fullTextSession.createIndexer().startAndWait();
+----
+====
+
+This will rebuild the index, deleting it and then reloading all entities from the database. Although
+it's simple to use, some tweaking is recommended to speed up the process: there are several
+parameters configurable.
+
+
+[WARNING]
+====
+During the progress of a MassIndexer the content of the index is undefined! If a query is performed
+while the MassIndexer is working most likely some results will be missing.
+====
+
+
+.Using a tuned MassIndexer
+
+====
+[source, JAVA]
+----
+fullTextSession
+ .createIndexer( User.class )
+ .batchSizeToLoadObjects( 25 )
+ .cacheMode( CacheMode.NORMAL )
+ .threadsToLoadObjects( 12 )
+ .idFetchSize( 150 )
+ .transactionTimeout( 1800 )
+ .progressMonitor( monitor ) //a MassIndexerProgressMonitor implementation
+ .startAndWait();
+----
+====
+
+This will rebuild the index of all `User` instances (and subtypes), and will create 12 parallel
+threads to load the User instances using batches of 25 objects per query; these same 12 threads will
+also need to process indexed embedded relations and custom FieldBridges or ClassBridges, to finally
+output a Lucene document. In this conversion process these threads are likely going to need to
+trigger lazy loading of additional attributes, so you will probably need a high number of threads
+working in parallel. When run in a JTA environment such as the WildFly application server, the mass
+indexer will use a timeout of 1800 seconds (= 30 minutes) for its transactions. Configure a timeout
+value which is long enough to load and index all entities of the type with the most instances,
+taking into account the configured batch size and number of threads to load objects. Note that
+these transactions are read-only, so choosing a substantially large value should pose no problem in
+general.
+
+As of Hibernate Search 4.4.0, instead of indexing all the types in parallel, the MassIndexer is
+configured by default to index only one type in parallel. It prevents resource exhaustion especially
+database connections and usually does not slow down the indexing. You can however configure this
+behavior using `MassIndexer.typesToIndexInParallel(int threadsToIndexObjects)`:
+
+.Configuring the MassIndexer to index several types in parallel
+====
+[source, JAVA]
+----
+fullTextSession
+ .createIndexer( User.class, Customer.class )
+ .typesToIndexInParallel( 2 )
+ .batchSizeToLoadObjects( 25 )
+ .cacheMode( CacheMode.NORMAL )
+ .threadsToLoadObjects( 5 )
+ .idFetchSize( 150 )
+ .progressMonitor( monitor ) //a MassIndexerProgressMonitor implementation
+ .startAndWait();
+----
+====
+
+Generally we suggest to leave cacheMode to `CacheMode.IGNORE` (the default), as in most reindexing
+situations the cache will be a useless additional overhead; it might be useful to enable some other
+`CacheMode` depending on your data: it could increase performance if the main entity is relating to
+enum-like data included in the index.
+
+
+[NOTE]
+====
+The MassIndexer was designed for speed and is unaware of transactions, so there is no need to begin
+one or committing. Also because it is not transactional it is not recommended to let users use the
+system during its processing, as it is unlikely people will be able to find results and the system
+load might be too high anyway.
+====
+
+
+[[search-batchindexing-threadsandconnections]]
+===== MassIndexer using threads and JDBC connections
+
+The MassIndexer was designed to finish the re-indexing task as quickly as possible, but this requires
+a bit of care in its configuration to behave fairly with your server resources.
+
+There is a simple formula to understand how the different options applied to the MassIndexer affect
+the number of used worker threads and connections: each thread will require a JDBC connection.
+
+====
+----
+threads = typesToIndexInParallel * (threadsToLoadObjects + 1);
+required JDBC connections = threads;
+----
+====
+
+Let's see some suggestions for a roughly sane tuning starting point:
+
+
+. Option `typesToIndexInParallel` should probably be a low value, like 1 or 2, depending on how much
+of your CPUs have spare cycles and how slow a database round trip will be.
+
+. Before tuning a parallel run, experiment with options to tune your primary indexed entities in
+isolation.
+
+. Making `threadsToLoadObjects` higher increases the pre-loading rate for the picked entities from
+the database, but also increases memory usage and the pressure on the threads working on subsequent
+indexing.
+
+. Increasing parallelism usually helps as the bottleneck usually is the latency to the database
+connection: it's probably worth it to experiment with values significantly higher than the number
+of actual cores available, but make sure your database can handle all the multiple requests.
+
+. This advice might not apply to you: always measure the effects! We're providing this as a means to
+help you understand how these options are related.
+
+
+[WARNING]
+====
+Running the MassIndexer with many threads will require many connections to the database. If you
+don't have a sufficiently large connection pool, the MassIndexer itself and/or your other
+applications could starve being unable to serve other requests: make sure you size your connection
+pool accordingly to the options as explained in the above paragraph.
+====
+
+[TIP]
+====
+The "sweet spot" of number of threads to achieve best performance is highly dependent on your
+overall architecture, database design and even data values. All internal thread groups have
+meaningful names so they should be easily identified with most diagnostic tools, including simply
+thread dumps.
+====
+
+
+[[search-batchindex-custommassindexer]]
+===== Using a custom MassIndexer implementation
+
+The provided MassIndexer is quite general purpose, and while we believe it's a robust approach, you
+might be able to squeeze some better performance by writing a custom implementation. To run your own
+MassIndexer instead of using the one shipped with Hibernate Search you have to:
+
+
+. create an implementation of the `org.hibernate.search.spi.MassIndexerFactory` interface;
+
+. set the property `hibernate.search.massindexer.factoryclass` with the qualified class name of the
+factory implementation.
+
+.Custom MassIndexerFactory example
+====
+[source, JAVA]
+----
+package org.myproject
+import org.hibernate.search.spi.MassIndexerFactory
+
+// ...
+
+public class CustomIndexerFactory implements MassIndexerFactory {
+
+  public void initialize(Properties properties) {
+  }
+
+  public MassIndexer createMassIndexer(...) {
+    return new CustomIndexer();
+  }
+
+}
+----
+
+----
+hibernate.search.massindexer.factoryclass = org.myproject.CustomIndexerFactory
+----
+====
+
+
+==== Useful parameters for batch indexing
+
+Other parameters which affect indexing time and memory consumption are:
+
+* `hibernate.search.[default|<indexname>].exclusive_index_use`
+* `hibernate.search.[default|<indexname>].indexwriter.max_buffered_docs`
+* `hibernate.search.[default|<indexname>].indexwriter.max_merge_docs`
+* `hibernate.search.[default|<indexname>].indexwriter.merge_factor`
+* `hibernate.search.[default|<indexname>].indexwriter.merge_min_size`
+* `hibernate.search.[default|<indexname>].indexwriter.merge_max_size`
+* `hibernate.search.[default|<indexname>].indexwriter.merge_max_optimize_size`
+* `hibernate.search.[default|<indexname>].indexwriter.merge_calibrate_by_deletes`
+* `hibernate.search.[default|<indexname>].indexwriter.ram_buffer_size`
+
+Previous versions also had a `max_field_length` but this was removed from Lucene, it's possible
+to obtain a similar effect by using a `LimitTokenCountAnalyzer`.
+
+All `.indexwriter` parameters are Lucene specific and Hibernate Search is just passing these
+parameters through - see <<lucene-indexing-performance>> for more details.
+
+The MassIndexer uses a forward only scrollable result to iterate on the primary keys to be loaded,
+but MySQL's JDBC driver will load all values in memory; to avoid this "optimization" set
+`idFetchSize` to `Integer.MIN_VALUE`.
+
+
+[[jsr352-integration]]
+=== Integration with JSR-352
+
+The integration with JSR-352, Batch Applications for the Java Platform, is in development. We do
+think we have the basics covered and we are looking for feedback.
+
+Hibernate Search provides a JSR-352 job to perform mass indexing. It covers not only the existing
+functionality of the mass indexer described above, but also benefits from some powerful standard
+features of the Java Batch Platform (JSR-352), such as failure recovery using checkpoints, chunk
+oriented processing, and parallel execution. This batch job accepts different entity type(s) as
+input, loads the relevant entities from the database, then rebuilds the full-text index from these.
+
+However, it requires a batch runtime for the execution. Please notice that we
+don't provide any batch runtime, you are free to choose one that fits you needs, e.g. the default
+batch runtime embedded in your Java EE container. We provide full integration to the JBeret
+implementation (see <<jsr-352-emf-jberet,how to configure it here>>).
+As for other implementations, they can also be used, but will require
+<<jsr-352-emf-other-implementation,a bit more configuration on your side>>.
+
+.How to use the JSR-352 mass-indexing job?
+====
+[source, JAVA]
+----
+Properties jobProps = MassIndexingJob
+        .parameters()
+        .forEntity( MyEntity.class )
+        .build();
+long executionId = BatchRuntime
+        .getJobOperator()
+        .start( MassIndexingJob.NAME, jobProps );
+----
+====
+
+==== Job Parameters
+
+.Job Parameters in JSR 352 Integration
+|===
+|Parameter Name |Builder Method |Requirement |Default value |Description
+
+|`entityTypes`
+|`forEntity(Class<?>)`, `forEntities(Class<?>, Class<?>...)`
+|Required
+|-
+|The entity types to index in this job execution, comma-separated.
+
+|`purgeAllOnStart`
+|`purgeAllOnStart(boolean)`
+|Optional
+|True
+|Specify whether the existing index should be purged at the beginning of the job. This operation
+takes place before indexing.
+
+|`optimizeAfterPurge`
+|`optimizeAfterPurge(boolean)`
+|Optional
+|True
+|Specify whether the mass indexer should be optimized at the beginning of the job. This operation
+takes place after the purge operation and before indexing.
+
+|`optimizeOnFinish`
+|`optimizeOnFinish(boolean)`
+|Optional
+|True
+|Specify whether the mass indexer should be optimized at the end of the job. This operation takes
+place after indexing.
+
+|`cacheMode`
+|`cacheMode(CacheMode)`
+|Optional
+|`IGNORE`
+|Specify the Hibernate `CacheMode` when loading entities.
+The default is `IGNORE`, and it will be the most efficient choice in most cases,
+but using another mode such as `GET` may be more efficient if many of the entities being indexed
+refer to a small set of other entities. 
+
+|`idFetchSize`
+|`idFetchSize(int)`
+|Optional
+|1000
+|Specifies the fetch size to be used when loading primary keys. Some databases
+accept special values, for example MySQL might benefit from using `Integer#MIN_VALUE`, otherwise it
+will attempt to preload everything in memory.
+
+|`entityFetchSize`
+|`entityFetchSize(int)`
+|Optional
+|The value of `sessionClearInterval`
+|Specifies the fetch size to be used when loading entities from database. Some databases
+accept special values, for example MySQL might benefit from using `Integer#MIN_VALUE`, otherwise it
+will attempt to preload everything in memory.
+
+|`customQueryHQL`
+|`restrictedBy(String)`
+|Optional
+|-
+|Use HQL / JPQL to index entities of a target entity type. Your query should contain only one entity
+type. Mixing this approach with the criteria restriction is not allowed. Please notice that there's
+no query validation for your input. See <<jsr-352-indexing-mode>> for more detail and limitations.
+
+|`customQueryCriteria` (Not available, query builder only)
+|`restrictedBy(Criterion)`
+|Optional
+|-
+|Add criterion to construct a customized selection of mass-indexing under the criteria approach. You
+can call this method multiple times to add multiple criteria: only entities matching every criterion
+will be indexed. However, mixing this approach with the HQL restriction is not allowed.
+See <<jsr-352-indexing-mode>> for more detail and limitations.
+
+|`maxResultsPerEntity`
+|`maxResultsPerEntity(int)`
+|Optional
+|-
+|The maximum number of results to load per entity type. This parameter let you define a threshold
+value to avoid loading too many entities accidentally. The value defined must be greater than 0.
+The parameter is not used by default. It is equivalent to keyword `LIMIT` in SQL.
+|`rowsPerPartition`
+|`rowsPerPartition(int)`
+|Optional
+|20,000
+|The maximum number of rows to process per partition. The value defined must be greater than 0, and
+equal to or greater than the value of `checkpointInterval`.
+
+|`maxThreads`
+|`maxThreads(int)`
+|Optional
+|The number of partitions
+|The maximum number of threads to use for processing the job. Note the batch runtime cannot
+guarantee the request number of threads are available; it will use as many as it can up to the
+request maximum.
+
+|`checkpointInterval`
+|`checkpointInterval(int)`
+|Optional
+|2,000, or the value of `rowsPerPartition` if it is smaller
+|The number of entities to process before triggering a checkpoint. The value defined must be greater
+than 0, and equal to or less than the value of `rowsPerPartition`.
+
+|`sessionClearInterval`
+|`sessionClearInterval(int)`
+|Optional
+|200, or the value of `checkpointInterval` if it is smaller
+|The number of entities to process before clearing the session. The value defined must be greater
+than 0, and equal to or less than the value of `checkpointInterval`.
+
+|`entityManagerFactoryReference`
+|`entityManagerFactoryReference(String)`
+|Required if there's more than one persistence unit
+|-
+|The string that will identify the `EntityManagerFactory`.
+
+|`entityManagerFactoryNamespace`
+|`entityManagerFactoryNamespace(String)`
+|-
+|-
+|See <<jsr-352-emf,Selecting the persistence unit (EntityManagerFactory)>> 
+|===
+
+[[jsr-352-indexing-mode]]
+==== Indexing mode
+
+The mass indexing job allows you to define your own entities to be indexed -- you can start a full
+indexing or a partial indexing through 3 different methods: selecting the desired entity types,
+using HQL, or using Hibernate criteria.
+
+.How to define the indexing mode?
+====
+[source, JAVA]
+----
+// full indexing
+Properties jobProps1 = MassIndexingJob
+        .parameters()
+        .forEntity( MyClass.class )
+        .build();
+
+// partial indexing using HQL
+Properties jobProps2 = MassIndexingJob
+        .parameters()
+        .forEntity( MyClass.class )
+        .restrictedBy( "select c from MyClass c where c.name in ( 'Foo', 'Bar' )" )
+        .build();
+
+// partial indexing using Criteria
+Properties jobProps3 = MassIndexingJob
+        .parameters()
+        .forEntity( MyClass.class )
+        .restrictedBy( Restrictions.in( "name", "Foo", "Bar" ) )
+        .build();
+----
+====
+
+While the full indexing is useful when you perform the very first indexing, or
+after extensive changes to your whole database, it may also be time consuming.
+If your want to reindex only part of your data, you need to add restrictions using HQL or criteria:
+they help you to define a customized selection, and only the entities inside that selection will be indexed. A typical
+use-case is to index the new entities appeared since yesterday.
+
+Note that, as detailed below, some features may not be supported depending on the indexing mode.
+
+.Comparaison of each indexing mode
+|===
+| Indexing mode | Scope | Parallel Indexing
+
+| Full Indexation
+| All entities
+| Supported
+
+| Criteria
+| Some entities
+| Supported
+
+| HQL
+| Some entities
+| Not supported
+|===
+
+[WARNING]
+====
+When using the HQL mode, there isn't any query validation before the job's start.
+If the query is invalid, the job will start and fail.
+
+Also, parallel indexing is disabled in HQL mode,
+because our current parallelism implementations relies on selection order,
+which might not be provided by the HQL given by user.
+
+Because of those limitations, we suggest you use this approach only for indexing small numbers of entities,
+and only if you know that no entities matching the query will be created during indexing.
+====
+
+==== Parallel indexing
+
+For better performance, indexing is performed in parallel using multiple threads. The set of
+entities to index is split into multiple partitions. Each thread processes one partition at a time.
+
+The following section will explain how to tune the parallel execution.
+
+[TIP]
+====
+The "sweet spot" of number of threads, fetch size, partition size, etc. to achieve best performance
+is highly dependent on your overall architecture, database design and even data values.
+
+You should experiment with these settings to find out what's best in your particular case.
+====
+
+===== Threads
+
+The maximum number of threads used by the job execution is defined through method `maxThreads()`.
+Within the N threads given, there’s 1 thread reserved for the core, so only N - 1 threads are
+available for different partitions. If N = 1, the program will work, and all batch elements will run
+in the same thread. The default number of threads used in Hibernate Search is 10. You can overwrite
+it with your preferred number.
+
+====
+[source, JAVA]
+----
+MassIndexingJob.parameters()
+        .maxThreads( 5 )
+        ...
+----
+====
+
+[NOTE]
+====
+Note that the batch runtime cannot guarantee the requested number of threads are available, it will
+use as many as possible up to the requested maximum (JSR352 v1.0 Final Release, page 34). Note also that all
+batch jobs share the same thread pool, so it's not always a good idea to execute jobs concurrently.
+====
+
+===== Rows per partition
+
+Each partition consists of a fixed number of elements to index. You may tune exactly how many elements
+a partition will hold with `rowsPerPartition`.
+
+====
+[source, JAVA]
+----
+MassIndexingJob.parameters()
+        .rowsPerPartition( 5000 )
+        ...
+----
+====
+
+[NOTE]
+====
+This property has *nothing* to do with "chunk size",
+which is how many elements are processed together between each write.
+That aspect of processing is addressed by chunking.
+
+Instead, `rowsPerPartition` is more about how parallel your mass indexing job will be.
+
+Please see the <<jsr-352-chunking,Chunking section>> to see how to tune chunking.
+====
+
+When `rowsPerPartition` is low, there will be many small partitions,
+so processing threads will be less likely to starve (stay idle because there's no more partition to process),
+but on the other hand you will only be able to take advantage of a small fetch size,
+which will increase the number of database accesses.
+Also, due to the failure recovery mechanisms, there is some overhead in starting a new partition,
+so with an unnecessarily large number of partitions, this overhead will add up.
+
+When `rowsPerPartition` is high, there will be a few big partitions,
+so you will be able to take advantage of a higher <<jsr-352-chunking,chunk size>>,
+and thus a higher fetch size,
+which will reduce the number of database accesses,
+and the overhead of starting a new partition will be less noticeable,
+but on the other hand you may not use all the threads available.
+
+[NOTE]
+====
+Each partition deals with one root entity type, so two different entity types will never run under
+the same partition.
+====
+
+[[jsr-352-chunking]]
+==== Chunking and session clearing
+
+The mass indexing job supports restart a suspended or failed job more or less from where it stopped.
+
+This is made possible by splitting each partition in several consecutive _chunks_ of entities,
+and saving process information in a _checkpoint_ at the end of each chunk.
+When a job is restarted, it will resume from the last checkpoint.
+
+The size of each chunk is determined by the `checkpointInterval` parameter.
+
+====
+[source, JAVA]
+----
+MassIndexingJob.parameters()
+        .checkpointInterval( 1000 )
+        ...
+----
+====
+
+But the size of a chunk is not only about saving progress, it is also about performance:
+
+ * a new Hibernate session is opened for each chunk;
+ * a new transaction is started for each chunk;
+ * inside a chunk, the session is cleared periodically
+   according to the `sessionClearInterval` parameter,
+   which must thereby be smaller than (or equal to) the chunk size;
+ * documents are flushed to the index at the end of each chunk.
+
+[TIP]
+====
+In general the checkpoint interval should be small compared to the number of rows per partition.
+
+Indeed, due to the failure recovery mechanism,
+the elements before the first checkpoint of each partition will take longer to process than the other,
+so in a 1000-element partition, having a 100-element checkpoint interval will be faster than
+having a 1000-element checkpoint interval.
+
+On the other hand, *chunks shouldn't be too small* in absolute terms.
+Performing a checkpoint means your JSR-352 runtime
+will write information about the progress of the job execution to its persistent storage,
+which also has a cost.
+Also, a new transaction and session are created for each chunk
+which doesn't come for free, and implies that setting the fetch size
+to a value higher than the chunk size is pointless.
+Finally, the index flush performed at the end of each chunk
+is an expensive operation that involves a global lock,
+which essentially means that the less you do it, the faster indexing will be.
+Thus having a 1-element checkpoint interval is definitely not a good idea.
+====
+
+[[jsr-352-emf]]
+==== Selecting the persistence unit (EntityManagerFactory)
+
+[CAUTION]
+====
+Regardless of how the entity manager factory is retrieved,
+you must make sure that the entity manager factory used by the mass indexer
+will stay open during the whole mass indexing process.
+====
+
+[[jsr-352-emf-jberet]]
+===== JBeret
+
+If your JSR-352 runtime is JBeret (used in WildFly in particular),
+you can use CDI to retrieve the `EntityManagerFactory`.
+Unless you use an already packaged `hibernate-search-jsr352` module for your application container,
+this will require you to add the `hibernate-search-jsr352-jberet` jar to your classpath.
+
+If you use only one persistence unit, the mass indexer will be able to access your database
+automatically without any special configuration.
+
+If you want to use multiple persistence units, you will have to register the `EntityManagerFactories`
+as beans in the CDI context.
+Note that entity manager factories will probably not be considered as beans by default, in which case
+you will have to register them yourself. You may use an application-scoped bean to do so:
+
+====
+[source, JAVA]
+----
+@ApplicationScoped
+public class EntityManagerFactoriesProducer {
+
+    @PersistenceUnit(unitName = "db1")
+    private EntityManagerFactory db1Factory;
+
+    @PersistenceUnit(unitName = "db2")
+    private EntityManagerFactory db2Factory;
+
+    @Produces
+    @Singleton
+    @Named("db1") // The name to use when referencing the bean
+    public EntityManagerFactory createEntityManagerFactoryForDb1() {
+        return db1Factory;
+    }
+
+    @Produces
+    @Singleton
+    @Named("db2") // The name to use when referencing the bean
+    public EntityManagerFactory createEntityManagerFactoryForDb2() {
+        return db2Factory;
+    }
+}
+----
+====
+
+Once the entity manager factories are registered in the CDI context, you can instruct the mass
+indexer to use one in particular by naming it using the `entityManagerReference` parameter.
+
+[NOTE]
+====
+Due to limitations of the CDI APIs, it is not currently possible to reference
+an entity manager factory by its persistence unit name when using the mass indexer with CDI.
+====
+
+[[jsr-352-emf-other-implementation]]
+===== Other DI-enabled JSR-352 implementations
+
+If you want to use a different JSR-352 implementation that happens to allow dependency injection,
+you can use `hibernate-search-jsr352-core` under the following conditions:
+
+1. You must map the following two scope annotations
+to the relevant scope in the dependency injection mechanism:
+ * `org.hibernate.search.jsr352.inject.scope.spi.HibernateSearchJobScoped`
+ * `org.hibernate.search.jsr352.inject.scope.spi.HibernateSearchPartitionScoped`
+2. You must make sure that the dependency injection mechanism will register
+all injection-annotated classes (`@Named`, ...) from the
+`hibernate-search-jsr352-core` module in the dependency injection context.
+For instance this can be achieved in Spring DI using the `@ComponentScan` annotation.
+3. You must register a single bean in the dependency injection context
+that will implement the `EntityManagerFactoryRegistry` interface.
+
+===== Plain Java environment (no dependency injection at all)
+
+The following will work only if your JSR-352 runtime does not support dependency injection at all,
+i.e. it ignores `@Inject` annotations in batch artifacts.
+This is the case for JBatch in Java SE mode, for instance.
+
+If you use only one persistence unit,
+the mass indexer will be able to access your database automatically without any special configuration:
+you only have to make sure to create the `EntityManagerFactory` (or `SessionFactory`)
+in your application before launching the mass indexer.
+
+If you want to use multiple persistence units, you will have to add two parameters when launching the
+mass indexer:
+
+* `entityManagerFactoryReference`: this is the string that will identify the `EntityManagerFactory`.
+* `entityManagerFactoryNamespace`: this allows to select how you want to reference the
+  `EntityManagerFactory`. Possible values are:
+
+** `persistence-unit-name` (the default): use the persistence unit name defined in
+   `persistence.xml`.
+** `session-factory-name`: use the session factory name defined in the Hibernate configuration by
+   the `hibernate.session_factory_name` configuration property.
+
+
+[CAUTION]
+====
+If you set the `hibernate.session_factory_name` property in the Hibernate configuration
+and you don't use JNDI, you will also have to set `hibernate.session_factory_name_is_jndi` to `false`.
+====
