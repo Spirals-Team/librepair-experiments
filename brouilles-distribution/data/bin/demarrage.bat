@@ -1,0 +1,1 @@
+java8\bin\java.exe -jar -Xmx1024m -Dspring.profiles.active=dev -Dlogging.config=conf/logback.xml -Djasypt.encryptor.password=supersecretz jars/brouilles-boot-${project.version}.jar
