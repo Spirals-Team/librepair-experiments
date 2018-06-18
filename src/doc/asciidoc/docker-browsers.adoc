@@ -1,0 +1,150 @@
+== Docker browsers 
+
+As of version 2.0.0, _Selenium-Jupiter_ allows to ask for browsers in https://www.docker.com/[Docker] containers. The only requirement to use this feature is to install https://www.docker.com/get-docker[Docker Engine] in the machine running the tests. Internally, _Selenium-Jupiter_ uses a https://github.com/docker-java/docker-java[docker-java] as Docker client and the Docker images for browsers provided by http://aerokube.com/selenoid/latest/[Selenoid].
+
+As shown in the following section, the mode of operation is similar to local browser. We simply asks for browsers in Docker simply declaring parameters in our `@Test` methods, and _Selenium-Jupiter_ will make magic for us: it downloads the proper Docker image for the browser, start it, and instantiate the object of type `WebDriver` or `RemoteWebDriver` to control the browser from our test. The annotation `@DockerBrowser` need to be declared in the parameter to mark the WebDriver object as a browser in Docker.    
+
+=== Chrome
+
+The following example contains a simple test example using Chrome browsers in Docker. Check out the code https://github.com/bonigarcia/selenium-jupiter/blob/master/src/test/java/io/github/bonigarcia/test/docker/DockerChromeJupiterTest.java[here]. As you can see, the first `@Test` method (called `testChrome`) declares a parameter of type `RemoteWebDriver`. This parameter is annotated with `@DockerBrowser`. This annotation requires to set the browser type, in this case `CHROME`. If no version is specified, then the latest version of the browser will be used. This feature is known as *_evergreen_ Docker browsers*, and it is implementing by consuming the REST API of https://hub.docker.com/[Docker Hub], asking for the list of https://hub.docker.com/u/selenoid/[Selenoid] browsers. On the other hand, the second `@Test` (called `testChromeWithVersion`) a fixed version is set, in this case `64.0`.  
+
+[source,java]
+----
+include::../../test/java/io/github/bonigarcia/test/docker/DockerChromeJupiterTest.java[tags=snippet-in-doc,indent=0]
+----
+
+In this other example, wildcards are used to set the browser version. In the first `@Test` (method `testLatestChrome`), we use the literal `latest` to mark the use of the latest version (in fact the use of `latest` is exactly the same that not declaring the `version` attribute). The second `@Test` (method `testFormerChrome`) sets the version as `latest-1`. This should be read as _latest version minus one_, in other words, the previous version to the stable version at the time of the test execution. Notice that the concrete versions for both test will evolve in time, since new versions are released constantly. All in all, you have the certainty of using the latest versions of the browser without any kind of extra configuration nor maintenance of the underlying infrastructure. 
+
+Moreover, in third (`testBetaChrome`) and fourth (`testUnstableChrome`) test **beta** and **unstable** (i.e. development) versions are used. This feature is available both for https://hub.docker.com/r/elastestbrowsers/chrome/[Chrome] and https://hub.docker.com/r/elastestbrowsers/firefox/[Firefox], thanks to the Docker images provided by the http://elastest.io/[ElasTest project].
+
+[source,java]
+----
+include::../../test/java/io/github/bonigarcia/test/docker/DockerChromeLatestJupiterTest.java[tags=snippet-in-doc,indent=0]
+----
+
+NOTE: The label _latest-*_ is supported, where _*_ is a number for a former version to the current stable. For instance, _latest-2_ means the two previous version to the stable (for instance, if at the time of running a test the latest version is 63.0, _latest-2_ will mean version 61.0).
+
+=== Firefox
+
+The use of Firefox is equivalent. With respect to the previous example, it simply change the type of browser. Versioning works exactly the same.
+
+[source,java]
+----
+include::../../test/java/io/github/bonigarcia/test/docker/DockerFirefoxJupiterTest.java[tags=snippet-in-doc,indent=0]
+----
+
+NOTE: Notice that the version of the second test is simply `57`. The actual version of the image is `57.0`, but _Selenium-Jupiter_ supposes that version is `.0` if not specified.
+
+=== Opera
+
+Again, the use of Opera browsers in Docker is the same, simply changing the browser type to `OPERA`.
+
+[source,java]
+----
+include::../../test/java/io/github/bonigarcia/test/docker/DockerOperaJupiterTest.java[tags=snippet-in-doc,indent=0]
+----
+
+=== Remote sessions (VNC)
+
+_Selenium-Jupiter_ allows to track the evolution of our browsers in Docker using Virtual Network Computing (VNC) sessions. This feature is disabled by default, but it can activated using the configuration key `sel.jup.vnc`  to `true` (more info on section link:#configuration[Configuration]).
+
+When it is activated, the VNC URL of a browser in Docker is printed in the test log, concretely using the _DEBUG_ level (see example below). Simply copying and pasting that URL in a real browser we can take a look to the browser while the test is being executed. We can even interact with the Docker browser.
+
+[source]
+----
+2018-03-31 17:07:03 [main] INFO  i.g.b.handler.DockerDriverHandler - VNC URL (copy and paste in a browser navigation bar to interact with remote session)
+2018-03-31 17:07:03 [main] INFO  i.g.b.handler.DockerDriverHandler - http://192.168.99.100:32769/vnc.html?host=192.168.99.100&port=32768&path=vnc/aa39e2562bf0f58bfbad0924d22ca958&resize=scale&autoconnect=true&password=selenoid
+----  
+
+[.thumb]
+.Example of VNC session on Chrome
+image::vnc_chrome_in_docker.png[scaledwidth=100%]
+
+NOTE: In addition to log the VNC URL, as of _Selenium-Jupiter_ 2.1.0, the value of this URL is exported as Java property as `vnc.session.url` (i.e. `System.setProperty("vnc.session.url", vncUrl);`).
+
+
+
+=== Recordings
+
+_Selenium-Jupiter_ allows to record the sessions of browsers in Docker. This capability is not activated by default, but it activated simply setting the configuration key `sel.jup.recording` to `true` (see section link:#configuration[Configuration] for further details about configuration).
+
+This way, a recording in MP4 format will be stored at the end of the test which uses one or several browsers in Docker. The output folder in which the recording is stored is configured by means of the configuration key `sel.jup.output.folder`, whose default value is `.` (i.e. the current folder in which the test is executed). The following picture shows an example of recording.
+
+[.thumb]
+.Example of recording played in VLC
+image::recording_chrome_in_docker.png[scaledwidth=100%]
+
+
+=== Performance tests
+
+Another important new feature of browsers in Docker is the possibility of asking for _many of them_ by the same test. This can be used to implement performance tests in a seamless way. To use this feature, we need into account two aspects. First of all, the attribute `size` of the annotation `@DockerBrowser` should be declared. This numeric value sets the number of browsers demanded by the test. Second, the test declares a `List<RemoteWebDriver>` (or `List<WebDriver>`). For example as follows:
+
+[source,java]
+----
+include::../../test/java/io/github/bonigarcia/test/docker/PerformenceDockerChromeJupiterTest.java[tags=snippet-in-doc,indent=0]
+----
+
+This example requires a list of 3 Chrome browsers in Docker. Then, it executed in parallel a given logic. Notice that if the number of browsers is high, the CPU and memory consumption of the test running the machine will increase accordingly.
+
+
+=== Interactive mode
+
+As of version 2.1.0, _Selenium-Jupiter_ can used interactively from the shell to get the VNC session of Docker browser. There are two ways of using this feature:
+
+* Directly from the source code, using Maven. The command to be used is `mvn exec:java -Dexec.args="browserName <version>"`. For instance:
+
+[source]
+----
+$ mvn exec:java -Dexec.args="chrome beta"
+[INFO] Scanning for projects...
+[INFO]
+[INFO] ------------------------------------------------------------------------
+[INFO] Building selenium-jupiter 2.1.2-SNAPSHOT
+[INFO] ------------------------------------------------------------------------
+[INFO]
+[INFO] --- exec-maven-plugin:1.6.0:java (default-cli) @ selenium-jupiter ---
+[INFO] Using SeleniumJupiter to execute chrome beta in Docker
+[INFO] Getting browser image list from Docker Hub
+[INFO] Using CHROME version beta
+[INFO] Pulling Docker image elastestbrowsers/chrome:beta ... please wait
+[INFO] Starting Docker container aerokube/selenoid:1.6.0
+mar 31, 2018 5:50:15 PM org.openqa.selenium.remote.ProtocolHandshake createSession
+INFORMATION: Detected dialect: OSS
+[INFO] Starting Docker container psharkey/novnc:3.3-t6
+[INFO] Session id 957187e9f3f99312ebd2c81546750643
+[INFO] VNC URL (copy and paste in a browser navigation bar to interact with remote session)
+[INFO] http://192.168.99.100:32775/vnc.html?host=192.168.99.100&port=32774&path=vnc/957187e9f3f99312ebd2c81546750643&resize=scale&autoconnect=true&password=selenoid
+[INFO] Press ENTER to exit
+
+[INFO] Stopping Docker container aerokube/selenoid:1.6.0
+[INFO] Stopping Docker container psharkey/novnc:3.3-t6
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time: 01:10 min
+[INFO] Finished at: 2018-03-31T17:51:15+02:00
+[INFO] Final Memory: 27M/390M
+[INFO] ------------------------------------------------------------------------
+----
+
+* Using _Selenium-Jupiter_ as a _fat-jar_. This jar can be created using the command `mvn compile assembly:single` from the source code, and then `java -jar selenium-jupiter.jar browserName <version>`. For instance:
+
+[source]
+----
+$ java -jar selenium-jupiter-2.1.2-SNAPSHOT-jar-with-dependencies.jar firefox
+[INFO] Using SeleniumJupiter to execute firefox (latest) in Docker
+[INFO] Getting browser image list from Docker Hub
+[INFO] Using FIREFOX version 59.0 (latest)
+[INFO] Pulling Docker image selenoid/vnc:firefox_59.0 ... please wait
+[INFO] Starting Docker container aerokube/selenoid:1.6.3
+mar 31, 2018 5:53:51 PM org.openqa.selenium.remote.ProtocolHandshake createSession
+INFORMATION: Detected dialect: W3C
+[INFO] Starting Docker container psharkey/novnc:3.3-t6
+[INFO] Session id 651fcf54-183e-4732-8fae-6a525140f6f0
+[INFO] VNC URL (copy and paste in a browser navigation bar to interact with remote session)
+[INFO] http://192.168.99.100:32777/vnc.html?host=192.168.99.100&port=32776&path=vnc/651fcf54-183e-4732-8fae-6a525140f6f0&resize=scale&autoconnect=true&password=selenoid
+[INFO] Press ENTER to exit
+
+[INFO] Stopping Docker container psharkey/novnc:3.3-t6
+[INFO] Stopping Docker container aerokube/selenoid:1.6.3
+----
