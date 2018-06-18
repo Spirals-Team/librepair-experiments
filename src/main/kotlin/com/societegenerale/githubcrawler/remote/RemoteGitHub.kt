@@ -1,0 +1,58 @@
+package com.societegenerale.githubcrawler.remote
+
+import com.societegenerale.githubcrawler.RepositoryConfig
+import com.societegenerale.githubcrawler.model.Branch
+import com.societegenerale.githubcrawler.model.FileOnRepository
+import com.societegenerale.githubcrawler.model.Repository
+import com.societegenerale.githubcrawler.model.SearchResult
+import com.societegenerale.githubcrawler.model.commit.Commit
+import com.societegenerale.githubcrawler.model.commit.DetailedCommit
+import com.societegenerale.githubcrawler.model.team.Team
+import com.societegenerale.githubcrawler.model.team.TeamMember
+
+
+interface RemoteGitHub {
+
+    fun fetchRepoConfig(repoFullName: String, defaultBranch: String): RepositoryConfig
+
+
+    fun fetchRepoBranches(organizationName: String, repositoryName: String):
+    //TODO this should be a Set, not a List
+            List<Branch>
+
+    fun fetchCodeSearchResult(repositoryFullName: String, query: String): SearchResult
+
+    @Throws(NoFileFoundException::class)
+    fun fetchFileContent(repositoryFullName: String, branchName: String, fileToFetch: String): String
+
+    fun fetchCommits(organizationName: String,
+                     repositoryFullName: String,
+                     perPage: Int): Set<Commit>
+
+    fun fetchCommit(organizationName: String,
+                    repositoryFullName: String,
+                    commitSha: String): DetailedCommit
+
+    fun fetchTeams(token: String,
+                   organizationName: String): Set<Team>
+
+    fun fetchTeamsMembers(token: String,
+                          teamId: String): Set<TeamMember>
+
+    fun fetchRepositories(organizationName: String): Set<Repository>
+
+    fun fetchFileOnRepo(repositoryFullName: String,
+                        branchName: String,
+                        fileToFetch: String): FileOnRepository?
+
+}
+
+
+
+
+class NoFileFoundException : Exception {
+
+    constructor(message: String) : super(message)
+
+}
+
