@@ -1,0 +1,97 @@
+# Copyright 2017 JanusGraph Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+conditions: v1
+group: travis_latest
+language: java
+sudo: true
+services:
+  - docker
+jdk:
+  - openjdk8
+
+#cache:
+#  directories:
+#    - ${HOME}/.m2
+
+env:
+  global:
+    # This is the encrypted COVERITY_SCAN_TOKEN, created via the
+    # `travis encrypt` command using the project repo's public key.
+    - secure: "v5ixqTeb74y0vRuPcDbe3C28GDDYvqyEXA2dt+9UVU6GG7WpnmpkBf05gI1dIhp51lBhwx9WSlFBtzho+KdCBmNY/CzBRhVHe/lCQYK9Hb6uGPvuwBvC0WjJgJXsVrLFjppeRhcf+OAweVQ3uw2RPMDRvKIVMUcO1BTFjjJl6REJXNUdzGS57MtH2mmRyOEz250EwgqUELZvcOytG7fNrjMJKVK2nSsoxi0BqZIpItTWPWWeQ1wi1FplJ18A2qtD+MPfAGNSB+/a+r0Av+VCT2eGl06ZyZAzP3q/vG5IYjQ3AJsSPqcZUt4ms+2us1+kwuzXIILjzZmcfImu29+y/thndU5E5b2v+nZ4H69CUCc5OmKW2RwozLNmBIUhO0n+35va/J7FiPIqm3pwxCz5vWA3YTHDADxnIYe7+9uY/+dOK/AvP5fyu7u07vuF3liKNBdrX7ylP3kYc7FXGmYl8wCZv31iy1yTtndQ9qKef7bo8lM9Cdh39KyowrygH+Um7pr9gqf2S9jn99nQ3bib32fBWgBkLpJRwhZYHPUupZjZfgu/9woby0DuriuHZKMqZd7QUawYz6wXGlhzu78x5Tohlj1pGBwHYdcJ/Tm3PiEpyH4aYQLffkjGHJAcCW5tO8QbB0qrLYWC8xVMWuFz1TpSBRXOqVYdBfIa2UZDtOU="
+    - COVERITY_BRANCH_NAME="coverity_scan"
+    # Default Elasticsearch heap size can be too large for Travis
+    - ES_JAVA_OPTS="-Xms256m -Xmx512m"
+
+  matrix:
+    # sort modules by test time with quickest modules first
+    - MODULE='server'
+    - MODULE='hadoop-parent/janusgraph-hadoop-2'
+    - MODULE='lucene'
+    - COVERITY_ONLY=true
+
+matrix:
+  fast_finish: true
+  # https://docs.travis-ci.com/user/customizing-the-build#Rows-that-are-Allowed-to-Fail
+  allow_failures:
+    # Elasticsearch 1.x tests can fail non-deterministically
+    - env: MODULE='es' ARGS='-Pelasticsearch1,es-docker'
+    # Can fail due to timeout (runs longer than 50min)
+
+install:
+  - if [[ ${commit_message} =~ \[docs\] ]]; then
+      echo "Commit message is ${commit_message}";
+    elif [ "${TRAVIS_BRANCH}" == "${COVERITY_BRANCH_NAME}" ] && [ -n "${COVERITY_ONLY:-}" ]; then
+      echo "Building all modules for Coverity analysis";
+      travis_retry travis_wait \
+          mvn install -DskipTests=true -Dmaven.javadoc.skip=true --batch-mode --show-version;
+    elif [ "${TRAVIS_BRANCH}" == "${COVERITY_BRANCH_NAME}" ] || [ -n "${COVERITY_ONLY:-}" ]; then
+      echo "Building all modules for test-compile coverage, but skipping Coverity upload";
+      travis_retry travis_wait \
+          mvn install -DskipTests=true -Dmaven.javadoc.skip=true --batch-mode --show-version;
+    elif [ -n "${DOCS_ONLY:-}" ]; then
+      echo "DOC_ONLY is " $DOC_ONLY
+    else
+      echo "Building janusgraph-${MODULE} and dependencies";
+      travis_retry travis_wait \
+          mvn install --projects janusgraph-${MODULE} --also-make \
+          -DskipTests=true -Dmaven.javadoc.skip=true --batch-mode --show-version;
+    fi
+
+script:
+  - if [ "${TRAVIS_BRANCH}" == "${COVERITY_BRANCH_NAME}" ] && [ -n "${COVERITY_ONLY:-}" ]; then
+      echo "Building Docker image for Coverity analysis";
+      docker build -t janusgraph/analysis analysis;
+      echo "Running Coverity scan";
+      echo "Commit message is ${commit_message}";
+    elif [ "${TRAVIS_BRANCH}" == "${COVERITY_BRANCH_NAME}" ] || [ -n "${COVERITY_ONLY:-}" ]; then
+      echo "Commit message is ${commit_message}";
+      echo "Skipping module tests on Coverity branch/job";
+    else
+      echo "Commit message is ${commit_message}";
+      echo $commit_message;
+      echo commit_message;
+      echo "Testing janusgraph-${MODULE}";
+      travis_retry travis_wait 50 \
+          mvn clean verify --projects janusgraph-${MODULE} -Pcoverage ${ARGS};
+    fi
+
+after_success:
+  # Upload test coverage reports to Codecov
+  - if [ "${TRAVIS_BRANCH}" == "${COVERITY_BRANCH_NAME}" ] || [ -n "${COVERITY_ONLY:-}" ]; then
+      echo "Skipping test coverage report upload in Coverity branch/job";
+      echo "Commit message is ${commit_message}";
+    else
+      echo "Commit message is ${commit_message}";
+    fi
