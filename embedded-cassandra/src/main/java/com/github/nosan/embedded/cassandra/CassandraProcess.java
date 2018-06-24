@@ -154,7 +154,7 @@ public class CassandraProcess
 			}
 		}
 
-		if (!isProcessRunning()) {
+		if (isProcessRunning()) {
 			ISupportConfig supportConfig = getConfig().supportConfig();
 			IllegalStateException ex = new IllegalStateException(
 					"Couldn't kill " + supportConfig.getName() + " " + "process!");
