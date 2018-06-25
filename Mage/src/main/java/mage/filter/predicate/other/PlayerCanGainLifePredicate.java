@@ -1,0 +1,28 @@
+
+package mage.filter.predicate.other;
+
+import mage.filter.predicate.ObjectSourcePlayer;
+import mage.filter.predicate.ObjectSourcePlayerPredicate;
+import mage.game.Game;
+import mage.players.Player;
+
+/**
+ *
+ * @author LevelX2
+ */
+public class PlayerCanGainLifePredicate implements ObjectSourcePlayerPredicate<ObjectSourcePlayer<Player>> {
+
+//    public PlayerCanGainLifePredicate() {
+//    }
+
+    @Override
+    public boolean apply(ObjectSourcePlayer<Player> input, Game game) {
+        Player player = input.getObject();
+        return player.isCanGainLife();
+    }
+
+    @Override
+    public String toString() {
+        return "Player can gain live";
+    }
+}

@@ -1,0 +1,47 @@
+
+package mage.cards.t;
+
+import java.util.UUID;
+import mage.abilities.common.EntersBattlefieldAllTriggeredAbility;
+import mage.abilities.effects.common.SacrificeEffect;
+import mage.cards.CardImpl;
+import mage.cards.CardSetInfo;
+import mage.constants.CardType;
+import mage.constants.SetTargetPointer;
+import mage.constants.Zone;
+import mage.filter.StaticFilters;
+import mage.filter.common.FilterControlledPermanent;
+import mage.filter.predicate.Predicates;
+import mage.filter.predicate.mageobject.CardTypePredicate;
+
+/**
+ *
+ * @author LoneFox
+
+ */
+public final class TaintedAether extends CardImpl {
+
+    private static final FilterControlledPermanent filter = new FilterControlledPermanent("a creature or a land");
+
+    static {
+        filter.add(Predicates.or(new CardTypePredicate(CardType.CREATURE), new CardTypePredicate(CardType.LAND)));
+    }
+
+    public TaintedAether(UUID ownerId, CardSetInfo setInfo) {
+        super(ownerId,setInfo,new CardType[]{CardType.ENCHANTMENT},"{2}{B}{B}");
+
+        // Whenever a creature enters the battlefield, its controller sacrifices a creature or land.
+        this.addAbility(new EntersBattlefieldAllTriggeredAbility(Zone.BATTLEFIELD, new SacrificeEffect(filter, 1, ""),
+                StaticFilters.FILTER_PERMANENT_CREATURES, false, SetTargetPointer.PLAYER,
+            "Whenever a creature enters the battlefield, its controller sacrifices a creature or land"));
+    }
+
+    public TaintedAether(final TaintedAether card) {
+        super(card);
+    }
+
+    @Override
+    public TaintedAether copy() {
+        return new TaintedAether(this);
+    }
+}
