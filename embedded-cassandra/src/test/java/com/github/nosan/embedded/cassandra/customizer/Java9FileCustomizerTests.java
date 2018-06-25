@@ -1,0 +1,61 @@
+/*
+ * Copyright 2012-2018 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.github.nosan.embedded.cassandra.customizer;
+
+import org.junit.Test;
+
+/**
+ * Tests for {@link Java9Customizer}.
+ *
+ * @author Dmytro Nosan
+ */
+public class Java9FileCustomizerTests {
+
+	@Test
+	public void name() {
+
+	}
+	//
+	// private Java9FileCustomizer customizer = new Java9FileCustomizer();
+	//
+	// @Test
+	// public void customize() throws IOException {
+	// Distribution distribution = Distribution.detectFor(Version.LATEST);
+	// File file = new File(getName(distribution));
+	// try (PrintWriter ps = new PrintWriter(new FileWriter(file))) {
+	// ps.println("JVM_OPTS=\"$JVM_OPTS -Xloggc:${CASSANDRA_HOME}/logs/gc.log\"");
+	// ps.println("JVM_OPTS_FILE=$CASSANDRA_CONF/jvm.options");
+	// }
+	//
+	// try {
+	// this.customizer.customize(file, distribution);
+	// assertThat(file).hasContent(
+	// "#JVM_OPTS=\"$JVM_OPTS -Xloggc:${CASSANDRA_HOME}/logs/gc.log\"\n"
+	// + "JVM_OPTS_FILE=$CASSANDRA_CONF/jvm.options");
+	// }
+	// finally {
+	// Files.deleteIfExists(file.toPath());
+	// }
+	//
+	// }
+	//
+	// private String getName(Distribution distribution) {
+	// return (distribution.getPlatform() != Platform.Windows ? "cassandra-env.sh"
+	// : "cassandra-env.ps1");
+	// }
+
+}
