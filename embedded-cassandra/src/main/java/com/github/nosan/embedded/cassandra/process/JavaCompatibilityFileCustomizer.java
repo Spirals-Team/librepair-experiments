@@ -30,8 +30,7 @@ import de.flapdoodle.embed.process.distribution.Platform;
  */
 class JavaCompatibilityFileCustomizer implements FileCustomizer {
 
-	private static final FileCustomizer[] FILE_CUSTOMIZERS = new FileCustomizer[] {
-			new EnvironmentCompatibilityCustomizer() };
+	private static final FileCustomizer[] FILE_CUSTOMIZERS = new FileCustomizer[] {};
 
 	@Override
 	public void customize(File file, Context context) throws IOException {
@@ -46,7 +45,6 @@ class JavaCompatibilityFileCustomizer implements FileCustomizer {
 		@Override
 		protected String process(String line, File file, Context context) {
 			return (!line.contains("-Xloggc") ? line : "#" + line);
-
 		}
 
 		@Override

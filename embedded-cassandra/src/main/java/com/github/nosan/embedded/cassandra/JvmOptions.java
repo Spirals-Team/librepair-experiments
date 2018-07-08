@@ -21,8 +21,10 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
+import org.apache.commons.lang3.SystemUtils;
+
 /**
- * todo leave javadoc here.
+ * Simple class for Cassandra's JVM Options.
  *
  * @author Dmytro Nosan
  */
@@ -38,29 +40,48 @@ public final class JvmOptions {
 		this.mode = Objects.requireNonNull(mode, "Mode must not be null");
 	}
 
+	/**
+	 * Retrieves Cassandra's JVM Options.
+	 * @return JVM Options.
+	 */
 	public List<String> getOptions() {
 		return this.options;
 	}
 
+	/**
+	 * Retrieves jvm.options file manipulations mode.
+	 * @return {@link Mode} mode.
+	 */
 	public Mode getMode() {
 		return this.mode;
 	}
 
 	/**
-	 * Mode.
+	 * Mode how to work with jvm.options file.
 	 * @author Dmytro Nosan
 	 */
 	public enum Mode {
 
 		/**
-		 * OVERRIDE.
+		 * Existing `jvm.options` will be replaced.
 		 */
 		REPLACE,
 		/**
-		 * APPEND.
+		 * Additional JVM Options will be added at the end of `jvm.options`.
 		 */
-		APPEND
+		ADD
 
+	}
+
+	/**
+	 * Detect default jvm options.
+	 * @return default jvm options.
+	 */
+	public static JvmOptions detect() {
+		if (SystemUtils.IS_JAVA_1_8) {
+			return new JvmOptions(Mode.ADD, "-XX:-UseNUMA", "-Xmx256m", "-Xms256m");
+		}
+		return new JvmOptions(Mode.ADD);
 	}
 
 }

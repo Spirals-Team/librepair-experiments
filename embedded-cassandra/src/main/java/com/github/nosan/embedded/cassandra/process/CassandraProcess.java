@@ -17,11 +17,13 @@
 package com.github.nosan.embedded.cassandra.process;
 
 import java.io.IOException;
+import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import de.flapdoodle.embed.process.config.IRuntimeConfig;
 import de.flapdoodle.embed.process.config.io.ProcessOutput;
@@ -35,6 +37,7 @@ import de.flapdoodle.embed.process.io.Processors;
 import de.flapdoodle.embed.process.io.StreamToLineProcessor;
 import de.flapdoodle.embed.process.runtime.AbstractProcess;
 import de.flapdoodle.embed.process.runtime.ProcessControl;
+import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,8 +93,8 @@ public final class CassandraProcess
 		setProcessId(getProcessId());
 		ProcessOutput processOutput = runtimeConfig.getProcessOutput();
 		ExecutableConfig executableConfig = getConfig();
-		LogWatch logWatch = new LogWatch(executableConfig.getConfig(),
-				processOutput.getOutput());
+		Config config = executableConfig.getConfig();
+		LogWatch logWatch = new LogWatch(config, processOutput.getOutput());
 
 		Processors.connect(process.getReader(), StreamToLineProcessor.wrap(logWatch));
 		Processors.connect(process.getError(),
@@ -101,13 +104,14 @@ public final class CassandraProcess
 
 		if (!logWatch.isInitWithSuccess()) {
 			String failureFound = logWatch.getFailureFound();
-			if (failureFound == null || failureFound.equalsIgnoreCase("<EOF>")) {
-				failureFound = "\n" + "----------------------\n"
-						+ "Hmm.. no failure message.. \n"
-						+ "...the cause must be somewhere in the process output\n"
-						+ "----------------------\n" + "\t\t\t\t" + logWatch.getOutput();
+			if (failureFound == null) {
+				throw new IOException("Could not start a process.");
 			}
 			throw new IOException("Could not start a process." + failureFound);
+		}
+		if (ClientConnection.isEnabled(config) && !ClientConnection.isConnected(config)) {
+			throw new IOException(
+					"Could not start a process. Something wrong with a client transport.");
 		}
 		log.info("Cassandra server has been started.");
 
@@ -195,7 +199,6 @@ public final class CassandraProcess
 
 	/**
 	 * Utility class to stop an embedded cassandra process.
-	 *
 	 */
 	static abstract class ProcessStopper {
 
@@ -247,6 +250,66 @@ public final class CassandraProcess
 					new ProcessConfig(
 							Arrays.asList("taskkill", "/F", "/T", "/pid", "" + pid),
 							output));
+		}
+
+	}
+
+	/**
+	 * Utility class to check cassandra is ready to accept connections.
+	 */
+	static class ClientConnection {
+
+		private static final Logger log = LoggerFactory.getLogger(ClientConnection.class);
+
+		private static final String LOCALHOST = "localhost";
+
+		private static final int MAX_ATTEMPTS = 10;
+
+		static boolean isConnected(Config config) {
+			for (int i = 0; i < MAX_ATTEMPTS; i++) {
+				log.info("Trying to connect to cassandra... Attempt:" + (i + 1));
+				boolean connected = tryConnect(config);
+				if (connected) {
+					log.info(
+							"Connection to cassandra has been established successfully.");
+					return true;
+				}
+				try {
+					TimeUnit.SECONDS.sleep(2);
+				}
+				catch (InterruptedException ex) {
+					Thread.currentThread().interrupt();
+				}
+			}
+			log.warn("Connection to cassandra has not been established...");
+			return false;
+		}
+
+		static boolean isEnabled(Config config) {
+			return config.isStartNativeTransport() || config.isStartRpc();
+		}
+
+		private static boolean tryConnect(Config config) {
+			if (config.isStartNativeTransport()) {
+				return tryConnect(
+						ObjectUtils.defaultIfNull(config.getRpcAddress(), LOCALHOST),
+						config.getNativeTransportPort());
+			}
+			else if (config.isStartRpc()) {
+				return tryConnect(
+						ObjectUtils.defaultIfNull(config.getRpcAddress(), LOCALHOST),
+						config.getRpcPort());
+			}
+			return false;
+		}
+
+		private static boolean tryConnect(String host, int port) {
+			try (Socket ignored = new Socket(host, port)) {
+				return true;
+			}
+			catch (IOException ex) {
+				return false;
+			}
 		}
 
 	}

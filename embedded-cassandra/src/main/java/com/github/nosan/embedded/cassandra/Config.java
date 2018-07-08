@@ -372,8 +372,7 @@ public class Config {
 
 	private transient int jmx_port = 0;
 
-	private transient JvmOptions jvm_options = new JvmOptions(JvmOptions.Mode.REPLACE,
-			"-Xmx256m", "-Xms256m", "-ea", "-Djava.net.preferIPv4Stack=true");
+	private transient JvmOptions jvm_options = JvmOptions.detect();
 
 	public int getJmxPort() {
 		return this.jmx_port;

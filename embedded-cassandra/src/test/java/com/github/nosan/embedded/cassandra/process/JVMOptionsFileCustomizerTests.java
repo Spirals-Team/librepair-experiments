@@ -37,7 +37,7 @@ public class JVMOptionsFileCustomizerTests extends AbstractFileCustomizerSupport
 	@Test
 	public void customizeAppend() throws Exception {
 		Config config = new Config();
-		config.setJvmOptions(new JvmOptions(JvmOptions.Mode.APPEND,
+		config.setJvmOptions(new JvmOptions(JvmOptions.Mode.ADD,
 				"-Dcassandra.local.port=555", "-Dcassandra.remote.port=444"));
 		withFile("jvm.options").from(classpath("jvm.options")).accept((file) -> {
 			this.customizer.process(file, this.context.withConfig(config));

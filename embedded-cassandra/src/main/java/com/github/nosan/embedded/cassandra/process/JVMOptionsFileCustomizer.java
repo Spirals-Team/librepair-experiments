@@ -43,12 +43,16 @@ class JVMOptionsFileCustomizer extends AbstractFileCustomizer {
 		JvmOptions options = getJvmOptions(context);
 		if (options != null) {
 			try (PrintWriter fileWriter = new PrintWriter(
-					new FileWriter(file, options.getMode() == JvmOptions.Mode.APPEND))) {
+					new FileWriter(file, isAppend(options)))) {
 				for (String line : options.getOptions()) {
 					fileWriter.println(line);
 				}
 			}
 		}
+	}
+
+	private boolean isAppend(JvmOptions options) {
+		return options.getMode() == JvmOptions.Mode.ADD;
 	}
 
 	private JvmOptions getJvmOptions(Context context) {

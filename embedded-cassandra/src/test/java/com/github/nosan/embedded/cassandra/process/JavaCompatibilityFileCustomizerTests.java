@@ -17,6 +17,7 @@
 package com.github.nosan.embedded.cassandra.process;
 
 import de.flapdoodle.embed.process.distribution.Platform;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * @author Dmytro Nosan
  */
+@Ignore
 public class JavaCompatibilityFileCustomizerTests extends AbstractFileCustomizerSupport {
 
 	private final JavaCompatibilityFileCustomizer customizer = new JavaCompatibilityFileCustomizer();
