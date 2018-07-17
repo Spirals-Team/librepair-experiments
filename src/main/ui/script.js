@@ -1,0 +1,320 @@
+$.ajaxSetup({
+    beforeSend: function(xhr) {
+        xhr.setRequestHeader('X-CSRF-TOKEN', $("meta[name='_csrf']").attr('content'));
+    }
+});
+
+var controller = {
+    disableSaveBtn: function() {
+        toggleSaveButton(false);
+    },
+
+    enableSaveBtn: function() {
+        toggleSaveButton(true);
+    },
+
+    removeClass: function(event, rivetsBinding) {
+        var className = rivetsBinding.item,
+            classesArray = config.changelogConfig.html.availableClasses;
+
+        classesArray.splice(classesArray.indexOf(className), 1);
+
+        // It would be better to place this in 'label-for-class-value' declaration,
+        // but RivetsJs doesn't give ability to do it in a natural way, so now it's here.
+        delete config.labels.labelsForClasses[className];
+    },
+
+    removeMasterUser: function(event, rivetsBinding) {
+        var userName = rivetsBinding.item,
+            usersArray = config.gitHubConfig.masterUsers;
+
+        usersArray.splice(usersArray.indexOf(userName), 1);
+    }
+}, config = {
+    requestAgentName: '',
+    timeZone: '',
+    imageUploadCode: '',
+    gitHubConfig: {
+        organizationName: '',
+        repositoryName: '',
+        token: '',
+        secretKey: '',
+        masterUsers: [ ]
+    },
+    labels: {
+        invalidChangelog: '',
+        mapChanges: '',
+        iconChanges: '',
+        workInProgress: '',
+        doNotMerge: '',
+        testMerge: '',
+        labelsForClasses: { }
+    },
+    changelogConfig: {
+        pathToChangelog: '',
+        html: {
+            availableClasses: [ ]
+        }
+    },
+    dmmBotConfig: {
+        pathToDme: ''
+    }
+};
+
+$.ajax('/config/rest/current').done(function(data) {
+    config = data;
+
+    $(document).ready(function() {
+        initRivets();
+        initForms();
+    });
+});
+
+$(document).ready(function() {
+    initDmmBot();
+
+
+    $('#open-about-button, #close-about-button').click(function() {
+        $('#overlay').fadeToggle('fast');
+        $('#about-block').fadeToggle('fast');
+    });
+
+
+    $('.help__button').click(function() {
+        var $icon = $(this).find('.material-icons'),
+            CLOSE_ICON = 'close', HELP_ICON = 'help';
+
+        if ($icon.html() === HELP_ICON) {
+            $icon.html(CLOSE_ICON);
+        } else {
+            $icon.html(HELP_ICON);
+        }
+
+        $('#' + $(this).data('for')).fadeToggle('fast');
+    });
+
+    $('#save-config').click(function() {
+        $.ajax({
+            url: '/config/rest/current',
+            method: 'PUT',
+            contentType: 'application/json',
+            data: JSON.stringify(config)
+        }).done(function() {
+            showToast('Configuration saved.');
+            toggleSaveButton(false);
+        });
+    });
+
+
+    $('#validate-config').click(function() {
+        var $githubIcon = $('#github-fail'),
+            $changelogIcon = $('#changelog-fail'),
+            $dmmBotIcon = $('#dmm-bot-fail'),
+            $progressBar = $('#progress-bar');
+
+        $githubIcon.hide();
+        $changelogIcon.hide();
+        $dmmBotIcon.hide();
+        toggleSaveButton(false);
+
+        $progressBar.slideDown('fast');
+
+        $.ajax({
+            url: '/config/rest/validation',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(config)
+        }).done(function() {
+            showToast('Configuration is valid.');
+            toggleSaveButton(true);
+        }).fail(function(jqXHR) {
+            showToast('Error! Configuration is invalid.');
+
+            var responseObject = JSON.parse(jqXHR.responseText);
+
+            if (!responseObject.gitHubOk) {
+                $githubIcon.show();
+            }
+
+            if (!responseObject.changelogOk) {
+                $changelogIcon.show();
+            }
+
+            if (!responseObject.dmmBotOk) {
+                $dmmBotIcon.show();
+            }
+        }).always(function() {
+            $progressBar.slideUp('fast');
+        });
+    });
+
+
+    $('#add-class-button').click(function() {
+        addClassAction();
+    });
+
+    $('#add-class-field').keypress(function(e) {
+        // React on 'enter' button.
+        if (e.which === 13) {
+            addClassAction();
+        }
+    });
+
+
+    $('#add-master-user-button').click(function() {
+        addMasterUserAction();
+    });
+
+    $('#add-master-user-field').keypress(function(e) {
+        // React on 'enter' button.
+        if (e.which === 13) {
+            addMasterUserAction();
+        }
+    });
+});
+
+function toggleSaveButton(isEnable) {
+    $('#save-config').prop('disabled', !isEnable);
+}
+
+function addClassAction() {
+    addFieldValueToArray('#add-class-field', config.changelogConfig.html.availableClasses);
+}
+
+function addMasterUserAction() {
+    addFieldValueToArray('#add-master-user-field', config.gitHubConfig.masterUsers);
+}
+
+function addFieldValueToArray(fieldSelector, arrayToAdd) {
+    var $addField = $(fieldSelector),
+        fieldValue = $addField.val();
+
+    if (fieldValue.length > 0) {
+        if (arrayToAdd.indexOf(fieldValue) !== -1) {
+            showToast('Item "' + fieldValue + '" already present in the list!');
+        } else {
+            arrayToAdd.push(fieldValue);
+
+            $addField.val('');
+            $addField.parent().get(0).MaterialTextfield.checkDirty();
+        }
+    }
+}
+
+function showToast(message) {
+    $('#snackbar').get(0).MaterialSnackbar.showSnackbar({ message: message });
+}
+
+function initDmmBot() {
+    var $initMasterBtn = $('#init-master-repo'),
+        $initMasterDone = $('#init-master-repo .done'),
+        $initMasterProcess = $('#init-master-repo .process'),
+        $initMasterFail = $('#init-master-repo .fail'),
+
+        $cleanReposBtn = $('#clean-repos'),
+        $cleanReposProcess = $('#clean-repos .process'),
+
+        REPOS_MASTER_URL = '/config/rest/repos/master',
+        REPOS_URL = '/config/rest/repos';
+
+    function toggleInitBtn(isEnable) {
+        $initMasterBtn.prop('disabled', !isEnable);
+    }
+
+    function toggleCleanBtn(isEnable) {
+        $cleanReposBtn.prop('disabled', !isEnable);
+    }
+
+    (function getMasterInitStatus() {
+        toggleInitBtn(false);
+
+        $.ajax({
+            url: REPOS_MASTER_URL,
+            method: 'GET'
+        }).done(function(status) {
+            if (status == 'DONE') {
+                $initMasterDone.show();
+            } else if (status === 'NOT_STARTED') {
+                $initMasterFail.show();
+            }
+            if (status !== 'IN_PROGRESS') {
+                $initMasterProcess.hide();
+                toggleInitBtn(true);
+                toggleCleanBtn(true);
+            } else {
+                toggleInitBtn(false);
+                toggleCleanBtn(false);
+                setTimeout(getMasterInitStatus, 5000);
+            }
+        });
+    })();
+
+    $initMasterBtn.click(function() {
+        $initMasterDone.hide();
+        $initMasterFail.hide();
+        $initMasterProcess.show();
+        toggleCleanBtn(false);
+        toggleInitBtn(false);
+
+        $.ajax({
+            url: REPOS_MASTER_URL,
+            method: 'PUT'
+        }).done(function() {
+            toggleInitBtn(true);
+            toggleCleanBtn(true);
+        }).fail(function() {
+            $initMasterFail.show();
+            $initMasterProcess.hide();
+            toggleInitBtn(true);
+            toggleCleanBtn(true);
+            showToast('Error on master repo initialization.')
+        });
+    });
+
+    $cleanReposBtn.click(function() {
+        $cleanReposProcess.show();
+
+        $.ajax({
+            url: REPOS_URL,
+            method: 'DELETE'
+        }).done(function() {
+            showToast('All repos deleted.');
+            $initMasterDone.hide();
+            $initMasterFail.show();
+        }).always(function() {
+            $cleanReposProcess.hide();
+        });
+    });
+}
+
+function initForms() {
+    // Check all fields for changes, to make labels float.
+    $('.mdl-textfield').each(function() {
+        if (this.MaterialTextfield)
+            this.MaterialTextfield.checkDirty();
+    });
+}
+
+function initRivets() {
+    rivets.binders['label-for-class-value'] = {
+        routine: function(el, value) {
+            this.className = value;
+            var labelsForClassesMap = config.labels.labelsForClasses;
+
+            if (labelsForClassesMap.hasOwnProperty(value)) {
+                el.value = labelsForClassesMap[value];
+            } else {
+                el.value = labelsForClassesMap[value] = '';
+            }
+        },
+
+        bind: function(el) {
+            var that = this;
+            $(el).keyup(function() {
+                config.labels.labelsForClasses[that.className] = el.value;
+            });
+        }
+    };
+
+    rivets.bind(document.body, { config: config, ctrl: controller });
+}
