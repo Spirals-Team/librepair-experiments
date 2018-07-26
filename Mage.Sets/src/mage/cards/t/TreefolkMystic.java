@@ -1,0 +1,82 @@
+
+package mage.cards.t;
+
+import java.util.LinkedList;
+import java.util.UUID;
+import mage.MageInt;
+import mage.abilities.Ability;
+import mage.abilities.Mode;
+import mage.abilities.common.BlocksOrBecomesBlockedTriggeredAbility;
+import mage.abilities.effects.OneShotEffect;
+import mage.cards.CardImpl;
+import mage.cards.CardSetInfo;
+import mage.constants.CardType;
+import mage.constants.SubType;
+import mage.constants.Outcome;
+import mage.game.Game;
+import mage.game.permanent.Permanent;
+
+/**
+ *
+ * @author Plopman
+ */
+public final class TreefolkMystic extends CardImpl {
+
+    public TreefolkMystic(UUID ownerId, CardSetInfo setInfo) {
+        super(ownerId, setInfo, new CardType[]{CardType.CREATURE}, "{3}{G}");
+        this.subtype.add(SubType.TREEFOLK);
+
+        this.power = new MageInt(2);
+        this.toughness = new MageInt(4);
+
+        // Whenever Treefolk Mystic blocks or becomes blocked by a creature, destroy all Auras attached to that creature.
+        this.addAbility(new BlocksOrBecomesBlockedTriggeredAbility(new TreefolkMysticEffect(), false));
+    }
+
+    public TreefolkMystic(final TreefolkMystic card) {
+        super(card);
+    }
+
+    @Override
+    public TreefolkMystic copy() {
+        return new TreefolkMystic(this);
+    }
+}
+
+class TreefolkMysticEffect extends OneShotEffect {
+
+    public TreefolkMysticEffect() {
+        super(Outcome.DestroyPermanent);
+    }
+
+    public TreefolkMysticEffect(final TreefolkMysticEffect effect) {
+        super(effect);
+    }
+
+    @Override
+    public TreefolkMysticEffect copy() {
+        return new TreefolkMysticEffect(this);
+    }
+
+    @Override
+    public boolean apply(Game game, Ability source) {
+        Permanent permanent = game.getPermanent(source.getFirstTarget());
+        if (permanent != null) {
+            LinkedList<UUID> attachments = new LinkedList();
+            attachments.addAll(permanent.getAttachments());
+            for (UUID uuid : attachments) {
+                Permanent aura = game.getPermanent(uuid);
+                if (aura != null && aura.hasSubtype(SubType.AURA, game)) {
+                    aura.destroy(source.getSourceId(), game, false);
+                }
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public String getText(Mode mode) {
+        return "destroy all Auras attached to that creature";
+    }
+
+}
