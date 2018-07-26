@@ -1,0 +1,76 @@
+
+package mage.abilities.costs.common;
+
+import java.util.UUID;
+import mage.MageObject;
+import mage.abilities.Ability;
+import mage.abilities.costs.Cost;
+import mage.abilities.costs.CostImpl;
+import mage.cards.Card;
+import mage.game.Game;
+import mage.game.permanent.Permanent;
+import mage.players.Player;
+import mage.util.CardUtil;
+
+/**
+ *
+ * @author BetaSteward_at_googlemail.com
+ */
+public class ExileSourceCost extends CostImpl {
+
+    private boolean toUniqueExileZone;
+
+    public ExileSourceCost() {
+        this.text = "exile {this}";
+    }
+
+    /**
+     *
+     * @param toUniqueExileZone moves the card to a source object dependant
+     * unique exile zone, so another effect of the same source object (e.g.
+     * Deadeye Navigator) can identify the card
+     */
+    public ExileSourceCost(boolean toUniqueExileZone) {
+        this.text = "exile {this}";
+        this.toUniqueExileZone = toUniqueExileZone;
+    }
+
+    public ExileSourceCost(ExileSourceCost cost) {
+        super(cost);
+        this.toUniqueExileZone = cost.toUniqueExileZone;
+    }
+
+    @Override
+    public boolean pay(Ability ability, Game game, UUID sourceId, UUID controllerId, boolean noMana, Cost costToPay) {
+        MageObject sourceObject = ability.getSourceObject(game);
+        Player controller = game.getPlayer(controllerId);
+        if (controller != null && sourceObject instanceof Card) {
+            UUID exileZoneId = null;
+            String exileZoneName = "";
+            if (toUniqueExileZone) {
+                exileZoneId = CardUtil.getExileZoneId(game, ability.getSourceId(), ability.getSourceObjectZoneChangeCounter());
+                exileZoneName = sourceObject.getName();
+                game.getState().setValue(sourceObject.getId().toString(), ability.getSourceObjectZoneChangeCounter());
+            }
+            controller.moveCardToExileWithInfo((Card) sourceObject, exileZoneId, exileZoneName, sourceId, game, game.getState().getZone(sourceObject.getId()), true);
+                // 117.11. The actions performed when paying a cost may be modified by effects.
+            // Even if they are, meaning the actions that are performed don't match the actions
+            // that are called for, the cost has still been paid.
+            // so return state here is not important because the user indended to exile the target anyway
+            paid = true;
+        }
+        return paid;
+    }
+
+    @Override
+    public boolean canPay(Ability ability, UUID sourceId, UUID controllerId, Game game) {
+        Permanent permanent = game.getPermanent(sourceId);
+        return permanent != null;
+    }
+
+    @Override
+    public ExileSourceCost copy() {
+        return new ExileSourceCost(this);
+    }
+
+}
