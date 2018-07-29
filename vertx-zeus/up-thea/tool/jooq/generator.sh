@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+java -classpath jooq-3.10.3.jar:jooq-meta-3.10.3.jar:jooq-codegen-3.10.3.jar:mysql-connector-java-8.0.8-dmr.jar:vertx-jooq-shared-2.4.1.jar:vertx-jooq-generate-2.4.1.jar:vertx-jooq-future-2.4.1.jar org.jooq.util.GenerationTool ./config/generator.xml

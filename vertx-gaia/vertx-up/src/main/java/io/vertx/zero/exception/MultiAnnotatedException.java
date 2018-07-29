@@ -1,0 +1,20 @@
+package io.vertx.zero.exception;
+
+import io.zero.epic.Ut;
+
+import java.util.Set;
+
+public class MultiAnnotatedException extends UpException {
+
+    public MultiAnnotatedException(final Class<?> clazz,
+                                   final String className,
+                                   final String name,
+                                   final Set<String> set) {
+        super(clazz, className, name, Ut.fromJoin(set));
+    }
+
+    @Override
+    public int getCode() {
+        return -40021;
+    }
+}
