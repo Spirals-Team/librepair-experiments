@@ -1,0 +1,45 @@
+import {Component, OnInit, ViewChild} from '@angular/core';
+import {HttpClient} from '@angular/common/http';
+import {Title} from '@angular/platform-browser';
+import {ContactRequest} from '../../generated-api/model/contactRequest';
+import {environment} from '../../environments/environment';
+import {AlertService} from '../core/alert/alert.service';
+
+@Component({
+  selector: 'app-contact',
+  templateUrl: './contact.component.html',
+  styleUrls: ['./contact.component.scss']
+})
+export class ContactComponent implements OnInit {
+
+  contactRequest: ContactRequest;
+  @ViewChild('contactForm') contactForm: any;
+
+  constructor(private http: HttpClient, private alertService: AlertService, title: Title) {
+    title.setTitle('Georg Ludewig - Software Engineer - Contact');
+  }
+
+  ngOnInit() {
+    this.contactRequest = <ContactRequest>{};
+  }
+
+  onSubmit() {
+    if (this.contactForm.valid) {
+      // note we set the response type to text due to this issue:  https://github.com/angular/angular/issues/18680
+      this.http.post(environment.appConfig.apiBase + '/v1/contact', this.contactRequest, {responseType: 'text'}).subscribe(
+        () => {
+          this.alertService.addSuccess('Contact request was submitted!');
+          this.contactForm.reset();
+        },
+        error => {
+          this.alertService.addError('Failed to submit contact request due to some very mysterious reasons !', error);
+        },
+        () => {
+          window.scrollTo(0, 0);
+        }
+      );
+    }
+  }
+
+
+}
