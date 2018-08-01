@@ -12,19 +12,19 @@ public class MasterMindReturn {
 
 	// getters and setters
 	public int getWellPlaced() {
-		return badlyPlaced;
-	}
-
-	public void setWellPlaced(int wellPlaced) {
-		badlyPlaced = wellPlaced;
-	}
-
-	public int getBadlyPlaced() {
 		return wellPlaced;
 	}
 
+	public void setWellPlaced(int wellPlaced) {
+		this.wellPlaced = wellPlaced;
+	}
+
+	public int getBadlyPlaced() {
+		return badlyPlaced;
+	}
+
 	public void setBadlyPlaced(int badlyPlaced) {
-		wellPlaced = badlyPlaced;
+		this.badlyPlaced = badlyPlaced;
 	}
 
 }
