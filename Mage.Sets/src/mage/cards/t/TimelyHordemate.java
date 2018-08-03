@@ -1,0 +1,57 @@
+
+package mage.cards.t;
+
+import java.util.UUID;
+import mage.MageInt;
+import mage.abilities.Ability;
+import mage.abilities.common.EntersBattlefieldTriggeredAbility;
+import mage.abilities.condition.common.RaidCondition;
+import mage.abilities.decorator.ConditionalInterveningIfTriggeredAbility;
+import mage.abilities.effects.common.ReturnFromGraveyardToBattlefieldTargetEffect;
+import mage.cards.CardImpl;
+import mage.cards.CardSetInfo;
+import mage.constants.CardType;
+import mage.constants.SubType;
+import mage.constants.ComparisonType;
+import mage.filter.common.FilterCreatureCard;
+import mage.filter.predicate.mageobject.ConvertedManaCostPredicate;
+import mage.target.common.TargetCardInYourGraveyard;
+import mage.watchers.common.PlayerAttackedWatcher;
+
+/**
+ *
+ * @author LevelX2
+ */
+public final class TimelyHordemate extends CardImpl {
+
+    private static final FilterCreatureCard filter = new FilterCreatureCard("creature card with converted mana cost 2 or less from your graveyard");
+
+    static {
+        filter.add(new ConvertedManaCostPredicate(ComparisonType.FEWER_THAN, 3));
+    }
+
+    public TimelyHordemate(UUID ownerId, CardSetInfo setInfo) {
+        super(ownerId, setInfo, new CardType[]{CardType.CREATURE}, "{3}{W}");
+        this.subtype.add(SubType.HUMAN);
+        this.subtype.add(SubType.WARRIOR);
+
+        this.power = new MageInt(3);
+        this.toughness = new MageInt(2);
+
+        // <i>Raid</i> &mdash; When Timely Hordemate enters the battlefield, if you attacked this turn, return target creature card with converted mana cost 2 or less from your graveyard to the battlefield.
+        Ability ability = new ConditionalInterveningIfTriggeredAbility(new EntersBattlefieldTriggeredAbility(new ReturnFromGraveyardToBattlefieldTargetEffect()), RaidCondition.instance,
+                "<i>Raid</i> &mdash; When {this} enters the battlefield, if you attacked with a creature this turn, return target creature card with converted mana cost 2 or less from your graveyard to the battlefield.");
+        ability.addTarget(new TargetCardInYourGraveyard(filter));
+        this.addAbility(ability, new PlayerAttackedWatcher());
+
+    }
+
+    public TimelyHordemate(final TimelyHordemate card) {
+        super(card);
+    }
+
+    @Override
+    public TimelyHordemate copy() {
+        return new TimelyHordemate(this);
+    }
+}

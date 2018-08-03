@@ -1,0 +1,57 @@
+
+package mage.cards.j;
+
+import java.util.UUID;
+import mage.MageInt;
+import mage.abilities.Ability;
+import mage.abilities.Gender;
+import mage.abilities.common.SimpleActivatedAbility;
+import mage.abilities.condition.common.CardsInControllerGraveCondition;
+import mage.abilities.costs.common.TapSourceCost;
+import mage.abilities.decorator.ConditionalOneShotEffect;
+import mage.abilities.effects.Effect;
+import mage.abilities.effects.common.DrawDiscardControllerEffect;
+import mage.abilities.effects.common.ExileAndReturnTransformedSourceEffect;
+import mage.abilities.keyword.TransformAbility;
+import mage.cards.CardImpl;
+import mage.cards.CardSetInfo;
+import mage.constants.CardType;
+import mage.constants.SubType;
+import mage.constants.SuperType;
+import mage.constants.Zone;
+
+/**
+ *
+ * @author LevelX2
+ */
+public final class JaceVrynsProdigy extends CardImpl {
+
+    public JaceVrynsProdigy(UUID ownerId, CardSetInfo setInfo) {
+        super(ownerId,setInfo,new CardType[]{CardType.CREATURE},"{1}{U}");
+        addSuperType(SuperType.LEGENDARY);
+        this.subtype.add(SubType.HUMAN);
+        this.subtype.add(SubType.WIZARD);
+        this.power = new MageInt(0);
+        this.toughness = new MageInt(2);
+
+        this.transformable = true;
+        this.secondSideCardClazz = JaceTelepathUnbound.class;
+
+        // {T}: Draw a card, then discard a card. If there are five or more cards in your graveyard, exile Jace, Vryn's Prodigy, then return him to the battefield transformed under his owner's control.
+        this.addAbility(new TransformAbility());
+        Ability ability = new SimpleActivatedAbility(Zone.BATTLEFIELD, new DrawDiscardControllerEffect(1, 1), new TapSourceCost());
+        Effect effect = new ConditionalOneShotEffect(new ExileAndReturnTransformedSourceEffect(Gender.MALE), new CardsInControllerGraveCondition(5));
+        ability.addEffect(effect);
+        this.addAbility(ability);
+
+    }
+
+    public JaceVrynsProdigy(final JaceVrynsProdigy card) {
+        super(card);
+    }
+
+    @Override
+    public JaceVrynsProdigy copy() {
+        return new JaceVrynsProdigy(this);
+    }
+}
