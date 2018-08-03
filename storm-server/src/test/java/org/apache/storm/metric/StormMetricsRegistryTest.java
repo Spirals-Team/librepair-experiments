@@ -1,0 +1,90 @@
+package org.apache.storm.metric;
+
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.Metric;
+import com.codahale.metrics.MetricSet;
+import com.codahale.metrics.Timer;
+import org.junit.jupiter.api.Test;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static com.codahale.metrics.MetricRegistry.name;
+import static org.junit.jupiter.api.Assertions.*;
+
+class StormMetricsRegistryTest {
+
+    private static final String OUTER_METER = "outerMeter";
+    private static final String INNER_SET = "innerSet";
+    private static final String OUTER_TIMER = "outerTimer";
+    private static final String INNER_METER = "innerMeter";
+    private static final String INNER_TIMER = "innerTimer";
+    private static final MetricSet OUTER = newMetricSetInstance();
+
+    @Test
+    void registerMetricSet() {
+        Meter existingInnerMeter = StormMetricsRegistry.registerMeter(name(INNER_SET, INNER_METER));
+
+        System.out.println("register outer set");
+        StormMetricsRegistry.registerMetricSet(OUTER);
+        assertSame(OUTER.getMetrics().get(OUTER_TIMER), StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().get(OUTER_TIMER));
+        assertSame(OUTER.getMetrics().get(OUTER_METER), StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().get(OUTER_METER));
+        assertSame(((MetricSet) OUTER.getMetrics().get(INNER_SET)).getMetrics().get(INNER_TIMER),
+            StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().get(name(INNER_SET, INNER_TIMER)));
+
+        assertNotSame(((MetricSet) OUTER.getMetrics().get(INNER_SET)).getMetrics().get(INNER_METER),
+            StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().get(name(INNER_SET, INNER_METER)));
+        assertSame(existingInnerMeter, StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().get(name(INNER_SET, INNER_METER)));
+
+        //Ensure idempotency
+        System.out.println("twice register outer set");
+        MetricSet newOuter = newMetricSetInstance();
+        StormMetricsRegistry.registerMetricSet(newOuter);
+        assertSame(OUTER.getMetrics().get(OUTER_TIMER), StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().get(OUTER_TIMER));
+        assertSame(OUTER.getMetrics().get(OUTER_METER), StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().get(OUTER_METER));
+        assertSame(((MetricSet) OUTER.getMetrics().get(INNER_SET)).getMetrics().get(INNER_TIMER),
+            StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().get(name(INNER_SET, INNER_TIMER)));
+        assertSame(existingInnerMeter, StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().get(name(INNER_SET, INNER_METER)));
+
+        System.out.println("name collision");
+        assertThrows(IllegalArgumentException.class, () -> StormMetricsRegistry.registerGauge(name(INNER_SET, INNER_METER), () -> 0));
+    }
+
+    @Test
+    void unregisterMetricSet() {
+        StormMetricsRegistry.registerMetricSet(OUTER);
+        StormMetricsRegistry.unregisterMetricSet(OUTER);
+        assertTrue(StormMetricsRegistry.DEFAULT_REGISTRY.getMetrics().isEmpty());
+
+    }
+
+    private static MetricSet newMetricSetInstance() {
+        return new MetricSet() {
+            private final MetricSet inner = new MetricSet() {
+                private final Map<String, Metric> map = new HashMap<>();
+
+                {
+                    map.put(INNER_METER, new Meter());
+                    map.put(INNER_TIMER, new Timer());
+                }
+
+                @Override
+                public Map<String, Metric> getMetrics() {
+                    return map;
+                }
+            };
+            private final Map<String, Metric> outerMap = new HashMap<>();
+
+            {
+                outerMap.put(OUTER_METER, new Meter());
+                outerMap.put(INNER_SET, inner);
+                outerMap.put(OUTER_TIMER, new Timer());
+            }
+
+            @Override
+            public Map<String, Metric> getMetrics() {
+                return outerMap;
+            }
+        };
+    }
+}
