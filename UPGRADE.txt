@@ -1,0 +1,762 @@
+----------------------------
+General upgrade instructions
+----------------------------
+
+If using a dockerised setup on basis of the VLO and Solr image available via 
+<https://gitlab.com/CLARIN-ERIC>, the general upgrade instruction below do not apply.
+Pleas do check the version specific instructions as they may be relevant.
+
+If using the docker compose configuration (available via <https://gitlab.com/CLARIN-ERIC/
+compose_vlo/>), make sure to remove the Solr home provisioning volume before bringing
+the services up, as otherwise an obsolete Solr configuration may be applied to the Solr
+container!!!
+
+Below you will find a quick overview of the manual upgrade steps. For more details see 
+DEPLOYMENT.md. Note that these steps do not apply in a direct way if you are using the
+docker based setup. Be advised to always take note of the version specific upgrade
+instructions (see below) in any case.
+
+1. Unpack the VLO distribution tarball
+
+2. Go to the 'war' directory.
+
+3. Run the `unpack-wars.sh` script in that directory
+  (OR execute the following steps manually:
+	- Unzip the vlo-web-app-#.##.war in a new 'vlo' directory
+	- Recursively assign ownership of the entire unpacked distribution to the
+	appropriate user, i.e. 'vlouser' on catalog.clarin.eu)
+
+4. In the 'config' directory, inspect VloConfig.xml and the data roots 
+configuration file that is included into this file by means of XInclude. It is
+advised to perform a diff between the old and new versions of these files.
+Depending on configuration preferences, you may want to copy settings from the
+old configuration to the new one. 
+
+See the version specific upgrade instructions below to see whether any specific changes
+require your attention at this point!
+
+5. Stop 
+	1) the Tomcat (or at least the VLO web app), and 
+	2) the Solr server.
+	3) jmxtrans, if applicable
+
+6. Replace the 'current' symlink with a link to location of the new VLO directory.
+
+7. Make sure that the installed Solr server is of a version matching the requirements of
+the current version of the VLO, and that its home directory is configured to be the 
+Solr home directory provided by the VLO in 'solr/vlo-solr-home'.
+IMPORTANT: If 'transplanting' a Solr data directory from another server, make sure that 
+you are running at least the same version of Solr as the source at which the index was
+created.
+
+Upgrading Solr can be done, depending on your OS, using the Solr installation script
+`install_solr_service.sh` with the -f option. The 'solr' directory inside the VLO 
+deployment package contains a tarball with scripts and information for 
+installing/upgrading a Solr instance that matches this version of the VLO. For details,
+see the `README.md` file in the VLO's Solr distribution and the general `DEPLOYMENT.md`.
+
+Also see 
+<https://lucene.apache.org/solr/guide/7_2/taking-solr-to-production.html#taking-solr-to-production>.
+
+8. If needed, flush the Solr index (by removing the content of the Solr data directory).
+The upgrade instructions for specific versions of the VLO indicate whether such a flush is
+required and you may want to check with the person responsible for the instance of the VLO
+you are upgrading.
+
+If 'transplanting' a Solr index from another server, you can put it in the right location,
+replacing the existing Solr data. Check your Solr configuration for the SOLR_DATA setting
+which configures the location of the Solr data directory.
+
+9. Start
+	1) the Solr server, and
+	2) the Tomcat server
+	3) jmxtrans, if applicable
+
+10. If you want to run an import straight away (discuss this with the person responsible
+for the upgraded VLO instance), go to the `bin` directory and run the importer using the
+updated configuration file:
+    `./vlo_solr_importer.sh -c ../config/VloConfig.xml`
+
+-----------------------------
+Upgrading from 4.4.x to 4.5.0
+-----------------------------
+The changes with consequences for configuration and deployment in this version are:
+
+1. Introduction of an authentication requirement for communication with the Solr server
+   by clients including the VLO importer, web app and utilities to generate sitemap 
+   and statistics
+2. Introduction of a mechanism to support Javascript snippet based integrations, e.g.
+   for user satisfaction assessment
+3. Several changes in VloConfig.xml
+
+See the sections below for details for all of these.
+
+## §1: Solr authentication
+
+The bundled Solr configuration has been extended with a security configuration (see
+`solr/vlo-solr-home/security.json` in the deployment package) which enables basic 
+authentication for all HTTP access. This file contains hashed passwords for a number of
+users with different roles. The VLO has to be configured with credentials for both a user
+with only read access, and a user with read/write access. For this purpose, new settings
+have been introduced to VloConfig.xml (see §3). The `config.properties` file of the
+statistics generator, if used, also needs to be adapted accordingly.
+
+The docker compose setup for the VLO provides shared environment variables for securing
+and accessing the Solr instance. See its documentation at 
+<https://gitlab.com/CLARIN-ERIC/compose_vlo/>. IMPORTANT: the Solr home provisioning 
+volume must (and can safely) be removed before starting the services after upgrading!!
+
+For some technical notes, see <https://github.com/clarin-eric/VLO/issues/126> and
+the relevant Solr documentation section at 
+<https://lucene.apache.org/solr/guide/7_3/basic-authentication-plugin.html>.
+
+## §2: User satisfaction rating and adding other functionality through javascript snippets
+
+A new context parameter
+
+	eu.clarin.cmdi.vlo.snippets.bottom.file
+
+is now available that allows for the configuration of a location to load HTML content
+to include below the closing 'body' tag. The concrete use case for this is to enable
+integrations such as feedback collection via Mopinion.
+
+The docker compose setup for the VLO contains a overlay (mopinion.yml) that enables
+a feedback panel defined via <https://app.mopinion.com>. See the documentation at
+<https://gitlab.com/CLARIN-ERIC/compose_vlo/>.
+
+## §3: Changes in VloConfig.xml
+
+VloConfig.xml has seen a change in the available configuration options, with both 
+removals and new additions in this release
+
+- Settings added to VloConfig.xml: 
+	solrUserReadOnly, solrUserReadOnlyPass, solrUserReadWrite, solrUserReadWritePass
+- Settings removed from VloConfig.xml:
+	simpleSearchFacetFields, languageFilters, facetOverviewLength
+- The nature of the following settings has changed in that the included fields should now
+be referenced by key rather than field name:
+	facetFields, primaryFacetFields, searchResultFields, ignoredFields, technicalFields
+
+The bundled VloConfig.xml has all these changes applied. When upgrading, it is advised
+to use the bundled VloConfig.xml and adapt as needed. When using the docker setup, all
+important settings can be tweaked through environment variables. See its documentation at 
+<https://gitlab.com/CLARIN-ERIC/compose_vlo/>.
+
+-----------------------------
+Upgrading from 4.4.2 to 4.4.3
+-----------------------------
+Maintenance release, no changes required (steps 4, 7 and 8 can be skipped)
+
+-----------------------------
+Upgrading from 4.4.1 to 4.4.2
+-----------------------------
+Maintenance release, no changes required (steps 4, 7 and 8 can be skipped)
+
+-----------------------------
+Upgrading from 4.4.0 to 4.4.1
+-----------------------------
+Maintenance release, no changes required (steps 4, 7 and 8 can be skipped)
+
+-----------------------------
+Upgrading from 4.3.x to 4.4.0
+-----------------------------
+The Solr schema has changed. Flush the index and run an import OR replace with a 
+pre-imported index ('transplantation') - ask the developer what approach to take.
+
+Make sure that the new Solr home content is applied to your Solr instance!!! Extra care 
+has to be taken if using compose_vlo, please read its documentation at 
+<https://gitlab.com/CLARIN-ERIC/compose_vlo/>.
+
+You may optionally upgrade (at step 7) the Solr server to version 7.2.1 if your deployment
+target has an older version installed. Note that this version of the VLO has NOT been
+tested to work with Solr 7.3 or higher. 
+
+IMPORTANT: Make sure that all configurations specific to the environment are kept while 
+upgrading (i.e. make sure your solr.in.sh file is not altered in any problematic way - see
+<https://lucene.apache.org/solr/guide/7_2/taking-solr-to-production.html>).
+
+If applicable, make sure to also restart jmxtrans after restarting Solr for whatever
+reason.
+
+## Configuration
+
+Three new properties have been added to VloConfig.xml:
+
+- `valueMappingsFile`
+  - This should be the (file:) URL of a value mapping definition, as can be found in 
+  the VLO-mapping project <https://github.com/clarin-eric/VLO-mapping>. The file may use
+  XInclude to combine multiple mappings, as is the case with the `master.xml` file found
+  in VLO-mapping. Consult the VLO developers for information on the right file to use.
+- `fields`
+  - This contains a set of `field` properties, which map a set of pre-defined
+  field keys to the names of actual fields defined in Solr. You can assume that the
+  provided mapping matches the Solr schema distributed along with the VLO.
+- `deprecatedFields`
+  - Analogues to `fields` (see above), this contains the Solr field names of deprecated
+  fields.
+  
+The following properties have been REMOVED:
+- `useCrossMapping`
+- `crossFacetMapUrl`
+- `nationalProjectMapping`
+  
+## Docker
+
+Two new environment variables have been added to the `docker-vlo` project, with defaults
+suitable for most deployments including beta and production.  The appropriate settings 
+will be guaranteed for those environments that have dedicated Docker Compose
+configurations in the `compose_vlo` project.
+
+- The new environment variable `VLO_DOCKER_VALUE_MAPPING_URI`
+image. It sets the value for `valueMappingsFile` in `VloConfig.xml` (see above). The
+default value `file:/srv/VLO-mapping/value-maps/dist/master.xml` works nicely with the
+`compose_vlo` configurations.
+- The new environment variable `VLO_DOCKER_WICKET_CONFIGURATION` can be used to select
+the 'configuration mode' of Wicket, which is either 'deployment' (default) or 
+'development' or. The default should be used in most cases, including beta and production
+environments.
+
+-----------------------------
+Upgrading from 4.3.5 to 4.3.6
+-----------------------------
+Maintenance release, no actions required (Solr index can be kept).
+
+Only the importer is affected by the changes in this release, so you could also choose
+to only replace the importer (bin directory). No configuration changes are required.
+
+-----------------------------
+Upgrading from 4.3.4 to 4.3.5
+-----------------------------
+Maintenance release, no actions required (Solr index can be kept).
+
+-----------------------------
+Upgrading from 4.3.3 to 4.3.4
+-----------------------------
+Maintenance release, no actions required (Solr index can be kept).
+
+-----------------------------
+Upgrading from 4.3.2 to 4.3.3
+-----------------------------
+Maintenance release, no actions required (Solr index can be kept). Make sure that the
+new Solr home content is applied to your Solr instance!!! Extra care has to be taken if
+using compose_vlo, please read its documentation at <https://gitlab.com/CLARIN-ERIC/
+compose_vlo/>.
+
+-----------------------------
+Upgrading from 4.3.1 to 4.3.2
+-----------------------------
+Maintenance release, no actions required (Solr index can be kept). Make sure that the
+new Solr home content is applied to your Solr instance!!! Extra care has to be taken if
+using compose_vlo, please read its documentation at <https://gitlab.com/CLARIN-ERIC/
+compose_vlo/>.
+
+-----------------------------
+Upgrading from 4.3.0 to 4.3.1
+-----------------------------
+Maintenance release, no actions required (Solr index can be kept).
+
+-----------------------------
+Upgrading from 4.2.x to 4.3.0
+-----------------------------
+
+The version of Solr used by the VLO (i.e. the client version used in the front end and
+importer and the server version it has been tested against) has been upgraded to 7.1. As
+of version 6.0, Solr has been designed to run as a stand-alone service rather than be
+deployed in a servlet container. Therefore when deploying VLO 4.3.0 or later, you must
+ensure that an instance of Solr is available and correctly configured; it no longer comes
+bundled with the VLO as a servlet. Follow the steps below to upgrade an existing VLO 4.2.x
+deployment to VLO 4.3.0. You may also find it helpful to read the updated deployment
+instructions (see DEPLOY.md).
+
+- Install and configure a detached Solr instance
+
+  - Use the OS's package manager if it provides a package for Solr 7.1.x
+    - OR unpack the tarball 'solr/vlo-*-solr.tar.gz' and run the 'build-solr.sh' script
+    in the resulting 'solr' directory, and then run the installer script:
+    
+      `target/solr/bin/install_solr_service.sh target/solr-7.1.0.tgz`
+    
+    Instructions, including options that allow you to deviate from the default settings
+    (e.g. port to bind to) can be found in the official Solr documentation:
+    
+      https://lucene.apache.org/solr/guide/7_0/taking-solr-to-production.html#taking-solr-to-production
+    
+  - After installation, stop the Solr server and configure it to use the 
+  'solr/vlo-solr-home' directory of the currently deployed version of the VLO as the 
+  'solr.solr.home' directory, for example by adding/modifying the 'SOLR_HOME' variable in
+  '/etc/default/solr.in.sh'.
+
+  - Also configure an external Solr data directory by setting the 'solr.data.home'
+  directory, for example by adding/modifying the 'SOLR_DATA_HOME' variable in 
+  '/etc/default/solr.in.sh'.
+    - When reusing an existing Solr data directory, make sure to clear it before starting
+    Solr again, or populate it with an pre-calculated index (e.g. from another server).
+
+- Configure the web application to connect to the new Solr instance. By default the Solr
+server will bind to port 8983. The 'core' holding the VLO index is called 'vlo-index',
+which assuming the defaults makes the Solr base URL 
+'http://localhost:8983/solr/vlo-index/'. You can test this by retrieving the URL 
+'base URL + select', e.g. 'http://localhost:8983/solr/vlo-index/select'.
+
+  - Verify that the correct URL is configured in the VloConfig.xml configuration file
+  in the VLO's 'config' directory.
+  
+  - If you are using the context parameter 'eu.carlin.cmdi.vlo.solr.serverUrl', update its
+  value or remove it to make the web application use the value configured in the
+  VloConfig.xml configuration file.
+  
+## Docker  
+
+If you are building a Docker image, take note that 'docker' profile (previously 'beta') 
+has a few additional VloConfig placeholders that need to be filtered before running the
+front end or importer: 
+- 'VLO_DOCKER_DELETE_ALL_FIRST', 
+- 'VLO_DOCKER_MAX_DAYS_IN_SOLR'
+- 'VLO_DOCKER_DATAROOTS_FILE'
+
+While previous versions of the VLO made it easy to combine the VLO front end and the Solr
+sever into one image (both deployed in one Tomcat instance), it now makes more sense to
+use separate containers for the web app (optionally combined with the importer) and Solr.
+For the latter, you can use the official off-the-shelve Solr image (see 
+<https://hub.docker.com/_/solr/>) and set it up to use the configuration provided via
+the VLO (e.g. set the Solr home directory to 'vlo-solr-home', via a mount), or CLARIN's
+Solr image derived from the official image tuned to work within the CLARIN infrastructure
+(see <https://gitlab.com/CLARIN-ERIC>). 
+
+For an example that should be easy to make running in any environment, see the 
+'compose_vlo' project (via <https://gitlab.com/CLARIN-ERIC>).
+
+-----------------------------
+Upgrading from 4.2.0 to 4.2.1
+-----------------------------
+* Two new configuration settings have been added related to parallel processing:
+- fileProcessingThreads
+- solrThreads
+
+These need to be tweaked depending on the environment in order to get the best processing
+while keeping the load accessible. The parameter `fileProcessingThreads` can be set to
+`-1` to instruct the importer to initialise a "work-stealing thread pool" with a
+parallelism level automatically determined by the JVM based on the number of available
+cores. This is often a good choice.
+
+For the 'beta' build profile, there are two new placeholders corresponding to the above
+parameters. See <https://gitlab.com/CLARIN-ERIC/docker-vlo-beta/merge_requests/4> for
+details. Note that this does not apply to other build profiles (including production)!
+
+-----------------------------
+Upgrading from 4.1.x to 4.2.0
+-----------------------------
+
+* There are several new configuration parameters in VloConfig.xml:
+
+- licenseTypeMapUrl
+- vcrMaximumItemsCount
+- vcrSubmitEndpoint
+
+Also notice that a new entry has been added to the 'ignoreFields' list in the same file.
+
+The values set in the bundled VloConfig.xml files should be suitable for production and
+testing environments.
+
+* This release requires VLO-mapping version 1.1.0 or higher. Make sure to source that
+you are sourcing the mapping definitions from an up-to-date location (see VloConfig.xml)
+before running an import or starting the web application. See <https://github.com/clarin-eric/VLO-mapping>.
+
+* The Solr schema has been updated for this release, so an existing index from a previous
+version of the VLO can NOT be used. Make sure to create or use a fresh import started with
+a clean index (for instruction, see above).
+
+* For the 'beta' build profile, the bundled VloConfig.xml now contains placeholders for
+several environment specific parameters. These need to be filtered before the application
+processes the configuration. See <https://gitlab.com/CLARIN-ERIC/docker-vlo-beta/issues/1>
+for details. Note that this does not apply to other build profiles (including production)!
+
+-----------------------------
+Upgrading from 4.0.x to 4.1.0
+-----------------------------
+
+* The facet-concept mapping file and uniformed mapping/normalisation files can now be
+sourced from an external location (remote URL or local file system). This is the 
+recommended way of setting up the VLO in any deployed environment. The required VLO mapping
+definitions can be obtained from <https://github.com/clarin-eric/VLO-mapping> by cloning
+the repository or downloading and unpacking the sources or distribution. Choose a fork
+and/or branch that matches your environment (dev, beta, production...) and needs.
+
+The VloConfig.xml defines the locations of these mapping files. Note that the bundled 
+VloConfig.xml may already be preconfigured for your specific environment.
+
+First, there is the 'facetConceptsFile'. The recommended way to configure it is using a
+local file URL, for example:
+	<facetConceptsFile>file:/srv/VLO-mapping/mapping/facetConcepts.xml</facetConceptsFile>
+	
+You can also use a remote location, e.g.:
+	<facetConceptsFile>https://vlo.clarin.eu/mapping/facetConcepts.xml</facetConceptsFile>
+...or also leave the property empty to use the bundled default definitions.
+
+Then there is a set of properties nationalProjectMapping, organisationNamesUrl,
+languageNameVariantsUrl, licenseAvailabilityMapUrl, resourceClassMapUrl, licenseURIMapUrl.
+These too are ideally configured through a URL to a local file, for example:
+    <nationalProjectMapping>file:/srv/VLO-mapping/uniform-maps/nationalProjectsMapping.xml</nationalProjectMapping>
+    <organisationNamesUrl>file:/srv/VLO-mapping/uniform-maps/OrganisationControlledVocabulary.xml</organisationNamesUrl>
+	....
+	
+To use bundled default mapping files, use relative paths such as
+    <nationalProjectMapping>uniform-maps/nationalProjectsMapping.xml</nationalProjectMapping>
+    <organisationNamesUrl>uniform-maps/OrganisationControlledVocabulary.xml</organisationNamesUrl>
+	...
+	
+Both the web application and the importer make use of the files configured at these 
+locations, so make sure that the content is available when starting the front end
+or importer!
+
+-----------------------------
+Upgrading from 3.4.x to 4.0.0
+-----------------------------
+
+This version of the VLO is based on CMDI 1.2, and no longer processes
+CMDI 1.1. Therefore make sure that all metadata presented to the importer
+is CMDI 1.2.
+
+There are two additions to the VloConfig.xml file:
+    - "primaryFacetFields" has a number "primaryFacetField" values that define
+    which fields are shown at first in the front end.
+    - "lrSwitchboardBaseUrl" defines the base URL of the Language Resource
+    Switchboard, which is used to create a link in the resources section of the
+    record page.
+
+Normally the default values can be adopted for both of these.
+
+There are no changes in the Solr schema, so the existing index can be kept.
+
+Versions 4.0.1 and 4.0.2 are maintenance releases that do not require any changes in
+the environment or configuration as long as the packaged mapping definitions are used.
+
+-----------------------------
+Upgrading from 3.4.0 to 3.4.1
+-----------------------------
+
+Maintenance release without the need to changes the configuration. However,
+optionally the newly added statistics reporter can be configured for use. To
+do so, follow these steps:
+    - Copy the configuration.properties file to a stable location and edit the
+    values to match the current environment. Currently, the reporter allows for
+    reporting by means of an XML report file and/or by sending data to a 
+    (remote) statsd server. This behaviour can be toggled by means of the 
+    configuration properties.
+    - Schedule the following command to be run after the importer completes:
+
+        ${VLO_DIR}/bin/statistics/start.sh ${SITEMAP_CONFIG_PROPS_FILE}
+
+(See the README file in bin/statistics for more information)
+
+-----------------------------
+Upgrading from 3.3.x to 3.4.x
+-----------------------------
+
+* A set of 'availability' values needs to be configured in VloConfig.xml. This
+determines which values are shown for the availability facet in the web app,
+and also allows for the setting of a description and display value. An example
+configuration is given in the following snippet:
+
+    <availability>
+        <availabilityValue value="PUB">
+            <displayValue>Public</displayValue>
+            <description>Publicly available resources</description>
+        </availabilityValue>
+    </availability>
+
+The default VloConfig.xml file is pre-configured for use in production and
+generally does not need to be altered.
+
+* The Piwik tracker is now configurable via context parameters. Set the 
+following parameters according to your preferences:
+
+    <Parameter 
+        name="eu.clarin.cmdi.vlo.piwik.enableTracker" 
+        description="'true' or 'false', defaults to 'false'"
+        value="true"/>
+
+    <!-- Further piwik parameters can be skipped if enableTracker is false -->
+
+    <Parameter 
+        name="eu.clarin.cmdi.vlo.piwik.siteId" 
+        description="defaults to '3'"
+        value="3"/> <!-- '1' for testing/beta, '3' for production -->
+    
+    <Parameter 
+        name="eu.clarin.cmdi.vlo.piwik.host" 
+        description="defaults to 'https://stats.clarin.eu/'"
+        value="https://stats.clarin.eu/"/>
+    
+    <Parameter 
+        name="eu.clarin.cmdi.vlo.piwik.domains" 
+        description="defaults to '*.vlo.clarin.eu'"
+        value="*.vlo.clarin.eu"/> <!-- should match public hostname -->
+
+See <https://stats.clarin.eu> for configuration details per environment.
+
+* Notice that the VLO importer script has an heap space maximum size that has
+been increased to 4 Gb (see bin/vlo_solr_importer.sh). This can be configured
+by means of the newly added "VMOPTS" variable in the script file.
+
+* There have been changes to the Solr configuration, so make sure to run or use
+a fresh import started with a clean index.
+
+* _Optionally_ configure the VLO sitemap generator, which can be found in 
+bin/sitemap-generator:
+    - Prepare a target directory for the sitemap file(s)
+    - Copy the configuration.properties file to a stable location and edit the
+    values to match the current environment
+    - Schedule the following command to be run after the importer completes:
+
+        ${VLO_DIR}/bin/sitemap-generator/start.sh ${SITEMAP_CONFIG_PROPS_FILE}
+
+    - Configure your web server to serve the contents of this directory via a 
+    stable public URL
+    - Register the sitemap URL with Google and/or other search engines
+(See the README file in bin/sitemap-generator for more information)
+
+--------------------------
+Upgrading from 3.2 to 3.3
+--------------------------
+* Take note of the change in VloConfig.xml which moves the data roots definition
+out of VloConfig.xml by means of XInclude. The configuration file now gets
+prepared for deployment environments at build time, so it is no longer necessary
+to copy over old configuration values in all cases.
+
+* Decide whether hierarchies should be indexed and displayed, and set the new
+'processHierarchies' configuration element accordingly (true/false). This 
+governs the behaviour of both the importer (will simply skip the 'update 
+hierarchies' step if set to false) and the front end (will not display hierarchy
+related UI components).
+
+* In the context fragment for the VLO web application, ADD the following 
+attribute to the <Context> root element:
+
+   sessionCookiePath="/"
+
+and, if set, REMOVE any "crossContext" parameter.
+ 
+---------------------------
+Upgrading from 3.1 to 3.2
+---------------------------
+* Take note of the following changes in VloConfig.xml:
+
+- 'facetConceptsFile' now defines the location of the facet/concept mapping 
+definition on disk; to use the default bundled definition, leave it empty. 
+Before this used to have the value '/facetConcepts.xml' which will no longer be
+valid - it can safely be replaced with either the empty string or 
+'facetConcepts.xml' to use the file in the same directory as VloConfig.xml.
+
+- 'languageLinkPrefix' element has been REPLACED by 'languageLinkTemplate';
+remove the former and add the following to existing configurations:
+
+	<languageLinkTemplate>https://infra.clarin.eu/content/language_info/data/{}.html</languageLinkTemplate>
+
+- 'languageNameVariantsUrl' and 'licenseAvailabilityMapUrl' are now required
+mapping configuration elements. So the following should normally be added:
+
+    <languageNameVariantsUrl>/LanguageNameVariantsMap.xml</languageNameVariantsUrl>   
+    <licenseAvailabilityMapUrl>/LicenseAvailabilityMap.xml</licenseAvailabilityMapUrl>
+
+- optional 'showResultScores' element, defaults to false. Should be false except
+when debugging result ranking.
+
+- The facet field 'availability' is now available
+
+* Be aware that the default maximum heap space of the importer has been
+increased from 2GB to 3GB (by means of a change in bin/vlo_solr_importer.sh).
+
+---------------------------
+Upgrading from 3.0.x to 3.1
+---------------------------
+
+* (For stable version) Update the external service running at <http://infra.clarin.eu/
+service/language/info.php> to select the 'languageCode' facet using ISO639-3 language 
+codes, e.g. <http://catalog.clarin.eu/vlo/search?fq=languageCode:code:nep> for 'nep'. 
+Contact Sander Maijers <sander@clarin.eu> for more information.
+
+* Take note of the following changes in VloConfig.xml:
+- 'imdiBrowserUrl' element has been removed
+- 'organisationNamesUrl' element has been added (should normally have 
+'/OrganisationControlledVocabulary.xml' as its value)
+- the 'language' facet has been replaced with 'languageCode'; the latter replaces the
+former in the 'facetField', 'simpleSearchFacetField' and 'searchResultField' elements
+
+* Flush the solr index (remove the data directory) and run a new import or copy the
+beta index over if it is based on a recent 3.1 import.
+
+---------------------------
+Upgrading from 3.0 to 3.0.1
+---------------------------
+
+No additional actions required, the existing Solr index can be kept
+
+---------------------------
+Upgrading from 2.18 to 3.0
+---------------------------
+
+* In version 3.0, the context parameters for the VLO web application have changed, see
+the file META-INF/context.xml for examples. The following parameters are now being
+processed:	
+
+- eu.carlin.cmdi.vlo.config.location
+	Optional but recommended. Should point to the location of VloConfig.xml that
+	should be used. Replaces The previously available parameter 'externalConfig', which is
+	no longer supported.
+
+- eu.carlin.cmdi.vlo.solr.serverUrl
+	Optional. Configures the base URL of the SOLR instance to connect to.
+	Usage is not recommended, instead configure the Solr URL via VloConfig.xml (see 
+	below).
+
+* New options have been added to the shared VLO configuration file VloConfig.xml 
+(in vlo-3.0/config):
+
+- The 'length' attributes in list elements can be removed
+
+- The Solr endpoint has changed because it is now multicore. Change for example:
+
+	<solrUrl>http://localhost:8084/vlo_solr/</solrUrl>
+    
+into
+
+	<solrUrl>http://localhost:8084/vlo_solr/core0/</solrUrl>
+
+This also applies to the eu.carlin.cmdi.vlo.solr.serverUrl context parameter (see above).
+
+- The following elements should be added:
+
+	<!-- begin added in 3.0 -->
+
+	<collectionFacet>collection</collectionFacet> 
+
+	<simpleSearchFacetFields>
+		<simpleSearchFacetField>language</simpleSearchFacetField>
+		<simpleSearchFacetField>resourceClass</simpleSearchFacetField>
+		<simpleSearchFacetField>genre</simpleSearchFacetField>
+		<simpleSearchFacetField>nationalProject</simpleSearchFacetField>
+	</simpleSearchFacetFields>
+
+	<!-- Fields shown in expanded search results on the search page -->
+	<searchResultFields>
+		<searchResultField>name</searchResultField>
+		<searchResultField>country</searchResultField>
+		<searchResultField>languages</searchResultField>
+		<searchResultField>modality</searchResultField>
+		<searchResultField>subject</searchResultField>
+		<searchResultField>genre</searchResultField>
+		<searchResultField>organisation</searchResultField>
+		<searchResultField>collection</searchResultField>
+		<searchResultField>nationalProject</searchResultField>
+	</searchResultFields>
+
+	<!-- Fields ignored in the record page -->
+	<ignoredFields>
+		<ignoredField>format</ignoredField>
+	</ignoredFields>
+
+	<!-- Fields shown as technical fields in the record page -->
+	<technicalFields>
+		<technicalField>id</technicalField>
+		<technicalField>dataProvider</technicalField>
+		<technicalField>metadataSource</technicalField>
+		<technicalField>_landingPageRef</technicalField>
+		<technicalField>_searchPageRef</technicalField>
+		<technicalField>_contentSearchRef</technicalField>
+		<technicalField>_lastSeen</technicalField>
+		<technicalField>_componentProfile</technicalField>
+	</technicalFields>
+
+	<!-- end added in 3.0 -->
+
+- The element 'facetfield' should be replaced with new values:
+
+	<!-- begin changed in 3.0 -->
+
+	<facetFields>
+		<facetField>language</facetField>
+		<facetField>resourceClass</facetField>
+		<facetField>continent</facetField>
+		<facetField>country</facetField>
+		<facetField>modality</facetField>
+		<facetField>genre</facetField>
+		<facetField>subject</facetField>
+		<facetField>format</facetField>
+		<facetField>organisation</facetField>
+		<facetField>nationalProject</facetField>
+		<facetField>keywords</facetField>
+		<facetField>dataProvider</facetField>
+	</facetFields>
+
+	<!-- end changed in 3.0 -->
+
+* The location of the Solr index data directory is now governed through a java system
+property 'solr.data.dir'. Add the following to ${catalina.home}/bin/setenv.sh:
+
+	export JAVA_OPTS="$JAVA_OPTS -Dsolr.data.dir=/lat/webapps/vlo/solr/data-beta"
+
+Substitute the directory with the actual desired location of the index data. The
+parent directory has to exist and should be writable by the Tomcat user.
+
+---------------------------
+Upgrading from 2.17 to 2.18
+---------------------------
+
+* In version 2.18 of the VLO, the URL mapping has been changed. To prevent
+existing references and bookmarks from breaking, add rewrite rules to the
+HTTP server to achieve the following mappings:
+
+[TODO: Define actual mod_rewrite rules and document here]
+
+- {vlobase}/?wicket:bookmarkablePage=:eu.clarin.cmdi.vlo.pages.ShowResultPage&docId={docId}
+	-> {vlobase}/record?docId={docId}
+
+- {vlobase}/?wicket:bookmarkablePage=:eu.clarin.cmdi.vlo.pages.ShowAllFacetValuesPage&selectedFacet={facet}
+	-> {vlobase}/values/{facet}
+
+In both case all additional GET parameters SHOULD be kept.
+
+Next to the URL mapping, the XML parameter file has undergone some changes:
+
+    <!-- Sets the maximum number of page instances which will be stored in the application scoped second level cache for faster retrieval -->
+    <pagesInApplicationCache>40</pagesInApplicationCache>
+    
+    <!-- Sets the maximum size (in KILOBYTES) of the File where page instances per session are stored. -->
+    <sessionCacheSize>10000</sessionCacheSize>
+
+Has been added to tune the Wicket page cache. The first parameter allows you
+to set the size of the application wide cache holding pages. The second parameter
+denotes the size of the cache (in kilobytes) associated with a session. The values
+listed above are the Wicket defaults.
+
+Other changes in the parameter file:
+- maxFileSize and use MaxFileSize have been integrated into one parameter:
+  
+  maxFileSize
+
+  If equal to 0, no upper limit to the size of metadata input files will be 
+  applied.
+
+- maxDaysToLife has been renamed into maxDaysInSolr
+
+- VloHomeLink has been renamed into homeUrl
+
+- helpUrl has been added; a link to a help page.
+
+- The facetConceptsFile parameter, referencing the facetConcepts.xml file, 
+  has been added also. This is part of the effort of making parameterised 
+  instantiation of the VLO possible.
+
+- Also, the facetOverviewLength parameter has been added. This parameter controls
+  the listing of facets on the search page.
+
+- Similar to 'useMaxFileSize' the expectReverseProxy parameter has been removed
+
+Finally, 
+
+    <cqlEndpointFilter>http://cqlservlet.mpi.nl/</cqlEndpointFilter>
+    
+    <cqlEndpointAlternative>http://cqlservlet.mpi.nl/</cqlEndpointAlternative>
+
+add the possibility of creating a filter for endpoints.
