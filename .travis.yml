@@ -1,0 +1,117 @@
+sudo: required
+
+cache:
+  directories:
+    - $HOME/.m2
+
+language: java
+jdk: oraclejdk8
+
+services:
+  - docker
+
+env:
+  global:
+    - secure: i3h/CNnXfDSG2rolOLufbmJyZNRUUiiTyHhT+fqEM3VEQcPb4p8zxymnpstLGwR4BC7QOSmxyl3bkOEvARupEX1Gp1LLkjY+8auB3cmPlhGkVsrZPMC47umN8M5W+97Mg9LhpUQerUihEMufvXoyTtpyiXyYh1W7cG6AqEGc3K6jqYlIGxYY/NrwPek2EOmy+kScz4U6gsAZnzvMOIpDWpDydQkrYGHomlrNyY8eV/9hBgeSX/w6RNbv2I6nUp/ubRIxgQv/kbxaH4zEnqI510yUDsiWq78lNEhDDzlto3rrZztniEMvTR1+5TMiO8/xFoD+s/Sgy2zUNCeBocexuLIc6WWUOHtQof2EyMTitEizYi7442d9UmdbFWFT6+hhWUOx6ldGVKmjBrVGtjq5inyuUcyjV6JqHALBO2ZQytKuGEK4lgKxleRXbLcHBSkQS/E1CxfzdPs9PlSa01OOR3rmkuoYLAgUFTZPaOlk45APkpbrJqlSRIhYHJ+XSWYl2w9AxmHdOu+nj08RjaM+aBx0DqvwGnut9faiH1B4JX5zl03LtiTBReD7yh574RU+9LZsln77LWwuWQDUpeOxOa2I6PUqcyOJoDt3R8tIp6ZjLk54hViETRpwRV+Oh+yQN03eEcIsF1l1V4zfB+ZES0N4MY4N5x69LAxmfnSCfuQ=
+    - secure: TVmEroz3S+6VRDyGL4Lqw13DBX1k+79TXTO8N1AaxpxzTu/D96f1mgl/P+V0rqClPGASieqxDchI+8I1l/S/4SbBSRAd0RG6zNAiUdwJdy4yiR7l/D+lokSaotWDLukEak0aozuWheTElphw7YXKTNSCuNAhU1B7/9m0T8fZp81atQoSB+6h37a37Qk49Usc3DWLkPo2whdLjPB8CFcSlxvwGHa9iwgq3PUftqWYUTNSb6LkmRTnV+sl1wWRB+4PP2EmEV/jPv8ekMk363ZRfTIOMtbysZVaLlIMxT0JOeO8HHo/2hiFZI3Qu28nYuENE4KrgO4EVofvk8r8gcve8XXX4VkQNX6961LOejs7eqCmK9tXwKsRm2dpjr8ofNxU1JuLxGOt2wN8W6FXMPLPBqXlRSm/13NCse+cv1Fj9GTLeYQwJuK03tnmo/P1YVpADh2UmyZ4MQRoieYZRMFQRa+70q5cMW4lipPX0Yul46UcXgpj24iPk6wmzgPHIy3l7Y9Y7KW5BUusY1X420xJydWFwr9em1g9xIlR9aQzpzuS2irSI0jIMvvo885YWMy36I6JzIVO+wQ5rDMj/4gkwDz6GnMQgz6Sr2qysxjFUjG3I0MNYuVnIqrfTDz++UxRDx0xOtLdPAe31FuTKMftSGSQp3ChCROgQZ6paq2sPds=
+    - COMMIT=${TRAVIS_COMMIT::7}
+
+before_install:
+  - chmod +x mvnw
+
+#install: executes ./mvnw install -DskipTests=true -Dmaven.javadoc.skip=true -B -V
+
+before_script:
+  - docker build gateway/ -t gateway-service
+
+#script: executes ./mvnw test -B
+#script: ./mvnw -Dtest=GatewayControllerTests test -pl gateway
+  
+after_failure:
+  - echo 'I have not failed. I've just found 10000 ways that won't work.'
+  - cat '/home/travis/build/LeonardoBonacci/oogway/gateway/build/dockerLogs/GateControllerTests/gateway-service.log'
+
+after_success:
+  #!/bin/bash
+  - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+
+  #TAG
+  - export TAG=`if [ "$TRAVIS_BRANCH" == "master" ]; then echo "latest"; else echo $TRAVIS_BRANCH ; fi`
+
+  # CONFIG SERVICE
+  - export CONFIG=$DOCKER_USERNAME/oogway-config-service
+  - docker build -t $CONFIG:$COMMIT ./config
+  - docker tag $CONFIG:$COMMIT $CONFIG:$TAG
+  - docker push $CONFIG
+
+  # ORCHESTRATION SERVICE
+  - export ORCHESTRATION=$DOCKER_USERNAME/oogway-orchestration-service
+  - docker build -t $ORCHESTRATION:$COMMIT ./orchestration
+  - docker tag $ORCHESTRATION:$COMMIT $ORCHESTRATION:$TAG
+  - docker push $ORCHESTRATION
+
+  # GATEWAY SERVICE
+  - export GATEWAY=$DOCKER_USERNAME/oogway-gateway-service
+  - docker build -t $GATEWAY:$COMMIT ./gateway
+  - docker tag $GATEWAY:$COMMIT $GATEWAY:$TAG
+  - docker push $GATEWAY
+
+  # AUTH SERVICE
+  - export AUTH=$DOCKER_USERNAME/oogway-auth-service
+  - docker build -t $AUTH:$COMMIT ./auth
+  - docker tag $AUTH:$COMMIT $AUTH:$TAG
+  - docker push $AUTH
+  
+  # DOORWAY SERVICE
+  - export DOORWAY=$DOCKER_USERNAME/oogway-doorway-service
+  - docker build -t $DOORWAY:$COMMIT ./heimdall/doorway
+  - docker tag $DOORWAY:$COMMIT $DOORWAY:$TAG
+  - docker push $DOORWAY
+  
+  # LUMBERJACK
+  - export LUMBERJACK=$DOCKER_USERNAME/oogway-lumberjack
+  - docker build -t $LUMBERJACK:$COMMIT ./heimdall/lumberjack
+  - docker tag $LUMBERJACK:$COMMIT $LUMBERJACK:$TAG
+  - docker push $LUMBERJACK
+  
+  # ORACLE SERVICE
+  - export ORACLE=$DOCKER_USERNAME/oogway-oracle-service
+  - docker build -t $ORACLE:$COMMIT ./oracle
+  - docker tag $ORACLE:$COMMIT $ORACLE:$TAG
+  - docker push $ORACLE
+  
+  # SANNYAS SERVICE
+  - export SANNYAS=$DOCKER_USERNAME/oogway-sannyas-service
+  - docker build -t $SANNYAS:$COMMIT ./sannyas
+  - docker tag $SANNYAS:$COMMIT $SANNYAS:$TAG
+  - docker push $SANNYAS
+  
+  # JOB SERVICE
+  - export JOBS=$DOCKER_USERNAME/oogway-job-service
+  - docker build -t $JOBS:$COMMIT ./jobs
+  - docker tag $JOBS:$COMMIT $JOBS:$TAG
+  - docker push $JOBS
+  
+  # LOCALTIMER SERVICE
+  - export LOCALTIMER=$DOCKER_USERNAME/oogway-localtimer-service
+  - docker build -t $LOCALTIMER:$COMMIT ./spectre/local-timer
+  - docker tag $LOCALTIMER:$COMMIT $LOCALTIMER:$TAG
+  - docker push $LOCALTIMER
+  
+  # LOCALTIMER SERVICE
+  - export MONEY=$DOCKER_USERNAME/oogway-money-service
+  - docker build -t $MONEY:$COMMIT ./spectre/money
+  - docker tag $MONEY:$COMMIT $MONEY:$TAG
+  - docker push $MONEY
+  
+  # SENTIMENT SERVICE
+  - export SENTIMENT=$DOCKER_USERNAME/oogway-sentiment-service
+  - docker build -t $SENTIMENT:$COMMIT ./spectre/sentiment
+  - docker tag $SENTIMENT:$COMMIT $SENTIMENT:$TAG
+  - docker push $SENTIMENT
+
+  # WEATHER SERVICE
+  - export WEATHER=$DOCKER_USERNAME/oogway-weather-service
+  - docker build -t $WEATHER:$COMMIT ./spectre/weather
+  - docker tag $WEATHER:$COMMIT $WEATHER:$TAG
+  - docker push $WEATHER
