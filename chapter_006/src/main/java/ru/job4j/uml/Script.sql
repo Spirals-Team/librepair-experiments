@@ -1,0 +1,10 @@
+--drop all tables
+DROP TABLE role_sets;
+DROP TABLE permissions;
+DROP TABLE files;
+DROP TABLE comments;
+DROP TABLE tickets;
+DROP TABLE categories;
+DROP TABLE states;
+DROP TABLE users;
+DROP TABLE roles;
