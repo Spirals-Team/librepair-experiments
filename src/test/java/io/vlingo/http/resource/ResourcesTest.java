@@ -1,0 +1,88 @@
+// Copyright © 2012-2018 Vaughn Vernon. All rights reserved.
+//
+// This Source Code Form is subject to the terms of the
+// Mozilla Public License, v. 2.0. If a copy of the MPL
+// was not distributed with this file, You can obtain
+// one at https://mozilla.org/MPL/2.0/.
+
+package io.vlingo.http.resource;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
+import org.junit.Test;
+
+import io.vlingo.http.sample.user.ProfileResource;
+import io.vlingo.http.sample.user.UserResource;
+
+public class ResourcesTest {
+  private final Resources resources = Loader.loadResources(Properties.loadProperties());
+  
+  @Test
+  public void testLoadResources() {
+    final Resource<?> user = resources.resourceOf("user");
+    
+    assertNotNull(user);
+    assertEquals(user.name, "user");
+    assertNotNull(user.resourceHandlerClass);
+    assertEquals("io.vlingo.http.sample.user.UserResource", user.resourceHandlerClass.getName());
+    assertEquals(10, user.handlerPoolSize);
+    
+    int countUserActions = 0;
+    
+    for (Action action : user.actions) {
+      ++countUserActions;
+      
+      assertTrue(action.method.isPOST() || action.method.isPATCH() || action.method.isGET());
+      
+      assertNotNull(action.uri);
+      assertNotNull(action.to);
+      assertNotNull(action.mapper);
+    }
+    
+    assertEquals(5, countUserActions);
+    
+    final Resource<?> profile = resources.resourceOf("profile");
+    
+    assertNotNull(profile);
+    assertEquals(profile.name, "profile");
+    assertNotNull(profile.resourceHandlerClass);
+    assertEquals("io.vlingo.http.sample.user.ProfileResource", profile.resourceHandlerClass.getName());
+    assertEquals(5, profile.handlerPoolSize);
+    
+    int countProfileActions = 0;
+    
+    for (Action action : profile.actions) {
+      ++countProfileActions;
+      
+      assertTrue(action.method.isPUT() || action.method.isGET());
+      
+      assertNotNull(action.uri);
+      assertNotNull(action.to);
+      assertNotNull(action.mapper);
+    }
+    
+    assertEquals(2, countProfileActions);
+  }
+
+  @Test
+  public void testThatResourcesBuildFluently() {
+    final Resources resources =
+            Resources
+              .are(Resource.defining("user", UserResource.class, 10,
+                      Actions.canBe("POST", "/users", "register(body:io.vlingo.http.sample.user.UserData userData)", true)
+                              .also("PATCH", "/users/{userId}/contact", "changeContact(String userId, body:io.vlingo.http.sample.user.ContactData contactData)", true)
+                              .also("PATCH", "/users/{userId}/name", "changeName(String userId, body:io.vlingo.http.sample.user.NameData nameData)", true)
+                              .also("GET", "/users/{userId}", "queryUser(String userId)", true)
+                              .also("GET", "/users", "queryUsers()", true)
+                              .thatsAll()),
+                   Resource.defining("profile", ProfileResource.class, 5,
+                      Actions.canBe("PUT", "/users/{userId}/profile", "define(String userId, body:io.vlingo.http.sample.user.ProfileData profileData)", "io.vlingo.http.sample.user.ProfileDataMapper", false)
+                              .also("GET", "/users/{userId}/profile", "query(String userId)", "io.vlingo.http.sample.user.ProfileDataMapper", false)
+                              .thatsAll()));
+
+    assertNotNull(resources.resourceOf("user"));
+    assertNotNull(resources.resourceOf("profile"));
+  }
+}
