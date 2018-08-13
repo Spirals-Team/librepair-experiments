@@ -1,0 +1,105 @@
+// Copyright © 2012-2018 Vaughn Vernon. All rights reserved.
+//
+// This Source Code Form is subject to the terms of the
+// Mozilla Public License, v. 2.0. If a copy of the MPL
+// was not distributed with this file, You can obtain
+// one at https://mozilla.org/MPL/2.0/.
+
+package io.vlingo.actors;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public class Environment {
+  final Address address;
+  final List<Actor> children;
+  final Definition definition;
+  final FailureMark failureMark;
+  final Logger logger;
+  final Mailbox mailbox;
+  final Supervisor maybeSupervisor;
+  final Actor parent;
+  final Map<String,Object> proxyCache;
+  final Stage stage;
+  final Stowage stowage;
+  final Stowage suspended;
+
+  private final AtomicBoolean secured;
+  private final AtomicBoolean stopped;
+
+  protected Environment(
+          final Stage stage,
+          final Address address,
+          final Definition definition,
+          final Actor parent,
+          final Mailbox mailbox,
+          final Supervisor maybeSupervisor,
+          final Logger logger) {
+    assert(stage != null);
+    this.stage = stage;
+    assert(address != null);
+    this.address = address;
+    assert(definition != null);
+    this.definition = definition;
+    if (address.id() != World.PRIVATE_ROOT_ID) assert(parent != null);
+    this.parent = parent;
+    assert(mailbox != null);
+    this.mailbox = mailbox;
+    this.maybeSupervisor = maybeSupervisor;
+    this.failureMark = new FailureMark();
+    this.logger = logger;
+    this.children = new ArrayList<Actor>(0);
+    this.proxyCache = new HashMap<>();
+    this.stowage = new Stowage();
+    this.suspended = new Stowage();
+    
+    this.secured = new AtomicBoolean(false);
+    this.stopped = new AtomicBoolean(false);
+  }
+
+  void addChild(final Actor child) {
+    children.add(child);
+  }
+
+  <T> void cacheProxy(final T proxy) {
+    proxyCache.put(proxy.getClass().getName(), proxy);
+  }
+
+  @SuppressWarnings("unchecked")
+  <T> T lookUpProxy(final Class<T> protocol) {
+    return (T) proxyCache.get(protocol.getName());
+  }
+
+  boolean isSecured() {
+    return secured.get();
+  }
+
+  void setSecured() {
+    secured.set(true);
+  }
+
+  boolean isStopped() {
+    return stopped.get();
+  }
+
+  void stop() {
+    if (stopped.compareAndSet(false, true)) {
+      stopChildren();
+
+      suspended.reset();
+
+      stowage.reset();
+
+      mailbox.close();
+    }
+  }
+
+  private void stopChildren() {
+    // TODO: re-implement as: children.forEach(child -> selfAs(Stoppable.class).stop());
+    children.forEach(child -> child.stop());
+    children.clear();
+  }
+}
