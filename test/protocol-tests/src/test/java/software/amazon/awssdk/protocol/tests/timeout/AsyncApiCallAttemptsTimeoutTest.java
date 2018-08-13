@@ -1,0 +1,112 @@
+/*
+ * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License").
+ * You may not use this file except in compliance with the License.
+ * A copy of the License is located at
+ *
+ *  http://aws.amazon.com/apache2.0
+ *
+ * or in the "license" file accompanying this file. This file is distributed
+ * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+ * express or implied. See the License for the specific language governing
+ * permissions and limitations under the License.
+ */
+
+package software.amazon.awssdk.protocol.tests.timeout;
+
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.anyUrl;
+import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.stubFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
+import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+
+import com.github.tomakehurst.wiremock.junit.WireMockRule;
+import java.net.URI;
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.async.AsyncResponseTransformer;
+import software.amazon.awssdk.core.exception.ClientExecutionTimeoutException;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.protocolrestjson.ProtocolRestJsonAsyncClient;
+import software.amazon.awssdk.services.protocolrestjson.model.AllTypesResponse;
+import software.amazon.awssdk.services.protocolrestjson.model.StreamingOutputOperationRequest;
+import software.amazon.awssdk.services.protocolrestjson.model.StreamingOutputOperationResponse;
+import software.amazon.awssdk.utils.builder.SdkBuilder;
+
+public class AsyncApiCallAttemptsTimeoutTest {
+    @Rule
+    public WireMockRule wireMock = new WireMockRule(0);
+
+    private static final String STREAMING_OUTPUT_PATH = "/2016-03-11/streamingOutputOperation";
+    private ProtocolRestJsonAsyncClient client;
+
+    @Before
+    public void setup() {
+        client = ProtocolRestJsonAsyncClient.builder()
+                                            .region(Region.US_WEST_1)
+                                            .endpointOverride(URI.create("http://localhost:" + wireMock.port()))
+                                            .credentialsProvider(() -> AwsBasicCredentials.create("akid", "skid"))
+                                            .overrideConfiguration(b -> b.apiCallAttemptTimeout(Duration.ofMillis(1000)))
+                                            .build();
+    }
+
+    @Test
+    public void nonstreamingOperation_finishedWithinTime_shouldNotTimeout() {
+        stubFor(post(anyUrl())
+                    .willReturn(aResponse().withStatus(200).withBody("{}").withFixedDelay(100)));
+        CompletableFuture<AllTypesResponse> allTypesResponseCompletableFuture = client.allTypes(SdkBuilder::build);
+
+        AllTypesResponse response = allTypesResponseCompletableFuture.join();
+        assertThat(response).isNotNull();
+    }
+
+    @Test
+    public void nonstreamingOperation_notFinishedWithinTime_shouldTimeout() {
+        stubFor(post(anyUrl())
+                    .willReturn(aResponse().withStatus(200).withBody("{}").withFixedDelay(1200)));
+        CompletableFuture<AllTypesResponse> allTypesResponseCompletableFuture = client.allTypes(SdkBuilder::build);
+
+        assertThatThrownBy(allTypesResponseCompletableFuture::join).hasCauseInstanceOf(ClientExecutionTimeoutException.class);
+    }
+
+    @Test
+    public void nonstreamingOperation500_notFinishedWithinTime_shouldTimeout() {
+        stubFor(post(anyUrl())
+                    .willReturn(aResponse().withStatus(500).withFixedDelay(1200)));
+        CompletableFuture<AllTypesResponse> allTypesResponseCompletableFuture = client.allTypes(SdkBuilder::build);
+
+        assertThatThrownBy(allTypesResponseCompletableFuture::join).hasCauseInstanceOf(ClientExecutionTimeoutException.class);
+    }
+
+    @Test
+    public void streamingOperation_finishedWithinTime__shouldNotTimeout() {
+        stubFor(post(urlPathEqualTo(STREAMING_OUTPUT_PATH))
+                    .willReturn(aResponse().withStatus(200).withBody("test").withFixedDelay(100)));
+
+        ResponseBytes<StreamingOutputOperationResponse> response =
+                client.streamingOutputOperation(StreamingOutputOperationRequest.builder().build(),
+                                                AsyncResponseTransformer.toBytes()).join();
+
+        byte[] arrayCopy = response.asByteArray();
+        assertThat(arrayCopy).containsExactly('t', 'e', 's', 't');
+    }
+
+    @Test
+    public void streamingOperation_notFinishedWithinTime__shouldTimeout() {
+        stubFor(post(urlPathEqualTo(STREAMING_OUTPUT_PATH))
+                    .willReturn(aResponse().withStatus(200).withBody("{}").withFixedDelay(1200)));
+
+        assertThatThrownBy(() ->
+            client.streamingOutputOperation(StreamingOutputOperationRequest.builder().build(),
+                                            AsyncResponseTransformer.toBytes()).join()).hasRootCauseInstanceOf(ClientExecutionTimeoutException.class);
+
+    }
+}
