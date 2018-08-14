@@ -1,0 +1,53 @@
+#!/bin/bash
+echo "Running pull request validations"
+set -e
+set -o pipefail
+
+
+GH_SCRIPT="./releng/travis/github"
+if [ ! -x "$GH_SCRIPT" ]; then
+    echo "Cannot find github script ($GH_SCRIPT)" >&2
+    exit 1
+fi
+
+NAME_CHECKSTYLE="releng/checkstyle"
+NAME_COVERAGE="releng/coverage"
+CHECKSTYLE_RESULT_FILE="target/checkstyle-result.xml"
+
+# Update the status on github for this commit
+# $1 The name of the check
+# $2 "pending"|"success"|"failure"|"error"
+# $3 A description of the current status
+function ghstatus() {
+ $GH_SCRIPT status "$2" "$3" "$1"
+}
+
+ghstatus "$NAME_CHECKSTYLE" "pending" "Running checkstyle using maven"
+ghstatus "$NAME_COVERAGE" "pending" "Running jacoco code coverage using maven"
+
+
+if [ -r "$CHECKSTYLE_RESULT_FILE" ]; then
+    # Remove old checkstyle results
+    rm $CHECKSTYLE_RESULT_FILE
+fi
+if ! mvn checkstyle:check -Dcheckstyle.failOnViolation=false; then
+    echo "Checkstyle failed" >&2
+    ghstatus "$NAME_CHECKSTYLE" "error" "Failed to complete checkstyle validation"
+else
+    VIOLATION_COUNT=$(grep "<error" $CHECKSTYLE_RESULT_FILE | wc -l)
+    if [ $VIOLATION_COUNT -eq 0 ]; then
+        ghstatus "$NAME_CHECKSTYLE" "success" "No checkstyle violations found"
+    else
+        ghstatus "$NAME_CHECKSTYLE" "failure" "$VIOLATION_COUNT checkstyle violations found"
+    fi
+fi
+
+
+if ! mvn verify -P pullrequest; then
+    echo "Insufficient test coverage according to Jacoco"
+    ghstatus "$NAME_COVERAGE" "failure" "Insufficient test coverage"
+else
+    ghstatus "$NAME_COVERAGE" "success" "Test coverage requirements met"
+fi
+
+echo "Custom pull request checks complete"

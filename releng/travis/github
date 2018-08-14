@@ -1,0 +1,129 @@
+#!/bin/bash
+_SCRIPT_FILE=$(readlink -f "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(dirname "$_SCRIPT_FILE")
+SCRIPT_NAME=$(basename $0)
+
+set -e
+set -o pipefail
+
+OPTIONS="hv"
+POSITIONAL_ARG_COUNT=1
+usage() {
+cat << EOF 
+
+  Usage: $SCRIPT_NAME [options] <command>
+
+  Interact with GitHub via its RESTful APIs. This requires the environmental variable GITHUB_TOKEN to be set.
+
+  Commands:
+    status <state> <description> <context>
+        Post a status check to github for the current commit.
+            state: "error" | "failure" | "pending" | "success"
+            description: Text GitHub will display to the user
+            context: A string tagging this status check for the user
+
+  Options:
+     -h         Print this message
+     -v         Verbose
+
+EOF
+}
+
+# Flags for remembering command line options
+LOGV=true
+EXAMPLE_FILE=
+while getopts "$OPTIONS" OPTION
+do
+  case $OPTION in
+    h) usage; exit 0;;
+    v) LOGV="echo";;
+    f) EXAMPLE_FILE="$OPTARG";;
+  esac
+done
+
+# Shift past all arguments
+shift $((OPTIND-1))
+
+# Handle missing arguments
+if [ $# -lt $POSITIONAL_ARG_COUNT ]; then
+    echo "Expected $POSITIONAL_ARG_COUNT arguments, but only $# were provided" >&2
+    usage
+    exit 1
+fi
+
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo "The environmental variable GITHUB_TOKEN must be set" >&2
+    exit 1
+fi
+
+# Initialize variables, or exit with an error if unable to
+# GH_OWNER - The owner of the git repository
+# GH_REPO - The repository name
+# GH_SHA - The sha of this commit
+function init_vars() {
+    # Get the URL on GitHub, and parse it
+    # Step 1: git remote get-url origin -> git@github.com:owner/repo.git or https://github.com/owner/repo.git
+    # Step 2: sed 's/^.*\.com[:\/]//g' -> owner/repo.git
+    # Step 3: sed 's/\.git//g' -> owner/repo
+    # Step 4: sed 's/\//\t/g' -> owner	repo
+    # Step 4: read those two tokens into the variables GH_OWNER and GH_REPO
+    read GH_OWNER GH_REPO < <(git remote get-url origin | sed 's/^.*\.com[:\/]//g' | sed 's/\//\t/g' | sed 's/\.git//g')
+    
+    # Do not use get rev-parse HEAD to get the sha of the commit because Travis is actually using a hidden merge commit
+    GH_SHA=$(git rev-list HEAD --no-merges --max-count 1)
+}
+
+
+
+# Post data to GitHub
+# $1 The URL relative to https://api.github.com/
+# $2 The data to post
+# Sets the variable HTTP_CODE from the response
+function github_post() {
+    if [ "$#" -ne 2 ]; then
+        echo "Internal error - script called a function with the wrong number of arguments ($#)"
+        exit 2
+    fi
+
+    if ! HTTP_CODE=$(curl -i https://api.github.com${1} -H "Authorization: token $GITHUB_TOKEN" \
+            --header "Content-Type: application/json" \
+            --request POST \
+            --data "$2" \
+            --silent \
+            --output /dev/null \
+            --write-out "%{http_code}"); then
+        echo "CURL operation failed" >&2
+        echo " -> URL: https://api.github.com${1}"
+        echo " -> Data: $2"
+        exit 2
+    fi
+}
+
+# This assumes $@ includes the command name and will shift past it.
+# $1 State
+# $2 Description
+# $3 Context
+function cmd_status() {
+    if [ $# -ne 3 ]; then
+        echo "Expected 3 more arguments, but got $# ($@)" >&2
+        usage
+        exit 1
+    fi
+    JSON=$(echo "{'state': '$1', 'description': '$2', 'context': '$3'}" | sed "s/'/\"/g")
+    github_post "/repos/$GH_OWNER/$GH_REPO/statuses/$GH_SHA" "$JSON"
+    if [[ ! "$HTTP_CODE" =~ 2[0-9][0-9] ]]; then
+        echo "Failed to post status to GitHub. Response code was $HTTP_CODE" >&2
+        exit 1
+    fi
+}
+
+
+init_vars
+
+CMD=$1
+shift 1
+case "$CMD" in
+    "status") cmd_status "$@";;
+    *) echo "Unrecognized command '$CMD'" >&2; usage; exit 1;;
+esac
+
