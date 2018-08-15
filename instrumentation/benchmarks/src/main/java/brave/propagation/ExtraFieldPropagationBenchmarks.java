@@ -1,0 +1,101 @@
+package brave.propagation;
+
+import brave.internal.HexCodec;
+import brave.propagation.TraceContext.Extractor;
+import brave.propagation.TraceContext.Injector;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+@Measurement(iterations = 5, time = 1)
+@Warmup(iterations = 10, time = 1)
+@Fork(3)
+@BenchmarkMode(Mode.SampleTime)
+@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@State(Scope.Thread)
+public class ExtraFieldPropagationBenchmarks {
+  static final Propagation.Factory
+      factory = ExtraFieldPropagation.newFactory(B3Propagation.FACTORY, "x-vcap-request-id");
+  static final Propagation<String> extra = factory.create(Propagation.KeyFactory.STRING);
+  static final Injector<Map<String, String>> extraInjector = extra.injector(Map::put);
+  static final Extractor<Map<String, String>> extraExtractor = extra.extractor(Map::get);
+  static final MutableTraceContext.Extractor<Map<String, String>> extraMutableExtractor =
+      factory.extractor(Map::get);
+
+  static final TraceContext context = TraceContext.newBuilder()
+      .traceIdHigh(HexCodec.lowerHexToUnsignedLong("67891233abcdef01"))
+      .traceId(HexCodec.lowerHexToUnsignedLong("2345678912345678"))
+      .spanId(HexCodec.lowerHexToUnsignedLong("463ac35c9f6413ad"))
+      .sampled(true)
+      .build();
+
+  static final Map<String, String> incoming = new LinkedHashMap<String, String>() {
+    {
+      extraInjector.inject(context, this);
+      put("x-vcap-request-id", "216a2aea45d08fc9");
+    }
+  };
+
+  static final Map<String, String> incomingNoExtra = new LinkedHashMap<String, String>() {
+    {
+      extraInjector.inject(context, this);
+    }
+  };
+
+  static final Map<String, String> nothingIncoming = Collections.emptyMap();
+
+  Map<String, String> carrier = new LinkedHashMap<>();
+  MutableTraceContext extracted = new MutableTraceContext();
+
+  @Benchmark public void inject() {
+    extraInjector.inject(context, carrier);
+  }
+
+  @Benchmark public TraceContextOrSamplingFlags extract() {
+    return extraExtractor.extract(incoming);
+  }
+
+  @Benchmark public TraceContextOrSamplingFlags extract_nothing() {
+    return extraExtractor.extract(nothingIncoming);
+  }
+
+  @Benchmark public TraceContextOrSamplingFlags extract_no_extra() {
+    return extraExtractor.extract(incomingNoExtra);
+  }
+
+  @Benchmark public void mutable_extract() {
+    extraMutableExtractor.extract(incoming, extracted);
+  }
+
+  @Benchmark public void mutable_extract_nothing() {
+    extraMutableExtractor.extract(nothingIncoming, extracted);
+  }
+
+  @Benchmark public void mutable_extract_no_extra() {
+    extraMutableExtractor.extract(incomingNoExtra, extracted);
+  }
+
+  // Convenience main entry-point
+  public static void main(String[] args) throws RunnerException {
+    Options opt = new OptionsBuilder()
+        .addProfiler("gc")
+        .include(".*" + ExtraFieldPropagationBenchmarks.class.getSimpleName())
+        .build();
+
+    new Runner(opt).run();
+  }
+}
