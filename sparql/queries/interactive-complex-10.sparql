@@ -1,0 +1,88 @@
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX sn: <http://www.ldbc.eu/ldbc_socialnet/1.0/data/>
+PREFIX snvoc: <http://www.ldbc.eu/ldbc_socialnet/1.0/vocabulary/>
+PREFIX sntag: <http://www.ldbc.eu/ldbc_socialnet/1.0/tag/>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+PREFIX dbpedia: <http://dbpedia.org/resource/>
+PREFIX dbpedia-owl: <http://dbpedia.org/ontology/>
+
+SELECT
+    (?fr AS ?personId)
+    (?first AS ?personFirstName)
+    (?last AS ?personLastName)
+    (?gender AS ?personGender)
+    (?locationName AS ?personCityName)
+    (?commonScore - ?uncommonScore AS ?similarity)
+WHERE 
+{
+    {
+        SELECT DISTINCT
+            ?fr
+            ?frId
+        WHERE
+        {       
+            BIND( "$personId"^^xsd:long AS ?rootId )
+            ?rootPerson a snvoc:Person .
+            ?rootPerson snvoc:id ?rootId .
+            ?rootPerson ((snvoc:knows/snvoc:hasPerson)|^(snvoc:knows/snvoc:hasPerson))/((snvoc:knows/snvoc:hasPerson)|^(snvoc:knows/snvoc:hasPerson)) ?fr .
+            ?fr snvoc:id ?frId .
+            FILTER(?frId != ?rootId)
+        }    
+    } .
+    ?fr snvoc:firstName ?first .
+    ?fr snvoc:lastName ?last .
+    ?fr snvoc:gender ?gender .
+    ?fr snvoc:birthday ?bday .
+    ?fr snvoc:isLocatedIn ?based .
+    ?based foaf:name ?locationName .
+    FILTER ( (MONTH(?bday) = $month && DAY(?bday) >= 21) || (MONTH(?bday) = ($month + 1) && DAY(?bday) < 22) ) .
+    OPTIONAL {
+        {
+            SELECT
+                ?frCommonInner
+                ?frCommonInnerId
+                (COUNT(DISTINCT ?post) AS ?commonScoreInner)
+            WHERE {
+                BIND( "$personId"^^xsd:long AS ?rootId )
+                ?rootPerson a snvoc:Person .
+                ?rootPerson snvoc:id ?rootId .
+	            ?post a snvoc:Post .
+                ?post snvoc:hasCreator ?frCommonInner .
+                ?frCommonInner snvoc:id ?frCommonInnerId .
+                ?post snvoc:hasTag ?tag .
+                ?rootPerson snvoc:hasInterest ?tag
+            }
+            GROUP BY ?frCommonInner ?frCommonInnerId
+        }
+        FILTER(?frCommonInnerId = ?frId)
+    } .
+    OPTIONAL {
+        {
+            SELECT
+                ?frUncommonInner
+                ?frUncommonInnerId
+                (COUNT(DISTINCT ?post) AS ?uncommonScore)
+            WHERE {
+                BIND( "$personId"^^xsd:long AS ?rootId )
+                ?rootPerson a snvoc:Person .
+                ?rootPerson snvoc:id ?rootId .
+	            ?post a snvoc:Post .
+                ?post snvoc:hasCreator ?frUncommonInner .
+                ?frUncommonInner snvoc:id ?frUncommonInnerId .
+                FILTER NOT EXISTS 
+                {
+                    ?post snvoc:hasTag ?tag .
+                    ?rootPerson snvoc:hasInterest ?tag
+                }
+            }
+            GROUP BY ?frUncommonInner ?frUncommonInnerId
+        }
+        FILTER(?frUncommonInnerId = ?frId)
+    }
+    BIND( COALESCE(?commonScoreInner, 0) AS ?commonScore )
+    BIND( COALESCE(?uncommonScoreInner, 0) AS ?uncommonScore )
+}
+ORDER BY DESC(?similarity) ?frId
+LIMIT 10
