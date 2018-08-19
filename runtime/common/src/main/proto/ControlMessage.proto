@@ -1,0 +1,194 @@
+//
+// Copyright (C) 2018 Seoul National University
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+syntax = "proto2";
+
+package protobuf;
+
+option java_package = "edu.snu.nemo.runtime.common.comm";
+option java_outer_classname = "ControlMessage";
+
+enum ClientToDriverMessageType {
+    LaunchDAG = 0;
+    DriverShutdown = 1;
+}
+
+message ClientToDriverMessage {
+    required ClientToDriverMessageType type = 1;
+    optional LaunchDAGMessage launchDAG = 2;
+}
+
+message LaunchDAGMessage {
+    required string dag = 1;
+}
+
+message DataCollectMessage {
+    required string data = 1;
+}
+
+enum DriverToClientMessageType {
+    DriverStarted = 0;
+    DriverReady = 1;
+    DataCollected = 2;
+    ExecutionDone = 3;
+}
+
+message DriverToClientMessage {
+    required DriverToClientMessageType type = 1;
+    optional DataCollectMessage dataCollected = 2;
+}
+
+enum MessageType {
+    TaskStateChanged = 0;
+    ScheduleTask = 1;
+    BlockStateChanged = 2;
+    DataSizeMetric = 3;
+    RequestBlockLocation = 4;
+    BlockLocationInfo = 5;
+    ExecutorFailed = 6;
+    ExecutorDataCollected = 7;
+    MetricMessageReceived = 8;
+    RequestMetricFlush = 9;
+    MetricFlushed = 10;
+}
+
+message Message {
+    required MessageType type = 1;
+    required int64 id = 2;
+    required string listenerId = 3; // The id of the message listener (handler).
+    optional TaskStateChangedMsg taskStateChangedMsg = 4;
+    optional ScheduleTaskMsg scheduleTaskMsg = 5;
+    optional BlockStateChangedMsg blockStateChangedMsg = 6;
+    optional DataSizeMetricMsg dataSizeMetricMsg = 7;
+    optional RequestBlockLocationMsg requestBlockLocationMsg = 8;
+    optional BlockLocationInfoMsg blockLocationInfoMsg = 9;
+    optional ExecutorFailedMsg executorFailedMsg = 10;
+    optional ContainerFailedMsg containerFailedMsg = 11;
+    optional MetricMsg metricMsg = 12;
+    optional DataCollectMessage dataCollected = 13;
+}
+
+// Messages from Master to Executors
+message ScheduleTaskMsg {
+    required bytes task = 1;
+}
+
+message BlockLocationInfoMsg {
+    required int64 requestId = 1; // To find the matching request msg
+    required string blockId = 2;
+    optional BlockStateFromExecutor state = 3;
+    optional string ownerExecutorId = 4;
+}
+
+// Messages from Executors to Master
+message TaskStateChangedMsg {
+    required string executorId = 1;
+    required string taskId = 2;
+    required TaskStateFromExecutor state = 3;
+    optional string vertexPutOnHoldId = 4;
+    optional RecoverableFailureCause failureCause = 5;
+    required int32 attemptIdx = 6;
+}
+
+enum RecoverableFailureCause {
+    InputReadFailure = 0;
+    OutputWriteFailure = 1;
+    // There is a 3rd cause: container_failure, but this is omitted here as it is never propagated with a control msg.
+}
+
+message BlockStateChangedMsg {
+    required string executorId = 1;
+    required string blockId = 2;
+    required BlockStateFromExecutor state = 3;
+    required string location = 4; // The location of the block (e.g., executor id or remote store).
+}
+
+message DataSizeMetricMsg {
+    // TODO #96: Modularize DataSkewPolicy to use MetricVertex and BarrierVertex.
+    repeated PartitionSizeEntry partitionSize = 1;
+}
+
+message PartitionSizeEntry {
+    required int32 key = 1;
+    required int64 size = 2;
+}
+
+message RequestBlockLocationMsg {
+    required string executorId = 1;
+    required string blockId = 2;
+}
+
+message ExecutorFailedMsg {
+    required string executorId = 1;
+    required bytes exception = 2;
+}
+
+message ContainerFailedMsg {
+    required string executorId = 1;
+}
+
+message MetricMsg {
+    repeated Metric metric = 1;
+}
+
+// Messages between Executors
+
+enum ByteTransferDataDirection {
+    INITIATOR_SENDS_DATA = 0;
+    INITIATOR_RECEIVES_DATA = 1;
+}
+
+message ByteTransferContextSetupMessage {
+    required string initiatorExecutorId = 1;
+    required int32 transferIndex = 2;
+    required ByteTransferDataDirection dataDirection = 3;
+    required bytes contextDescriptor = 4;
+}
+
+message ByteTransferContextDescriptor {
+    required string blockId = 1;
+    required BlockStore blockStore = 2;
+    required string runtimeEdgeId = 3;
+    optional bytes keyRange = 4;
+}
+
+enum TaskStateFromExecutor {
+    READY = 0;
+    EXECUTING = 1;
+    COMPLETE = 2;
+    FAILED_RECOVERABLE = 3;
+    FAILED_UNRECOVERABLE = 4;
+    ON_HOLD = 5;
+}
+
+enum BlockStateFromExecutor {
+    NOT_AVAILABLE = 0;
+    IN_PROGRESS = 1;
+    AVAILABLE = 2;
+}
+
+enum BlockStore {
+    MEMORY = 0;
+    SER_MEMORY = 1;
+    LOCAL_FILE = 2;
+    REMOTE_FILE = 3;
+}
+
+// Common messages
+message Metric {
+    required string metricType = 1;
+    required string metricId = 2;
+    required string metricField = 3;
+    required bytes metricValue = 4;
+}
