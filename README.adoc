@@ -1,0 +1,149 @@
+image::doc/images/srcdeps-for-maven.svg[ec4j,height=60,alt=srcdeps for Maven]
+
+{empty}
+
+ifdef::env-github[]
+https://github.com/srcdeps/srcdeps-maven/blob/master/LICENSE[image:https://img.shields.io/github/license/srcdeps/srcdeps-maven.svg[License]]
+http://search.maven.org/#search%7Cga%7C1%7Corg.srcdeps.mvn[image:https://img.shields.io/maven-central/v/org.srcdeps.mvn/srcdeps-maven-local-repository.svg[Maven Central]]
+http://travis-ci.org/srcdeps/srcdeps-maven[image:https://img.shields.io/travis/srcdeps/srcdeps-maven/master.svg?logo=travis&color=white&label=Travis+CI[Travis CI build status]]
+https://ci.appveyor.com/project/ppalaga/srcdeps-maven[image:https://img.shields.io/appveyor/ci/ppalaga/srcdeps-maven/master.svg?logo=appveyor&color=white&label=AppVeyor+Windows+CI[AppVeyor Windows CI build status]]
+endif::[]
+
+A tool for building dependencies of a Maven project from their sources during the build of the dependent Maven project.
+
+A similar tool for building source dependencies of Gradle projects lives under https://github.com/srcdeps/srcdeps-gradle-plugin .
+Contributions to support Ant, sbt and other Java build tools are welcome!
+
+= What is this good for?
+
+Source dependencies can help in situations, when the binaries of a dependency are not available in any remote
+Maven repository. It may happen for various reasons, such as:
+
+* The dependency project has not released yet because they release e.g. biweekly, but you want to develop and test your
+  project on top of their changes continuously - in the most extreme case, you want to integrate each of their commits.
+  This helps to find issues early and shorten your own delivery cycles.
+* The dependency project has not released for whatever other reasons (other priorities, project discontinued, ...)
+  but you still need to consume some commit from their branch.
+* The dependency project is doing nasty things and you do not want to consume their binaries. You want to fork their
+  source repository, cherry-pick only some of their commits and let `srcdeps` build out of your fork on the fly.
+
+Check this presentation to find out more about source dependencies in Java:
+
+* Slides: http://ppalaga.github.io/presentations/171020-geecon-prague/
+* Video: https://www.youtube.com/watch?v=ztLgGzJJxg4
+
+== `srcdeps` support for Maven
+
+You need to use Maven 3.3.1+ to build a Maven project that has source dependencies.
+Since `srcdeps-maven` version 3.2.0, a Maven project may depend not only on a source commit of another Maven project
+but also on a source commit of a Gradle project.
+
+The present solution for Maven is leveraging the concept of Maven Core Extensions introduced in Maven 3.3.1.
+In particular, we provide an implementation of `LocalRepositoryManager` that delegates all the usual artifact
+lookup work to the standard local repository manager available in Maven class path, but it is watching carefully,
+if the requested artifact is marked as a source dependency either in `pom.xml` or in `srcdeps.yaml`. If so,
+the `srcdeps-core` library is called, to build what is necessary and install it to the Maven Local Repository.
+In other words, the dependencies are built and installed while they are looked up.
+
+=== How to configure `srcdeps` for Maven
+
+We provide a maven plugin that initializes `srcdeps` configuration files `.mvn/extensions.xml` and
+`srcdeps.yaml`. Just run the following in the root directory of your project tree:
+
+[source,shell]
+----
+mvn org.srcdeps.mvn:srcdeps-maven-plugin:init
+----
+
+While the resulting `.mvn/extensions.xml` will mostly be ready to use, the usefulness of the generated
+`srcdeps.yaml` file depends strongly on the completeness of your dependencies' pom files. You should review
+the generated `srcdeps.yaml` and adjust it manually.
+
+See link:doc/srcdeps-maven-configuration.adoc[srcdeps for Maven Configuration Guide] for more details about
+`.mvn/extensions.xml` and `srcdeps.yaml`.
+
+Note that all options configurable in `srcdeps.yaml` can be overriden through system properties passed on the command
+line. See  https://github.com/srcdeps/srcdeps-core/tree/master/doc/srcdeps-yaml-runtime-overrides.adoc
+
+=== Examples a.k.a. Quickstarts
+
+There is a couple of ready-to-build self-contained examples in the
+link:srcdeps-maven-quickstarts[srcdeps-maven-quickstarts] directory. Perhaps the most prominent of them are
+
+* The link:srcdeps-maven-quickstarts/srcdeps-mvn-git-revision-quickstart[srcdeps-mvn-git-revision-quickstart] that
+  demonstrates how a Maven project can depend on a source revision of another Maven project. The git revision of the
+  dependent project is set in `pom.xml` of the dependent project.
+* The link:srcdeps-maven-quickstarts/srcdeps-mvn-git-snapshot-quickstart[srcdeps-mvn-git-snapshot-quickstart] is
+  similar to the previous srcdeps-mvn-git-revision-quickstart but the revision of the dependency is defined in
+  `srcdeps.yaml` rather than in `pom.xml`. This is practical if you do not want to change `pom.xml` for some
+  reason.
+* The link:srcdeps-maven-quickstarts/srcdeps-mvn-git-gradle-source-dependency-quickstart[srcdeps-mvn-git-gradle-source-dependency-quickstart]
+  shows a Maven project depending on a source revision of a Gradle project.
+
+
+== How `srcdeps` works
+
+* There are two ways to mark a dependency as a source dependency:
+  link:doc/srcdeps-maven-configuration.adoc#srcdeps-in-pom-xml[in `pom.xml`] or
+  link:doc/srcdeps-maven-configuration.adoc#srcdeps-in-srcdeps-yaml[in `srcdeps.yaml`].
+* As we noted above, `srcdeps` provides a custom Maven Local Repository implementation which intercepts the artifact
+  requests. If it spots a source dependency artifact it does the following:
+* It finds a SCM repository in `srcdeps.yaml` associated with the given artifact.
+* The URL of the associated SCM repository is used to fetch the sources of the dependency and checkout the desired revision.
+  The sources are cloned to `${maven.repo.local}/../srcdeps/${scmRepo.id}`
+* Then, `srcdeps-core` changes the version in the sources to whatever version was requested using
+  `versions-maven-plugin` in case the dependency is a Maven project, or a piece of gradle script injected
+  to `settings.gradle` if the dependency is a Gradle project. This step is necessary because the version in
+  `pom.xml`/`gradle.build` as checked out from the remote source repository may be different from the
+  artifact version requested.
+* And finally, `srcdeps-core` builds the artifacts and installs them to the local Maven repository
+* As of `srcdeps-maven` 3.3.0, the source dependencies are rebuild during every build of the dependent project,
+  except for the following two cases which are considered immutable and are thus built and installed only once:
+** `tag` source dependency declared link:doc/srcdeps-maven-configuration.adoc#srcdeps-in-pom-xml[in `pom.xml`]
+** `revision`  source dependency declared link:doc/srcdeps-maven-configuration.adoc#srcdeps-in-srcdeps-yaml[in `srcdeps.yaml`]
+
+
+== Source dependencies pointing at a branch
+
+If you decide to depend on a branch by e.g.
+
+[source,xml]
+----
+<dependency>
+  <groupId>org.my-org.my-group</groupId>
+  <artifactId>my-artifact</artifactId>
+  <version>1.2.3-SRC-branch-my-special-branch</version>
+</dependency>
+----
+
+then you need to know the following:
+
+* `my-special-branch` is fetched at most once per JVM.
+* Outer build containing the above snippet is one JVM and inner builds taking care for building `my-special-branch`
+  or any other source dependencies are separate JVMs.
+* Hence if you have two projects in your dependency hierarchy depending on
+  `org.my-org.my-group:my-artifact:1.2.3-SRC-branch-my-special-branch` the two JVMs taking care for building it may
+  clash by fetching two different states of the branch at two different points in time.
+* `my-special-branch` is rebuilt only if its `HEAD` has changed with the last fetch.
+* This means that if there is no clash, `my-special-branch` is built at most once per whole build set that includes the
+  top level outer build and all its recursive inner builds. In other words, there is no rebuild if `HEAD` has not
+  changed since the last build of the given branch.
+* In case of a clash, the behavior is untested. In the worst case, the clashing JVMs may all fire builds that will
+  re-install new artifacts to local Maven repository in the middle of the outermost build. One half of the build would
+  thus see `org.my-org.my-group:my-artifact:1.2.3-SRC-branch-my-special-branch` built from one commit and the other half
+  would see `org.my-org.my-group:my-artifact:1.2.3-SRC-branch-my-special-branch` built from a different commit.
+
+== Misc.
+
+* All code and contributions are under link:/LICENSE.txt[Apache License]
+* Issues and Discussions: https://github.com/srcdeps/srcdeps-maven-plugin/issues
+
+=== Legacy note
+
+Originally, the present project provided a Maven plugin called `srcdeps-maven-plugin` that worked fairly well in
+most situations, but it turned out soon that the Maven Plugin API is not rich enough to allow for catching dependencies
+of all possible kinds. Most notably, the given project's parent pom and imports in `dependencyManagement`
+sections were resolved by Maven even before the plugin was initialized. Thus, if the given project's parent pom had a
+`-SRC-` version, the build failed with a missing artifact error message, simply because it happened before
+`srcdeps-maven-plugin` could do anything. That's why we later chose the much more powerful Maven Core Extensions
+API to implement `srcdeps` for Maven.
