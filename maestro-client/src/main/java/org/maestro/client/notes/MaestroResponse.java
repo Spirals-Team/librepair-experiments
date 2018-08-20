@@ -1,0 +1,92 @@
+/*
+ *  Copyright 2017 Otavio R. Piske <angusyoung@gmail.com>
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+
+package org.maestro.client.notes;
+
+import org.maestro.client.exchange.support.DefaultGroupInfo;
+import org.maestro.client.exchange.support.PeerInfo;
+import org.maestro.client.exchange.support.WorkerPeer;
+import org.maestro.common.client.notes.MaestroCommand;
+import org.maestro.common.client.notes.MaestroNoteType;
+import org.msgpack.core.MessageBufferPacker;
+import org.msgpack.core.MessageUnpacker;
+
+import java.io.IOException;
+
+public class MaestroResponse extends AbstractMaestroNote {
+    private String id;
+    private PeerInfo peerInfo;
+
+    public MaestroResponse(MaestroCommand maestroCommand) {
+        super(MaestroNoteType.MAESTRO_TYPE_RESPONSE, maestroCommand);
+    }
+
+    public MaestroResponse(MaestroCommand maestroCommand, MessageUnpacker unpacker) throws IOException {
+        super(MaestroNoteType.MAESTRO_TYPE_RESPONSE, maestroCommand, unpacker);
+
+        id = unpacker.unpackString();
+
+
+        final String memberName = unpacker.unpackString();
+        final String groupName = unpacker.unpackString();
+
+        final String role = unpacker.unpackString();
+        final String host = unpacker.unpackString();
+
+        this.peerInfo = new WorkerPeer(role, host, new DefaultGroupInfo(memberName, groupName));
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public PeerInfo getPeerInfo() {
+        return peerInfo;
+    }
+
+    public void setPeerInfo(PeerInfo peerInfo) {
+        this.peerInfo = peerInfo;
+    }
+
+    @Override
+    protected MessageBufferPacker pack() throws IOException {
+        MessageBufferPacker packer = super.pack();
+
+        packer.packString(this.id);
+        packer.packString(peerInfo.groupInfo().memberName());
+        packer.packString(peerInfo.groupInfo().groupName());
+        packer.packString(peerInfo.peerName());
+        packer.packString(peerInfo.peerHost());
+
+        return packer;
+    }
+
+    @Override
+    public String toString() {
+        return "MaestroResponse{" +
+                "id='" + id + '\'' +
+                ", peerInfo=" + peerInfo +
+                "} " + super.toString();
+    }
+
+    public static String prettyName(final MaestroResponse response) {
+        return response.peerInfo.peerName() + "@" + response.peerInfo.peerHost();
+    }
+}
