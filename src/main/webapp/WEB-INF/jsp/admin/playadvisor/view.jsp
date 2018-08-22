@@ -1,0 +1,41 @@
+<%--
+Copyright (C) 2016 B3Partners B.V.
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+--%>
+<%@include file="/WEB-INF/jsp/taglibs.jsp"%>
+<%@page contentType="text/html" pageEncoding="UTF-8"%>
+
+<stripes:layout-render name="/WEB-INF/jsp/templates/admin.jsp" pageTitle="Push naar playadvisor" menuitem="pushy">
+    <stripes:layout-component name="content">
+
+        <h1>Playadvisor</h1>
+
+        <jsp:include page="/WEB-INF/jsp/common/messages.jsp"/>
+        
+        <stripes:form beanclass="nl.b3p.playbase.stripes.PlayadvisorRESTAPIActionBean" class="form-horizontal">
+            Locatie id <stripes:text name="location"/> <br/>
+            Project id <stripes:text name="project"/> <br/>
+            <stripes:submit name="updateLocation" class="btn btn-primary">Export</stripes:submit>
+            <stripes:submit name="pushLocationsWithoutImages" class="btn btn-warning">noimages</stripes:submit>
+        </stripes:form>
+        
+        <h1>Playmapping</h1>
+        <stripes:form beanclass="nl.b3p.playbase.stripes.ProjectActionBean" class="form-horizontal">
+            Locatie guid <stripes:text name="locationguid"/> <br/>
+            Project id <stripes:text name="projectid"/> <br/>
+            <stripes:submit name="loadPMLocation" class="btn btn-primary">loadPMLocation</stripes:submit>
+        </stripes:form>
+    </stripes:layout-component>
+</stripes:layout-render>
