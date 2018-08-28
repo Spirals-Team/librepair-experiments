@@ -1,0 +1,13 @@
+* https://github.com/surli/bugs-collection/tree/alibaba-fastjson-235954999-20170525-114444 
+* https://github.com/surli/bugs-collection/tree/alibaba-fastjson-237446893-20170530-114637 
+* https://github.com/surli/bugs-collection/tree/apache-opennlp-235580633-20170524-122524 
+* https://github.com/surli/bugs-collection/tree/alibaba-fastjson-237857856-20170531-114658 
+* https://github.com/surli/bugs-collection/tree/apache-opennlp-237576035-20170530-180550 
+* https://github.com/surli/bugs-collection/tree/dangdangdotcom-elastic-job-236312425-20170526-115553 
+* https://github.com/surli/bugs-collection/tree/CorfuDB-CorfuDB-235903669-20170525-070624 
+* https://github.com/surli/bugs-collection/tree/dangdangdotcom-sharding-jdbc-236705786-20170527-185711 
+* https://github.com/surli/bugs-collection/tree/dangdangdotcom-sharding-jdbc-236303372-20170526-112151 
+* https://github.com/surli/bugs-collection/tree/dangdangdotcom-sharding-jdbc-236731643-20170527-210241 
+* https://github.com/surli/bugs-collection/tree/dangdangdotcom-sharding-jdbc-237930594-20170531-162736 
+* https://github.com/surli/bugs-collection/tree/dangdangdotcom-sharding-jdbc-237948846-20170531-170859 
+* https://github.com/surli/bugs-collection/tree/CorfuDB-CorfuDB-236537649-20170526-235951 
