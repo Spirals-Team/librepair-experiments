@@ -1,0 +1,180 @@
+<app-monitor-page>
+  <app-monitor-toolbar>
+    Events
+    &nbsp;&nbsp;&nbsp;&nbsp;
+    <button mat-button
+            *ngIf="mayWriteEvents()"
+            color="primary"
+            (click)="createEvent()">
+      <mat-icon>add_box</mat-icon>
+      CREATE EVENT
+    </button>
+
+    <button mat-icon-button
+            matTooltip="Jump to now"
+            color="primary"
+            (click)="jumpToNow()">
+      <mat-icon>refresh</mat-icon>
+    </button>
+
+    <button *ngIf="!(dataSource.streaming$ | async)"
+            mat-icon-button
+            matTooltip="Start streaming events"
+            color="primary"
+            (click)="startStreaming()">
+      <mat-icon>play_arrow</mat-icon>
+    </button>
+
+    <button *ngIf="dataSource.streaming$ | async"
+            mat-icon-button
+            matTooltip="Pause streaming events"
+            color="primary"
+            (click)="stopStreaming()">
+      <mat-icon>pause</mat-icon>
+    </button>
+  </app-monitor-toolbar>
+
+  <div class="panel-content" *ngIf="dataSource">
+    <form [formGroup]="filter">
+      <div fxLayout="row" class="filter-bar">
+        <div fxFlex class="vmiddle">
+          <input formControlName="textSearch"
+                 placeholder="Filter by text search"
+                 style="width: 300px">
+          &nbsp;&nbsp;
+          <app-column-chooser [columns]="columns"
+                              [displayedColumns]="displayedColumns"
+                              (change)="updateColumns($event)"></app-column-chooser>
+        </div>
+      </div>
+      <div fxLayout="row" class="filter-bar">
+        <div fxFlex class="vmiddle">
+          <app-select [options]="severityOptions" (change)="updateSeverity($event)"></app-select>
+          &nbsp;&nbsp;
+          <app-select [options]="sourceOptions"
+                      (change)="updateSource($event)"></app-select>
+          &nbsp;&nbsp;
+          <app-select #intervalSelect
+                      [options]="intervalOptions"
+                      icon="access_time"
+                      (change)="updateInterval($event)"></app-select>
+          &nbsp;&nbsp;
+          <ng-container *ngIf="filter.value['interval'] === 'CUSTOM'">
+            <input formControlName="customStart" type="datetime" style="width: 160px">
+            <input formControlName="customStop" type="datetime" style="width: 160px">
+            &nbsp;&nbsp;
+            <button (click)="applyCustomDates()"
+                    class="ya-button"
+                    [disabled]="filter.invalid">Apply</button>
+          </ng-container>
+          <ng-container *ngIf="filter.value['interval'] !== 'CUSTOM'">
+            <button class="ya-button" (click)="jumpToNow()">
+              Jump to now
+            </button>
+          </ng-container>
+
+          &nbsp;&nbsp;
+          <app-dots *ngIf="dataSource.loading$ | async">
+          </app-dots>
+        </div>
+        <div fxFlex="150px" style="text-align: right">
+          <app-action-link icon="file_download"
+                          [link]="downloadURL$ | async">Download Data</app-action-link>
+        </div>
+      </div>
+    </form>
+
+    <div class="table-status" [ngSwitch]="appliedInterval">
+      <div class="message-zone">
+        <span *ngIf="dataSource.streaming$ | async">
+          Listening for events
+          <app-dots fontSize="16px" color="#1b61b9"></app-dots>
+        </span>
+      </div>
+      <span *ngSwitchCase="'PT1H'">
+        Showing events from <b>the last hour</b> ending at <b>{{ validStop | datetime }}</b> (Mission Time)
+      </span>
+      <span *ngSwitchCase="'PT6H'">
+        Showing events from <b>the last 6 hours</b> ending at <b>{{ validStop | datetime }}</b> (Mission Time)
+      </span>
+      <span *ngSwitchCase="'P1D'">
+        Showing events from <b>the last 24 hours</b> ending at <b>{{ validStop | datetime }}</b> (Mission Time)
+      </span>
+      <span *ngSwitchCase="'NO_LIMIT'">
+        Showing events from <b>all time</b>
+      </span>
+      <span *ngSwitchCase="'CUSTOM'">
+        Showing events from <b>{{ validStart | datetime }}</b> to <b>{{ validStop | datetime }}</b> (Mission Time)
+      </span>
+    </div>
+
+    <table mat-table [dataSource]="dataSource" class="ya-data-table" style="width: 100%">
+      <ng-container cdkColumnDef="severity">
+        <th mat-header-cell *cdkHeaderCellDef style="width: 50px"></th>
+        <td mat-cell *cdkCellDef="let row">
+          <app-event-severity [severity]="row.severity"></app-event-severity>
+        </td>
+      </ng-container>
+
+      <ng-container cdkColumnDef="message">
+        <th mat-header-cell *cdkHeaderCellDef>Message</th>
+        <td mat-cell *cdkCellDef="let row" style="white-space: pre">{{ row.message || '-' }}</td>
+      </ng-container>
+
+      <ng-container cdkColumnDef="type">
+        <th mat-header-cell *cdkHeaderCellDef style="width: 150px">Type</th>
+        <td mat-cell *cdkCellDef="let row">
+          {{ row.type || '-' }}
+        </td>
+      </ng-container>
+
+      <ng-container cdkColumnDef="source">
+        <th mat-header-cell *cdkHeaderCellDef style="width: 150px">Source</th>
+        <td mat-cell *cdkCellDef="let row">
+          {{ row.source || '-' }}
+        </td>
+      </ng-container>
+
+      <ng-container cdkColumnDef="gentime">
+        <th mat-header-cell *cdkHeaderCellDef style="width: 200px">Generation Time</th>
+        <td mat-cell *cdkCellDef="let row" style="white-space: nowrap">
+          {{ (row.generationTimeUTC | datetime) || '-' }}
+        </td>
+      </ng-container>
+
+      <ng-container cdkColumnDef="rectime">
+        <th mat-header-cell *cdkHeaderCellDef style="width: 200px">Reception Time</th>
+        <td mat-cell *cdkCellDef="let row" style="white-space: nowrap">
+          {{ (row.receptionTimeUTC | datetime) || '-' }}
+        </td>
+      </ng-container>
+
+      <ng-container cdkColumnDef="seqNumber">
+        <th mat-header-cell *cdkHeaderCellDef style="width: 100px">Sequence Number</th>
+        <td mat-cell *cdkCellDef="let row">
+          {{ row.seqNumber || '-' }}
+        </td>
+      </ng-container>
+
+      <ng-container *ngFor="let extraColumn of extraColumns" [cdkColumnDef]="extraColumn.id">
+        <th mat-header-cell *cdkHeaderCellDef [style.width]="extraColumn.width || '200px'">{{ extraColumn.label }}</th>
+        <td mat-cell *cdkCellDef="let row">
+          {{ row[extraColumn.id] || '-' }}
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *cdkHeaderRowDef="displayedColumns"></tr>
+      <tr mat-row *cdkRowDef="let row; columns: displayedColumns;"
+               [@rowAnimation]="row.animate"
+               [ngClass]="row.severity"></tr>
+    </table>
+
+    <mat-toolbar>
+      <span style="flex: 1 1 auto"></span>
+      <button [disabled]="!dataSource.hasMore()"
+              class="ya-button"
+              (click)="loadMoreData()">Load More</button>
+      <span style="flex: 1 1 auto"></span>
+    </mat-toolbar>
+  </div>
+</app-monitor-page>
