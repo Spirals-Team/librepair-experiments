@@ -1,0 +1,873 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Socket;
+use File::Copy;
+
+my $verbose;
+my $pg_only;
+my $hostname;
+my $gfuser;
+my $gfdir;
+my $mailserver;
+my $yes;
+my $force;
+my $nogfpasswd;
+my $admin_email;
+my ($rez) = GetOptions(
+    #"length=i" => \$length,    # numeric
+    #"file=s"   => \$data,      # string
+    "verbose"      => \$verbose,
+    "pg_only"      => \$pg_only,
+    "hostname=s"   => \$hostname,
+    "gfuser=s"     => \$gfuser,
+    "gfdir=s"      => \$gfdir,
+    "mailserver=s" => \$mailserver,
+    "y|yes"        => \$yes,
+    "f|force"      => \$force,
+    "nogfpasswd"   => \$nogfpasswd,
+    "admin_email=s" => \$admin_email,
+);
+
+my @CONFIG_VARIABLES;
+
+my $postgresonly = 0;
+
+if ($pg_only) 
+{
+    @CONFIG_VARIABLES =
+      ( 'POSTGRES_SERVER', 'POSTGRES_PORT', 'POSTGRES_DATABASE', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_ADMIN_PASSWORD' );
+
+    $postgresonly = 1;
+} 
+else 
+{
+
+    @CONFIG_VARIABLES = (
+	'HOST_DNS_ADDRESS',
+	'GLASSFISH_USER',
+	'GLASSFISH_DIRECTORY',
+	'ADMIN_EMAIL',
+	'MAIL_SERVER',
+
+	'POSTGRES_SERVER',
+	'POSTGRES_PORT',
+	'POSTGRES_ADMIN_PASSWORD',
+	'POSTGRES_DATABASE',
+	'POSTGRES_USER',
+	'POSTGRES_PASSWORD',
+
+	'SOLR_LOCATION', 
+	
+	'RSERVE_HOST',
+	'RSERVE_PORT',
+	'RSERVE_USER',
+	'RSERVE_PASSWORD'
+
+	);
+}
+
+my %CONFIG_DEFAULTS = (
+    'HOST_DNS_ADDRESS',    'localhost',
+    'GLASSFISH_USER',	   '',
+    'GLASSFISH_DIRECTORY', '/usr/local/glassfish4',
+    'GLASSFISH_USER',	   '',
+    'ADMIN_EMAIL',         '',
+    'MAIL_SERVER',         'mail.hmdc.harvard.edu',
+
+    'POSTGRES_ADMIN_PASSWORD', 'secret',
+    'POSTGRES_SERVER',   '127.0.0.1',
+    'POSTGRES_PORT',     5432,
+    'POSTGRES_DATABASE', 'dvndb',
+    'POSTGRES_USER',     'dvnapp',
+    'POSTGRES_PASSWORD', 'secret',
+
+    'SOLR_LOCATION',     'LOCAL',
+
+    'RSERVE_HOST',     'localhost',
+    'RSERVE_PORT',     6311,
+    'RSERVE_USER',     'rserve',
+    'RSERVE_PASSWORD', 'rserve'
+
+);
+my %CONFIG_PROMPTS = (
+    'HOST_DNS_ADDRESS',    'Fully Qualified Domain Name of your host',
+    'GLASSFISH_USER',	   'Glassfish service account username',
+    'GLASSFISH_DIRECTORY', 'Glassfish Directory',
+    'ADMIN_EMAIL',         'Administrator email address for this Dataverse',
+    'MAIL_SERVER',         'SMTP (mail) server to relay notification messages',
+
+    'POSTGRES_SERVER',   'Postgres Server Address',
+    'POSTGRES_PORT',     'Postgres Server Port',
+    'POSTGRES_ADMIN_PASSWORD', 'Postgres ADMIN password',
+    'POSTGRES_DATABASE', 'Name of the Postgres Database',
+    'POSTGRES_USER',     'Name of the Postgres User',
+    'POSTGRES_PASSWORD', 'Postgres user password',
+
+    'SOLR_LOCATION',     'Remote SOLR indexing service',
+
+    'RSERVE_HOST',     'Rserve Server',
+    'RSERVE_PORT',     'Rserve Server Port',
+    'RSERVE_USER',     'Rserve User Name',
+    'RSERVE_PASSWORD', 'Rserve User Password'
+
+);
+
+
+my %CONFIG_COMMENTS = (
+    'HOST_DNS_ADDRESS',    ":\n(enter numeric IP address, if FQDN is unavailable) ",
+    'GLASSFISH_USER',      ":\nThis user will be running Glassfish service on your system.\n - If this is a dev. environment, this should be your own username; \n - In production, we suggest \"glassfish\" or another unprivileged user\n: ",
+    'GLASSFISH_DIRECTORY', '',
+    'ADMIN_EMAIL',         ":\n(please enter a valid email address!) ",
+    'MAIL_SERVER',         '',
+
+    'POSTGRES_SERVER',   '',
+    'POSTGRES_PORT',     '',
+    'POSTGRES_ADMIN_PASSWORD', ":\n - We will need this to create the user and database that the Dataverse application will be using.\n (Hit RETURN if access control is set to \"trust\" for this connection in pg_hba.conf)\n: ",
+    'POSTGRES_USER',     ":\n - This is the Postgres user that the Dataverse app will be using to talk to the database\n: ",
+    'POSTGRES_DATABASE', '',
+    'POSTGRES_PASSWORD', '',
+
+    'SOLR_LOCATION',     "? \n - Leave this set to \"LOCAL\" if the SOLR will be running on the same (this) server.\n Otherwise, please enter the host AND THE PORT NUMBER of the remote SOLR service, colon-separated\n (for example: foo.edu:8983)\n: ",
+
+    'RSERVE_HOST',     '',
+    'RSERVE_PORT',     '',
+    'RSERVE_USER',     '',
+    'RSERVE_PASSWORD', ''
+
+);
+
+
+my $API_URL = "http://localhost:8080/api";
+
+# jodbc.postgresql.org recommends 4.2 for Java 8.
+# updated drivers may be obtained from
+#  https://jdbc.postgresql.org/download.html
+my $postgres_jdbc = "postgresql-42.2.2.jar";
+
+# A few preliminary checks:
+
+# OS:
+
+my $uname_out = `uname -a`;
+
+# hostname:
+
+my $hostname_from_cmdline = `hostname`;
+chop $hostname_from_cmdline;
+
+if ($hostname) {
+    $CONFIG_DEFAULTS{'HOST_DNS_ADDRESS'} = $hostname;
+}
+else {
+    $CONFIG_DEFAULTS{'HOST_DNS_ADDRESS'} = $hostname_from_cmdline;
+}
+
+# read default configuration values from tab separated file "default.config" if it exists
+#  moved after the $hostname_from_cmdline section to avoid excessively complicating the logic
+#  of command line argument, automatic selection, or config file.
+sub trim { my $s = shift; $s =~ s/^\s+|\s+$//g; return $s };
+my $config_default_file = "default.config";
+if ( -e $config_default_file )
+{
+	print("loading default configuration values from $config_default_file\n");
+	open( my $inp_cfg, $config_default_file );
+	while( my $ln = <$inp_cfg> )
+	{
+		my @xs = split('\t', $ln );
+		if ( 2 == @xs )
+		{
+			my $k = $xs[0];
+                        my $v = trim($xs[1]);
+                        if (defined $ENV{$k} && ($k eq "POSTGRES_USER" || $k eq "POSTGRES_PASSWORD")) {
+                            $v = $ENV{$k};
+                        }
+                        if (defined $ENV{'POSTGRESQL_ADMIN_PASSWORD'} && $k eq "POSTGRES_ADMIN_PASSWORD")   {
+                            $v = $ENV{'POSTGRESQL_ADMIN_PASSWORD'};
+                        }
+                        $CONFIG_DEFAULTS{$k}=$v;
+		}
+	}
+}
+else
+{
+	print("using hard-coded default configuration values ($config_default_file not found)\n");
+}
+
+# get current user. first one wins.
+my $current_user = $ENV{LOGNAME} || $ENV{USER} || getpwuid($<);
+
+if (!$CONFIG_DEFAULTS{'GLASSFISH_USER'}) {
+   $CONFIG_DEFAULTS{'GLASSFISH_USER'} = $current_user;
+   print "No pre-configured user found; using $current_user.\n";
+}
+
+# command-line argument takes precendence
+if ($gfuser) {
+    print "Using CLI-specified user $gfuser.\n";
+    $CONFIG_DEFAULTS{'GLASSFISH_USER'} = $gfuser;
+}
+
+# prefer that we not install as root.
+unless ( $< != 0 ) {
+print "####################################################################\n";
+print "     It is recommended that this script not be run as root.\n";
+print " Consider creating a glassfish service account, giving it ownership\n";
+print "  on the glassfish/domains/domain1/ and glassfish/lib/ directories,\n";
+print "    along with the JVM-specified files.dir location, and running\n";
+print "       this installer as the user who will launch Glassfish.\n";
+print "####################################################################\n";
+}
+
+# ensure $gfuser exists or bail
+my $gfidcmd="id $CONFIG_DEFAULTS{'GLASSFISH_USER'}";
+my $gfreturncode=system($gfidcmd);
+if ($gfreturncode != 0) {
+   die "Couldn't find user $gfuser. Please ensure the account exists and is readable by the user running this installer.\n";
+}
+
+if ($mailserver) {
+    $CONFIG_DEFAULTS{'MAIL_SERVER'} = $mailserver;
+}
+
+if ($gfdir) {
+    $CONFIG_DEFAULTS{'GLASSFISH_DIRECTORY'} = $gfdir;
+}
+
+print "\nWelcome to the Dataverse installer.\n";
+unless ($postgresonly) {
+    print "You will be guided through the process of setting up a NEW\n";
+    print "instance of the dataverse application\n";
+}
+else {
+    print "You will be guided through the process of configuring the\n";
+    print "LOCAL instance of PostgreSQL database for use by the DVN\n";
+    print "application.\n";
+}
+
+my @uname_tokens = split( " ", $uname_out );
+
+my $WORKING_OS;
+if ( $uname_tokens[0] eq "Darwin" ) {
+    print "\nThis appears to be a MacOS X system; good.\n";
+    # TODO: check the OS version
+
+    $WORKING_OS = "MacOSX";
+}
+elsif ( $uname_tokens[0] eq "Linux" ) {
+    if ( -f "/etc/redhat-release" ) {
+        print "\nThis appears to be a RedHat system; good.\n";
+        $WORKING_OS = "RedHat";
+        # TODO: check the distro version
+    }
+    else {
+        print "\nThis appears to be a non-RedHat Linux system;\n";
+        print "this installation *may* succeed; but we're not making any promises!\n";
+        $WORKING_OS = "Linux";
+    }
+}
+else {
+    print "\nWARNING: This appears to be neither a Linux or MacOS X system!\n";
+    print "This installer script will most likely fail. Please refer to the\n";
+    print "DVN Installers Guide for more information.\n\n";
+
+    $WORKING_OS = "Unknown";
+
+    print "Do you wish to continue?\n [y/n] ";
+
+    my $yesnocont;
+
+    if ($yes) {
+        $yesnocont = "y";
+    }
+    else {
+        print "here";
+        exit;
+        $yesnocont = <>;
+        chop $yesnocont;
+    }
+
+    while ( $yesnocont ne "y" && $yesnocont ne "n" ) {
+        print "Please enter 'y' or 'n'!\n";
+        print "(or ctrl-C to exit the installer)\n";
+        $yesnocont = <>;
+        chop $yesnocont;
+    }
+
+    if ( $yesnocont eq "n" ) {
+        exit 0;
+    }
+
+}
+
+ENTERCONFIG:
+
+print "\n";
+print "Please enter the following configuration values:\n";
+print "(hit [RETURN] to accept the default value)\n";
+print "\n";
+
+for my $ENTRY (@CONFIG_VARIABLES) 
+{
+    my $config_prompt = $CONFIG_PROMPTS{$ENTRY};
+    my $config_comment = $CONFIG_COMMENTS{$ENTRY};
+
+    if ( $config_comment eq '' ) 
+    {
+	print $config_prompt . ": ";
+	print "[" . $CONFIG_DEFAULTS{$ENTRY} . "] ";
+    }
+    else 
+    {
+	print $config_prompt . $config_comment;
+	print "[" . $CONFIG_DEFAULTS{$ENTRY} . "] ";
+    }
+
+    my $user_entry = "";
+
+    unless ($yes) 
+    {
+        $user_entry = <>;
+        chop $user_entry;
+
+	if ( $user_entry ne "" ) {
+	    $CONFIG_DEFAULTS{$ENTRY} = $user_entry;
+	}
+
+
+	# for some values, we'll try to do some validation right here, in real time:
+    
+	if ($ENTRY eq 'ADMIN_EMAIL') 
+	{
+	    $user_entry = $CONFIG_DEFAULTS{$ENTRY};
+	    my $attempts = 0; 
+	    while ($user_entry !~/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,4}/) 
+	    {
+		$attempts++;
+		print "Please enter a valid email address: ";
+		$user_entry = <>;
+		chop $user_entry;
+	    }
+
+	    if ($attempts) 
+	    {
+		print "OK, looks legit.\n";
+		$CONFIG_DEFAULTS{$ENTRY} = $user_entry;
+	    }
+
+	}
+	elsif ($ENTRY eq 'GLASSFISH_DIRECTORY') 
+	{
+            # 5a. CHECK IF GLASSFISH DIR LOOKS OK:
+	    print "\nChecking your Glassfish installation...";
+
+	    my $g_dir = $CONFIG_DEFAULTS{'GLASSFISH_DIRECTORY'};
+
+
+	    unless ( -d $g_dir . "/glassfish/domains/domain1" ) 
+	    {
+		# TODO: need better check than this
+
+		while ( !( -d $g_dir . "/glassfish/domains/domain1" ) ) 
+		{
+		    print "\nInvalid Glassfish directory " . $g_dir . "!\n";
+		    print "Enter the root directory of your Glassfish installation:\n";
+		    print "(Or ctrl-C to exit the installer): ";
+
+		    $g_dir = <>;
+		    chop $g_dir;
+		}
+
+		# TODO: 
+		# verify that we can write in the Glassfish directory 
+		# (now that we are no longer requiring to run the installer as root)
+
+		my $g_testdir = $g_dir . "/glassfish/domains/domain1";
+		my $g_libdir = $g_dir . "/glassfish/lib";
+		if (!(-w $g_testdir)) {
+		   die("$g_testdir not writable. Have you created a glassfish user, and given it write permission on $g_testdir?\n");
+		} elsif (!(-w $g_libdir)) {
+		   die("$g_libdir not writable. Have you created a glassfish user, and given it write permission on $g_libdir?\n");
+		}
+
+	    }
+
+	    print "OK!\n";
+	    $CONFIG_DEFAULTS{'GLASSFISH_DIRECTORY'} = $g_dir; 
+
+	}
+	elsif ($ENTRY eq 'MAIL_SERVER')
+	{
+	    my $smtp_server = "";
+	    while (! &validate_smtp_server() )
+	    {
+		print "Enter a valid SMTP (mail) server:\n";
+		print "(Or ctrl-C to exit the installer): ";
+
+		$smtp_server = <>;
+		chop $smtp_server;
+
+		$CONFIG_DEFAULTS{'MAIL_SERVER'} = $smtp_server unless $smtp_server eq ''; 
+	    }
+	}
+    }
+
+    print "\n";
+}
+
+# CONFIRM VALUES ENTERED:
+
+print "\nOK, please confirm what you've entered:\n\n";
+
+for my $ENTRY (@CONFIG_VARIABLES) {
+    print $CONFIG_PROMPTS{$ENTRY} . ": " . $CONFIG_DEFAULTS{$ENTRY} . "\n";
+}
+
+my $yesno;
+if ($yes) {
+    $yesno = "y";
+}
+else {
+    print "\nIs this correct? [y/n] ";
+    $yesno = <>;
+    chop $yesno;
+}
+
+while ( $yesno ne "y" && $yesno ne "n" ) {
+    print "Please enter 'y' or 'n'!\n";
+    print "(or ctrl-C to exit the installer)\n";
+    $yesno = <>;
+    chop $yesno;
+}
+
+if ( $yesno eq "n" ) {
+    goto ENTERCONFIG;
+}
+
+# VALIDATION/VERIFICATION OF THE CONFIGURATION VALUES:
+# 1. VERIFY/VALIDATE THE MAIL SERVER THEY CONFIGURED:
+# (has been moved to the top, so that it's validated in real time, when the user enters the value)
+
+# 2. CHECK IF THE WAR FILE IS AVAILABLE:
+
+print "\nChecking if the application .war file is available... ";
+
+# if this installation is running out of the installer zib bundle directory,
+# the war file will be sitting right here, named "dataverse.war": 
+
+my $WARFILE_LOCATION = "dataverse.war"; 
+
+# but if it's not here, this is probably a personal development 
+# setup, so their build should be up in their source tree:
+
+unless ( -f $WARFILE_LOCATION ) {
+    my $DATAVERSE_VERSION = "";
+    my $DATAVERSE_POM_FILE = "../../pom.xml";
+    if ( -f $DATAVERSE_POM_FILE ) 
+    {
+	open DPF, $DATAVERSE_POM_FILE; 
+	my $pom_line;
+	while ($pom_line=<DPF>)
+	{
+	    chop $pom_line;
+	    if ($pom_line =~/^[ \t]*<version>([0-9\.]+)<\/version>/)
+	    {
+		$DATAVERSE_VERSION=$1;
+		last;
+	    }	    
+	}
+	close DPF;
+
+	if ($DATAVERSE_VERSION ne "") {
+	    $WARFILE_LOCATION = "../../target/dataverse-" . $DATAVERSE_VERSION . ".war";
+	}
+    }
+}
+
+# But, if the war file cannot be found in either of the 2
+# places - we'll just have to give up:
+
+unless ( -f $WARFILE_LOCATION ) {
+    print "\nWARNING: Can't find the project .war file!\n";
+    print "\tAre you running the installer in the right directory?\n";
+    print "\tHave you built the war file?\n";
+    print "\t(if not, build the project and run the installer again)\n";
+
+    exit 0;
+}
+
+print " Yes, it is!\n";
+
+
+# check the working (installer) dir:
+my $cwd;
+chomp( $cwd = `pwd` );
+
+# 2b. CHECK IF THE SQL TEMPLATE IS IN PLACE AND CREATE THE SQL FILE
+
+#my $SQL_REFERENCE_DATA     = "reference_data_filtered.sql";
+my $SQL_REFERENCE_TEMPLATE = "../database/reference_data.sql";
+
+unless ( -f $SQL_REFERENCE_TEMPLATE ) {
+    $SQL_REFERENCE_TEMPLATE = "reference_data.sql";
+}
+
+unless ( -f $SQL_REFERENCE_TEMPLATE ) {
+    print "\nWARNING: Can't find .sql data template!\n";
+    print "(are you running the installer in the right directory?)\n";
+
+    exit 0;
+}
+
+#open DATATEMPLATEIN, $SQL_REFERENCE_TEMPLATE   || die $@;
+#open SQLDATAOUT,     '>' . $SQL_REFERENCE_DATA || die $@;
+#
+#while (<DATATEMPLATEIN>) {
+#    s/dvnapp/$CONFIG_DEFAULTS{'POSTGRES_USER'}/g;
+#    print SQLDATAOUT $_;
+#}
+
+#close DATATEMPLATEIN;
+#close SQLDATAOUT;
+
+# 3. CHECK POSTGRES AND JQ AVAILABILITY:
+
+# 4. CREATE POSTGRES USER AND DATABASE
+
+# 5. CONFIGURE GLASSFISH
+
+my $glassfish_dir = $CONFIG_DEFAULTS{'GLASSFISH_DIRECTORY'};
+
+my $done = &setup();
+
+
+# 7. PRE-POPULATE THE DATABASE:
+# (in this step some pre-supplied content is inserted into the database that we have just created;
+# it is not *necessary* for the application to run in the very basic mode; but some features - certain 
+# types of metadata imports, for example - will be unavailable if it's not done. 
+
+# Check if the App is running: 
+
+unless ((
+     my $exit_code =
+     system( $glassfish_dir . "/bin/asadmin list-applications | grep -q '^dataverse'" )
+	) == 0 )
+{
+    # If the "asadmin list-applications" has failed, it may only mean that an earlier
+    # "asadmin login" had failed, and asadmin is now failing to run without the user
+    # supplying the username and password. (And the fact that we are trying to pile the  
+    # output to grep prevents it from providing the prompts). 
+    # So before we give up, we'll try an alternative: 
+
+    unless ((
+	my $exit_code_2 =
+	system( "curl http://localhost:8080/robots.txt | grep -q '^User-agent'" )
+	    ) == 0 )
+    {
+	print STDERR "It appears that the Dataverse application is not running...\n";
+	print STDERR "Even though the \"asadmin deploy\" command had succeeded earlier.\n\n";
+	print STDERR "Aborting - sorry...\n\n";
+    }
+}
+
+
+print "\nOK, the Dataverse application appears to be running...\n\n";
+
+# Run the additional setup scripts, that populate the metadata block field values, create users
+# and dataverses, etc.
+
+unless ( -d "data" && -f "setup-datasetfields.sh" && -f "setup-users.sh" && -f "setup-dvs.sh" && -f "setup-all.sh" ) {
+    chdir("../api");
+}
+
+unless ( -d "data" && -f "setup-datasetfields.sh" && -f "setup-users.sh" && -f "setup-dvs.sh" && -f "setup-builtin-roles.sh" && -f "setup-all.sh" ) {
+    print "\nERROR: Can't find the metadata and user/dataverse setup scripts!\n";
+    print "\tAre you running the installer in the right directory?\n";
+    exit 1;
+}
+
+# if there's an admin_email set from arguments, replace the value in `dv-root.json` (called by `setup-all.sh`)
+if ($admin_email)
+{
+	print "setting contact email for root dataverse to: $admin_email\n";
+	set_root_contact_email( $admin_email );
+}
+else
+{
+	print "using default contact email for root dataverse\n";
+}
+
+for my $script ( "setup-all.sh" ) {
+    # (there's only 1 setup script to run now - it runs all the other required scripts)
+    print "Executing post-deployment setup script " . $script . "... ";
+
+    my $my_hostname = $CONFIG_DEFAULTS{'HOST_DNS_ADDRESS'};
+
+    # We used to filter the supplied scripts, replacing "localhost" and the port, in 
+    # case they are running Dataverse on a different port... Now we are simply requiring
+    # that the port 8080 is still configured in domain.xml when they are running the 
+    # installer:
+    my $run_script;
+    #if ( $my_hostname ne "localhost" ) {
+    #    system( "sed 's/localhost:8080/$my_hostname/g' < " . $script . " > tmpscript.sh; chmod +x tmpscript.sh" );
+    #    $run_script = "tmpscript.sh";
+    #}
+    #else {
+    $run_script = $script;
+    #}
+
+    unless ( my $exit_code = system( "./" . $run_script . " > $run_script.$$.log 2>&1") == 0 ) 
+    {
+        print "\nERROR executing script " . $script . "!\n";
+        exit 1;
+    }
+    print "done!\n";
+}
+
+# SOME ADDITIONAL SETTINGS THAT ARE NOT TAKEN CARE OF BY THE setup-all SCRIPT 
+# NEED TO BE CONFIGURED HERE:
+
+print "Making additional configuration changes...\n\n";
+
+
+# a. Configure the Admin email in the Dataverse settings:
+
+print "Executing " . "curl -X PUT -d " . $CONFIG_DEFAULTS{'ADMIN_EMAIL'} . " " . $API_URL . "/admin/settings/:SystemEmail" . "\n";
+
+my $exit_code = system("curl -X PUT -d " . $CONFIG_DEFAULTS{'ADMIN_EMAIL'} . " " . $API_URL . "/admin/settings/:SystemEmail"); 
+if ( $exit_code )       
+{
+    print "WARNING: failed to configure the admin email in the Dataverse settings!\n\n";
+} 
+else 
+{
+    print "OK.\n\n";
+}
+    
+# b. If this installation is going to be using a remote SOLR search engine service, configure its location in the settings:
+
+if ($CONFIG_DEFAULTS{'SOLR_LOCATION'} ne 'LOCAL')
+{
+    print "Executing " . "curl -X PUT -d " . $CONFIG_DEFAULTS{'SOLR_LOCATION'} . " " . $API_URL . "/admin/settings/:SolrHostColonPort" . "\n";
+    my $exit_code = system("curl -X PUT -d " . $CONFIG_DEFAULTS{'SOLR_LOCATION'} . " " . $API_URL . "/admin/settings/:SolrHostColonPort"); 
+    if ( $exit_code )       
+    {
+	print "WARNING: failed to configure the location of the remote SOLR service!\n\n";
+    }
+    else 
+    {
+	print "OK.\n\n";
+    }
+}
+
+
+
+chdir($cwd);
+
+print "\n\nYou should now have a running DVN instance at\n";
+print "  http://" . $CONFIG_DEFAULTS{'HOST_DNS_ADDRESS'} . ":8080\n\n\n";
+
+# (going to skip the Rserve check, for now)
+
+exit 0;
+
+# 9. FINALLY, CHECK IF RSERVE IS RUNNING:
+print "\n\nFinally, checking if Rserve is running and accessible...\n";
+
+unless ( $CONFIG_DEFAULTS{'RSERVE_PORT'} =~ /^[0-9][0-9]*$/ ) {
+    print $CONFIG_DEFAULTS{'RSERVE_HOST'} . " does not look like a valid port number,\n";
+    print "defaulting to 6311.\n\n";
+
+    $CONFIG_DEFAULTS{'RSERVE_PORT'} = 6311;
+}
+
+my ( $rserve_iaddr, $rserve_paddr, $rserve_proto );
+
+unless ( $rserve_iaddr = inet_aton( $CONFIG_DEFAULTS{'RSERVE_HOST'} ) ) {
+    print STDERR "Could not look up $CONFIG_DEFAULTS{'RSERVE_HOST'},\n";
+    print STDERR "the host you specified as your R server.\n";
+    print STDERR "\nDVN can function without a working R server, but\n";
+    print STDERR "much of the functionality concerning running statistics\n";
+    print STDERR "and analysis on quantitative data will not be available.\n";
+    print STDERR "Please consult the Installers guide for more info.\n";
+
+    exit 0;
+}
+
+$rserve_paddr = sockaddr_in( $CONFIG_DEFAULTS{'RSERVE_PORT'}, $rserve_iaddr );
+$rserve_proto = getprotobyname('tcp');
+
+unless ( socket( SOCK, PF_INET, SOCK_STREAM, $rserve_proto )
+    && connect( SOCK, $rserve_paddr ) )
+{
+    print STDERR "Could not establish connection to $CONFIG_DEFAULTS{'RSERVE_HOST'}\n";
+    print STDERR "on port $CONFIG_DEFAULTS{'RSERVE_PORT'}, the address you provided\n";
+    print STDERR "for your R server.\n";
+    print STDERR "DVN can function without a working R server, but\n";
+    print STDERR "much of the functionality concerning running statistics\n";
+    print STDERR "and analysis on quantitative data will not be available.\n";
+    print STDERR "Please consult the \"Installing R\" section in the Installers guide\n";
+    print STDERR "for more info.\n";
+
+    exit 0;
+
+}
+
+close(SOCK);
+print "\nOK!\n";
+
+sub setup {
+    my $success = 1;
+    my $failure = 0;
+
+    # We are going to run a standalone shell script with a bunch of asadmin
+    # commands to set up all the glassfish components for the application.
+    # All the parameters must be passed to that script as environmental
+    # variables:
+
+    $ENV{'GLASSFISH_ROOT'}   = $CONFIG_DEFAULTS{'GLASSFISH_DIRECTORY'};
+    $ENV{'GLASSFISH_DOMAIN'} = "domain1";
+    $ENV{'ASADMIN_OPTS'}     = "";
+    $ENV{'MEM_HEAP_SIZE'}    = $CONFIG_DEFAULTS{'DEF_MEM_SIZE'};
+
+    $ENV{'DB_PORT'} = $CONFIG_DEFAULTS{'POSTGRES_PORT'};
+    $ENV{'DB_HOST'} = $CONFIG_DEFAULTS{'POSTGRES_SERVER'};
+    $ENV{'DB_NAME'} = $CONFIG_DEFAULTS{'POSTGRES_DATABASE'};
+    $ENV{'DB_USER'} = $CONFIG_DEFAULTS{'POSTGRES_USER'};
+    $ENV{'DB_PASS'} = $CONFIG_DEFAULTS{'POSTGRES_PASSWORD'};
+
+    $ENV{'RSERVE_HOST'} = $CONFIG_DEFAULTS{'RSERVE_HOST'};
+    $ENV{'RSERVE_PORT'} = $CONFIG_DEFAULTS{'RSERVE_PORT'};
+    $ENV{'RSERVE_USER'} = $CONFIG_DEFAULTS{'RSERVE_USER'};
+    $ENV{'RSERVE_PASS'} = $CONFIG_DEFAULTS{'RSERVE_PASSWORD'};
+
+    $ENV{'HOST_ADDRESS'} = $CONFIG_DEFAULTS{'HOST_DNS_ADDRESS'};
+    $ENV{'SMTP_SERVER'}  = $CONFIG_DEFAULTS{'MAIL_SERVER'};
+    $ENV{'FILES_DIR'} =
+      $CONFIG_DEFAULTS{'GLASSFISH_DIRECTORY'} . "/glassfish/domains/" . $ENV{'GLASSFISH_DOMAIN'} . "/files";
+    
+    $ENV{'WARFILE_LOCATION'} = $WARFILE_LOCATION;
+    
+    #start-glassfish is a container name for OpenShift deployment 
+    if ( exists($ENV{'MY_POD_NAME'}) )
+    {
+	    # assume that the second postgres-setup call is sufficient outside OpenShift
+	    # nope, it's not - both are necessary
+	    unless($ENV{"MY_POD_NAME"} eq "start-glassfish" || $ENV{"MY_POD_NAME"} eq "dataverse-glassfish-0") {
+		system("perl ./postgres-setup");
+	    }
+    }
+    else
+    {
+		system("perl ./postgres-setup");
+    }
+    
+    print "Finished configuring postgres \n";
+    
+    #Start and Setup Glassfish + Deploy war file
+    #needs to pass on -y / $yes for non-interactive
+    unless ($yes)
+    {
+    	system("perl ./glassfish-startup");
+    }
+    else
+    {
+    	system("perl ./glassfish-startup -y");
+    }
+
+    print "Finished configuring postgres \n";
+
+    #Pre-populate the database 
+    $ENV{'PREPOPULATE'} = 1;
+    system("perl ./postgres-setup");
+    if ($?) {
+        return $failure;
+    }
+    return $success;
+}
+
+sub create_pg_hash {
+    my $pg_username = shift @_;
+    my $pg_password = shift @_;
+
+    my $encode_line = $pg_password . $pg_username;
+
+    # for Redhat:
+
+    ##print STDERR "executing /bin/echo -n $encode_line | md5sum\n";
+
+    my $hash;
+    if ( $WORKING_OS eq "MacOSX" ) {
+        $hash = `/bin/echo -n $encode_line | md5`;
+    }
+    else {
+        $hash = `/bin/echo -n $encode_line | md5sum`;
+    }
+
+    chop $hash;
+
+    $hash =~ s/  \-$//;
+
+    if ( ( length($hash) != 32 ) || ( $hash !~ /^[0-9a-f]*$/ ) ) {
+        print STDERR "Failed to generate a MD5-encrypted password hash for the Postgres database.\n";
+        exit 1;
+    }
+
+    return $hash;
+}
+
+sub validate_smtp_server {
+    my ( $mail_server_iaddr, $mail_server__paddr, $mail_server_proto, $mail_server_status );
+
+    $mail_server_status = 1;
+
+    unless ( $mail_server_iaddr = inet_aton( $CONFIG_DEFAULTS{'MAIL_SERVER'} ) ) {
+	print STDERR "Could not look up $CONFIG_DEFAULTS{'MAIL_SERVER'},\n";
+	print STDERR "the host you specified as your mail server\n";
+	$mail_server_status = 0;
+    }
+
+    if ($mail_server_status) {
+	my $mail_server_paddr = sockaddr_in( 25, $mail_server_iaddr );
+	$mail_server_proto = getprotobyname('tcp');
+
+       unless ( socket( SOCK, PF_INET, SOCK_STREAM, $mail_server_proto )
+		 && connect( SOCK, $mail_server_paddr ) )
+	{
+	    print STDERR "Could not establish connection to $CONFIG_DEFAULTS{'MAIL_SERVER'},\n";
+	    print STDERR "the address you provided for your Mail server.\n";
+	    print STDERR "Please select a valid mail server, and try again.\n\n";
+
+	    $mail_server_status = 0;
+	}
+
+	close(SOCK);
+    }
+
+    return $mail_server_status; 
+}
+
+# support function for set_root_contact_email
+sub search_replace_file
+{
+        my ($infile, $pattern, $replacement, $outfile) = @_;
+        open (my $inp, $infile);
+        local $/ = undef;
+        my $txt = <$inp>;
+        close $inp;
+        $txt =~s/$pattern/$replacement/g;
+        open (my $opf, '>:encoding(UTF-8)', $outfile);
+        print $opf $txt;
+        close $opf;
+        return;
+}
+# set the email address for the default `dataverseAdmin` account
+sub set_root_contact_email
+{
+        my ($contact_email) = @_;
+        my $config_json = "data/user-admin.json";
+        search_replace_file($config_json,"\"email\":\"dataverse\@mailinator.com\"","\"email\":\"$contact_email\"",$config_json);
+        return;
+}
