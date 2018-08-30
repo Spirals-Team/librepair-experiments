@@ -1,0 +1,57 @@
+# Java Maven CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-java/ for more details
+#
+version: 2
+jobs:
+  build:
+    docker:
+      # we still want to run on JDK 8
+      - image: circleci/openjdk:8-jdk
+      
+      # we still want to support 9.6, the list is at https://circleci.com/docs/2.0/circleci-images/#postgresql
+      - image: circleci/postgres:9.6-alpine-postgis-ram
+        environment:
+          POSTGRES_USER: adempiere
+          POSTGRES_PASSWORD: adempiere
+          POSTGRES_DB: idempiere
+
+    working_directory: ~/repo
+
+    environment:
+      # Customize the JVM maximum heap limit
+      MAVEN_OPTS: -Xmx3200m
+    
+    steps:
+      - checkout
+
+      - run:
+          name: install dockerize
+          command: wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz && sudo tar -C /usr/local/bin -xzvf dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz && rm dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz
+          environment:
+            DOCKERIZE_VERSION: v0.3.0
+      - run:
+          name: Wait for db
+          command: dockerize -wait tcp://localhost:5432 -timeout 1m
+
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+          - v1-dependencies-{{ checksum "pom.xml" }}
+          # fallback to using the latest cache if no exact match is found
+          - v1-dependencies-
+
+      - run: mvn dependency:go-offline
+
+      - save_cache:
+          paths:
+            - ~/.m2
+          key: v1-dependencies-{{ checksum "pom.xml" }}
+
+      # run the migrations
+      - run: mvn flyway:migrate
+
+      # run tests!
+      - run: mvn package
+          environment:
+            CONNECTION: "xyzCConnection[name=0.0.0.0{localhost-idempiere-adempiere},AppsHost=0.0.0.0,WebPort=8081,SSLPort=8443,type=PostgreSQL,DBhost=localhost,DBport=5432,DBname=idempiere,BQ=false,FW=false,FWhost=,FWport=0,UID=adempiere,PWD=adempiere]"
