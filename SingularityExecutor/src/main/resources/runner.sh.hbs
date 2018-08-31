@@ -1,0 +1,127 @@
+#!/bin/bash
+#
+# This script was automatically generated.
+# Task ID: {{{ taskId }}}
+#
+
+export MESOS_TASK_ID={{{bashEscaped taskId}}}  # I can't believe Mesos doesn't expose this.
+
+{{#if cfsQuota }}
+# Outputs the path of the deepest cgroup the current process is in.
+# The output of:
+#   cat /proc/self/cgroup
+# will look like:
+# --------------------
+# 8:net_cls:/
+# 7:memory:/test_cgroup/mesos/4e59173b-e2a7-47a6-bcb8-455b637faa5f
+# 6:freezer:/test_cgroup/mesos/4e59173b-e2a7-47a6-bcb8-455b637faa5f
+# 5:devices:/
+# 4:cpuset:/
+# 3:cpuacct:/test_cgroup/mesos/4e59173b-e2a7-47a6-bcb8-455b637faa5f
+# 2:cpu:/test_cgroup/mesos/4e59173b-e2a7-47a6-bcb8-455b637faa5f
+# 1:blkio:/test_cgroup
+# --------------------
+# This function will return the deepest cgroup path in that output.
+# For this example, it would return:
+#   /test_cgroup/mesos/4e59173b-e2a7-47a6-bcb8-455b637faa5f
+function get_deepest_cgroup {
+   local cgroups=$(</proc/self/cgroup)
+   local max_depth=0
+   local max_path="/"
+
+   for cgroup_spec in $cgroups; do
+     local cg_path=$(echo $cgroup_spec | cut -d: -f3)
+     if [ "$cg_path" == "/" ]; then
+       local depth=0
+     else
+       local depth=$(echo -ne "$cg_path" | tr '/' "\n" | wc -l)
+     fi
+
+     if [ "$depth" -gt "$max_depth" ]; then
+       local max_depth="$depth"
+       local max_path="$cg_path"
+     fi
+   done
+   echo "$max_path"
+}
+
+CPU_CGROUP_BASE_DIRECTORY=`findmnt --kernel --first-only --types cgroup --options cpu --noheadings --output TARGET`
+
+CGROUP_CPU_PATH="$CPU_CGROUP_BASE_DIRECTORY$(get_deepest_cgroup)"
+echo {{{ cfsQuota }}} > "$CGROUP_CPU_PATH/cpu.cfs_quota_us"
+echo {{{ cfsPeriod }}} > "$CGROUP_CPU_PATH/cpu.cfs_period_us"
+{{/if}}
+
+# load system-wide profile.d
+if [[ -d /etc/profile.d ]]; then
+  echo "Sourcing files from /etc/profile.d"
+  for i in /etc/profile.d/*.sh; do
+    source $i >/dev/null 2>&1
+    echo "    Sourced $i"
+  done
+else
+  echo "No /etc/profile.d to source"
+fi
+
+# load env vars
+if [[ -f deploy.env ]]; then
+  echo "Sourcing deploy-specific environment variables"
+  source deploy.env
+else
+  echo "No deploy-specific environment variables"
+fi
+
+# TODO: consider removing this when all artifacts have tmp folder created at build time?
+if [[ ! -d ./tmp ]]; then
+  echo "Creating tmp directory in sandbox"
+  mkdir ./tmp
+fi
+
+echo "Ensuring ./tmp is owned by {{{ user }}} with 0750"
+sudo chown -R {{{ user }}} ./tmp
+sudo chmod -R 0750 ./tmp
+
+# Create log directory for logrotate runs
+if [[ ! -d {{{ logDir }}} ]]; then
+    echo "Creating log directory ({{{ logDir }}})"
+    mkdir -p {{{ logDir }}}
+fi
+
+echo "Ensuring {{{ logDir }}} is owned by {{{ user }}} with 0755"
+sudo chown -R {{{ user }}} {{{ logDir }}}
+sudo chmod -R 0755 {{{ logDir }}}
+
+echo "Ensuring {{{ taskAppDirectory }}} exists and is owned by {{{ user }}}"
+if [[ ! -d {{{ taskAppDirectory }}} ]]; then
+    echo "Creating {{{ taskAppDirectory }}} directory"
+    mkdir -p {{{ taskAppDirectory }}}
+fi
+sudo chown -R {{{ user }}} {{{ taskAppDirectory }}}
+
+cd {{{ taskAppDirectory }}}/
+
+# load artifact's profile.d
+if [[ -d .profile.d ]]; then
+    for FILE in $(ls .profile.d/*); do
+        source "$FILE"
+        echo "Sourced $FILE"
+    done
+else
+  echo "No deploy-specific profile.d"
+fi
+
+{{#if useFileAttributes}}
+touch {{{ logFilePath }}}
+sudo chown {{{ user }}} {{{ logFilePath }}}
+setfattr -n user.logstart -v "$(($(date +%s%N)/1000000))" {{{ logFilePath }}}
+{{/if}}
+
+# execute command
+{{#if shouldChangeUser}}
+echo "Executing: {{{ switchUserCommand }}} {{#if maxOpenFiles}}/bin/bash -c 'ulimit -Sn {{{maxOpenFiles}}} && {{/if}}{{{ cmd }}}{{#if maxOpenFiles}}'{{/if}} >> {{{ logFilePath }}} 2>&1"
+exec {{{ switchUserCommand }}} {{#if maxOpenFiles}}/bin/bash -c 'ulimit -Sn {{{maxOpenFiles}}} && exec {{/if}}{{{ cmd }}}{{#if maxOpenFiles}}'{{/if}} >> {{{ logFilePath }}} 2>&1
+{{else}}
+echo "Executing: {{{ cmd }}} >> {{{ logFilePath }}} 2>&1"
+{{#if maxOpenFiles}}ulimit -Sn {{{maxOpenFiles}}}{{/if}}
+exec {{{ cmd }}} >> {{{ logFilePath }}} 2>&1
+{{/if}}
