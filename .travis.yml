@@ -1,0 +1,51 @@
+language: java
+jdk:
+  - oraclejdk8
+
+sudo: required
+services:
+  - docker
+
+install:
+  - ./gradlew build -x check
+
+jobs:
+  include:
+    - stage: test
+      env: [ NAME=core ]
+      script: ./gradlew testcontainers:check javadoc
+
+    - stage: test
+      env: [ NAME=core ]
+      jdk: oraclejdk9
+      script: ./gradlew testcontainers:check
+
+    - env: [ NAME=selenium ]
+      script: ./gradlew selenium:check
+
+    - env: [ NAME=modules ]
+      script: ./gradlew check -x testcontainers:check -x selenium:check
+
+    # Run Docker-in-Docker tests inside Alpine
+    - env: [ NAME="docker-in-alpine-docker" ]
+      script:
+        - |
+                DOCKER_HOST=unix:///var/run/docker.sock DOCKER_TLS_VERIFY= docker run -t --rm \
+                -v "$HOME/.gradle":/root/.gradle/ \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                -v "$(pwd)":"$(pwd)" \
+                -w "$(pwd)" \
+                openjdk:8-jdk-alpine \
+                ./gradlew --no-daemon testcontainers:test --tests '*GenericContainerRuleTest'
+
+    - stage: deploy
+      sudo: false
+      services: []
+      install: skip
+      script: skip
+      deploy:
+        provider: script
+        script: ./gradlew -Pversion=$TRAVIS_TAG release
+        on:
+          tags: true
+          branch: master
