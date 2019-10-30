@@ -41,7 +41,7 @@ The branches that have 4 commits have one commit (the third one) that contains a
 
 Every branch associated to a build failure has the file `repairnator.json` that contains relevant information regarding the building of the project.
 
-### Build Information
+### Builds Information extracted from the Travis API
 
 Starting from January 2016 to April 2019, we collected the build failures in Travis CI.
 
@@ -59,6 +59,17 @@ Every build is triggered by an event. In particular, in the following table it i
 |----------------------------|:-----------:|:-------------:|:-----------:|:--------:
 | **Number of the builds**   | 7.172       | 6.266         | 539         | 160
 
+Using the information extracted from the Travis API, we also divided the builds based on the build duration expressed in seconds. The following table shows the number of the builds divided by different build time ranges:
 
+|                                            | Number of the builds   |
+|:------------------------------------------:|-----------------------:|
+| **0 &lt; build_time &le; 100**             |                 1.527  |
+| **100 &lt; build_time &le; 500**           |                 3.950  |
+| **500 &lt; build_time &le; 1.000**          |                1.443  |
+| **1.000 &lt; build_time &le; 5.000**         |               3.400  |
+| **5.000 &lt; build_time &le; 10.000**        |               1.220  |
+| **10.000 &lt; build_time &le; 25.000**       |               2.172  |
+| **25.000 &lt; build_time &le; 50.000**      |                  408  |
+| **build_time &gt; 50.000**                  |                   17  |
 
-
+The minimum build time recorded has been 3 seconds (`build` [357685462](https://github.com/repairnator/repairnator-experiments/blob/master/builds/357685462.json), `branch` [as0kir-topjava-357685462-20180324-053259](https://github.com/repairnator/repairnator-experiments/tree/as0kir-topjava-357685462-20180324-053259)), while the maximum build time recorded has been 60.035 seconds (`build` [247511890](https://github.com/repairnator/repairnator-experiments/blob/master/builds/247511890.json), `branch` [apache-flink-247511890-20170627-234202_bugonly](https://github.com/repairnator/repairnator-experiments/tree/apache-flink-247511890-20170627-234202_bugonly)).
