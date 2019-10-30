@@ -173,3 +173,27 @@ On the contrary, considering only the custom exceptions, we analyzed that the to
 | com.spotify.docker.client.exceptions.DockerException    |                   96 |
 | spoon.SpoonException                                    |                   96 |
 | com.mongodb.MongoTimeoutException                       |                   95 |
+
+During the build process there can be many failing test cases. In the following table it is possible to see the number of the builds divided by the number of the failing tests:
+
+| Number of the failing test cases           | Number of the builds   |
+|:------------------------------------------:|-----------------------:|
+| **1**                                      |                 3.141  |
+| **2**                                      |                 2.958  |
+| **3**                                      |                   545  |
+| **4**                                      |                   601  |
+| **5**                                      |                   177  |
+| **6**                                      |                   735  |
+| **&gt; 10**                                |                   556  |
+
+The number of the builds divided by the number of the erroring test cases is reported in the following table:
+
+| Number of the erroring test cases          | Number of the builds   |
+|:------------------------------------------:|-----------------------:|
+| **1**                                      |                 2.210  |
+| **2**                                      |                   733  |
+| **3**                                      |                   531  |
+| **4**                                      |                   297  |
+| **5**                                      |                   233  |
+| **6**                                      |                   273  |
+| **&gt; 50**                                |                 1.162  |
