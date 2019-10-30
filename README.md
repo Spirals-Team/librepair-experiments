@@ -65,11 +65,47 @@ Using the information extracted from the Travis API, we also divided the builds 
 |:------------------------------------------:|-----------------------:|
 | **0 &lt; build_time &le; 100**             |                 1.527  |
 | **100 &lt; build_time &le; 500**           |                 3.950  |
-| **500 &lt; build_time &le; 1.000**          |                1.443  |
-| **1.000 &lt; build_time &le; 5.000**         |               3.400  |
-| **5.000 &lt; build_time &le; 10.000**        |               1.220  |
-| **10.000 &lt; build_time &le; 25.000**       |               2.172  |
-| **25.000 &lt; build_time &le; 50.000**      |                  408  |
-| **build_time &gt; 50.000**                  |                   17  |
+| **500 &lt; build_time &le; 1.000**         |                 1.443  |
+| **1.000 &lt; build_time &le; 5.000**       |                 3.400  |
+| **5.000 &lt; build_time &le; 10.000**      |                 1.220  |
+| **10.000 &lt; build_time &le; 25.000**     |                 2.172  |
+| **25.000 &lt; build_time &le; 50.000**     |                   408  |
+| **build_time &gt; 50.000**                 |                    17  |
 
 The minimum build time recorded has been 3 seconds (`build` [357685462](https://github.com/repairnator/repairnator-experiments/blob/master/builds/357685462.json), `branch` [as0kir-topjava-357685462-20180324-053259](https://github.com/repairnator/repairnator-experiments/tree/as0kir-topjava-357685462-20180324-053259)), while the maximum build time recorded has been 60.035 seconds (`build` [247511890](https://github.com/repairnator/repairnator-experiments/blob/master/builds/247511890.json), `branch` [apache-flink-247511890-20170627-234202_bugonly](https://github.com/repairnator/repairnator-experiments/tree/apache-flink-247511890-20170627-234202_bugonly)).
+
+### Builds Information extracted using Repairnator
+
+Every branch is linked to a build JSON file in `master` branch and every JSON file is related to a Travis CI build failure.
+In particular, in addition to the program files, every branch has some files with the keyword `repairnator` in their name in which there are useful information about the build process, such as the number and the types of the failures occurred.
+
+The following table shows the different types of `repairnator` files that can be found in a branch and the number of the branches that have these files:
+
+|                                           | Number of the branches |
+|:------------------------------------------|-----------------------:|
+| repairnator.json                          |                  14137 |
+| repairnator.maven.buildproject.log        |                  12860 |
+| repairnator.maven.testproject.log         |                  12860 |
+| repairnator.maven.computeclasspath.log    |                  12804 |
+| repairnator.nopol.results                 |                   8914 |
+| repairnator.maven.resolvedependency.log   |                   7845 |
+| repairnator.astor.log                     |                   6218 |
+| repairnator.astor.mutation.log            |                   4835 |
+| repairnator.astor.results.json            |                   1083 |
+| repairnator.astor.mutation.results.json   |                    945 |
+| repairnator.maven.nperepair.log           |                    922 |
+| repairnator.maven.npefix.log              |                    715 |
+| repairnator.npefix.results                |                    289 |
+| repairnator-patches                       |                    120 |
+| repairnatorPatches                        |                     52 |
+| repairnator                               |                     10 |
+
+
+
+
+
+
+
+
+
+
