@@ -49,15 +49,15 @@ A build can have different states, and as reported in the [official documentatio
 
 In the following table, we reported the number of the collected builds, divided by their state:
 
-|                            | failed      | passed      | errored     | canceled
-|----------------------------|:-----------:|:-----------:|:-----------:|:--------:
-| **Number of the builds**   | 13.181      | 896         | 48          | 12
+|                            | failed      | passed      | errored     | canceled  |
+|----------------------------|:-----------:|:-----------:|:-----------:|:---------:|
+| **Number of the builds**   | 13.181      | 896         | 48          | 12        |
 
 Every build is triggered by an event. In particular, in the following table it is possibile to see the number of the collected builds divided by the type of their trigger event:
 
-|                            | push        | pull request  | cron        | api
-|----------------------------|:-----------:|:-------------:|:-----------:|:--------:
-| **Number of the builds**   | 7.172       | 6.266         | 539         | 160
+|                            | push        | pull request  | cron        | api      |
+|----------------------------|:-----------:|:-------------:|:-----------:|:--------:|
+| **Number of the builds**   | 7.172       | 6.266         | 539         | 160      |
 
 Using the information extracted from the Travis API, we also divided the builds based on the build duration expressed in seconds. The following table shows the number of the builds divided by different build time ranges:
 
@@ -130,9 +130,46 @@ Analyzing the `repairnator.json` files, it is possible to know that are two main
 
 In the following table, we reported the number of the builds for both of them:
 
-|                            | only_fail   | failing_passing     
+|                            | only_fail   | failing_passing |     
 |----------------------------|:-----------:|:---------------:|
 | **Number of the builds**   |      13.390 |             747 |
 
+In particular, removing the custom exceptions related to a specific program, we analyzed that the top 20 common failure types are the following ones:
 
+| Failure type                                  | Number of the builds |
+|:----------------------------------------------|---------------------:|
+| java.lang.AssertionError                      |                 7280 |
+| java.lang.NullPointerException                |                 1836 |
+| org.junit.ComparisonFailure                   |                 1293 |
+| java.lang.IllegalStateException               |                 1280 |
+| java.lang.AssertionError                      |                 1198 |
+| java.lang.RuntimeException                    |                  736 |
+| java.lang.Exception                           |                  722 |
+| java.lang.NoClassDefFoundError                |                  442 |
+| junit.framework.AssertionFailedError          |                  433 |
+| java.lang.IllegalArgumentException            |                  420 |
+| java.io.IOException                           |                  404 |
+| org.junit.runners.model.TestTimedOutException |                  276 |
+| java.lang.NullPointerException:               |                  261 |
+| java.lang.ExceptionInInitializerError         |                  261 |
+| java.io.FileNotFoundException                 |                  154 |
+| junit.framework.ComparisonFailure             |                  136 |
+| java.lang.IndexOutOfBoundsException           |                  117 |
+| java.util.concurrent.TimeoutException         |                   99 |
+| java.net.MalformedURLException                |                   92 |
+| org.junit.AssumptionViolatedException         |                   90 |
 
+On the contrary, considering only the custom exceptions, we analyzed that the top 10 common failure types are the following ones:
+
+| Failure type                                            | Number of the builds |
+|:--------------------------------------------------------|---------------------:|
+| skipped                                                 |                  346 |
+| org.postgresql.util.PSQLException                       |                  228 |
+| redis.clients.jedis.exceptions.JedisConnectionException |                  173 |
+| redis.clients.jedis.exceptions.JedisException           |                  163 |
+| com.facebook.presto.spi.PrestoException                 |                  132 |
+| org.springframework.beans.factory.BeanCreationException |                  112 |
+| org.openqa.selenium.WebDriverException                  |                  105 |
+| com.spotify.docker.client.exceptions.DockerException    |                   96 |
+| spoon.SpoonException                                    |                   96 |
+| com.mongodb.MongoTimeoutException                       |                   95 |
