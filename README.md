@@ -79,33 +79,60 @@ The minimum build time recorded has been 3 seconds (`build` [357685462](https://
 Every branch is linked to a build JSON file in `master` branch and every JSON file is related to a Travis CI build failure.
 In particular, in addition to the program files, every branch has some files with the keyword `repairnator` in their name in which there are useful information about the build process, such as the number and the types of the failures occurred.
 
-The following table shows the different types of `repairnator` files that can be found in a branch and the number of the branches that have these files:
+The following tables show the different types of `repairnator` files that can be found in a branch and the number of the branches that have these files:
 
-|                                           | Number of the branches |
+#### Repairnator Data Files
+
+| File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
 | repairnator.json                          |                  14137 |
-| repairnator.maven.buildproject.log        |                  12860 |
-| repairnator.maven.testproject.log         |                  12860 |
-| repairnator.maven.computeclasspath.log    |                  12804 |
-| repairnator.nopol.results                 |                   8914 |
-| repairnator.maven.resolvedependency.log   |                   7845 |
-| repairnator.astor.log                     |                   6218 |
-| repairnator.astor.mutation.log            |                   4835 |
-| repairnator.astor.results.json            |                   1083 |
-| repairnator.astor.mutation.results.json   |                    945 |
-| repairnator.maven.nperepair.log           |                    922 |
-| repairnator.maven.npefix.log              |                    715 |
-| repairnator.npefix.results                |                    289 |
 | repairnator-patches                       |                    120 |
 | repairnatorPatches                        |                     52 |
 | repairnator                               |                     10 |
 
+Every branch has its proper `repairnator.json` file in which where are the following information:
 
+#### Repairnator Maven Log Files
 
+| File                                      | Number of the branches |
+|:------------------------------------------|-----------------------:|
+| repairnator.maven.buildproject.log        |                  12860 |
+| repairnator.maven.testproject.log         |                  12860 |
+| repairnator.maven.computeclasspath.log    |                  12804 |
+| repairnator.maven.resolvedependency.log   |                   7845 |
 
+#### Repairnator Nopol Files
 
+| File                                      | Number of the branches |
+|:------------------------------------------|-----------------------:|
+| repairnator.nopol.results                 |                   8914 |
 
+#### Repairnator Astor Files
 
+| File                                      | Number of the branches |
+|:------------------------------------------|-----------------------:|
+| repairnator.astor.log                     |                   6218 |
+| repairnator.astor.mutation.log            |                   4835 |
+| repairnator.astor.results.json            |                   1083 |
+| repairnator.astor.mutation.results.json   |                    945 |
+
+#### Repairnator NPEFix Files
+
+| File                                      | Number of the branches |
+|:------------------------------------------|-----------------------:|
+| repairnator.maven.nperepair.log           |                    922 |
+| repairnator.maven.npefix.log              |                    715 |
+| repairnator.npefix.results                |                    289 |
+
+Analyzing the `repairnator.json` files, it is possible to know that are two main `bug type` associated to every build:
+* only_fail;
+* failing_passing.
+
+In the following table, we reported the number of the builds for both of them:
+
+|                            | only_fail   | failing_passing     
+|----------------------------|:-----------:|:---------------:|
+| **Number of the builds**   |      13.390 |             747 |
 
 
 
