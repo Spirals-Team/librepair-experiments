@@ -45,7 +45,7 @@ The branches that have 4 commits have one commit (the third one) that contains a
 
 The repository contains the builds collected in the period between February 2017 and August 2018.
 
-A build can have different states, and as reported in the [official documentation of Travis CI](https://docs.travis-ci.com/user/for-beginners/#breaking-the-build), a build is considered broken when one or more of its jobs complete with a state that is not passed: errored, failed, or canceled.
+A build can have different states, and as reported in the [official documentation of Travis CI](https://docs.travis-ci.com/user/for-beginners/#breaking-the-build), a build is considered broken when one or more of its jobs complete with a state that is not passed: `errored`, `failed`, or `canceled`.
 
 In the following table, we reported the number of the collected builds based on their state:
 
@@ -59,26 +59,28 @@ Every build is triggered by an event. In particular, in the following table it i
 |----------------------------|:-----------:|:-------------:|:-----------:|:--------:|
 | **Number of the builds**   | 7.172       | 6.266         | 539         | 160      |
 
-Using the information extracted from the Travis API, we also classified the builds based on the build duration expressed in seconds. The following table shows the number of the builds per different intervals of build time.
-
-In addition to the classic events (`push` and `pull request`), there can be other two types of events: `cron` and `pull request`. 
+In addition to the classic events (`push` and `pull request`), there can be other two types of triggering events: `cron` and `pull request`. 
 
 The event type `cron` means that the build has been triggered via the [Travis CI cron jobs](https://docs.travis-ci.com/user/cron-jobs/), that can run builds at regular scheduled intervals independently of whether any commits were pushed to the repository.
 
 The event type `api` means that the build has been triggered using the Travis CI API.
 
+Using the information extracted from the Travis CI API, it is possible to know also the duration of a build, where the term `duration` is intended as the wall clock time in seconds to produce and execute a build.
+
+The following table shows the number of the builds per different intervals of duration:
+
 |                                            | Number of the builds   |
 |:------------------------------------------:|-----------------------:|
-| **0 &lt; build_time &le; 100**             |                 1.527  |
-| **100 &lt; build_time &le; 500**           |                 3.950  |
-| **500 &lt; build_time &le; 1.000**         |                 1.443  |
-| **1.000 &lt; build_time &le; 5.000**       |                 3.400  |
-| **5.000 &lt; build_time &le; 10.000**      |                 1.220  |
-| **10.000 &lt; build_time &le; 25.000**     |                 2.172  |
-| **25.000 &lt; build_time &le; 50.000**     |                   408  |
-| **build_time &gt; 50.000**                 |                    17  |
+| **0 &lt; duration &le; 100**             |                 1.527  |
+| **100 &lt; duration &le; 500**           |                 3.950  |
+| **500 &lt; duration &le; 1.000**         |                 1.443  |
+| **1.000 &lt; duration &le; 5.000**       |                 3.400  |
+| **5.000 &lt; duration &le; 10.000**      |                 1.220  |
+| **10.000 &lt; duration &le; 25.000**     |                 2.172  |
+| **25.000 &lt; duration &le; 50.000**     |                   408  |
+| **duration &gt; 50.000**                 |                    17  |
 
-The minimum build time recorded has been 3 seconds (`build` [357685462](https://github.com/repairnator/repairnator-experiments/blob/master/builds/357685462.json), `branch` [as0kir-topjava-357685462-20180324-053259](https://github.com/repairnator/repairnator-experiments/tree/as0kir-topjava-357685462-20180324-053259)), while the maximum build time recorded has been 60.035 seconds (`build` [247511890](https://github.com/repairnator/repairnator-experiments/blob/master/builds/247511890.json), `branch` [apache-flink-247511890-20170627-234202_bugonly](https://github.com/repairnator/repairnator-experiments/tree/apache-flink-247511890-20170627-234202_bugonly)).
+The minimum duration recorded has been 3 seconds (`build` [357685462](https://github.com/repairnator/repairnator-experiments/blob/master/builds/357685462.json), `branch` [as0kir-topjava-357685462-20180324-053259](https://github.com/repairnator/repairnator-experiments/tree/as0kir-topjava-357685462-20180324-053259)), while the maximum duration recorded has been 60.035 seconds (`build` [247511890](https://github.com/repairnator/repairnator-experiments/blob/master/builds/247511890.json), `branch` [apache-flink-247511890-20170627-234202_bugonly](https://github.com/repairnator/repairnator-experiments/tree/apache-flink-247511890-20170627-234202_bugonly)).
 
 ### Builds Information extracted using Repairnator
 
