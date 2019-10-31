@@ -1,6 +1,6 @@
 # repairnator-experiments
 
-This is an open-science repository whith data related to ["How to Design a Program Repair Bot? Insights from the Repairnator Project"](https://hal.inria.fr/hal-01691496/document) (ICSE 2018) and [Repairnator patches programs automatically](https://ubiquity.acm.org/article.cfm?id=3349589), (Ubiquity, Association for Computing Machinery, 2019)
+This is an open-science repository whith data related to ["How to Design a Program Repair Bot? Insights from the Repairnator Project"](https://hal.inria.fr/hal-01691496/document) (ICSE 2018) and [Repairnator patches programs automatically](https://ubiquity.acm.org/article.cfm?id=3349589), (Ubiquity, Association for Computing Machinery, 2019).
 
 ```Bibtex
 @inproceedings{repairnator,
@@ -11,7 +11,7 @@ This is an open-science repository whith data related to ["How to Design a Progr
 }
 ```
 
-This repository aims to contain the code of the failing Java projects and also information about the bugs reproduction, test failures and repair attempt logs using three different repair tools: [NPEFix](https://github.com/SpoonLabs/npefix), [Nopol](https://github.com/SpoonLabs/nopol), and [Astor](https://github.com/SpoonLabs/astor).
+This repository aims to contain the code of the failing Java projects and also information about the bugs reproduction, test failures and repair attempts using three different repair tools: [NPEFix](https://github.com/SpoonLabs/npefix), [Nopol](https://github.com/SpoonLabs/nopol), and [Astor](https://github.com/SpoonLabs/astor).
 
 ## Content of the repository
 
@@ -26,11 +26,11 @@ More details about every entry listed above will be provided in the subsequent s
 
 The repository contains the builds collected in the period between February 2017 and August 2018.
 
-There are currently 14.137 build JSON files in the `builds` folder, each of them associated to a Continuous Integration (CI) build failure of a Java program that uses Maven as building tool.
+There are currently 14.137 build JSON files in the `builds` folder, each of them associated with a Continuous Integration (CI) build failure of a Java program that uses Maven as building tool.
 
 The name of these JSON files corresponds to the Travis CI build identifier and their content is the result of the Travis CI API V3 ```GET /build/{build.id}```. More details can be found on the [official documentation](https://docs.travis-ci.com/user/developer/#api-v3).
 
-There are 14.137 different branches (excluding master branch), each of them associated to a build failure. In particular, every branch can have 2, 3 or 4 commits, as reported in the following table:
+There are 14.137 different branches (excluding master branch), each of them associated with a build failure. In particular, every branch can have 2, 3 or 4 commits, as reported in the following table:
 
 |                            | 2 commits   | 3 commits   | 4 commits   |
 |----------------------------|:-----------:|:-----------:|:-----------:|
@@ -39,7 +39,7 @@ There are 14.137 different branches (excluding master branch), each of them asso
 Most of the branches have 3 commits, where:
 * The first one is the failing one;
 * The second one contains metadata and log infomation regarding the building of the project;
-* The third one, optional, contains a patch developed by an automatic program repair techinque.
+* The third one adds other information about the failure and the reproduction of the bug. In addition, it can contain a patch developed by an automatic program repair technique, if any.
 
 The branches that have 2 commits have the same information of the branches with 3 commits, and the only difference is that it has been created a single commit with all the data that usually are separated in the second and the third commit.
 
@@ -47,7 +47,7 @@ The branches that have 4 commits have one commit (the third one) that contains a
 
 ## Builds information extracted from the Travis CI API
 
-The use of Travis CI API allowed to collect useful information about the collected failing builds, such as their states, the trigger events and their duration.
+The use of Travis CI API allowed to gather useful information about the collected failing builds, such as their states, the trigger events and their duration.
 
 ### States of the collected failing builds
 
@@ -94,7 +94,7 @@ The minimum duration recorded has been 3 seconds (`build` [357685462](https://gi
 
 ## Builds information extracted using Repairnator
 
-The use of Repairnator allowed to collect a set of data about the bug reproduction, test failures and repair attempts. These data are stored in a specific branch for every build failure. In particular, every branch is linked to a build JSON file in `master` branch and, as well as containing the source code of the buggy program, it also has some files with the keyword `repairnator`in their name. These files contain the information collected by Repairnator. There are also folders with the keyword `repairnator` in their names, and they contain the patches generated using a program repair tool.
+The use of Repairnator allowed to collect a set of data about the bugs reproduction, test failures and repair attempts. These data are stored in a specific branch for every build failure. In particular, every branch is linked to a build JSON file in `master` branch and, as well as containing the source code of the buggy program, it also has some files with the keyword `repairnator`in their name. These files contain the information collected by Repairnator. There are also folders with the keyword `repairnator` in their names, and they contain the patches generated using a program repair tool.
 
 ### repairnator.json files
 
@@ -108,7 +108,7 @@ Every branch has a file called `repairnator.json` that contains the data reporte
 | failingModule            | The failing module during the building of the project.                                    |
 | failing-test-cases       | The list of the failing test cases.                                                       |
 | hostname                 | The hostname used to run the Repairnator inspector.                                          |
-| metrics                  | It contains information about the program associated with the failing build, such as the number of the source code files, the number of the test cases and the number of the used libraries. It also contains other information, such as the duration expressed in seconds to reproduce the bug, the date of the buggy build, and the date of the bug reproduction.                                                                                                      |
+| metrics                  | It contains information about the program associated with the failing build, such as the number of the program files, the number of the test cases and the number of the used libraries. It also contains other information, such as the duration expressed in seconds to reproduce the bug, the date of the buggy build, and the date of the bug reproduction.                                                                                                      |
 | repo                     | The name of the repository associated with the failing build.                             |
 | totalNumberErroringTests | The total number of the erroring test cases.                                              |
 | totalNumberFailingTests  | The total number of the failing test cases.                                               |
@@ -146,7 +146,7 @@ NPEFix is the second program repair tool used during the experiment and it has b
 
 ### Repairnator Astor files
 
-Astor is the third program repair tool used during the experiment and it has been used starting from September 2017. There are 4 log files related to the execution of Astor that can be found in the branches, as reported in the following table:
+Astor is the third program repair tool used during the experiment and it has been used starting from September 2017. There are 4 files related to the execution of Astor that can be found in the branches, as reported in the following table:
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
@@ -166,7 +166,7 @@ As reported in the following table, there are some branches that also have a fol
 
 ### Types of the collected failing builds
 
-Analyzing the `repairnator.json` files, it is possible to know that there are two main `bug type` associated to every collected build:
+Analyzing the `repairnator.json` files, it is possible to know that there are two main `bug type` associated with every collected build:
 
 * only_fail;
 * failing_passing.
