@@ -11,20 +11,20 @@ This is an open-science repository whith data related to ["How to Design a Progr
 }
 ```
 
-This repository aims to contain the code of the failing projects and also information about the bugs reproduction, test failures and repair attempt logs using three different repair tools: [NPEFix](https://github.com/SpoonLabs/npefix), [Nopol](https://github.com/SpoonLabs/nopol), and [Astor](https://github.com/SpoonLabs/astor).
+This repository aims to contain the code of the failing Java projects and also information about the bugs reproduction, test failures and repair attempt logs using three different repair tools: [NPEFix](https://github.com/SpoonLabs/npefix), [Nopol](https://github.com/SpoonLabs/nopol), and [Astor](https://github.com/SpoonLabs/astor).
 
 ## Contents
 The structure of the repository is as follows:
 * Branch `master` contains the `builds` folder and the documentation of this repository;
-* The `builds` folder contains a specific JSON file obtained using the Travis API for every Travis CI build failure related to Java programs that use Maven as building tool;
+* The `builds` folder contains a specific JSON file obtained using the Travis CI API for every Travis CI build failure related to Java programs that use Maven as building tool;
 * For each of these failing builds, there is a specific branch with all the information related to the building of a project, bug reproduction, test failures and repair attempt logs.
 
-In the subsequent sections we will provide more details about every entry listed above.
+More details about every entry listed above will be provided in the subsequent sections.
 
 ## General information
 The repository currently contains 14.137 build JSON files in the `builds` folder, each of them associated to a Continuous Integration (CI) build failure of a Java program that uses Maven as building tool.
 
-The name of these JSON files corresponds to the Travis CI build identifier and their content is the result of the Travis API V3 ```GET /build/{build.id}```. More details can be found on the [official documentation](https://docs.travis-ci.com/user/developer/#api-v3).
+The name of these JSON files corresponds to the Travis CI build identifier and their content is the result of the Travis CI API V3 ```GET /build/{build.id}```. More details can be found on the [official documentation](https://docs.travis-ci.com/user/developer/#api-v3).
 
 There are 14.137 different branches (excluding master branch), each of them associated to a build failure. In particular, every branch can have 2, 3 or 4 commits, as reported in the following table:
 
@@ -41,25 +41,31 @@ The branches that have 2 commits have the same information of the branches with 
 
 The branches that have 4 commits have one commit (the third one) that contains also the human patch.
 
-## Builds Information extracted from the Travis API
+## Builds Information extracted from the Travis CI API
 
-Starting from January 2016 to April 2019, we collected the build failures in Travis CI.
+The repository contains the builds collected in the period between February 2017 and August 2018.
 
 A build can have different states, and as reported in the [official documentation of Travis CI](https://docs.travis-ci.com/user/for-beginners/#breaking-the-build), a build is considered broken when one or more of its jobs complete with a state that is not passed: errored, failed, or canceled.
 
-In the following table, we reported the number of the collected builds, divided by their state:
+In the following table, we reported the number of the collected builds based on their state:
 
 |                            | failed      | passed      | errored     | canceled  |
 |----------------------------|:-----------:|:-----------:|:-----------:|:---------:|
 | **Number of the builds**   | 13.181      | 896         | 48          | 12        |
 
-Every build is triggered by an event. In particular, in the following table it is possibile to see the number of the collected builds divided by the type of their trigger event:
+Every build is triggered by an event. In particular, in the following table it is possible to see the number of the collected builds that have been triggered by a specific event:
 
 |                            | push        | pull request  | cron        | api      |
 |----------------------------|:-----------:|:-------------:|:-----------:|:--------:|
 | **Number of the builds**   | 7.172       | 6.266         | 539         | 160      |
 
-Using the information extracted from the Travis API, we also divided the builds based on the build duration expressed in seconds. The following table shows the number of the builds divided by different build time ranges:
+Using the information extracted from the Travis API, we also classified the builds based on the build duration expressed in seconds. The following table shows the number of the builds per different intervals of build time.
+
+In addition to the classic events (`push` and `pull request`), there can be other two types of events: `cron` and `pull request`. 
+
+The event type `cron` means that the build has been triggered via the [Travis CI cron jobs](https://docs.travis-ci.com/user/cron-jobs/), that can run builds at regular scheduled intervals independently of whether any commits were pushed to the repository.
+
+The event type `api` means that the build has been triggered using the Travis CI API.
 
 |                                            | Number of the builds   |
 |:------------------------------------------:|-----------------------:|
