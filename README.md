@@ -45,7 +45,7 @@ The branches that have 2 commits have the same information of the branches with 
 
 The branches that have 4 commits have one commit (the third one) that contains also the human patch.
 
-## Builds Information extracted from the Travis CI API
+## Builds information extracted from the Travis CI API
 
 A build can have different states, and as reported in the [official documentation of Travis CI](https://docs.travis-ci.com/user/for-beginners/#breaking-the-build), a build is considered broken when one or more of its jobs complete with a state that is not passed: `errored`, `failed`, or `canceled`.
 
@@ -84,9 +84,9 @@ The following table shows the number of the builds per different intervals of du
 
 The minimum duration recorded has been 3 seconds (`build` [357685462](https://github.com/repairnator/repairnator-experiments/blob/master/builds/357685462.json), `branch` [as0kir-topjava-357685462-20180324-053259](https://github.com/repairnator/repairnator-experiments/tree/as0kir-topjava-357685462-20180324-053259)), while the maximum duration recorded has been 60.035 seconds (`build` [247511890](https://github.com/repairnator/repairnator-experiments/blob/master/builds/247511890.json), `branch` [apache-flink-247511890-20170627-234202_bugonly](https://github.com/repairnator/repairnator-experiments/tree/apache-flink-247511890-20170627-234202_bugonly)).
 
-## Builds Information extracted using Repairnator
+## Builds information extracted using Repairnator
 
-The use of Repairnator allowed to collect a set of data about the bug reproduction, test failures and repair attempts. These data are stored in a specific branch for every build failure. In particular, every branch is linked to a build JSON file in `master` branch and, as well as containing the source code of the buggy program, it also has some files with the keyword `repairnator`in their name. These files contain the information collected by Repairnator.
+The use of Repairnator allowed to collect a set of data about the bug reproduction, test failures and repair attempts. These data are stored in a specific branch for every build failure. In particular, every branch is linked to a build JSON file in `master` branch and, as well as containing the source code of the buggy program, it also has some files with the keyword `repairnator`in their name. These files contain the information collected by Repairnator. There are also folders with the keyword `repairnator` in their names, and they contain the patches generated using a program repair tool.
 
 ### repairnator.json files
 
@@ -107,7 +107,7 @@ Every branch has a file called `repairnator.json` that contains the data reporte
 | totalNumberRunningTests  | The total number of the running test cases.                                               |
 | totalNumberSkippingTests | The total number of the skipping test cases.                                              |
 
-### Repairnator Maven Log Files
+### Repairnator Maven files
 
 Repairnator also collects information about the different phases of the Maven build life cycle. In particual, there are four different files. It is possible to see the number of the branches that have these files in the following table:
 
@@ -118,7 +118,7 @@ Repairnator also collects information about the different phases of the Maven bu
 | repairnator.maven.computeclasspath.log    |                 12.804 |
 | repairnator.maven.resolvedependency.log   |                  7.845 |
 
-### Repairnator Nopol Files
+### Repairnator Nopol files
 
 Nopol is one of the three program repair tools used in order to try to generate a patch for the failing builds. Nopol has been used since February 2017. The file `repairnator.nopol.results` contains information about its execution, such as its configuration and the allocated time. In the following table it is possible to see the number of the branches that contain this file:
 
@@ -126,7 +126,7 @@ Nopol is one of the three program repair tools used in order to try to generate 
 |:------------------------------------------|-----------------------:|
 | repairnator.nopol.results                 |                  8.914 |
 
-### Repairnator NPEFix Files
+### Repairnator NPEFix files
 
 NPEFix is the second program repair tool used during the experiment and it has been used since August 2017. In particular, it has been exploited only when a `NullPointerException` has been encountered during the execution of the test suite. In the following table there are the different files associated with the execution of NPEFix and the number of branches that have these files:
 
@@ -136,7 +136,7 @@ NPEFix is the second program repair tool used during the experiment and it has b
 | repairnator.maven.npefix.log              |                    715 |
 | repairnator.npefix.results                |                    289 |
 
-### Repairnator Astor Files
+### Repairnator Astor files
 
 Astor is the third program repair tool used during the experiment and it has been used starting from September 2017. There are 4 log files related to the execution of Astor that can be found in the branches, as reported in the following table:
 
@@ -147,58 +147,65 @@ Astor is the third program repair tool used during the experiment and it has bee
 | repairnator.astor.results.json            |                  1.083 |
 | repairnator.astor.mutation.results.json   |                    945 |
 
+### Repairnator Patch folders
 
+As reported in the following table, there are some branches that also have a folder containing the patches generated by the automatic program repair tools:
 
+| Folder                                    | Number of the branches |
+|:------------------------------------------|-----------------------:|
+| repairnator-patches                       |                    120 |
+| repairnatorPatches                        |                     52 |
 
-Analyzing the `repairnator.json` files, it is possible to know that are two main `bug type` associated to every build:
+### Types of the failing builds collected
+
+Analyzing the `repairnator.json` files, it is possible to know that there are two main `bug type` associated to every collected build:
+
 * only_fail;
 * failing_passing.
 
-In the following table, we reported the number of the builds for both of them:
+In the following table, it is reported the number of the builds based on their type:
 
 |                            | only_fail   | failing_passing |     
 |----------------------------|:-----------:|:---------------:|
 | **Number of the builds**   |      13.390 |             747 |
 
-In particular, removing the custom exceptions related to a specific program, we analyzed that the top 20 common failure types are the following ones:
+The type `failing_passing` means that the build failed because at least one test case failed, and the next build was a passing build that did not contain changes in the test files.
 
-| Failure type                                  | Number of the builds |
-|:----------------------------------------------|---------------------:|
-| java.lang.AssertionError                      |                7.280 |
-| java.lang.NullPointerException                |                1.836 |
-| org.junit.ComparisonFailure                   |                1.293 |
-| java.lang.IllegalStateException               |                1.280 |
-| java.lang.AssertionError                      |                1.198 |
-| java.lang.RuntimeException                    |                  736 |
-| java.lang.Exception                           |                  722 |
-| java.lang.NoClassDefFoundError                |                  442 |
-| junit.framework.AssertionFailedError          |                  433 |
-| java.lang.IllegalArgumentException            |                  420 |
-| java.io.IOException                           |                  404 |
-| org.junit.runners.model.TestTimedOutException |                  276 |
-| java.lang.NullPointerException:               |                  261 |
-| java.lang.ExceptionInInitializerError         |                  261 |
-| java.io.FileNotFoundException                 |                  154 |
-| junit.framework.ComparisonFailure             |                  136 |
-| java.lang.IndexOutOfBoundsException           |                  117 |
-| java.util.concurrent.TimeoutException         |                   99 |
-| java.net.MalformedURLException                |                   92 |
-| org.junit.AssumptionViolatedException         |                   90 |
+## Most common test failure types
 
-On the contrary, considering only the custom exceptions, we analyzed that the top 10 common failure types are the following ones:
+Considering the 14.137 collected builds, we analyzed the different failure types occurred. Without taking into account the custom exceptions related to the specific projects, `AssertionError` is the most common failure type with 7.280 occurences observed. The following table shows the top 10 common failure types observed:
 
-| Failure type                                            | Number of the builds |
-|:--------------------------------------------------------|---------------------:|
-| skipped                                                 |                  346 |
-| org.postgresql.util.PSQLException                       |                  228 |
-| redis.clients.jedis.exceptions.JedisConnectionException |                  173 |
-| redis.clients.jedis.exceptions.JedisException           |                  163 |
-| com.facebook.presto.spi.PrestoException                 |                  132 |
-| org.springframework.beans.factory.BeanCreationException |                  112 |
-| org.openqa.selenium.WebDriverException                  |                  105 |
-| com.spotify.docker.client.exceptions.DockerException    |                   96 |
-| spoon.SpoonException                                    |                   96 |
-| com.mongodb.MongoTimeoutException                       |                   95 |
+| Failure type                         | Occurrences |
+|:-------------------------------------|------------:|
+| java.lang.AssertionError             |       8.478 |
+| java.lang.NullPointerException       |       2.097 |
+| org.junit.ComparisonFailure          |       1.293 |
+| java.lang.IllegalStateException      |       1.281 |
+| java.lang.RuntimeException           |         737 |
+| java.lang.Exception                  |         722 |
+| java.lang.NoClassDefFoundError       |         442 |
+| junit.framework.AssertionFailedError |         437 |
+| java.lang.IllegalArgumentException   |         420 |
+| java.io.IOException                  |         404 |
+| **Other**                            |       2.414 |
+| **Total**                            |      18.725 |
+
+On the contrary, taking into account only the custom exceptions, the top 10 common failure types observed are the following ones:
+
+| Failure Type                                            | Occurrences |
+|:--------------------------------------------------------|------------:|
+| skipped                                                 |         346 |
+| org.postgresql.util.PSQLException                       |         228 |
+| redis.clients.jedis.exceptions.JedisConnectionException |         173 |
+| redis.clients.jedis.exceptions.JedisException           |         163 |
+| com.facebook.presto.spi.PrestoException                 |         132 |
+| org.springframework.beans.factory.BeanCreationException |         112 |
+| org.openqa.selenium.WebDriverException                  |         105 |
+| com.spotify.docker.client.exceptions.DockerException    |          96 |
+| spoon.SpoonException                                    |          96 |
+| com.mongodb.MongoTimeoutException                       |          95 |
+| **Other**                                               |       2.678 |
+| **Total**                                               |       4.224 |
 
 During the build process there can be many failing test cases. In the following table it is possible to see the number of the builds divided by the number of the failing tests:
 
