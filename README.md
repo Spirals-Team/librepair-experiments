@@ -107,37 +107,48 @@ Every branch has a file called `repairnator.json` that contains the data reporte
 | totalNumberRunningTests  | The total number of the running test cases.                                               |
 | totalNumberSkippingTests | The total number of the skipping test cases.                                              |
 
-#### Repairnator Maven Log Files
+### Repairnator Maven Log Files
+
+Repairnator also collects information about the different phases of the Maven build life cycle. In particual, there are four different files. It is possible to see the number of the branches that have these files in the following table:
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
-| repairnator.maven.buildproject.log        |                  12860 |
-| repairnator.maven.testproject.log         |                  12860 |
-| repairnator.maven.computeclasspath.log    |                  12804 |
-| repairnator.maven.resolvedependency.log   |                   7845 |
+| repairnator.maven.buildproject.log        |                 12.860 |
+| repairnator.maven.testproject.log         |                 12.860 |
+| repairnator.maven.computeclasspath.log    |                 12.804 |
+| repairnator.maven.resolvedependency.log   |                  7.845 |
 
-#### Repairnator Nopol Files
+### Repairnator Nopol Files
 
-| File                                      | Number of the branches |
-|:------------------------------------------|-----------------------:|
-| repairnator.nopol.results                 |                   8914 |
-
-#### Repairnator Astor Files
+Nopol is one of the three program repair tools used in order to try to generate a patch for the failing builds. Nopol has been used since February 2017. The file `repairnator.nopol.results` contains information about its execution, such as its configuration and the allocated time. In the following table it is possible to see the number of the branches that contain this file:
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
-| repairnator.astor.log                     |                   6218 |
-| repairnator.astor.mutation.log            |                   4835 |
-| repairnator.astor.results.json            |                   1083 |
-| repairnator.astor.mutation.results.json   |                    945 |
+| repairnator.nopol.results                 |                  8.914 |
 
-#### Repairnator NPEFix Files
+### Repairnator NPEFix Files
+
+NPEFix is the second program repair tool used during the experiment and it has been used since August 2017. In particular, it has been exploited only when a `NullPointerException` has been encountered during the execution of the test suite. In the following table there are the different files associated with the execution of NPEFix and the number of branches that have these files:
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
 | repairnator.maven.nperepair.log           |                    922 |
 | repairnator.maven.npefix.log              |                    715 |
 | repairnator.npefix.results                |                    289 |
+
+### Repairnator Astor Files
+
+Astor is the third program repair tool used during the experiment and it has been used starting from September 2017. There are 4 log files related to the execution of Astor that can be found in the branches, as reported in the following table:
+
+| File                                      | Number of the branches |
+|:------------------------------------------|-----------------------:|
+| repairnator.astor.log                     |                  6.218 |
+| repairnator.astor.mutation.log            |                  4.835 |
+| repairnator.astor.results.json            |                  1.083 |
+| repairnator.astor.mutation.results.json   |                    945 |
+
+
+
 
 Analyzing the `repairnator.json` files, it is possible to know that are two main `bug type` associated to every build:
 * only_fail;
@@ -153,11 +164,11 @@ In particular, removing the custom exceptions related to a specific program, we 
 
 | Failure type                                  | Number of the builds |
 |:----------------------------------------------|---------------------:|
-| java.lang.AssertionError                      |                 7280 |
-| java.lang.NullPointerException                |                 1836 |
-| org.junit.ComparisonFailure                   |                 1293 |
-| java.lang.IllegalStateException               |                 1280 |
-| java.lang.AssertionError                      |                 1198 |
+| java.lang.AssertionError                      |                7.280 |
+| java.lang.NullPointerException                |                1.836 |
+| org.junit.ComparisonFailure                   |                1.293 |
+| java.lang.IllegalStateException               |                1.280 |
+| java.lang.AssertionError                      |                1.198 |
 | java.lang.RuntimeException                    |                  736 |
 | java.lang.Exception                           |                  722 |
 | java.lang.NoClassDefFoundError                |                  442 |
