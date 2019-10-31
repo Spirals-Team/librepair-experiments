@@ -156,7 +156,7 @@ As reported in the following table, there are some branches that also have a fol
 | repairnator-patches                       |                    120 |
 | repairnatorPatches                        |                     52 |
 
-### Types of the failing builds collected
+### Types of the collected failing builds
 
 Analyzing the `repairnator.json` files, it is possible to know that there are two main `bug type` associated to every collected build:
 
@@ -171,7 +171,7 @@ In the following table, it is reported the number of the builds based on their t
 
 The type `failing_passing` means that the build failed because at least one test case failed, and the next build was a passing build that did not contain changes in the test files.
 
-## Most common test failure types
+### Most common test failure types
 
 Considering the 14.137 collected builds, we analyzed the different failure types occurred. Without taking into account the custom exceptions related to the specific projects, `AssertionError` is the most common failure type with 7.280 occurences observed. The following table shows the top 10 common failure types observed:
 
@@ -207,7 +207,9 @@ On the contrary, taking into account only the custom exceptions, the top 10 comm
 | **Other**                                               |       2.678 |
 | **Total**                                               |       4.224 |
 
-During the build process there can be many failing test cases. In the following table it is possible to see the number of the builds divided by the number of the failing tests:
+### Number of the failing test cases per build
+
+During the build process there can be many failing test cases. In the following table it is possible to see the number of the builds based on the number of their failing test cases:
 
 | Number of the failing test cases           | Number of the builds   |
 |:------------------------------------------:|-----------------------:|
@@ -217,9 +219,11 @@ During the build process there can be many failing test cases. In the following 
 | **4**                                      |                   601  |
 | **5**                                      |                   177  |
 | **6**                                      |                   735  |
-| **&gt; 10**                                |                   556  |
+| **&gt; 6**                                 |                   956  |
 
-The number of the builds divided by the number of the erroring test cases is reported in the following table:
+### Number of the erroring test cases per build
+
+The number of the builds based on the number of their erroring test cases is reported in the following table:
 
 | Number of the erroring test cases          | Number of the builds   |
 |:------------------------------------------:|-----------------------:|
@@ -229,4 +233,4 @@ The number of the builds divided by the number of the erroring test cases is rep
 | **4**                                      |                   297  |
 | **5**                                      |                   233  |
 | **6**                                      |                   273  |
-| **&gt; 50**                                |                 1.162  |
+| **&gt; 6**                                 |                 2.775  |
