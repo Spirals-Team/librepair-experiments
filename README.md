@@ -47,6 +47,10 @@ The branches that have 4 commits have one commit (the third one) that contains a
 
 ## Builds information extracted from the Travis CI API
 
+The use of Travis CI API allowed to collect useful information about the collected failing builds, such as their states, the trigger events and their duration.
+
+### States of the collected failing builds
+
 A build can have different states, and as reported in the [official documentation of Travis CI](https://docs.travis-ci.com/user/for-beginners/#breaking-the-build), a build is considered broken when one or more of its jobs complete with a state that is not passed: `errored`, `failed`, or `canceled`.
 
 In the following table, we reported the number of the collected builds based on their state:
@@ -54,6 +58,8 @@ In the following table, we reported the number of the collected builds based on 
 |                            | failed      | passed      | errored     | canceled  |
 |----------------------------|:-----------:|:-----------:|:-----------:|:---------:|
 | **Number of the builds**   | 13.181      | 896         | 48          | 12        |
+
+### Trigger events of the collected failing builds
 
 Every build is triggered by an event. In particular, in the following table it is possible to see the number of the collected builds that have been triggered by a specific event:
 
@@ -66,6 +72,8 @@ In addition to the classic events (`push` and `pull request`), there can be othe
 The event type `cron` means that the build has been triggered via the [Travis CI cron jobs](https://docs.travis-ci.com/user/cron-jobs/), that can run builds at regular scheduled intervals independently of whether any commits were pushed to the repository.
 
 The event type `api` means that the build has been triggered using the Travis CI API.
+
+### Duration of the collected failing builds
 
 Using the information extracted from the Travis CI API, it is possible to know also the duration of a build, where the term `duration` is intended as the wall clock time in seconds to produce and execute a build.
 
