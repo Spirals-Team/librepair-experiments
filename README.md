@@ -11,20 +11,20 @@ This is an open-science repository whith data related to ["How to Design a Progr
 }
 ```
 
-This repository aims to contain code of failing projects.
+This repository aims to contain the code of the failing projects and also information about the bugs reproduction, test failures and repair attempt logs using three different repair tools: [NPEFix](https://github.com/SpoonLabs/npefix), [Nopol](https://github.com/SpoonLabs/nopol), and [Astor](https://github.com/SpoonLabs/astor).
 
 ## Contents
 The structure of the repository is as follows:
 * Branch `master` contains the `builds` folder and the documentation of this repository;
-* The `builds` folder contains a specific JSON file for every Travis CI build failure related to Java programs obtained using the Travis API;
-* For each of these failing builds, there is a separated branch with all the information related to the building of a project.
+* The `builds` folder contains a specific JSON file obtained using the Travis API for every Travis CI build failure related to Java programs that use Maven as building tool;
+* For each of these failing builds, there is a specific branch with all the information related to the building of a project, bug reproduction, test failures and repair attempt logs.
 
 In the subsequent sections we will provide more details about every entry listed above.
 
-### General information
-The repository currently contains 14.137 build JSON files in the `builds` folder, each of them associated to a continuous integration (CI) build failure of a Java program that uses Maven as building tool.
+## General information
+The repository currently contains 14.137 build JSON files in the `builds` folder, each of them associated to a Continuous Integration (CI) build failure of a Java program that uses Maven as building tool.
 
-The name of these JSON files corresponds to the Travis CI build identifier and their content is the result of the Travis API ```GET /build/{build.id}```.
+The name of these JSON files corresponds to the Travis CI build identifier and their content is the result of the Travis API V3 ```GET /build/{build.id}```. More details can be found on the [official documentation](https://docs.travis-ci.com/user/developer/#api-v3).
 
 There are 14.137 different branches (excluding master branch), each of them associated to a build failure. In particular, every branch can have 2, 3 or 4 commits, as reported in the following table:
 
@@ -32,16 +32,16 @@ There are 14.137 different branches (excluding master branch), each of them asso
 |----------------------------|:-----------:|:-----------:|:-----------:|
 | **Number of the branches** | 15          | 13.875      | 247         |
 
-As you can see, most of the branches have 3 commits, where:
+Most of the branches have 3 commits, where:
 * The first one is the failing one;
 * The second one contains metadata and log infomation regarding the building of the project;
 * The third one, optional, contains a patch developed by an automatic program repair techinque.
 
+The branches that have 2 commits have the same information of the branches with 3 commits, and the only difference is that it has been created a single commit with all the data that usually are separated in the second and the third commit.
+
 The branches that have 4 commits have one commit (the third one) that contains also the human patch.
 
-Every branch associated to a build failure has the file `repairnator.json` that contains relevant information regarding the building of the project.
-
-### Builds Information extracted from the Travis API
+## Builds Information extracted from the Travis API
 
 Starting from January 2016 to April 2019, we collected the build failures in Travis CI.
 
