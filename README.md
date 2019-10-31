@@ -221,6 +221,8 @@ During the build process there can be many failing test cases. In the following 
 | **6**                                      |                   735  |
 | **&gt; 6**                                 |                   956  |
 
+The highest number of the failing test cases observed in a single build has been 804 (`build` [412170129](https://github.com/repairnator/repairnator-experiments/blob/master/builds/412170129.json), `branch` [SeleniumHQ-htmlunit-driver-412170129-20180804-232323](https://github.com/repairnator/repairnator-experiments/tree/SeleniumHQ-htmlunit-driver-412170129-20180804-232323)).
+
 ### Number of the erroring test cases per build
 
 The number of the builds based on the number of their erroring test cases is reported in the following table:
@@ -234,3 +236,6 @@ The number of the builds based on the number of their erroring test cases is rep
 | **5**                                      |                   233  |
 | **6**                                      |                   273  |
 | **&gt; 6**                                 |                 2.775  |
+
+The highest number of the erroring test cases observed in a single build has been 14.783 (`build` [376595276
+](https://github.com/repairnator/repairnator-experiments/blob/master/builds/376595276.json), `branch` [druid-io-druid-376595276-20180509-013859](https://github.com/repairnator/repairnator-experiments/tree/druid-io-druid-376595276-20180509-013859)).
