@@ -4,9 +4,9 @@ This is an open-science repository whith data related to ["How to Design a Progr
 
 ```Bibtex
 @inproceedings{repairnator,
- title = {{How to Design a Program Repair Bot? Insights from the Repairnator Project}},
+ title = {How to Design a Program Repair Bot? Insights from the Repairnator Project},
  author = {Urli, Simon and Yu, Zhongxing and Seinturier, Lionel and Monperrus, Martin},
- booktitle = {{Proceedings of the 40th International Conference on Software Engineering}},
+ booktitle = {Proceedings of the 40th International Conference on Software Engineering},
  year = {2018}
 }
 ```
