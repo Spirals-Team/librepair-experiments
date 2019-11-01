@@ -18,7 +18,7 @@ This repository aims to contain the code of the failing Java projects and also i
 The structure of the repository is as follows:
 * Branch `master` contains the `builds` folder and the documentation of this repository;
 * The `builds` folder contains a specific JSON file obtained using the Travis CI API for every Travis CI build failure related to Java programs that use Maven as building tool;
-* For each of these failing builds, there is a specific branch with all the information related to the building of a project, bug reproduction, failing tests and repair attempts.
+* For each of these failing builds, there is a specific branch with all the information related to the building of the project, bug reproduction, failing tests and repair attempts.
 
 More details about every entry listed above will be provided in the subsequent sections.
 
@@ -45,7 +45,7 @@ The branches that have 2 commits have the same information of the branches with 
 
 The branches that have 4 commits have one commit (the third one) that contains also the human patch.
 
-## Builds information extracted from the Travis CI API
+## Builds information extracted using Travis CI API
 
 The use of Travis CI API allowed to gather useful information about the collected failing builds, such as their states, the trigger events and their duration.
 
@@ -53,7 +53,7 @@ The use of Travis CI API allowed to gather useful information about the collecte
 
 A build can have different states, and as reported in the [official documentation of Travis CI](https://docs.travis-ci.com/user/for-beginners/#breaking-the-build), a build is considered broken when one or more of its jobs complete with a state that is not passed: `errored`, `failed`, or `canceled`.
 
-In the following table, we reported the number of the collected builds based on their state:
+In the following table, it is reported the number of the collected builds based on their state:
 
 |                            | failed      | passed      | errored     | canceled  |
 |----------------------------|:-----------:|:-----------:|:-----------:|:---------:|
@@ -105,7 +105,7 @@ Every branch has a file called `repairnator.json` that contains the data reporte
 | bugType                  | The type of the failing build.                                                             |
 | bugCommit                | The URL of the bug commit in which it is possible to see the diff with the previous one.  |
 | error-types              | The types of the errors occurred during the building of the project.                      |
-| failingModule            | The failing module during the building of the project.                                    |
+| failingModule            | The module failed during the building of the project.                                    |
 | failing-test-cases       | The list of the failing test cases.                                                       |
 | hostname                 | The hostname used to run the Repairnator inspector.                                          |
 | metrics                  | It contains information about the program associated with the failing build, such as the number of the program files, the number of the test cases and the number of the used libraries. It also contains other information, such as the duration expressed in seconds to reproduce the bug, the date of the buggy build, and the date of the bug reproduction.                                                                                                      |
@@ -143,7 +143,7 @@ Nopol is one of the three program repair tools used in order to try to generate 
 
 ### Repairnator NPEFix files
 
-NPEFix is the second program repair tool used during the experiment and it has been used since August 2017. In particular, it has been exploited only when a `NullPointerException` has been encountered during the execution of the test suite. In the following table there are the different files associated with the execution of NPEFix and the number of branches that have these files:
+NPEFix is the second program repair tool used during the experiment and it has been used since August 2017. In particular, it has been exploited only when a `NullPointerException` has been encountered during the execution of the test suite. In the following table, there are the different files associated with the execution of NPEFix and the number of branches that have these files:
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
@@ -159,7 +159,7 @@ NPEFix is the second program repair tool used during the experiment and it has b
 
 ### Repairnator Astor files
 
-Astor is the third program repair tool used during the experiment and it has been used starting from September 2017. There are 4 files related to the execution of Astor that can be found in the branches, as reported in the following table:
+Astor is the third program repair tool used during the experiment and it has been used starting from September 2017. There are 4 different files related to the execution of Astor that can be found in the branches, as reported in the following table:
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
@@ -173,7 +173,7 @@ Astor is the third program repair tool used during the experiment and it has bee
 * **repairnator.astor.log**: it contains log information about the execution of Astor, starting from the beginning (e.g., the creation of the [Spoon](http://spoon.gforge.inria.fr) model);
 * **repairnator.astor.mutation.log**: it contains log information about the execution of Astor, such as the modification points found with [GZoltar](http://www.gzoltar.com), and the mutation operators applied to these modification points in order to create a possible patch;
 * **repairnator.astor.results.json**: it contains the statistics about Astor execution, such as the number of the patches found and the total time used for its execution;
-* **repairnator.astor.mutation.results.json**: it contains information about the program variants created, such as the number of the variants successfully compiled and the number of program variants with compilation errors.
+* **repairnator.astor.mutation.results.json**: it contains information about the program variants created by Astor, such as the number of the variants successfully compiled and the number of program variants with compilation errors.
 
 ### Repairnator Patch folders
 
@@ -186,7 +186,7 @@ As reported in the following table, there are some branches that also have a fol
 
 ### Types of the collected failing builds
 
-Analyzing the `repairnator.json` files, it is possible to know that there are two main `bug type` associated with every collected build:
+Analyzing the `repairnator.json` files, it is possible to know that there are two possible `bugType` associated with every collected build:
 
 * only_fail;
 * failing_passing.
@@ -201,7 +201,7 @@ The type `failing_passing` means that the build failed because at least one test
 
 ### Most common test failure types
 
-Considering the 14.137 collected builds, we analyzed the different failure types occurred. Without taking into account the custom exceptions related to the specific projects, `AssertionError` is the most common failure type with 7.280 occurences observed. The following table shows the top 10 common failure types observed:
+Considering the 14.137 collected builds, we analyzed the different failure types occurred. Without taking into account the custom exceptions related to the specific projects, `AssertionError` is the most common failure type with 8.478 occurences observed. The following table shows the top 10 common failure types observed:
 
 | Failure type                         | Occurrences |
 |:-------------------------------------|------------:|
