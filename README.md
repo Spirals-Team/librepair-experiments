@@ -94,7 +94,7 @@ The minimum duration recorded has been 3 seconds (`build` [357685462](https://gi
 
 ## Builds information extracted using Repairnator
 
-The use of Repairnator allowed to collect a set of data about the bugs reproduction, test failures and repair attempts. These data are stored in a specific branch for every build failure. In particular, every branch is linked to a build JSON file in `master` branch and, as well as containing the source code of the buggy program, it also has some files with the keyword `repairnator`in their name. These files contain the information collected by Repairnator. There are also folders with the keyword `repairnator` in their names, and they contain the patches generated using a program repair tool.
+The use of Repairnator allowed to collect a set of data about the bugs reproduction, test failures and repair attempts. These data are stored in a specific branch for every build failure. In particular, every branch is linked to a build JSON file in `master` branch and, as well as containing the source code of the buggy program, it also has some files with the keyword `repairnator`in their name. These files contain information collected by Repairnator. There are also folders with the keyword `repairnator` in their names, and they contain the patches generated using a program repair tool.
 
 ### repairnator.json files
 
@@ -126,6 +126,13 @@ Repairnator also collects information about the different phases of the Maven bu
 | repairnator.maven.computeclasspath.log    |                 12.804 |
 | repairnator.maven.resolvedependency.log   |                  7.845 |
 
+#### Content of the files
+
+* **repairnator.maven.buildproject.log**: it contains log information about the building of a project, such as the operations related to the goals of Apache Maven Resources plugin;
+* **repairnator.maven.testproject.log**: it contains information about the execution of the test suite, such as the name of the executed test cases, and the number of the failing, running or skipped tests;
+* **repairnator.maven.computeclasspath.log**: it contains log information about the creation of the classpath file;
+* **repairnator.maven.resolvedependency.log**: it contains log information about the download of the necessary dependecies in order to build the project.
+
 ### Repairnator Nopol files
 
 Nopol is one of the three program repair tools used in order to try to generate a patch for the failing builds. Nopol has been used since February 2017. The file `repairnator.nopol.results` contains information about its execution, such as its configuration and the allocated time. In the following table it is possible to see the number of the branches that contain this file:
@@ -144,6 +151,12 @@ NPEFix is the second program repair tool used during the experiment and it has b
 | repairnator.maven.npefix.log              |                    715 |
 | repairnator.npefix.results                |                    289 |
 
+#### Content of the files
+
+* **repairnator.maven.nperepair.log**: it contains Maven log information about the building of a project executed by NPEFix;
+* **repairnator.maven.npefix.log**: it contains Maven log information about the execution of the test cases performed by NPEFix;
+* **repairnator.npefix.results**: it contains information about the execution of NPEFix, such as if it was successful or not.
+
 ### Repairnator Astor files
 
 Astor is the third program repair tool used during the experiment and it has been used starting from September 2017. There are 4 files related to the execution of Astor that can be found in the branches, as reported in the following table:
@@ -154,6 +167,13 @@ Astor is the third program repair tool used during the experiment and it has bee
 | repairnator.astor.mutation.log            |                  4.835 |
 | repairnator.astor.results.json            |                  1.083 |
 | repairnator.astor.mutation.results.json   |                    945 |
+
+#### Content of the files
+
+* **repairnator.astor.log**: it contains log information about the execution of Astor, starting from the beginning (e.g., the creation of the [Spoon](http://spoon.gforge.inria.fr) model);
+* **repairnator.astor.mutation.log**: it contains log information about the execution of Astor, such as the modification points found with [GZoltar](http://www.gzoltar.com), and the mutation operators applied to these modification points in order to create a possible patch;
+* **repairnator.astor.results.json**: it contains the statistics about Astor execution, such as the number of the patches found and the total time used for its execution;
+* **repairnator.astor.mutation.results.json**: it contains information about the program variants created, such as the number of the variants successfully compiled and the number of program variants with compilation errors.
 
 ### Repairnator Patch folders
 
