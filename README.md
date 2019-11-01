@@ -221,6 +221,26 @@ On the contrary, taking into account only the custom exceptions, the top 10 comm
 | **Other**                                               |       2.678 |
 | **Total**                                               |       4.224 |
 
+Note that in `repairnator.json` files, the are some cases in which the same exception could be reported in two different ways. In particular, considering the values in the array `FailureNames` of JSON object `metrics`, there can be some `repairnator.json` files in which the exception has been saved with the correct name and others in which the exception has been saved with a single `:` at the end of the name. For instance, you can find both `java.lang.NullPointerException` and `java.lang.NullPointerException:`.
+
+The complete list of these exceptions saved both with the correct name and with the symbol `:` at the end of the name is as follows:
+
+* java.lang.NullPointerException;
+* java.lang.ExceptionInInitializerError;
+* java.lang.AssertionError;
+* java.lang.NumberFormatException;
+* java.io.FileNotFoundException;
+* com.rgross.exception.CountyNotFoundException;
+* java.util.concurrent.TimeoutException;
+* java.lang.StackOverflowError;
+* java.lang.IllegalStateException;
+* java.lang.UnsupportedOperationException;
+* junit.framework.AssertionFailedError;
+* org.opentest4j.AssertionFailedError;
+* com.objectia.twostep.exception.APIException;
+* java.lang.RuntimeException;
+* java.io.EOFException.
+
 ### Number of failing test cases per build
 
 During the build process there can be many failing test cases. In the following table it is possible to see the number of the builds based on the number of their failing test cases:
