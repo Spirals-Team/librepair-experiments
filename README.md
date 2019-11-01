@@ -22,9 +22,9 @@ The structure of the repository is as follows:
 
 More details about every entry listed above will be provided in the subsequent sections.
 
-## Overview
+## Statistics
 
-The repository contains the builds collected in the period between February 2017 and August 2018.
+The repository contains the builds collected in the period February 2017 - August 2018.
 
 There are currently 14.137 build JSON files in the `builds` folder, each of them associated with a Continuous Integration (CI) build failure of a Java program that uses Maven as building tool.
 
@@ -47,27 +47,24 @@ The branches that have 4 commits have one commit (the third one) that contains a
 
 ## Builds information extracted using Travis CI API
 
-The use of Travis CI API allowed to gather useful information about the collected failing builds, such as their states, the trigger events and their duration.
-
 ### States of the collected failing builds
 
 A build can have different states, and as reported in the [official documentation of Travis CI](https://docs.travis-ci.com/user/for-beginners/#breaking-the-build), a build is considered broken when one or more of its jobs complete with a state that is not passed: `errored`, `failed`, or `canceled`.
 
-In the following table, it is reported the number of the collected builds based on their state:
+In the following table, it is reported the number of collected builds based on their state:
 
 |                            | failed      | passed      | errored     | canceled  |
 |----------------------------|:-----------:|:-----------:|:-----------:|:---------:|
-| **Number of the builds**   | 13.181      | 896         | 48          | 12        |
+| **Number of builds**   | 13.181      | 896         | 48          | 12        |
 
 ### Trigger events of the collected failing builds
 
-Every build is triggered by an event. In particular, in the following table it is possible to see the number of the collected builds that have been triggered by a specific event:
+Every build is triggered by an event. In particular, in the following table we see the number of the collected builds that have been triggered by a specific event:
 
 |                            | push        | pull request  | cron        | api      |
 |----------------------------|:-----------:|:-------------:|:-----------:|:--------:|
-| **Number of the builds**   | 7.172       | 6.266         | 539         | 160      |
+| **Number of builds**       | 7.172       | 6.266         | 539         | 160      |
 
-In addition to the classic events (`push` and `pull request`), there can be other two types of triggering events: `cron` and `pull request`. 
 
 The event type `cron` means that the build has been triggered via the [Travis CI cron jobs](https://docs.travis-ci.com/user/cron-jobs/), that can run builds at regular scheduled intervals independently of whether any commits were pushed to the repository.
 
@@ -75,7 +72,7 @@ The event type `api` means that the build has been triggered using the Travis CI
 
 ### Duration of the collected failing builds
 
-Using the information extracted from the Travis CI API, it is possible to know also the duration of a build, where the term `duration` is intended as the wall clock time in seconds to produce and execute a build.
+Using the information extracted from the Travis CI API, it is possible to know the duration of a build, where the term `duration` is intended as the wall clock time in seconds to produce and execute a build.
 
 The following table shows the number of the builds per different intervals of duration:
 
@@ -94,7 +91,7 @@ The minimum duration recorded has been 3 seconds (`build` [357685462](https://gi
 
 ## Builds information extracted using Repairnator
 
-The use of Repairnator allowed to collect a set of data about the bugs reproduction, test failures and repair attempts. These data are stored in a specific branch for every build failure. In particular, every branch is linked to a build JSON file in `master` branch and, as well as containing the source code of the buggy program, it also has some files with the keyword `repairnator`in their name. These files contain information collected by Repairnator. There are also folders with the keyword `repairnator` in their names, and they contain the patches generated using a program repair tool.
+The data about bugs reproduction, test failures and repair attempts is stored in a specific branch for every build failure. In particular, every branch is linked to a build JSON file in `master` branch and, as well as containing the source code of the buggy program, it also has some files with the keyword `repairnator`in their name. 
 
 ### repairnator.json files
 
@@ -104,11 +101,11 @@ Every branch has a file called `repairnator.json` that contains the data reporte
 |:-------------------------|:------------------------------------------------------------------------------------------|
 | bugType                  | The type of the failing build.                                                             |
 | bugCommit                | The URL of the bug commit in which it is possible to see the diff with the previous one.  |
-| error-types              | The types of the errors occurred during the building of the project.                      |
-| failingModule            | The module failed during the building of the project.                                    |
+| error-types              | The types of errors that occurred during the building of the project.                      |
+| failingModule            | The failing Maven module.                                    |
 | failing-test-cases       | The list of the failing test cases.                                                       |
 | hostname                 | The hostname used to run the Repairnator inspector.                                          |
-| metrics                  | It contains information about the program associated with the failing build, such as the number of the program files, the number of the test cases and the number of the used libraries. It also contains other information, such as the duration expressed in seconds to reproduce the bug, the date of the buggy build, and the date of the bug reproduction.                                                                                                      |
+| metrics                  | It contains information about the program associated with the failing build, such as the number of program files, the number of test cases and the number of used libraries. It also contains other information, such as the duration expressed in seconds to reproduce the bug, the date of the buggy build, and the date of the bug reproduction.                                                                                                      |
 | repo                     | The name of the repository associated with the failing build.                             |
 | totalNumberErroringTests | The total number of the erroring test cases.                                              |
 | totalNumberFailingTests  | The total number of the failing test cases.                                               |
@@ -125,8 +122,6 @@ Repairnator also collects information about the different phases of the Maven bu
 | repairnator.maven.testproject.log         |                 12.860 |
 | repairnator.maven.computeclasspath.log    |                 12.804 |
 | repairnator.maven.resolvedependency.log   |                  7.845 |
-
-#### Content of the files
 
 * **repairnator.maven.buildproject.log**: it contains log information about the building of a project, such as the operations related to the goals of Apache Maven Resources plugin;
 * **repairnator.maven.testproject.log**: it contains information about the execution of the test suite, such as the name of the executed test cases, and the number of the failing, running or skipped tests;
@@ -151,8 +146,6 @@ NPEFix is the second program repair tool used during the experiment and it has b
 | repairnator.maven.npefix.log              |                    715 |
 | repairnator.npefix.results                |                    289 |
 
-#### Content of the files
-
 * **repairnator.maven.nperepair.log**: it contains Maven log information about the building of a project executed by NPEFix;
 * **repairnator.maven.npefix.log**: it contains Maven log information about the execution of the test cases performed by NPEFix;
 * **repairnator.npefix.results**: it contains information about the execution of NPEFix, such as if it was successful or not.
@@ -167,8 +160,6 @@ Astor is the third program repair tool used during the experiment and it has bee
 | repairnator.astor.mutation.log            |                  4.835 |
 | repairnator.astor.results.json            |                  1.083 |
 | repairnator.astor.mutation.results.json   |                    945 |
-
-#### Content of the files
 
 * **repairnator.astor.log**: it contains log information about the execution of Astor, starting from the beginning (e.g., the creation of the [Spoon](http://spoon.gforge.inria.fr) model);
 * **repairnator.astor.mutation.log**: it contains log information about the execution of Astor, such as the modification points found with [GZoltar](http://www.gzoltar.com), and the mutation operators applied to these modification points in order to create a possible patch;
@@ -186,12 +177,7 @@ As reported in the following table, there are some branches that also have a fol
 
 ### Types of the collected failing builds
 
-Analyzing the `repairnator.json` files, it is possible to know that there are two possible `bugType` associated with every collected build:
-
-* only_fail;
-* failing_passing.
-
-In the following table, it is reported the number of the builds based on their type:
+In the following table, we have the number of the builds based on their type:
 
 |                            | only_fail   | failing_passing |     
 |----------------------------|:-----------:|:---------------:|
@@ -201,7 +187,7 @@ The type `failing_passing` means that the build failed because at least one test
 
 ### Most common test failure types
 
-Considering the 14.137 collected builds, we analyzed the different failure types occurred. Without taking into account the custom exceptions related to the specific projects, `AssertionError` is the most common failure type with 8.478 occurences observed. The following table shows the top 10 common failure types observed:
+Considering the 14.137 collected builds, we analyzed the different failure types occurred. `AssertionError` is the most common failure type with 8.478 occurences observed. The following table shows the top 10 common failure types observed:
 
 | Failure type                         | Occurrences |
 |:-------------------------------------|------------:|
@@ -235,7 +221,7 @@ On the contrary, taking into account only the custom exceptions, the top 10 comm
 | **Other**                                               |       2.678 |
 | **Total**                                               |       4.224 |
 
-### Number of the failing test cases per build
+### Number of failing test cases per build
 
 During the build process there can be many failing test cases. In the following table it is possible to see the number of the builds based on the number of their failing test cases:
 
@@ -251,7 +237,7 @@ During the build process there can be many failing test cases. In the following 
 
 The highest number of the failing test cases observed in a single build has been 804 (`build` [412170129](https://github.com/repairnator/repairnator-experiments/blob/master/builds/412170129.json), `branch` [SeleniumHQ-htmlunit-driver-412170129-20180804-232323](https://github.com/repairnator/repairnator-experiments/tree/SeleniumHQ-htmlunit-driver-412170129-20180804-232323)).
 
-### Number of the erroring test cases per build
+### Number of erroring test cases per build
 
 The number of the builds based on the number of their erroring test cases is reported in the following table:
 
