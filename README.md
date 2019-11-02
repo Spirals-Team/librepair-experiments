@@ -1,6 +1,6 @@
 # repairnator-experiments
 
-This is an open-science repository whith data related to ["How to Design a Program Repair Bot? Insights from the Repairnator Project"](https://hal.inria.fr/hal-01691496/document) (ICSE 2018) and [Repairnator patches programs automatically](https://ubiquity.acm.org/article.cfm?id=3349589), (Ubiquity, Association for Computing Machinery, 2019).
+This is an open-science repository with data related to ["How to Design a Program Repair Bot? Insights from the Repairnator Project"](https://hal.inria.fr/hal-01691496/document) (ICSE 2018) and [Repairnator patches programs automatically](https://ubiquity.acm.org/article.cfm?id=3349589), (Ubiquity, Association for Computing Machinery, 2019).
 
 ```Bibtex
 @inproceedings{repairnator,
@@ -24,17 +24,17 @@ More details about every entry listed above will be provided in the subsequent s
 
 ## Statistics
 
-The repository contains the builds collected in the period February 2017 - August 2018.
+The repository contains the builds collected in the period February 2017 - September 2018.
 
-There are currently 14.137 build JSON files in the `builds` folder, each of them associated with a Continuous Integration (CI) build failure of a Java program that uses Maven as building tool.
+There are currently 14.132 build JSON files in the `builds` folder, each of them associated with a Continuous Integration (CI) build failure of a Java program that uses Maven as building tool.
 
 The name of these JSON files corresponds to the Travis CI build identifier and their content is the result of the Travis CI API V3 ```GET /build/{build.id}```. More details can be found on the [official documentation](https://docs.travis-ci.com/user/developer/#api-v3).
 
-There are 14.137 different branches (excluding master branch), each of them associated with a build failure. In particular, every branch can have 2, 3 or 4 commits, as reported in the following table:
+There are 14.132 different branches (excluding master branch), each of them associated with a build failure. In particular, every branch can have 2, 3 or 4 commits, as reported in the following table:
 
 |                            | 2 commits   | 3 commits   | 4 commits   |
 |----------------------------|:-----------:|:-----------:|:-----------:|
-| **Number of the branches** | 15          | 13.875      | 247         |
+| **Number of the branches** | 15          | 13.870      | 247         |
 
 Most of the branches have 3 commits, where:
 * The first one is the failing one;
@@ -55,7 +55,7 @@ In the following table, it is reported the number of collected builds based on t
 
 |                            | failed      | passed      | errored     | canceled  |
 |----------------------------|:-----------:|:-----------:|:-----------:|:---------:|
-| **Number of builds**   | 13.181      | 896         | 48          | 12        |
+| **Number of builds**       | 13.178      | 895         | 47          | 12        |
 
 ### Trigger events of the collected failing builds
 
@@ -63,7 +63,7 @@ Every build is triggered by an event. In particular, in the following table we s
 
 |                            | push        | pull request  | cron        | api      |
 |----------------------------|:-----------:|:-------------:|:-----------:|:--------:|
-| **Number of builds**       | 7.172       | 6.266         | 539         | 160      |
+| **Number of builds**       | 7.169       | 6.264         | 539         | 160      |
 
 
 The event type `cron` means that the build has been triggered via the [Travis CI cron jobs](https://docs.travis-ci.com/user/cron-jobs/), that can run builds at regular scheduled intervals independently of whether any commits were pushed to the repository.
@@ -79,9 +79,9 @@ The following table shows the number of the builds per different intervals of du
 |                                            | Number of the builds   |
 |:------------------------------------------:|-----------------------:|
 | **0 &lt; duration &le; 100**               |                 1.527  |
-| **100 &lt; duration &le; 500**             |                 3.950  |
+| **100 &lt; duration &le; 500**             |                 3.948  |
 | **500 &lt; duration &le; 1.000**           |                 1.443  |
-| **1.000 &lt; duration &le; 5.000**         |                 3.400  |
+| **1.000 &lt; duration &le; 5.000**         |                 3.397  |
 | **5.000 &lt; duration &le; 10.000**        |                 1.220  |
 | **10.000 &lt; duration &le; 25.000**       |                 2.172  |
 | **25.000 &lt; duration &le; 50.000**       |                   408  |
@@ -118,10 +118,10 @@ Repairnator also collects information about the different phases of the Maven bu
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
-| repairnator.maven.buildproject.log        |                 12.860 |
-| repairnator.maven.testproject.log         |                 12.860 |
-| repairnator.maven.computeclasspath.log    |                 12.804 |
-| repairnator.maven.resolvedependency.log   |                  7.845 |
+| repairnator.maven.buildproject.log        |                 12.855 |
+| repairnator.maven.testproject.log         |                 12.855 |
+| repairnator.maven.computeclasspath.log    |                 12.799 |
+| repairnator.maven.resolvedependency.log   |                  7.841 |
 
 * **repairnator.maven.buildproject.log**: it contains log information about the building of a project, such as the operations related to the goals of Apache Maven Resources plugin;
 * **repairnator.maven.testproject.log**: it contains information about the execution of the test suite, such as the name of the executed test cases, and the number of the failing, running or skipped tests;
@@ -134,7 +134,7 @@ Nopol is one of the three program repair tools used in order to try to generate 
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
-| repairnator.nopol.results                 |                  8.914 |
+| repairnator.nopol.results                 |                  8.910 |
 
 ### Repairnator NPEFix files
 
@@ -142,7 +142,7 @@ NPEFix is the second program repair tool used during the experiment and it has b
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
-| repairnator.maven.nperepair.log           |                    922 |
+| repairnator.maven.nperepair.log           |                    921 |
 | repairnator.maven.npefix.log              |                    715 |
 | repairnator.npefix.results                |                    289 |
 
@@ -152,12 +152,12 @@ NPEFix is the second program repair tool used during the experiment and it has b
 
 ### Repairnator Astor files
 
-Astor is the third program repair tool used during the experiment and it has been used starting from September 2017. There are 4 different files related to the execution of Astor that can be found in the branches, as reported in the following table:
+Astor is the third program repair tool used during the experiment and it has been used starting from September 2017. There are four different files related to the execution of Astor that can be found in the branches, as reported in the following table:
 
 | File                                      | Number of the branches |
 |:------------------------------------------|-----------------------:|
-| repairnator.astor.log                     |                  6.218 |
-| repairnator.astor.mutation.log            |                  4.835 |
+| repairnator.astor.log                     |                  6.215 |
+| repairnator.astor.mutation.log            |                  4.834 |
 | repairnator.astor.results.json            |                  1.083 |
 | repairnator.astor.mutation.results.json   |                    945 |
 
@@ -181,19 +181,19 @@ In the following table, we have the number of the builds based on their type:
 
 |                            | only_fail   | failing_passing |     
 |----------------------------|:-----------:|:---------------:|
-| **Number of the builds**   |      13.390 |             747 |
+| **Number of the builds**   |      13.387 |             745 |
 
 The type `failing_passing` means that the build failed because at least one test case failed, and the next build was a passing build that did not contain changes in the test files.
 
 ### Most common test failure types
 
-Considering the 14.137 collected builds, we analyzed the different failure types occurred. `AssertionError` is the most common failure type with 8.478 occurences observed. The following table shows the top 10 common failure types observed:
+Considering the 14.132 collected builds, we analyzed the different failure types occurred. `AssertionError` is the most common failure type with 8.475 occurences observed. The following table shows the top 10 common failure types observed:
 
 | Failure type                         | Occurrences |
 |:-------------------------------------|------------:|
-| java.lang.AssertionError             |       8.478 |
-| java.lang.NullPointerException       |       2.097 |
-| org.junit.ComparisonFailure          |       1.293 |
+| java.lang.AssertionError             |       8.475 |
+| java.lang.NullPointerException       |       2.096 |
+| org.junit.ComparisonFailure          |       1.291 |
 | java.lang.IllegalStateException      |       1.281 |
 | java.lang.RuntimeException           |         737 |
 | java.lang.Exception                  |         722 |
@@ -201,8 +201,8 @@ Considering the 14.137 collected builds, we analyzed the different failure types
 | junit.framework.AssertionFailedError |         437 |
 | java.lang.IllegalArgumentException   |         420 |
 | java.io.IOException                  |         404 |
-| **Other**                            |       2.414 |
-| **Total**                            |      18.725 |
+| **Other**                            |       2.413 |
+| **Total**                            |      18.718 |
 
 On the contrary, taking into account only the custom exceptions, the top 10 common failure types observed are the following ones:
 
@@ -247,13 +247,14 @@ During the build process there can be many failing test cases. In the following 
 
 | Number of the failing test cases           | Number of the builds   |
 |:------------------------------------------:|-----------------------:|
-| **1**                                      |                 3.141  |
-| **2**                                      |                 2.958  |
+| **0**                                      |                 5.023  |
+| **1**                                      |                 3.140  |
+| **2**                                      |                 2.957  |
 | **3**                                      |                   545  |
 | **4**                                      |                   601  |
 | **5**                                      |                   177  |
-| **6**                                      |                   735  |
-| **&gt; 6**                                 |                   956  |
+| **6**                                      |                   734  |
+| **&gt; 6**                                 |                   955  |
 
 The highest number of the failing test cases observed in a single build has been 804 (`build` [412170129](https://github.com/repairnator/repairnator-experiments/blob/master/builds/412170129.json), `branch` [SeleniumHQ-htmlunit-driver-412170129-20180804-232323](https://github.com/repairnator/repairnator-experiments/tree/SeleniumHQ-htmlunit-driver-412170129-20180804-232323)).
 
@@ -263,13 +264,14 @@ The number of the builds based on the number of their erroring test cases is rep
 
 | Number of the erroring test cases          | Number of the builds   |
 |:------------------------------------------:|-----------------------:|
-| **1**                                      |                 2.210  |
+| **0**                                      |                 7.082  |
+| **1**                                      |                 2.209  |
 | **2**                                      |                   733  |
 | **3**                                      |                   531  |
 | **4**                                      |                   297  |
 | **5**                                      |                   233  |
 | **6**                                      |                   273  |
-| **&gt; 6**                                 |                 2.775  |
+| **&gt; 6**                                 |                 2.774  |
 
 The highest number of the erroring test cases observed in a single build has been 14.783 (`build` [376595276
 ](https://github.com/repairnator/repairnator-experiments/blob/master/builds/376595276.json), `branch` [druid-io-druid-376595276-20180509-013859](https://github.com/repairnator/repairnator-experiments/tree/druid-io-druid-376595276-20180509-013859)).
