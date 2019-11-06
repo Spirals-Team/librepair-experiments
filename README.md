@@ -206,20 +206,20 @@ Considering the 14.132 collected builds, we analyzed the different failure types
 
 On the contrary, taking into account only the custom exceptions, the top 10 common failure types observed are the following ones:
 
-| Failure Type                                            | Occurrences |
-|:--------------------------------------------------------|------------:|
-| skipped                                                 |         346 |
-| org.postgresql.util.PSQLException                       |         228 |
-| redis.clients.jedis.exceptions.JedisConnectionException |         173 |
-| redis.clients.jedis.exceptions.JedisException           |         163 |
-| com.facebook.presto.spi.PrestoException                 |         132 |
-| org.springframework.beans.factory.BeanCreationException |         112 |
-| org.openqa.selenium.WebDriverException                  |         105 |
-| com.spotify.docker.client.exceptions.DockerException    |          96 |
-| spoon.SpoonException                                    |          96 |
-| com.mongodb.MongoTimeoutException                       |          95 |
-| **Other**                                               |       2.678 |
-| **Total**                                               |       4.224 |
+| Failure Type                                               | Occurrences |
+|:---------------------------------------------------------- |------------:|
+| org.postgresql.util.PSQLException                          |         228 |
+| redis.clients.jedis.exceptions.JedisConnectionException    |         173 |
+| redis.clients.jedis.exceptions.JedisException              |         163 |
+| com.facebook.presto.spi.PrestoException                    |         132 |
+| org.springframework.beans.factory.BeanCreationException    |         112 |
+| org.openqa.selenium.WebDriverException                     |         105 |
+| com.spotify.docker.client.exceptions.DockerException       |          96 |
+| spoon.SpoonException                                       |          96 |
+| com.mongodb.MongoTimeoutException                          |          95 |
+| org.springframework.dao.DataAccessResourceFailureException |          84 |
+| **Other**                                                  |       2.594 |
+| **Total**                                                  |       3.878 |
 
 Note that in `repairnator.json` files, the are some cases in which the same exception could be reported in two different ways. In particular, considering the values in the array `FailureNames` of JSON object `metrics`, there can be some `repairnator.json` files in which the exception has been saved with the correct name and others in which the exception has been saved with a single `:` at the end of the name. For instance, you can find both `java.lang.NullPointerException` and `java.lang.NullPointerException:`.
 
