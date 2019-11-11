@@ -140,7 +140,7 @@ In the following table it is possibile to see the number of failed jobs per buil
 | 6                         |                  193 |
 | > 6                       |                  320 |
 
-The highest number of the failed jobs per build is 58 (`build` [421505900](https://github.com/repairnator/repairnator-experiments/blob/master/builds/421505900.json) - `branch` [JWGmeligMeyling-blaze-persistence-421505900-20180828-141855](https://github.com/repairnator/repairnator-experiments/tree/JWGmeligMeyling-blaze-persistence-421505900-20180828-141855), and `build` [421480538](https://github.com/repairnator/repairnator-experiments/blob/master/builds/421480538.json) - `branch` [JWGmeligMeyling-blaze-persistence-421480538-20180828-125625](https://github.com/repairnator/repairnator-experiments/tree/JWGmeligMeyling-blaze-persistence-421480538-20180828-125625)).
+The highest number of the failed jobs per build is 58 (`build` [421480538](https://github.com/repairnator/repairnator-experiments/blob/master/builds/421480538.json) - `branch` [JWGmeligMeyling-blaze-persistence-421480538-20180828-125625](https://github.com/repairnator/repairnator-experiments/tree/JWGmeligMeyling-blaze-persistence-421480538-20180828-125625), and `build` [421505900](https://github.com/repairnator/repairnator-experiments/blob/master/builds/421505900.json) - `branch` [JWGmeligMeyling-blaze-persistence-421505900-20180828-141855](https://github.com/repairnator/repairnator-experiments/tree/JWGmeligMeyling-blaze-persistence-421505900-20180828-141855)).
 
 ### Number of canceled jobs per build
 
