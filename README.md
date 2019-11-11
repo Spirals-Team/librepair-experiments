@@ -18,6 +18,7 @@ This repository aims to contain the code of the failing Java projects and also i
 The structure of the repository is as follows:
 * Branch `master` contains the `builds` folder and the documentation of this repository;
 * The `builds` folder contains a specific JSON file obtained using the Travis CI API for every Travis CI build failure related to Java programs that use Maven as building tool;
+* The `jobs` folder contains a subfolder for every build and each of them contains as many JSON files (obtained using the Travis CI API) as the number of jobs associated with that build;
 * For each of these failing builds, there is a specific branch with all the information related to the building of the project, bug reproduction, failing tests and repair attempts.
 
 More details about every entry listed above will be provided in the subsequent sections.
@@ -29,6 +30,8 @@ The repository contains the builds collected in the period February 2017 - Septe
 There are currently 14.132 build JSON files in the `builds` folder, each of them associated with a Continuous Integration (CI) build failure of a Java program that uses Maven as building tool.
 
 The name of these JSON files corresponds to the Travis CI build identifier and their content is the result of the Travis CI API V3 ```GET /build/{build.id}```. More details can be found on the [official documentation](https://docs.travis-ci.com/user/developer/#api-v3).
+
+The `jobs` folder has a specific subfolder for every build (except for 25 builds in which the data are no more available through the Travis CI API) and the name of these subfolders corresponds with the build id to which they are associated. Every subfolder related to a build contains a distinct JSON file for every job associated with that build. The name of these JSON files corresponds to the Travis CI job identifier and their content is the result of the Travis CI API V3 ```GET /job/{job.id}```.
 
 There are 14.132 different branches (excluding master branch), each of them associated with a build failure. In particular, every branch can have 2, 3 or 4 commits, as reported in the following table:
 
@@ -88,6 +91,75 @@ The following table shows the number of the builds per different intervals of du
 | **duration &gt; 50.000**                   |                    17  |
 
 The minimum duration recorded has been 3 seconds (`build` [357685462](https://github.com/repairnator/repairnator-experiments/blob/master/builds/357685462.json), `branch` [as0kir-topjava-357685462-20180324-053259](https://github.com/repairnator/repairnator-experiments/tree/as0kir-topjava-357685462-20180324-053259)), while the maximum duration recorded has been 60.035 seconds (`build` [247511890](https://github.com/repairnator/repairnator-experiments/blob/master/builds/247511890.json), `branch` [apache-flink-247511890-20170627-234202_bugonly](https://github.com/repairnator/repairnator-experiments/tree/apache-flink-247511890-20170627-234202_bugonly)).
+
+## Jobs information extracted using Travis CI API
+
+### States of the jobs associated with a build
+
+Using the Travis CI API, it is possibile to know also the state of the jobs associated with a specific build. In particular, a job can have four different states: `passed`, `errored`, `failed`, and `canceled`. As reported in the [official documentation of Travic CI](https://docs.travis-ci.com/user/for-beginners/#breaking-the-build), when one or more jobs have a state different from `passed`, the associated build is considered broken.
+
+In the following table, it is reported the number of jobs associated with the collected builds based on their state:
+
+|                            | passed      | errored     | failed      | canceled  |
+|----------------------------|:-----------:|:-----------:|:-----------:|:---------:|
+| **Number of jobs**         | 37.738      | 144         | 23.962      | 2.945     |
+
+### Number of errored jobs per build
+
+When a job is classified as `errored`, it means that a command in the `before_install`, `install`, or `before_script` phase returned a non-zero exit code. The job stops immediately.
+
+In the following table it is possibile to see the number of errored jobs per build:
+
+| Number of the errored jobs | Number of the builds |
+|----------------------------|---------------------:|
+| 0                          |               14.003 |
+| 1                          |                   87 |
+| 2                          |                    8 |
+| 3                          |                    3 |
+| 4                          |                    5 |
+| 5                          |                    0 |
+| 6                          |                    0 |
+| > 6                        |                    1 |
+
+The highest number of the errored jobs per build is 12 (`build` [332193968](https://github.com/repairnator/repairnator-experiments/blob/master/builds/332193968.json), `branch` [GJL-flink-332193968-20180123-111656_bugonly](https://github.com/repairnator/repairnator-experiments/tree/GJL-flink-332193968-20180123-111656_bugonly)). 
+
+### Number of failed jobs per build
+
+When a job is classified as `failed`, it means that a command in the `script` phase returned a non-zero exit code. The job continues to run until it completes.
+
+In the following table it is possibile to see the number of failed jobs per build:
+
+| Number of the failed jobs | Number of the builds |
+|---------------------------|---------------------:|
+| 0                         |                  926 |
+| 1                         |                8.554 |
+| 2                         |                2.514 |
+| 3                         |                  901 |
+| 4                         |                  512 |
+| 5                         |                  187 |
+| 6                         |                  193 |
+| > 6                       |                  320 |
+
+The highest number of the failed jobs per build is 58 (`build` [421505900](https://github.com/repairnator/repairnator-experiments/blob/master/builds/421505900.json) - `branch` [JWGmeligMeyling-blaze-persistence-421505900-20180828-141855](https://github.com/repairnator/repairnator-experiments/tree/JWGmeligMeyling-blaze-persistence-421505900-20180828-141855), and `build` [421480538](https://github.com/repairnator/repairnator-experiments/blob/master/builds/421480538.json) - `branch` [JWGmeligMeyling-blaze-persistence-421480538-20180828-125625](https://github.com/repairnator/repairnator-experiments/tree/JWGmeligMeyling-blaze-persistence-421480538-20180828-125625)).
+
+### Number of canceled jobs per build
+
+When a job is classified as `canceled`, it means that a user cancels the job before it completes.
+
+In the following table it is possibile to see the number of canceled jobs per build:
+
+| Number of the canceled jobs | Number of the builds |
+|-----------------------------|---------------------:|
+| 0                           |               13.834 |
+| 1                           |                  159 |
+| 2                           |                   15 |
+| 3                           |                    4 |
+| 4                           |                    4 |
+| 5                           |                    0 |
+| 6                           |                    2 |
+| > 6                         |                   89 |
+
+The highest number of the canceled jobs per build is 36. The are 41 builds with 36 canceled jobs (e.g., the `build` [335090924](https://github.com/repairnator/repairnator-experiments/blob/master/builds/335090924.json), `branch` [matsim-org-matsim-335090924-20180130-113656_bugonly](https://github.com/repairnator/repairnator-experiments/tree/matsim-org-matsim-335090924-20180130-113656_bugonly)).
 
 ## Builds information extracted using Repairnator
 
